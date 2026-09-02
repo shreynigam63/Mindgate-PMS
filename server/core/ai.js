@@ -20,13 +20,68 @@ const API = 'https://api.anthropic.com/v1/messages';
 function aiEnabled() { return !!process.env.ANTHROPIC_API_KEY; }
 
 // Tolerant JSON extraction from a model reply (pure, tested).
+// Index of the brace that closes the object opened at `start`, ignoring
+// braces that appear inside string literals (KRA titles and narrative
+// text routinely contain them). -1 if it is never closed.
+function closingBraceIndex(s, start) {
+  let depth = 0, inString = false, escaped = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\') { if (inString) escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) return i;
+  }
+  return -1;
+}
+
 function parseAiJson(text) {
   if (!text) return null;
   const cleaned = String(text).replace(/```json|```/g, '').trim();
-  try { return JSON.parse(cleaned); } catch { /* try to find an object */ }
+  try { return JSON.parse(cleaned); } catch { /* fall through to recovery */ }
+
   const start = cleaned.indexOf('{');
+  if (start === -1) return null;
+  const close = closingBraceIndex(cleaned, start);
+
+  // RECOVERY: a closing brace emitted too early, with the remaining keys
+  // trailing after it — observed live from POST /agentic/cycle-health:
+  //
+  //   {"headline":"...","bottleneck":"...","chase_this_week":[...]},
+  //   "next_phase_blockers":[...],"caveats":[...]
+  //
+  // The reply is complete, not truncated; the object just closes after
+  // the third key and the rest follows at top level. The old recovery
+  // below (first "{" to LAST "}") cannot help here: on the full reply the
+  // last brace sits inside the trailing section, so the slice spans a
+  // malformed range and parse fails, and the caller silently fell back to
+  // {_unparsed}. Since every consumer reads named keys off the draft, a
+  // partial parse would quietly drop whole sections — worse than an
+  // obvious failure — so recover the WHOLE object by moving that brace to
+  // the end.
+  //
+  // Gated on the remainder starting with a comma so this only fires on
+  // the it-kept-going shape, never on a model that legitimately closed
+  // its object and then added prose (which the span parse below handles).
+  if (close !== -1) {
+    const rest = cleaned.slice(close + 1).trim();
+    // Try it both ways: the trailing section may or may not already carry
+    // a closing brace of its own, and appending a second one would be
+    // just as unparseable as the original.
+    if (rest.startsWith(',')) {
+      const head = cleaned.slice(start, close);
+      for (const candidate of [head + rest, head + rest + '}']) {
+        try { return JSON.parse(candidate); } catch { /* try the next shape */ }
+      }
+    }
+    // Object closed properly but with trailing text after it.
+    try { return JSON.parse(cleaned.slice(start, close + 1)); } catch { /* fall through */ }
+  }
+
   const end = cleaned.lastIndexOf('}');
-  if (start !== -1 && end > start) {
+  if (end > start) {
     try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { return null; }
   }
   return null;
