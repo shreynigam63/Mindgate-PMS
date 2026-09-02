@@ -13,7 +13,7 @@ const ai = require('../../core/ai');
 // house rule that modules never import each other's internals. This is
 // also what guarantees career suggestions stay inside the set the
 // career-path form accepts — both resolve eligibility through it.
-const { eligibleTransitionsFor } = require('../people');
+const { eligibleTransitionsFor, careerPathDiagnostics } = require('../people');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -565,6 +565,13 @@ router.post('/career-suggest', async (req, res) => {
     if (!emp.designation) return res.status(409).json({ error: 'Your designation is not set — ask HR to complete your record before asking for career suggestions.' });
 
     const transitions = await eligibleTransitionsFor(T(req), req.user.id);
+    // Why the list is empty, when it is. Previously the model was handed a
+    // bare empty array and — correctly, given that input — told the
+    // employee no path was configured. That was FALSE whenever a
+    // transition existed and had merely been excluded on level, and it
+    // sent HR hunting for a row that was already there. The model can only
+    // be as accurate as its input, so the input now carries the reason.
+    const diagnostics = transitions.length ? null : await careerPathDiagnostics(T(req), req.user.id);
     const current = (await db.query(
       `SELECT target_role, target_timeline, plan FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`,
       [T(req), req.user.id])).rows[0];
@@ -579,6 +586,9 @@ router.post('/career-suggest', async (req, res) => {
         typical_time_months: t.typical_time_months,
         required_competencies: t.required_competencies || [],
       })),
+      // Present only when configured_transitions is empty. reason is one
+      // of: none_configured | level_mismatch | all_inactive | no_designation
+      why_no_transitions: diagnostics,
     };
     const out = await ai.narrate({
       tenantId: T(req), kind: 'career_suggest', ref: { employee_id: req.user.id },
@@ -587,10 +597,24 @@ router.post('/career-suggest', async (req, res) => {
 next one to two years, given their current designation and department.
 HARD CONSTRAINT: you may only propose roles that appear in
 configured_transitions. That list is the organisation's own career
-pathing matrix and the form will reject anything outside it. If the list
-is empty, say plainly that no path has been configured from this role yet
-and that HR needs to define one — do not invent a role, a level, or a
-timeline.
+pathing matrix and the form will reject anything outside it. Never invent
+a role, a level or a timeline.
+
+When configured_transitions is empty, why_no_transitions says why, and
+you must report THAT reason rather than assuming nothing exists:
+- none_configured: no path has been defined from this role yet; HR needs
+  to add one to the Career Pathing Matrix.
+- level_mismatch: a path IS configured from this role, but it is
+  restricted to a level that does not match this employee's role band.
+  Say so explicitly, quote the required level and the employee's actual
+  role_band from the input, and say HR should either clear the level on
+  that transition (blank means any level) or correct the employee's role
+  band. Do NOT say nothing is configured — it is, and saying otherwise
+  sends people looking for the wrong thing.
+- all_inactive: the path exists but every transition from this role is
+  deactivated; HR can reactivate it.
+- no_designation: the employee has no designation on their record, so
+  nothing can be matched until HR sets it.
 Use the matrix's own typical_time_months and required_competencies rather
 than estimating your own. You never suggest, imply or hint at a
 performance rating or score, and you never promise a promotion — you are

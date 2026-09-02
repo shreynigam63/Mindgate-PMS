@@ -291,6 +291,39 @@ router.get('/designations', async (req, res) => {
 // reference screenshots of a "New transition" form; built to the exact
 // fields shown, with min/typical time-in-role stored and displayed but
 // NOT enforced (see migration 022's comment for why).
+// The role_band values that actually exist, so From Level can be a
+// dropdown like From Role already is instead of a free-text box nobody
+// can spell consistently.
+router.get('/role-bands', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT DISTINCT role_band FROM core.employees
+        WHERE tenant_id=$1 AND role_band IS NOT NULL AND TRIM(role_band) <> '' ORDER BY role_band`,
+      [T(req)]);
+    res.json({ role_bands: r.rows.map((row) => row.role_band) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// How many active employees a from_role/from_level pair actually matches.
+// Shown while HR fills the form, so a transition that matches NOBODY is
+// visible at the moment it is created rather than discovered weeks later
+// by an employee being told no path exists.
+router.get('/career/match-count', async (req, res) => {
+  try {
+    const fromRole = (req.query.from_role || '').trim();
+    if (!fromRole) return res.json({ count: 0, from_role: null });
+    const fromLevel = (req.query.from_level || '').trim() || null;
+    const r = await db.query(
+      `SELECT COUNT(*)::int AS n FROM core.employees
+        WHERE tenant_id=$1 AND status='active'
+          AND LOWER(TRIM(designation)) = LOWER(TRIM($2))
+          AND ($3::text IS NULL
+               OR LOWER(TRIM(COALESCE(role_band, ''))) = LOWER(TRIM($3)))`,
+      [T(req), fromRole, fromLevel]);
+    res.json({ count: r.rows[0].n, from_role: fromRole, from_level: fromLevel });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/career/transitions', async (req, res) => {
   try {
     if (!(await adminOnly(req, res))) return;
@@ -370,15 +403,75 @@ router.delete('/career/transitions/:id', async (req, res) => {
 // blocked — same permissive-when-unconfigured philosophy the old
 // Career Framework check used, just evaluated per employee now instead
 // of against one flat org-wide list.
+// Matching is case- and whitespace-insensitive, and an EMPTY from_level
+// counts as "any level" exactly like NULL does.
+//
+// It used to compare both fields raw and exact. from_role survived that
+// because the matrix form picks it from a dropdown of real designations,
+// but from_level is a free-text box — so "L3 " or "l3" against a role_band
+// of "L3" silently matched nothing, with no way to see why. NULLIF on the
+// trimmed value is what folds '' into the any-level case; a row saved with
+// an empty string rather than NULL was previously a transition that could
+// never match anyone.
+//
+// A level-specific transition still does NOT match an employee with no
+// role_band — that is a real mismatch, not a formatting one. It is now
+// REPORTED rather than silently dropped: see careerPathDiagnostics.
+const TRANSITION_MATCH = `
+  LOWER(TRIM(from_role)) = LOWER(TRIM($2))
+  AND (NULLIF(TRIM(COALESCE(from_level, '')), '') IS NULL
+       OR LOWER(TRIM(from_level)) = LOWER(TRIM(COALESCE($3, ''))))`;
+
 async function eligibleTransitionsFor(tenantId, employeeId) {
   const emp = (await db.query(`SELECT designation, role_band FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp || !emp.designation) return [];
   const r = await db.query(
     `SELECT * FROM people.career_transitions
-      WHERE tenant_id=$1 AND active=true AND from_role=$2
-        AND (from_level IS NULL OR from_level = $3)`,
+      WHERE tenant_id=$1 AND active=true AND ${TRANSITION_MATCH}`,
     [tenantId, emp.designation, emp.role_band || null]);
   return r.rows;
+}
+
+// Why an employee has no eligible transitions.
+//
+// "No career path is configured from your current role" was being shown
+// whenever the match returned nothing — including when a path WAS
+// configured and had merely been excluded on level. That sent HR looking
+// for a missing row that already existed. An empty result has several
+// distinct causes and they need distinct answers.
+async function careerPathDiagnostics(tenantId, employeeId) {
+  const emp = (await db.query(
+    `SELECT designation, role_band FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+  if (!emp) return { reason: 'no_employee' };
+  if (!emp.designation) {
+    return { reason: 'no_designation', designation: null, role_band: emp.role_band || null, matched: 0 };
+  }
+  const base = { designation: emp.designation, role_band: emp.role_band || null };
+
+  // Everything configured FROM this role, ignoring level and active, so we
+  // can tell "nothing exists" from "something exists but was filtered".
+  const all = (await db.query(
+    `SELECT to_role, from_level, active FROM people.career_transitions
+      WHERE tenant_id=$1 AND LOWER(TRIM(from_role)) = LOWER(TRIM($2))`,
+    [tenantId, emp.designation])).rows;
+
+  const matched = await eligibleTransitionsFor(tenantId, employeeId);
+  if (matched.length) return { ...base, reason: 'ok', matched: matched.length };
+
+  if (!all.length) return { ...base, reason: 'none_configured', matched: 0 };
+
+  const active = all.filter((t) => t.active);
+  if (!active.length) return { ...base, reason: 'all_inactive', matched: 0, inactive: all.length };
+
+  // Configured and active, so the only thing left that can exclude them is
+  // the level. Report both sides of the comparison — the whole failure was
+  // that neither was visible.
+  return {
+    ...base,
+    reason: 'level_mismatch',
+    matched: 0,
+    excluded_by_level: active.map((t) => ({ to_role: t.to_role, requires_level: t.from_level })),
+  };
 }
 
 router.get('/career/my-path', async (req, res) => {
@@ -387,7 +480,12 @@ router.get('/career/my-path', async (req, res) => {
     const transitions = await eligibleTransitionsFor(T(req), req.user.id);
     const eligibleTargetRoles = [...new Set(transitions.map((t) => t.to_role))].sort();
     const phase = await activeCyclePhase(T(req));
-    res.json({ path: p || null, eligible_target_roles: eligibleTargetRoles, cycle_phase: phase, editable: pm.phaseAllows(phase, 'career_edit') });
+    // path_diagnostics explains an EMPTY eligible list. Without it the UI
+    // could only say "nothing configured", which is wrong whenever a
+    // transition exists but was excluded on level.
+    const diagnostics = eligibleTargetRoles.length ? null : await careerPathDiagnostics(T(req), req.user.id);
+    res.json({ path: p || null, eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
+      editable: pm.phaseAllows(phase, 'career_edit'), path_diagnostics: diagnostics });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -434,4 +532,4 @@ router.get('/career/team', async (req, res) => {
 // is what keeps that read explicit — and it guarantees the AI can only
 // suggest roles the career-path form will actually accept, since both
 // sides now resolve eligibility through this one function.
-module.exports = { router, eligibleTransitionsFor };
+module.exports = { router, eligibleTransitionsFor, careerPathDiagnostics };

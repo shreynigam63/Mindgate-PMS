@@ -26,7 +26,9 @@ export default function CareerTransitionsPage() {
     api(`/people/career/transitions?${params}`).then(r => setRows(r.transitions)).catch(e => setErr(e.message));
   };
   useEffect(() => { load(); }, [q, showInactive]);
+  const [roleBands, setRoleBands] = useState([]);
   useEffect(() => { api('/people/designations').then(r => setDesignations(r.designations)).catch(() => setDesignations([])); }, []);
+  useEffect(() => { api('/people/role-bands').then(r => setRoleBands(r.role_bands)).catch(() => setRoleBands([])); }, []);
 
   const remove = async (t) => {
     if (!confirm(`Remove the transition ${t.from_role} → ${t.to_role}?`)) return;
@@ -101,12 +103,12 @@ export default function CareerTransitionsPage() {
         </div>
       )}
 
-      {showForm && <TransitionForm designations={designations} initial={editing} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load(); }} />}
+      {showForm && <TransitionForm designations={designations} roleBands={roleBands} initial={editing} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load(); }} />}
     </div>
   );
 }
 
-function TransitionForm({ designations, initial, onClose, onSaved }) {
+function TransitionForm({ designations, roleBands, initial, onClose, onSaved }) {
   const [f, setF] = useState({
     from_role: initial?.from_role || '', from_level: initial?.from_level || '',
     to_role: initial?.to_role || '', to_level: initial?.to_level || '',
@@ -117,8 +119,23 @@ function TransitionForm({ designations, initial, onClose, onSaved }) {
   });
   const [err, setErr] = useState(null);
   const [saving, setSaving] = useState(false);
+  // How many active employees this from_role/from_level pair actually
+  // matches. A transition that matches nobody is the failure this form
+  // used to make easy and invisible — it now shows up before saving.
+  const [match, setMatch] = useState(null);
 
   const set = (k) => (e) => setF(s => ({ ...s, [k]: e.target.value }));
+
+  useEffect(() => {
+    if (!f.from_role) { setMatch(null); return; }
+    let cancelled = false;
+    const p = new URLSearchParams({ from_role: f.from_role });
+    if (f.from_level) p.set('from_level', f.from_level);
+    api(`/people/career/match-count?${p}`)
+      .then(r => { if (!cancelled) setMatch(r.count); })
+      .catch(() => { if (!cancelled) setMatch(null); });
+    return () => { cancelled = true; };
+  }, [f.from_role, f.from_level]);
 
   const save = async () => {
     setErr(null);
@@ -159,10 +176,36 @@ function TransitionForm({ designations, initial, onClose, onSaved }) {
             </div>
             <div>
               <label className="lbl">From Level</label>
-              <input className="inp" value={f.from_level} onChange={set('from_level')} placeholder="e.g. L1, Junior" />
-              <p className="text-[10px] text-navy-400 mt-1">Leave blank for "any level".</p>
+              {/* A dropdown of role bands that actually exist, for the same
+                  reason From Role is one: this was a free-text box compared
+                  exactly against employee.role_band, so a typo or a level
+                  nobody holds produced a transition matching nobody, with
+                  no way to see why. */}
+              <select className="inp" value={f.from_level} onChange={set('from_level')}>
+                <option value="">— Any level —</option>
+                {roleBands.map(b => <option key={b} value={b}>{b}</option>)}
+                {f.from_level && !roleBands.includes(f.from_level) && (
+                  <option value={f.from_level}>{f.from_level} (not used by any employee)</option>
+                )}
+              </select>
+              <p className="text-[10px] text-navy-400 mt-1">
+                {roleBands.length ? 'Sourced from employee role bands. "Any level" is usually what you want.'
+                                  : 'No role bands are set on any employee — leave this as "Any level".'}
+              </p>
             </div>
           </div>
+          {f.from_role && (
+            <p className={`text-xs rounded-lg px-3 py-2 ${match === 0
+              ? 'bg-rose-50 border border-rose-200 text-rose-700'
+              : 'bg-emerald-50 border border-emerald-100 text-emerald-800'}`}>
+              {match === null ? 'Checking who this applies to…'
+                : match === 0
+                  ? <>This matches <b>no employees</b>. {f.from_level
+                      ? <>No active employee is a <b>{f.from_role}</b> at level <b>{f.from_level}</b> — set the level to “Any level”, or check their role band.</>
+                      : <>No active employee has the designation <b>{f.from_role}</b>.</>} Saving it is allowed, but nobody will see this path.</>
+                  : <>Applies to <b>{match}</b> active employee{match === 1 ? '' : 's'}.</>}
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="lbl">To Role *</label>

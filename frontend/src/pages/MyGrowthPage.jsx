@@ -293,6 +293,52 @@ function CareerAiPanel({ onUse }) {
   );
 }
 
+// Why the target-role list is empty. Deterministic and shown above the AI
+// panel: an empty list has several causes and only one of them is "HR has
+// not set this up". Saying "nothing is configured" when a transition
+// exists but was excluded on level sent people looking for a row that was
+// already there.
+function CareerPathGap({ d }) {
+  if (!d || d.reason === 'ok') return null;
+
+  if (d.reason === 'level_mismatch') {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs space-y-1.5">
+        <p className="font-bold text-amber-800">A career path exists for your role, but it does not match your level</p>
+        <p className="text-navy-600">
+          The matrix has {d.excluded_by_level.length === 1 ? 'a transition' : `${d.excluded_by_level.length} transitions`} from
+          <b> {d.designation}</b>, but {d.excluded_by_level.length === 1 ? 'it is' : 'they are'} restricted to a level that
+          does not match your role band {d.role_band ? <>(<b>{d.role_band}</b>)</> : <>(<b>not set on your record</b>)</>}.
+        </p>
+        <ul className="list-disc pl-4 text-navy-500">
+          {d.excluded_by_level.map((t, i) => (
+            <li key={i}>→ {t.to_role} — requires level <b>{t.requires_level}</b></li>
+          ))}
+        </ul>
+        <p className="text-navy-600">
+          Ask HR to either clear the level on that transition (blank means <i>any level</i>) or correct your role band.
+        </p>
+      </div>
+    );
+  }
+  if (d.reason === 'all_inactive') {
+    return <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs">
+      <p className="font-bold text-amber-800">The career path from your role is deactivated</p>
+      <p className="text-navy-600">{d.inactive} transition{d.inactive === 1 ? ' is' : 's are'} configured from <b>{d.designation}</b> but switched off. Ask HR to reactivate.</p>
+    </div>;
+  }
+  if (d.reason === 'no_designation') {
+    return <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs">
+      <p className="font-bold text-amber-800">Your designation is not set</p>
+      <p className="text-navy-600">Career paths are matched on designation, so nothing can be suggested until HR completes your record.</p>
+    </div>;
+  }
+  return <div className="bg-navy-50 border border-navy-100 rounded-xl p-3 text-xs">
+    <p className="font-bold text-navy-700">No career path configured yet</p>
+    <p className="text-navy-500">Nothing has been defined from <b>{d.designation}</b> in the Career Pathing Matrix. Ask HR to add one.</p>
+  </div>;
+}
+
 function CareerPathCard() {
   const [data, setData] = useState(null);
   const [form, setForm] = useState({ target_role: '', target_timeline: '', plan: '' });
@@ -323,6 +369,7 @@ function CareerPathCard() {
         <p className="font-bold text-sm flex-1">Aspiring Career</p>
         {data.cycle_phase && <span className={`chip ${phaseColor(data.cycle_phase)}`}>{phaseLabel(data.cycle_phase)}</span>}
       </div>
+      <CareerPathGap d={data.path_diagnostics} />
       {editable && <CareerAiPanel onUse={(a) => setForm((fm) => ({
         target_role: a.target_role || fm.target_role,
         target_timeline: a.typical_time || fm.target_timeline,
