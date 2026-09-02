@@ -20,6 +20,53 @@ router.use(authenticate, apiPermissionParity);
 const T = (req) => req.user.tenant_id;
 const fail = (res, e) => res.status(e.status || 500).json({ error: e.message });
 
+// ---------------------------------------------------------------------------
+// House style for every AI draft in this module: SHORT BULLETS, GROUPED BY
+// KRA. Requested after a mid-year draft came back as three dense
+// paragraphs — accurate, but nobody reads a wall of text about their own
+// half-year, and a manager copying it into an evaluation field has to
+// unpick which sentence belongs to which KRA before they can edit it.
+//
+// The rules are stated as constraints the model can check itself against
+// (a word count, a bullet count, an exact-title requirement) rather than
+// adjectives like "concise", which every model already believes it is.
+//
+// EXACT TITLES matter beyond tidiness: grouping is only useful if the
+// group names match the KRAs the employee actually has, and a paraphrased
+// title silently detaches a bullet from the KRA it is about.
+const KRA_BULLET_RULES = `FORMAT — a hard requirement, not a preference:
+- Write BULLETS, never paragraphs. One idea per bullet.
+- Each bullet is a single sentence of at most 18 words. Do not start it
+  with a dash, a number or a bullet character — the UI adds those.
+- Group every bullet under the KRA it concerns, naming that KRA by its
+  EXACT title as given in the input. Never paraphrase a title, never
+  invent a KRA, never merge two.
+- At most 3 bullets per list. If you have nothing the input supports for
+  a list, return it empty rather than padding it.
+- Anything that genuinely spans KRAs goes in the cross-cutting section,
+  not repeated under each KRA.
+- Plain professional English: no "leveraged", "spearheaded" or "synergy",
+  no praise the input does not support, no filler adjectives.`;
+
+// The bullets, rendered as the plain text that goes into a form field.
+//
+// WHY THE SERVER RENDERS IT: these drafts feed a "copy into the field"
+// button, and the field is a plain textarea. Composing that text here
+// keeps one source of truth — the same grouping the panel shows is the
+// grouping that lands in the box — instead of the screen and the server
+// each having their own idea of what the draft said.
+function renderKraBullets(byKra, key, crossCutting) {
+  const blocks = [];
+  for (const group of Array.isArray(byKra) ? byKra : []) {
+    const points = Array.isArray(group && group[key]) ? group[key].filter((p) => String(p || '').trim()) : [];
+    if (!points.length) continue;
+    blocks.push(`${group.kra}\n${points.map((p) => `- ${String(p).trim()}`).join('\n')}`);
+  }
+  const cross = Array.isArray(crossCutting) ? crossCutting.filter((p) => String(p || '').trim()) : [];
+  if (cross.length) blocks.push(`Across KRAs\n${cross.map((p) => `- ${String(p).trim()}`).join('\n')}`);
+  return blocks.join('\n\n');
+}
+
 async function activeCycle(tenantId) {
   const r = await db.query(
     `SELECT * FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled') ORDER BY created_at DESC LIMIT 1`, [tenantId]);
@@ -68,17 +115,38 @@ router.post('/appraisal-draft', async (req, res) => {
     };
     const out = await ai.narrate({
       tenantId: T(req), kind: 'appraisal_draft', ref: { cycle_id: c.id, employee_id },
-      requestedBy: req.user.email, input,
+      // Bullets under every KRA need more room than the two paragraphs
+      // this used to return.
+      requestedBy: req.user.email, input, maxTokens: 1600,
       system: `You draft the WRITTEN portions of a manager's performance evaluation from the
 employee's KRAs and self-appraisal. You never suggest, imply, or hint at a
 numeric rating — judgement is the manager's alone; if the self-appraisal
 contains self-ratings, ignore the numbers and use only the narratives.
-Ground every sentence in the input; invent nothing. If the self-appraisal is
-missing or unsubmitted, say so and draft only from the KRAs.
+Ground every bullet in the input; invent nothing. If the self-appraisal is
+missing or unsubmitted, say so in gaps and draft only from the KRAs.
+
+${KRA_BULLET_RULES}
+
 Respond ONLY with JSON:
-{"strengths":"2-4 sentences","improvement_areas":"2-4 sentences","evidence_notes":["short pointers the manager may verify"],"gaps":["anything the input lacked"]}`,
+{"by_kra":[{"kra":"exact KRA title","strengths":["..."],"improvement_areas":["..."]}],
+ "cross_cutting":{"strengths":["..."],"improvement_areas":["..."]},
+ "evidence_notes":["short pointers the manager may verify"],
+ "gaps":["anything the input lacked"]}`,
     });
-    res.json({ ok: true, ...out, note: 'Draft only — edit before use; ratings are yours to decide.' });
+    // The two textareas this feeds want text, not JSON — rendered here so
+    // the box gets exactly the grouping the panel shows.
+    const d = out.draft || {};
+    const cross = d.cross_cutting || {};
+    res.json({
+      ok: true,
+      ...out,
+      draft: {
+        ...d,
+        strengths: renderKraBullets(d.by_kra, 'strengths', cross.strengths),
+        improvement_areas: renderKraBullets(d.by_kra, 'improvement_areas', cross.improvement_areas),
+      },
+      note: 'Draft only — edit before use; ratings are yours to decide.',
+    });
   } catch (e) { fail(res, e); }
 });
 
@@ -121,23 +189,45 @@ router.post('/midyear-draft', async (req, res) => {
     };
     const out = await ai.narrate({
       tenantId: T(req), kind: 'midyear_draft', ref: { cycle_id: c.id, employee_id },
-      requestedBy: req.user.email, input, maxTokens: 800,
-      system: perspective === 'self'
+      // Per-KRA bullets across three sections need far more room than the
+      // 2-4 sentence narrative this used to produce: eight KRAs is
+      // realistic, and a truncated draft is a draft nobody can use.
+      requestedBy: req.user.email, input, maxTokens: 1600,
+      system: `${perspective === 'self'
         ? `You draft an EMPLOYEE's own mid-year reflection, in first person ("I"), from their KRAs
-and their own logged 1-on-1 connects this cycle. Cover highlights, challenges, and focus for
-next half. Ground everything in the input; invent nothing. Never suggest or imply a rating.
-Respond ONLY with JSON: {"narrative":"2-4 sentences, first person","gaps":["anything the input lacked"]}`
+and their own logged 1-on-1 connects this cycle. Ground everything in the input; invent
+nothing. Never suggest or imply a rating.`
         : `You draft a MANAGER's mid-year narrative about ONE employee, from their KRAs, the
 manager's own logged 1-on-1 connects this cycle, and (if available) the employee's own
 submitted self-reflection. Ground everything in the input; invent nothing. Never suggest or
-imply a numeric rating — judgement is the manager's alone.
-Respond ONLY with JSON: {"narrative":"2-4 sentences","gaps":["anything the input lacked"]}`,
+imply a numeric rating — judgement is the manager's alone.`}
+
+${KRA_BULLET_RULES}
+
+Respond ONLY with JSON:
+{"by_kra":[{"kra":"exact KRA title","progress":["..."],"blockers":["..."],"focus_next":["..."]}],
+ "cross_cutting":{"progress":["..."],"blockers":["..."],"focus_next":["..."]},
+ "gaps":["anything the input lacked"]}`,
     });
     // Same bug as connect-insights/connect-autotag, fixed the same way:
     // ai.narrate() returns { id, created_at, draft } — the actual output
-    // is under .draft. MidYearReviewPage.jsx already reads draft.narrative
-    // (top-level), so spreading out.draft is what actually matches it.
-    res.json({ ok: true, ...out.draft });
+    // is under .draft. MidYearReviewPage.jsx reads the fields at the top
+    // level, so spreading out.draft is what actually matches it.
+    //
+    // narrative is composed from the same bullets the panel renders,
+    // because the "use this draft" button writes it into a plain textarea.
+    const d = out.draft || {};
+    const cross = d.cross_cutting || {};
+    const sections = [
+      ['Progress', renderKraBullets(d.by_kra, 'progress', cross.progress)],
+      ['Blockers', renderKraBullets(d.by_kra, 'blockers', cross.blockers)],
+      ['Focus for the next half', renderKraBullets(d.by_kra, 'focus_next', cross.focus_next)],
+    ].filter(([, body]) => body);
+    res.json({
+      ok: true,
+      ...d,
+      narrative: sections.map(([h, body]) => `${h}\n${body}`).join('\n\n'),
+    });
   } catch (e) { fail(res, e); }
 });
 
@@ -209,7 +299,7 @@ no identities and you must not speculate about who wrote anything or single
 out text that could identify a person (a role+event combination, a unique
 complaint). Quote at most one short representative fragment per theme.
 Respond ONLY with JSON:
-{"themes":[{"name":"...","prevalence":"rough share of verbatims","summary":"2-3 sentences","representative_quote":"short fragment or null"}],"tensions":["where feedback disagrees with itself"],"suggested_followups":["..."]}`,
+{"themes":[{"name":"...","prevalence":"rough share of verbatims","summary":"one sentence, at most 20 words","representative_quote":"short fragment or null"}],"tensions":["where feedback disagrees with itself"],"suggested_followups":["..."]}`,
     });
     res.json({ ok: true, ...out });
   } catch (e) { fail(res, e); }
@@ -723,4 +813,4 @@ Respond ONLY with JSON:
   } catch (e) { fail(res, e); }
 });
 
-module.exports = { router };
+module.exports = { router, renderKraBullets, KRA_BULLET_RULES };

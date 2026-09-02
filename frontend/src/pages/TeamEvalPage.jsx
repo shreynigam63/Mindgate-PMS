@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Send, ChevronDown, ChevronRight } from 'lucide-react';
-import { api, phaseLabel, phaseColor, DraftBadge } from '../utils/api';
+import { api, phaseLabel, phaseColor, DraftBadge, KraBullets } from '../utils/api';
 
 // Matches Self-Appraisal's convention: per-KRA picks in letter grades,
 // the one computed overall in descriptive wording — see that page for
@@ -114,8 +114,12 @@ function EvalEditor({ t, phase, scale, cycleType, reload }) {
       {draft && (
         <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
           <DraftBadge />
-          {draft.strengths && <p><b>Strengths:</b> {draft.strengths}</p>}
-          {draft.improvement_areas && <p><b>Improvement areas:</b> {draft.improvement_areas}</p>}
+          <KraBullets byKra={draft.by_kra} crossCutting={draft.cross_cutting}
+            sections={[['strengths', 'Strengths'], ['improvement_areas', 'Improvement areas']]} />
+          {(draft.evidence_notes || []).length > 0 && (
+            <div><p className="font-semibold">Worth verifying</p>
+              <ul className="list-disc pl-4">{draft.evidence_notes.map((n, i) => <li key={i}>{n}</li>)}</ul></div>
+          )}
           {(draft.gaps || []).length > 0 && <p className="text-amber-300">Input gaps: {draft.gaps.join(' · ')}</p>}
           <button className="btn-sec !bg-navy-700 !text-white !border-navy-600" onClick={() => {
             setF(s => ({ ...s, strengths: draft.strengths || s.strengths, improvement_areas: draft.improvement_areas || s.improvement_areas }));
