@@ -21,6 +21,7 @@ const { notify } = require('../../core/notifications');
 const { requireConsent } = require('../../core/consent');
 const { isSuper50Eligible, computeWeightedRating } = require('./rating-rules');
 const { isConnectDue, shouldRemindAgain, computeCadenceProgress } = require('./connect-reminders');
+const { runReminders } = require('./reminders');
 const { parseCsv, parseExcelSheets, detectFormat } = require('../../core/employees');
 const pm = require('./phase-machine');
 
@@ -1402,6 +1403,17 @@ router.post('/my/self-appraisal/submit', async (req, res) => {
     }
     await db.query(`UPDATE pms.self_appraisals SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [a.id]);
     audit(req, 'SELF_APPRAISAL_SUBMITTED', c.id, req.user.id, null);
+    // Requested: the manager hears about a submission the moment it
+    // happens, not on the next reminder sweep. Mid-year already did this;
+    // the annual appraisal did not, so the manager only found out by
+    // opening the team page. The manager is resolved live rather than
+    // from any snapshot, for the reason spelled out in
+    // notifySheetSubmitted.
+    const mgr = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
+    if (mgr && mgr.manager_id) {
+      await notify(T(req), mgr.manager_id, 'self_appraisal_submitted',
+        `${req.user.name} submitted their self-appraisal`, null, '/pms/team');
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1687,7 +1699,14 @@ router.post('/my/midyear-review/submit', async (req, res) => {
     }
     await db.query(`UPDATE pms.midyear_checkins SET self_status='submitted', self_submitted_at=now(), updated_at=now() WHERE id=$1`, [row.id]);
     audit(req, 'MIDYEAR_SELF_SUBMITTED', c.id, req.user.id, null);
-    if (row.manager_id) await notify(T(req), row.manager_id, 'midyear_self_signed', `${req.user.name} signed their Mid-Year Review`, null, '/pms/team/midyear-review');
+    // The LIVE manager, not the manager_id snapshotted on the check-in row
+    // when it was created. Same bug the KRA flow had: an employee whose
+    // manager changed mid-cycle had their submission announced to the
+    // person who no longer manages them, while the person who has to act
+    // on it heard nothing.
+    const liveMgr = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
+    const notifyMgr = (liveMgr && liveMgr.manager_id) || row.manager_id;
+    if (notifyMgr) await notify(T(req), notifyMgr, 'midyear_self_signed', `${req.user.name} signed their Mid-Year Review`, null, '/pms/team/midyear-review');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2636,6 +2655,21 @@ async function checkAndSendConnectReminders(tenantId) {
   return reminded;
 }
 
+// POST /pms/reminders/run — the same sweep the boot loop runs, on demand.
+// Exists because the engine is a catch-up rather than a clock (see
+// reminders.js): if HR opens a phase late, or the free instance slept
+// through a reminder morning, this is how someone makes the sweep happen
+// now instead of waiting for the next daily tick. Safe to press twice —
+// the ledger's unique key means a second run sends nothing.
+router.post('/reminders/run', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const counts = await runReminders(T(req));
+    audit(req, 'REMINDERS_RUN', null, null, counts);
+    res.json({ ok: true, ...counts });
+  } catch (e) { logger.error('reminders run', { error: e.message }); res.status(500).json({ error: 'Could not run the reminder sweep' }); }
+});
+
 router.post('/connects/check-reminders', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
@@ -3054,4 +3088,4 @@ router.post('/hr/kra-sheet/clean-titles', async (req, res) => {
 // they are the pure part of the per-KRA scoring (no db), and the weighted
 // average plus the "no overall until every KRA is rated" rule are exactly
 // the behaviour worth pinning down without standing up a database.
-module.exports = { router, checkAndSendConnectReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader };
+module.exports = { router, checkAndSendConnectReminders, runReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader };

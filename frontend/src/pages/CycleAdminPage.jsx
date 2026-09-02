@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, ArrowRight, RotateCcw, Rocket, Activity, Sparkles, Trash2, Save, X, Info, History, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, ArrowRight, RotateCcw, Rocket, Activity, BellRing, Sparkles, Trash2, Save, X, Info, History, ChevronDown, ChevronUp } from 'lucide-react';
 import { api, PHASES, phaseLabel, phaseColor, DraftBadge } from '../utils/api';
 
 export default function CycleAdminPage() {
@@ -7,6 +7,7 @@ export default function CycleAdminPage() {
   const [err, setErr] = useState(null);
   const [health, setHealth] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [sweep, setSweep] = useState(null);
   const load = () => api('/pms/cycles').then(r => setCycles(r.cycles)).catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
 
@@ -37,6 +38,22 @@ export default function CycleAdminPage() {
       const r = await api('/pms/publish', { method: 'POST' });
       alert(`Published: ${r.published}. ${r.failures.length ? `Failed: ${r.failures.length} — ` + r.failures.slice(0, 3).map(f => f.reason).join('; ') : ''}`);
       load();
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  // The reminder engine is a catch-up rather than a clock (see
+  // server/modules/performance/reminders.js): it runs at boot and daily,
+  // and replays anything the free instance slept through. This button is
+  // for the case where that is not soon enough — HR opened a phase late,
+  // or wants to confirm the sweep works. Pressing it twice is harmless.
+  const runReminders = async () => {
+    setBusy(true); setErr(null); setSweep(null);
+    try {
+      const r = await api('/pms/reminders/run', { method: 'POST' });
+      const { ok, total, ...rules } = r;
+      setSweep(total
+        ? `Sent ${total}: ` + Object.entries(rules).filter(([, n]) => n).map(([k, n]) => `${k.replace(/_/g, ' ')} ${n}`).join(', ')
+        : 'Nothing due — everyone is either up to date or already reminded.');
     } catch (e) { setErr(e.message); }
     setBusy(false);
   };
@@ -83,8 +100,10 @@ export default function CycleAdminPage() {
         <h2 className="text-lg font-bold">Appraisal Cycles</h2>
         <button className="btn-pri" onClick={() => setShowNew(true)}><Plus size={13} className="inline mr-1" />New cycle</button>
         <button className="btn-sec" disabled={busy} onClick={cycleHealth}><Activity size={13} className="inline mr-1" />{busy ? 'Working…' : 'Cycle health (agent)'}</button>
+        <button className="btn-sec" disabled={busy} onClick={runReminders}><BellRing size={13} className="inline mr-1" />{busy ? 'Working…' : 'Run reminder sweep'}</button>
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
+      {sweep && <p className="text-xs text-emerald-700">{sweep}</p>}
       {health?.draft && (
         <div className="bg-navy-800 text-slate-100 rounded-xl p-4 text-xs space-y-2">
           <div className="flex items-center gap-2"><Sparkles size={13} className="text-amber-300" /><DraftBadge /></div>
