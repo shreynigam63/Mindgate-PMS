@@ -711,7 +711,12 @@ than estimating your own. You never suggest, imply or hint at a
 performance rating or score, and you never promise a promotion — you are
 describing what an aspiration would require, not what will happen.
 Respond ONLY with JSON:
-{"aspirations":[{"target_role":"exactly as given in configured_transitions","fit":"1-2 sentences on why this follows from their current role and department","typical_time":"from the matrix, or null","competencies_to_build":["from the matrix, phrased as something to work on"],"first_steps":["what to start this cycle"]}],
+Each suggested_milestone must be a step the employee could actually put a
+date against and mark progress on — "Lead one delivery workstream
+end to end", not "grow as a leader". Three to five per aspiration, in the
+order they would be done.
+Respond ONLY with JSON:
+{"aspirations":[{"target_role":"exactly as given in configured_transitions","fit":"1-2 sentences on why this follows from their current role and department","typical_time":"from the matrix, or null","competencies_to_build":["from the matrix, phrased as something to work on"],"first_steps":["what to start this cycle"],"suggested_milestones":[{"title":"short, datable, checkable","description":"one sentence on what done looks like"}]}],
  "no_path_configured":true or false,
  "notes":["anything the employee should discuss with their manager or HR"]}`,
     });
@@ -900,7 +905,10 @@ router.post('/review-assist', async (req, res) => {
     // SOURCE 3 — Aspiring Career, through the people module's exported
     // reader rather than a reach into its table (same house rule as the
     // career-suggest endpoint above). Role names and timelines come from
-    // HR's configured matrix, not from the model.
+    // HR's configured matrix, not from the model. Since migration 028 this
+    // carries real MILESTONE PROGRESS rather than only the plan text, so
+    // "any progress marked in Aspiring Career" is now something the model
+    // can actually be shown.
     const career = await careerPathFor(T(req), req.user.id);
 
     const today = new Date().toISOString().slice(0, 10);
@@ -980,6 +988,8 @@ Respond ONLY with JSON:
         goals: goals.length,
         goals_achieved: goals.filter((g) => g.progress_pct >= 100).length,
         aspiring_career_set: !!career,
+        career_milestones: career && career.milestones ? career.milestones.length : 0,
+        career_progress_pct: career ? career.progress_pct : null,
       },
       draft: d,
       note: 'Evidence from your own records — edit and add to it before you submit.',

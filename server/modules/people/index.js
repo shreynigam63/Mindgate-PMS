@@ -476,7 +476,8 @@ async function careerPathDiagnostics(tenantId, employeeId) {
 
 router.get('/career/my-path', async (req, res) => {
   try {
-    const p = (await db.query(`SELECT target_role, target_timeline, plan, updated_at FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [T(req), req.user.id])).rows[0];
+    const p = (await db.query(`SELECT id, target_role, target_timeline, plan, updated_at FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [T(req), req.user.id])).rows[0];
+    const milestones = await milestonesFor(p ? p.id : null);
     const transitions = await eligibleTransitionsFor(T(req), req.user.id);
     const eligibleTargetRoles = [...new Set(transitions.map((t) => t.to_role))].sort();
     const phase = await activeCyclePhase(T(req));
@@ -484,7 +485,8 @@ router.get('/career/my-path', async (req, res) => {
     // could only say "nothing configured", which is wrong whenever a
     // transition exists but was excluded on level.
     const diagnostics = eligibleTargetRoles.length ? null : await careerPathDiagnostics(T(req), req.user.id);
-    res.json({ path: p || null, eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
+    res.json({ path: p || null, milestones, progress_pct: careerProgress(milestones),
+      eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
       editable: pm.phaseAllows(phase, 'career_edit'), path_diagnostics: diagnostics });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -510,6 +512,125 @@ router.put('/career/my-path', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ---- Aspiring Career milestones ------------------------------------------
+// What turns an aspiration into a plan: the steps towards the target role,
+// each with a date and a progress figure. Same shape as a development goal
+// (see migration 028 for why), and the same split of what is gated:
+//
+//   CONTENT is phase-gated to career_edit, like the rest of the path —
+//   you set out your steps during Growth Planning.
+//   PROGRESS is not, mirroring BR-2.3 for development goals. Progress
+//   happens all year; a gate would mean marking a milestone done months
+//   after you actually did it, which makes the number worthless.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function myCareerPathId(tenantId, employeeId) {
+  const r = await db.query(
+    `SELECT id FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]);
+  return r.rows[0] ? r.rows[0].id : null;
+}
+
+async function milestonesFor(pathId) {
+  if (!pathId) return [];
+  return (await db.query(
+    `SELECT id, title, description, target_date, progress_pct, sort_order
+       FROM people.career_milestones WHERE career_path_id=$1 ORDER BY sort_order, created_at`, [pathId])).rows;
+}
+
+// The single number the rest of the app asks for: how far along is this
+// aspiration. Averaged across milestones, unweighted — the milestones
+// carry no weights and inventing some would be making up precision.
+// null, not 0, when there are no milestones: "no steps written down" and
+// "steps written down, none started" are different states and 0% would
+// report the first as the second.
+function careerProgress(milestones) {
+  if (!milestones.length) return null;
+  return Math.round(milestones.reduce((sum, m) => sum + m.progress_pct, 0) / milestones.length);
+}
+
+// PUT /people/career/my-milestones — replace the list, same all-at-once
+// shape as the development plan's goals editor.
+router.put('/career/my-milestones', async (req, res) => {
+  try {
+    const phase = await activeCyclePhase(T(req));
+    if (!pm.phaseAllows(phase, 'career_edit')) {
+      return res.status(409).json({ error: `Aspiring Career editing is not open (phase: ${phase || 'no active cycle'}) — opens once HR locks KRAs and moves the cycle to Growth Planning` });
+    }
+    const pathId = await myCareerPathId(T(req), req.user.id);
+    if (!pathId) return res.status(409).json({ error: 'Set your target role first — milestones are the steps towards it' });
+
+    const list = Array.isArray((req.body || {}).milestones) ? req.body.milestones : null;
+    if (!list) return res.status(400).json({ error: 'milestones array required' });
+    // Per-row errors with the row named, the same way every other importer
+    // and bulk editor in this codebase reports them — one message saying
+    // "something is wrong" makes the author hunt for it.
+    const errors = [];
+    list.forEach((m, i) => {
+      const row = i + 1;
+      if (!m || !String(m.title || '').trim()) errors.push({ row, error: 'title is required' });
+      // A milestone with no date is a wish. The development plan learned
+      // this the same way: goals without target dates never got looked at
+      // again, so a date became mandatory there too.
+      if (!m || !m.target_date) errors.push({ row, error: 'target date is required' });
+      else if (!ISO_DATE_RE.test(String(m.target_date))) errors.push({ row, error: 'target date must be yyyy-mm-dd' });
+      const p = m && m.progress_pct;
+      if (p != null && (!Number.isFinite(Number(p)) || Number(p) < 0 || Number(p) > 100)) {
+        errors.push({ row, error: 'progress must be a number between 0 and 100' });
+      }
+    });
+    if (errors.length) return res.status(422).json({ error: 'Some milestones need fixing', errors });
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      // Replaced wholesale, but progress is CARRIED OVER by title where a
+      // milestone survives the edit — otherwise reordering the list or
+      // fixing a typo would silently reset months of tracked progress.
+      const existing = (await client.query(
+        `SELECT title, progress_pct FROM people.career_milestones WHERE career_path_id=$1`, [pathId])).rows;
+      const priorByTitle = new Map(existing.map((m) => [m.title.trim().toLowerCase(), m.progress_pct]));
+      await client.query(`DELETE FROM people.career_milestones WHERE career_path_id=$1`, [pathId]);
+      let order = 0;
+      for (const m of list) {
+        const title = String(m.title).trim();
+        const carried = priorByTitle.get(title.toLowerCase());
+        const progress = m.progress_pct != null ? Number(m.progress_pct) : (carried ?? 0);
+        await client.query(
+          `INSERT INTO people.career_milestones (tenant_id, career_path_id, title, description, target_date, progress_pct, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [T(req), pathId, title, (m.description || '').trim() || null, m.target_date, progress, (order += 10)]);
+      }
+      await client.query(`UPDATE people.career_paths SET updated_at=now() WHERE id=$1`, [pathId]);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+
+    const milestones = await milestonesFor(pathId);
+    res.json({ ok: true, milestones, progress_pct: careerProgress(milestones) });
+  } catch (e) { logger.error('career milestones save', { error: e.message }); res.status(500).json({ error: 'Could not save your milestones' }); }
+});
+
+// PUT /people/career/my-milestones/:id/progress — NOT phase-gated, see above.
+router.put('/career/my-milestones/:id/progress', async (req, res) => {
+  try {
+    const progress = Number((req.body || {}).progress_pct);
+    if (!Number.isFinite(progress) || progress < 0 || progress > 100) {
+      return res.status(400).json({ error: 'progress_pct must be a number between 0 and 100' });
+    }
+    // Scoped through the owning path, so one employee cannot move another's
+    // milestone by guessing an id.
+    const r = await db.query(
+      `UPDATE people.career_milestones m SET progress_pct=$1, updated_at=now()
+         FROM people.career_paths p
+        WHERE m.id=$2 AND m.career_path_id=p.id AND p.tenant_id=$3 AND p.employee_id=$4
+        RETURNING m.id`,
+      [Math.round(progress), req.params.id, T(req), req.user.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'milestone not found' });
+    const milestones = await milestonesFor(await myCareerPathId(T(req), req.user.id));
+    res.json({ ok: true, progress_pct: careerProgress(milestones), milestones });
+  } catch (e) { logger.error('career milestone progress', { error: e.message }); res.status(500).json({ error: 'Could not update progress' }); }
+});
+
 // Manager view of their reports' career paths — general awareness, no
 // approval step (BR-3.1 says employees define their own aspiration; there
 // is no "manager approves career path" requirement in the BRD, unlike KRAs
@@ -518,9 +639,19 @@ router.get('/career/team', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const r = await db.query(
-      `SELECT e.id AS employee_id, e.name, cp.target_role, cp.target_timeline, cp.plan, cp.updated_at
-         FROM core.employees e LEFT JOIN people.career_paths cp ON cp.tenant_id=e.tenant_id AND cp.employee_id=e.id
-        WHERE e.tenant_id=$1 AND e.manager_id=$2 AND e.status='active' ORDER BY e.name`, [T(req), req.user.id]);
+      `SELECT e.id AS employee_id, e.name, cp.target_role, cp.target_timeline, cp.plan, cp.updated_at,
+              COUNT(m.id)::int                                        AS milestone_count,
+              COUNT(m.id) FILTER (WHERE m.progress_pct >= 100)::int   AS milestones_done,
+              -- ROUND to match careerProgress() exactly; AVG over no rows
+              -- is NULL, which is the "no milestones written down" state
+              -- rather than 0%.
+              ROUND(AVG(m.progress_pct))::int                         AS progress_pct
+         FROM core.employees e
+         LEFT JOIN people.career_paths cp ON cp.tenant_id=e.tenant_id AND cp.employee_id=e.id
+         LEFT JOIN people.career_milestones m ON m.career_path_id=cp.id
+        WHERE e.tenant_id=$1 AND e.manager_id=$2 AND e.status='active'
+        GROUP BY e.id, e.name, cp.target_role, cp.target_timeline, cp.plan, cp.updated_at
+        ORDER BY e.name`, [T(req), req.user.id]);
     res.json({ team: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -541,10 +672,17 @@ router.get('/career/team', async (req, res) => {
 // career path is stored is one edit, not a hunt across the repo.
 async function careerPathFor(tenantId, employeeId) {
   const r = await db.query(
-    `SELECT target_role, target_timeline, plan, updated_at
+    `SELECT id, target_role, target_timeline, plan, updated_at
        FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`,
     [tenantId, employeeId]);
-  return r.rows[0] || null;
+  const path = r.rows[0];
+  if (!path) return null;
+  // Milestones come with it. The review assist was written to read "any
+  // progress marked in Aspiring Career" and, until migration 028, there
+  // was nothing to read — it could only quote the plan text back. This is
+  // what makes that promise true.
+  const milestones = await milestonesFor(path.id);
+  return { ...path, milestones, progress_pct: careerProgress(milestones) };
 }
 
 module.exports = { router, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor };
