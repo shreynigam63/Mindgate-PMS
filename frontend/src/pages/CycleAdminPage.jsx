@@ -152,7 +152,7 @@ const ACTION_LABELS = {
   PHASE_ADVANCE: 'Phase advanced', PHASE_ROLLBACK: 'Phase rolled back', CYCLE_CANCELLED: 'Cycle cancelled',
   KRA_BULK_UPLOAD: 'KRA bulk upload', KRA_SUBMITTED: 'KRA submitted', KRA_SUBMITTED_ON_BEHALF: 'KRA submitted on behalf',
   KRA_ENTERED_ON_BEHALF: 'KRA entered on behalf', KRA_TITLES_CLEANED: 'KRA titles cleaned up',
-  DEVPLAN_SUBMITTED: 'Development Plan submitted', SELF_APPRAISAL_SUBMITTED: 'Self-Appraisal submitted',
+  DEVPLAN_SUBMITTED: 'Target achievements submitted', SELF_APPRAISAL_SUBMITTED: 'Self-Appraisal submitted',
   MANAGER_EVAL_SUBMITTED: 'Manager Evaluation submitted', HOD_EVAL_SUBMITTED: 'Delivery Head Review submitted',
   HOD_QUEUE_RESEEDED: 'HOD queue re-seeded', MIDYEAR_SELF_SUBMITTED: 'Mid-Year self sign-off', MIDYEAR_MANAGER_SUBMITTED: 'Mid-Year manager sign-off',
   PARAMETER_SCORES_UPDATED: '7-parameter scores updated', REVIEW_PARAMETERS_UPDATED: 'Review parameters updated',

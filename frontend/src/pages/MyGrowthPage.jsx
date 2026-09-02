@@ -22,7 +22,12 @@ export default function MyGrowthPage() {
   );
 }
 
-// ---------------- Development Plan (BR-2.1/2.2/2.3) ------------------------
+// ---------------- Target achievements for the year (BR-2.1/2.2/2.3) --------
+// Displayed as "Target achievements for the year". The stored shape stays
+// development_plans / development_goals and every route keeps its path —
+// the annual review, the manager queue, the completion report and the
+// phase-change notification all reference it, and renaming those for a
+// wording change would be breaking for no user-visible gain.
 function DevelopmentPlanCard() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -38,7 +43,7 @@ function DevelopmentPlanCard() {
   return (
     <div className="card p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <p className="font-bold text-sm flex-1">Development Plan</p>
+        <p className="font-bold text-sm flex-1">Target achievements for the year</p>
         <span className={`chip ${STATUS_COLOR[data.plan.status]}`}>{data.plan.status}</span>
       </div>
       {data.plan.status === 'returned' && data.plan.manager_comment && (
@@ -432,7 +437,7 @@ function TeamDevelopmentPlans() {
 
   return (
     <div className="space-y-2">
-      <p className="font-bold text-sm">Team Development Plans</p>
+      <p className="font-bold text-sm">Team target achievements</p>
       {data.plans.map(p => (
         <div key={p.id} className="card overflow-hidden">
           <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpenId(v => v === p.id ? null : p.id)}>

@@ -11,6 +11,7 @@
 const express = require('express');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
+const ExcelJS = require('exceljs');
 const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
@@ -20,7 +21,7 @@ const { notify } = require('../../core/notifications');
 const { requireConsent } = require('../../core/consent');
 const { isSuper50Eligible, computeWeightedRating } = require('./rating-rules');
 const { isConnectDue, shouldRemindAgain, computeCadenceProgress } = require('./connect-reminders');
-const { parseCsv, parseExcelBuffer, detectFormat } = require('../../core/employees');
+const { parseCsv, parseExcelSheets, detectFormat } = require('../../core/employees');
 const pm = require('./phase-machine');
 
 const router = express.Router();
@@ -183,7 +184,7 @@ router.put('/cycles/:id/pip-threshold', async (req, res) => {
 // the whole tenant every time.
 const PHASE_OPEN_NOTICES = {
   kra_open: [{ audience: 'all', title: 'KRA Setting is now open', body: 'Set your KRAs for this cycle.' }],
-  growth_planning: [{ audience: 'all', title: 'Growth Planning is now open', body: 'Set your Development Plan and Career Path for this cycle.' }],
+  growth_planning: [{ audience: 'all', title: 'Growth Planning is now open', body: 'Set your target achievements for the year and your Aspiring Career for this cycle.' }],
   mid_year_review: [
     { audience: 'all', title: 'Mid-Year Review is now open', body: 'Your Mid-Year Review is open — add your reflection and self-rating.' },
     { audience: 'managers', title: 'Mid-Year Review is now open for your team', body: 'Mid-Year Review is open for your direct reports.' },
@@ -460,33 +461,77 @@ async function ensureKraSheet(tenantId, cycleId, employeeId) {
   return s;
 }
 
-// GET /pms/hr/kra-sheet/bulk-upload-template.csv — same reasoning as the
-// employee import template: a real "Download template" link instead of
-// asking HR to guess the expected columns. Header matches
-// KRA_BULK_KNOWN exactly; example rows show two KRAs for one employee
-// whose weights sum to 100, since that grouping rule is the least
-// obvious part of the format — remove the example rows before uploading.
+// ---- Bulk KRA upload template (.xlsx and .csv) -----------------------------
+// A real "Download template" link instead of asking HR to guess the
+// expected columns.
+//
+// The template IS the client's own KRA goal sheet: the same headers, in
+// the same order, with the same guidance banner on row 1 and the header
+// on row 2 — because that is the file people already have open, and a
+// template that looks like something else invites a rewrite instead of an
+// upload. employee_email is the single addition (see KRA_BULK_KNOWN
+// above for why it has to exist).
+//
+// Example rows show two KRAs for one sample employee whose weights sum to
+// 100, since that grouping rule is the least obvious part of the format,
+// and they show Parameters filled once per group with the following rows
+// left blank — the forward-fill the real sheets use.
 //
 // MUST be registered before GET /hr/kra-sheet/:employeeId below — Express
 // matches routes in registration order, and ":employeeId" matches ANY
-// path segment, including this literal one. Registering it after :employeeId
-// caused exactly this: a request for .../bulk-upload-template.csv was
-// swallowed by the param route, which then tried to use the literal
-// string "bulk-upload-template.csv" as a uuid in a SQL query and failed
-// with "invalid input syntax for type uuid" — found live during testing.
+// path segment, including these literal ones. Registering it after
+// :employeeId caused exactly this: a request for
+// .../bulk-upload-template.csv was swallowed by the param route, which
+// then tried to use the literal string "bulk-upload-template.csv" as a
+// uuid in a SQL query and failed with "invalid input syntax for type
+// uuid" — found live during testing.
+const KRA_TEMPLATE_BANNER = 'Fill employee_email for every row. Parameters may be written once per group and left blank on the rows below it. Each employee’s Weightage must total 100. Delete the sample rows before uploading.';
+const KRA_TEMPLATE_HEADERS = [
+  'employee_email', 'Parameters', 'KRA \n(S.M.A.R.T GOALS)',
+  'KPIs \n(Measuring Metrics & Data Source)', 'Weightage', 'Comments',
+];
+const KRA_TEMPLATE_SAMPLE = [
+  ['jane.sample@example.com', 'Financial', 'Project Budget Adherence', 'Manage project delivery within allocated budget', 60, 'Delete this sample row'],
+  ['jane.sample@example.com', '', 'On-Time Project Delivery', '100% milestone achievement as per project plan', 40, 'Delete this sample row'],
+];
+
+router.get('/hr/kra-sheet/bulk-upload-template.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('KRA');
+    ws.addRow([KRA_TEMPLATE_BANNER]);
+    ws.mergeCells(1, 1, 1, KRA_TEMPLATE_HEADERS.length);
+    ws.getRow(1).font = { italic: true };
+    const header = ws.addRow(KRA_TEMPLATE_HEADERS);
+    header.font = { bold: true };
+    header.alignment = { wrapText: true, vertical: 'middle' };
+    for (const row of KRA_TEMPLATE_SAMPLE) ws.addRow(row);
+    ws.columns.forEach((col, i) => { col.width = [30, 18, 38, 46, 12, 30][i] || 20; });
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="kra_bulk_upload_template.xlsx"');
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('kra template xlsx', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
+});
+
+// Same columns as the .xlsx, for anyone who would rather work in a plain
+// text file. Kept because the previous template was a CSV and the link
+// may be bookmarked; newlines inside the header cells are flattened to
+// spaces, which normKraHeader() treats identically.
 router.get('/hr/kra-sheet/bulk-upload-template.csv', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
-    const rows = [
-      KRA_BULK_KNOWN.join(','),
-      ['jane.sample@example.com', 'Improve client response time to <24hrs', '60', 'Own first-response SLA for assigned accounts', 'Avg response time tracked in helpdesk'].join(','),
-      ['jane.sample@example.com', 'Complete onboarding automation project', '40', 'Reduce manual setup steps for new joiners', 'Onboarding checklist automated in HRMS'].join(','),
-    ];
-    const csv = rows.join('\n') + '\n';
+    const cell = (v) => {
+      const t = String(v).replace(/\s*\n\s*/g, ' ');
+      return /[",]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const csv = [KRA_TEMPLATE_HEADERS, ...KRA_TEMPLATE_SAMPLE]
+      .map((r) => r.map(cell).join(',')).join('\n') + '\n';
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="kra_bulk_upload_template.csv"');
     res.send(csv);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { logger.error('kra template csv', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
 });
 
 router.get('/hr/kra-sheet/:employeeId', async (req, res) => {
@@ -603,43 +648,346 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
 // entry work in PMS." The existing bulk importer (core/employees.js) only
 // covers employee MASTER data (name/email/manager/etc) — this is the
 // missing piece for KRA CONTENT itself. Deliberately reuses the exact same
-// parsing/validation/dry-run pattern (same shared parseCsv/parseExcelBuffer,
-// same header-normalisation, same per-row line-numbered errors, same
-// ?commit=1-required-to-load default) so behaviour is consistent and
-// familiar to whoever already uses the employee importer.
+// parsing/validation/dry-run pattern (same shared parseCsv/Excel reader,
+// same per-row line-numbered errors, same ?commit=1-required-to-load
+// default) so behaviour is consistent and familiar to whoever already uses
+// the employee importer.
 //
-// Columns (header row, case-insensitive, order-free):
-//   employee_email, kra_title, weight, description, measures
 // Rows are grouped by employee_email; each employee's KRA weights must sum
 // to 100 (same weightsValid() rule as the single-entry route) before ANY
 // row commits — a bad file for one employee should not partially load.
+// COLUMNS. The template is the client's own KRA goal sheet, headers taken
+// verbatim, plus one column those sheets have no way to carry:
+//
+//   employee_email | Parameters | KRA (S.M.A.R.T GOALS)
+//                  | KPIs (Measuring Metrics & Data Source)
+//                  | Weightage | Comments
+//
+// employee_email is ours. The source sheets are per-ROLE, not per-person —
+// one workbook holds a tab called "PM KRA", another "L1 Recon" — so the
+// file never says whose KRAs these are. Importing needs a person, so HR
+// fills that one column in. Everything else is their header, unchanged, so
+// an existing sheet needs a column added rather than a rewrite.
+//
+// The older flat header (employee_email, kra_title, weight, description,
+// measures) still works: both spellings map to the same canonical field
+// below, so files built against the previous CSV template keep importing.
 const KRA_BULK_REQUIRED = ['employee_email', 'kra_title', 'weight'];
-const KRA_BULK_KNOWN = ['employee_email', 'kra_title', 'weight', 'description', 'measures'];
+const KRA_BULK_KNOWN = ['employee_email', 'category', 'kra_title', 'measures', 'weight', 'description'];
 
-function validateKraBulkRows(rows, knownEmails, empByEmail) {
-  if (!rows.length) return { ok: false, fatal: 'Empty file', rows: [], errors: [], warnings: [] };
-  const header = rows[0].map((h) => String(h).trim().toLowerCase().replace(/\s+/g, '_'));
-  const missing = KRA_BULK_REQUIRED.filter((c) => !header.includes(c));
-  if (missing.length) return { ok: false, fatal: `Missing required column(s): ${missing.join(', ')}`, rows: [], errors: [], warnings: [] };
-  const unknown = header.filter((h) => !KRA_BULK_KNOWN.includes(h));
-  const idx = Object.fromEntries(header.map((h, i) => [h, i]));
-  const out = []; const errors = []; const warnings = [];
+// Header text -> canonical field. Keys are already normalised by
+// normKraHeader(), so "KRA \n(S.M.A.R.T GOALS)" arrives here as "kra".
+//
+// "weigthtage" is not a typo in this file — it is the spelling in one of
+// the workbooks in circulation ("Weigthtage"), sitting alongside sheets
+// that spell it "Weightage". Both are real files HR will upload, so both
+// are accepted rather than making someone hunt a transposition in a
+// column heading to find out why their import said the weight column was
+// missing.
+const KRA_HEADER_ALIASES = {
+  employee_email: 'employee_email', email: 'employee_email', emp_email: 'employee_email',
+  parameters: 'category', parameter: 'category', category: 'category',
+  kra: 'kra_title', kra_title: 'kra_title', kras: 'kra_title', key_result_area: 'kra_title', goal: 'kra_title',
+  kpis: 'measures', kpi: 'measures', measures: 'measures', measure: 'measures',
+  weightage: 'weight', weigthtage: 'weight', weight: 'weight', weight_pct: 'weight', weightage_pct: 'weight',
+  comments: 'description', comment: 'description', description: 'description', remarks: 'description',
+};
 
-  rows.slice(1).forEach((r, n) => {
-    const line = n + 2; // 1-based + header
-    const get = (c) => (idx[c] != null ? String(r[idx[c]] ?? '').trim() : '');
-    const rec = {
-      line,
+// Parentheses are dropped before matching so the long qualifiers in the
+// client headers ("(S.M.A.R.T GOALS)", "(Measuring Metrics & Data
+// Source)") don't have to be reproduced character-for-character — those
+// are guidance to whoever fills the sheet, not part of the column's
+// identity, and they differ subtly between the workbooks.
+function normKraHeader(h) {
+  return String(h ?? '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/%/g, '_pct')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+// WHY THIS EXISTS: the real sheets do not start with a header row. Row 1
+// is a merged banner ("Please see Guideline Sheet for reference (Apr 2025
+// - Mar 2026)") repeated across every cell, and the actual column names
+// are on row 2. Assuming row 1 would read that banner as the header and
+// report every column as unknown and every required column as missing —
+// which is a true statement about row 1 and useless to the person holding
+// a perfectly valid sheet.
+//
+// So find the header instead of assuming it: the first row within the
+// first HEADER_SCAN_ROWS that names both a KRA-title column and a weight
+// column. Those two are what make a row a KRA, and requiring both
+// together is what stops a banner or a stray note from being mistaken for
+// a header.
+const HEADER_SCAN_ROWS = 10;
+function headerFieldsIn(row) {
+  return new Set(row.map((c) => KRA_HEADER_ALIASES[normKraHeader(c)]).filter(Boolean));
+}
+function findKraHeaderRow(rows) {
+  for (let i = 0; i < Math.min(rows.length, HEADER_SCAN_ROWS); i++) {
+    const fields = headerFieldsIn(rows[i]);
+    if (fields.has('kra_title') && fields.has('weight')) return i;
+  }
+  return -1;
+}
+
+// Where the data actually starts. One of the sheets splits its header over
+// TWO rows — "KRA" / "KPIs" / "Weightage" on one, then "(S.M.A.R.T GOALS)"
+// / "(Measuring Metrics & Data Source)" / "Weightage" on the next — so the
+// second row would otherwise be read as a KRA whose weightage is the word
+// "Weightage". Two or more cells naming known columns is a header, not
+// data: a real KRA row would have to be titled "KRA" and weighted
+// "Weightage" to be mistaken for one.
+const STACKED_HEADER_LIMIT = 2;
+function findKraDataStart(rows, headerRow) {
+  let i = headerRow + 1;
+  while (i < rows.length && i <= headerRow + STACKED_HEADER_LIMIT && headerFieldsIn(rows[i]).size >= 2) i++;
+  return i;
+}
+
+// A weight shared across n KRAs, as the k-th KRA's share, to two decimals
+// and summing to EXACTLY the shared value. A plain division does not: 10
+// across 3 gives 3.33 three times, and the sheet's 100 becomes 99.99 —
+// which then trips the "weights must total 100" check and rejects a file
+// that was correct before we divided it. The rounding remainder goes to
+// the earliest KRAs (3.34, 3.33, 3.33), so the total is preserved by
+// construction rather than by luck.
+function splitShare(raw, n, k) {
+  const total = Number(raw);
+  if (!Number.isFinite(total) || n <= 0) return NaN;
+  const cents = Math.round(total * 100);
+  const base = Math.floor(cents / n);
+  const remainder = cents - base * n;
+  return (base + (k < remainder ? 1 : 0)) / 100;
+}
+
+// One worksheet -> records. Returns null when the sheet has no header row
+// at all, which the caller reports as a skipped sheet rather than an
+// error: these workbooks routinely carry a "Guidelines" or "Ratings" tab
+// alongside the KRA tabs, and refusing the whole upload because of one
+// reference tab would be wrong.
+//
+// rowNumbers and merged, when the caller has them, describe the sheet as
+// it looks on screen: rowNumbers because blank rows are dropped during
+// parsing (so the array index is not the row the person filling the sheet
+// sees), and merged because these sheets lean heavily on vertical merges.
+// Both degrade safely — a CSV supplies neither and is read row-for-row,
+// which is exactly right for a CSV.
+//
+// THE TWO MERGE SHAPES, both taken from the real sheets:
+//
+//   1. One KRA, several KPIs. "Internal Process Adherence" spans rows
+//      17-20 with the title and weight cells merged down and a different
+//      KPI on each row. That is ONE KRA with four measures, not four KRAs
+//      each worth 15.
+//
+//   2. One weight, several KRAs. Rows 21-23 merge the WEIGHT cell (15)
+//      across two distinct KRA titles. The sheet is saying those KRAs are
+//      together worth 15.
+//
+// Reading either literally is what makes a 100-point sheet total 305.
+function parseKraSheet(sheetName, rows, rowNumbers, merged) {
+  const headerRow = findKraHeaderRow(rows);
+  if (headerRow < 0) return null;
+  const dataStart = findKraDataStart(rows, headerRow);
+  const rowNumberAt = (i) => (rowNumbers && rowNumbers[i] != null ? rowNumbers[i] : i + 1);
+
+  const mapped = rows[headerRow].map((c) => KRA_HEADER_ALIASES[normKraHeader(c)] || null);
+  const idx = {};
+  mapped.forEach((field, i) => { if (field && idx[field] == null) idx[field] = i; });
+  const unknown = rows[headerRow]
+    .map((c, i) => (mapped[i] ? null : String(c ?? '').trim()))
+    .filter((h) => h);
+
+  const records = [];
+  const notes = [];
+  // Parameters is FORWARD-FILLED in the source sheets: written once at the
+  // top of a group ("Financial") and left blank on every following row of
+  // that group. Reading each cell literally would give the first KRA of
+  // each group a category and the rest none — so carry the last non-empty
+  // value down, which is how the sheet reads on screen. The KRA title is
+  // carried the same way for the same reason (shape 3 below).
+  let carriedCategory = null;
+  let carriedTitle = null;
+  let block = null;   // the weight cell currently in force (shape 2 above)
+  let current = null; // the KRA currently being built (shape 1 above)
+  let pastTotal = false; // the "100" row marks the end of the KRA table
+
+  rows.forEach((r, i) => {
+    if (i < dataStart) return;
+    const line = rowNumberAt(i);
+    const get = (field) => (idx[field] != null ? String(r[idx[field]] ?? '').trim() : '');
+    const isCont = (field) => !!(merged && merged[i] && idx[field] != null && merged[i][idx[field]]);
+
+    const cat = get('category');
+    if (cat) carriedCategory = cat;
+
+    const title = get('kra_title');
+    if (title) carriedTitle = title;
+    const kpi = get('measures');
+    const weightRaw = get('weight');
+
+    // Nothing but a category — a group heading with no KRAs under it yet.
+    if (!title && !kpi && !weightRaw) { notes.push({ line, kind: 'empty', text: cat }); return; }
+
+    // No title and no KPI, but something in the weight column: the footer
+    // rows every one of these sheets ends with — a "100" total, and a note
+    // like "Max 8 Key KRAs". Neither is a KRA, and neither is an error, but
+    // both are reported rather than dropped silently so the row count is
+    // explainable. A number is called a total; anything else is described
+    // as what it is, because calling "Max 8 Key KRAs" a total would be a
+    // confidently wrong answer.
+    if (!title && !kpi) {
+      const isTotal = Number.isFinite(Number(weightRaw));
+      if (isTotal) pastTotal = true;
+      notes.push({ line, kind: isTotal ? 'total' : 'note', text: weightRaw });
+      block = null;
+      current = null;
+      return;
+    }
+
+    // Below the total row these sheets carry loose jottings — "FTR", "OC
+    // implementation" — in the KRA column with nothing else on the row.
+    // The total is where the table ends, so an unweighted row after it is
+    // a note, not a KRA missing its weight. Reported, not dropped: if one
+    // of them really was meant to be a KRA, HR sees it named here.
+    if (pastTotal && !weightRaw) { notes.push({ line, kind: 'trailing', text: title || kpi }); return; }
+
+    // A fresh weight cell opens a new block; a merged continuation of the
+    // one above keeps the current block, so its value is counted once.
+    if (weightRaw && !isCont('weight')) block = { raw: weightRaw, line, kras: [] };
+
+    // WHAT MAKES A ROW ANOTHER MEASURE RATHER THAN ANOTHER KRA. The
+    // deciding column is the WEIGHT, because that is what the sheet is
+    // apportioning: a row that carries its own weight is its own weighted
+    // line even when the title above it is left blank (shape 3), and a row
+    // whose weight is merged from above is part of what that weight covers
+    // (shape 1). Getting this backwards is what turned the Delivery
+    // Manager sheet's 100 into 85 — three rows with blank titles but real
+    // weights of their own were folded into the KRA above and their weight
+    // dropped on the floor.
+    const continuesPrevious = current
+      && ((isCont('weight') && (isCont('kra_title') || !title)) || (!title && !weightRaw));
+    if (continuesPrevious) {
+      if (kpi && !current.measure_lines.includes(kpi)) current.measure_lines.push(kpi);
+      const extra = get('description');
+      if (extra && !current.description_lines.includes(extra)) current.description_lines.push(extra);
+      return;
+    }
+
+    // A row with no weight of its own does not belong to the block above:
+    // it is a KRA the sheet forgot to weight, and it must be reported as
+    // that rather than quietly given a share of someone else's weight.
+    const rowBlock = weightRaw ? block : null;
+    current = {
+      sheet: sheetName,
+      line, // the row HR sees on screen, so an error points at it
       employee_email: get('employee_email').toLowerCase(),
-      kra_title: get('kra_title'),
-      weight: Number(get('weight')),
-      description: get('description') || null,
-      measures: get('measures') || null,
+      category: carriedCategory,
+      // Blank title + its own weight: shape 3. The title carries down from
+      // the row above, the same way the category does.
+      kra_title: title || carriedTitle || '',
+      measure_lines: kpi ? [kpi] : [],
+      description_lines: get('description') ? [get('description')] : [],
+      weight_raw: weightRaw,
+      block: rowBlock,
     };
-    if (!rec.employee_email) errors.push({ line, error: 'employee_email is empty' });
-    else if (!knownEmails.has(rec.employee_email)) errors.push({ line, error: `employee_email "${rec.employee_email}" not found among active employees` });
-    if (!rec.kra_title) errors.push({ line, error: 'kra_title is empty' });
-    if (!Number.isFinite(rec.weight) || rec.weight <= 0) errors.push({ line, error: `weight must be a positive number (got "${get('weight')}")` });
+    if (rowBlock) rowBlock.kras.push(current);
+    records.push(current);
+  });
+
+  // Weight is assigned only now, because a block's share is not knowable
+  // until every KRA sharing it has been seen. A block covering one KRA —
+  // every row of a CSV, and most rows of these sheets — gives that KRA its
+  // full weight, so the ordinary case is unchanged.
+  const shared = [];
+  for (const rec of records) {
+    const b = rec.block;
+    delete rec.block;
+    rec.measures = rec.measure_lines.length ? rec.measure_lines.join('\n') : null;
+    rec.description = rec.description_lines.length ? rec.description_lines.join('\n') : null;
+    delete rec.measure_lines; delete rec.description_lines;
+    if (!b) { rec.weight = Number(rec.weight_raw); continue; }
+    const n = b.kras.length || 1;
+    rec.weight = splitShare(b.raw, n, b.kras.indexOf(rec));
+    if (n > 1 && !shared.includes(b)) shared.push(b);
+  }
+
+  const missing = KRA_BULK_REQUIRED.filter((c) => idx[c] == null);
+  return { headerRowNumber: rowNumberAt(headerRow), missing, unknown, records, notes, shared };
+}
+
+// sheets: [{ name, rows }] — one entry for a CSV, one per worksheet for an
+// .xlsx. Multi-sheet is the normal case here, not an edge case: the
+// workbooks in use carry a dozen role tabs each.
+function validateKraBulkRows(sheets, knownEmails, empByEmail) {
+  if (!Array.isArray(sheets)) sheets = [];
+  // Back-compat: a bare array of rows (the old single-sheet signature, and
+  // what parseCsv returns) is one unnamed sheet.
+  if (sheets.length && Array.isArray(sheets[0])) sheets = [{ name: null, rows: sheets }];
+  const nonEmpty = sheets.filter((s) => s.rows && s.rows.length);
+  if (!nonEmpty.length) return { ok: false, fatal: 'Empty file', rows: [], errors: [], warnings: [] };
+
+  const out = []; const errors = []; const warnings = [];
+  const skippedSheets = []; const missingBySheet = [];
+
+  for (const sheet of nonEmpty) {
+    const parsed = parseKraSheet(sheet.name, sheet.rows, sheet.rowNumbers, sheet.merged);
+    if (!parsed) { skippedSheets.push(sheet.name || 'file'); continue; }
+    if (parsed.missing.length) { missingBySheet.push({ sheet: sheet.name, missing: parsed.missing }); continue; }
+    if (parsed.unknown.length) {
+      warnings.push({ sheet: sheet.name, line: parsed.headerRowNumber, warning: `ignored column(s) with no place in a KRA: ${parsed.unknown.join(', ')}` });
+    }
+    // A weight cell merged across several DIFFERENT KRAs says those KRAs
+    // are together worth that much. Splitting it evenly is the only
+    // reading that keeps the sheet's own total intact, but it is a
+    // decision made on the author's behalf, so it is stated rather than
+    // performed quietly — HR can set explicit weights before committing.
+    for (const b of parsed.shared) {
+      warnings.push({
+        sheet: sheet.name, line: b.line,
+        warning: `weightage ${b.raw} is merged across ${b.kras.length} KRAs (${b.kras.map((k) => k.kra_title).join('; ')}) — split as ${b.kras.map((k) => k.weight).join(' / ')}`,
+      });
+    }
+    for (const n of parsed.notes) {
+      warnings.push({
+        sheet: sheet.name, line: n.line,
+        warning: n.kind === 'total' ? `row read as the sheet's weightage total (${n.text}), not a KRA`
+          : n.kind === 'empty' ? `row skipped — nothing on it but the category "${n.text}"`
+          : n.kind === 'trailing' ? `row skipped — "${n.text}" sits below the total row and carries no weightage`
+          : `row skipped — no KRA title, and the weightage column reads "${n.text}"`,
+      });
+    }
+    out.push(...parsed.records);
+  }
+
+  // FATAL vs REPORTED. No usable sheet anywhere means there is nothing to
+  // import and the file is wrong — say so up front. But if SOME sheet
+  // parsed, a sheet missing employee_email is a fixable per-sheet problem,
+  // reported as an error with the sheet named, not a wall the whole upload
+  // hits with no indication of which tab is at fault.
+  if (!out.length && missingBySheet.length) {
+    const first = missingBySheet[0];
+    const where = first.sheet ? `sheet "${first.sheet}": ` : '';
+    return { ok: false, fatal: `${where}missing required column(s): ${first.missing.join(', ')}`, rows: [], errors: [], warnings: [] };
+  }
+  if (!out.length) {
+    return { ok: false, fatal: 'No KRA table found — expected a header row naming a KRA column and a Weightage column', rows: [], errors: [], warnings: [] };
+  }
+  for (const m of missingBySheet) {
+    errors.push({ sheet: m.sheet, line: 1, error: `sheet "${m.sheet}" is missing required column(s): ${m.missing.join(', ')} — it was not imported` });
+  }
+  for (const name of skippedSheets) {
+    warnings.push({ sheet: name, line: 1, warning: `sheet "${name}" has no KRA header row and was skipped` });
+  }
+
+  for (const rec of out) {
+    const at = { sheet: rec.sheet, line: rec.line };
+    if (!rec.employee_email) errors.push({ ...at, error: 'employee_email is empty' });
+    else if (!knownEmails.has(rec.employee_email)) errors.push({ ...at, error: `employee_email "${rec.employee_email}" not found among active employees` });
+    if (!rec.kra_title) errors.push({ ...at, error: 'KRA title is empty' });
+    if (!Number.isFinite(rec.weight) || rec.weight <= 0) errors.push({ ...at, error: `weightage must be a positive number (got "${rec.weight_raw}")` });
     // Found live: a bulk upload where the source file's kra_title column
     // had "(Employee Name - Designation)" typed onto the end of every
     // title, presumably by whoever filled the sheet — not something our
@@ -650,18 +998,19 @@ function validateKraBulkRows(rows, knownEmails, empByEmail) {
     if (emp && rec.kra_title) {
       const titleLower = rec.kra_title.toLowerCase();
       if (emp.name && titleLower.includes(emp.name.toLowerCase())) {
-        warnings.push({ line, warning: `kra_title appears to include the employee's own name ("${emp.name}") — consider removing it for a cleaner display` });
+        warnings.push({ ...at, warning: `KRA title appears to include the employee's own name ("${emp.name}") — consider removing it for a cleaner display` });
       } else if (emp.designation && titleLower.includes(emp.designation.toLowerCase())) {
-        warnings.push({ line, warning: `kra_title appears to include the employee's own designation ("${emp.designation}") — consider removing it for a cleaner display` });
+        warnings.push({ ...at, warning: `KRA title appears to include the employee's own designation ("${emp.designation}") — consider removing it for a cleaner display` });
       }
     }
-    out.push(rec);
-  });
-
-  if (unknown.length) warnings.push({ line: 1, warning: `ignored unknown column(s): ${unknown.join(', ')}` });
+  }
 
   // Per-employee weight-sum check — same rule PUT /my/kra-sheet/kras enforces
   // at submit time, checked here up front so a bad file fails as a whole.
+  //
+  // Grouped by EMPLOYEE, not by sheet, deliberately: a person's KRAs can be
+  // split across tabs (a support engineer carrying both an "L1 Support" and
+  // an "L1 Monitoring" block), and 100 is the total for the person.
   const byEmployee = new Map();
   for (const r of out) {
     if (!r.employee_email) continue;
@@ -669,15 +1018,36 @@ function validateKraBulkRows(rows, knownEmails, empByEmail) {
     byEmployee.get(r.employee_email).push(r);
   }
   for (const [email, kras] of byEmployee) {
+    // Two KRAs under one title happen when the sheet leaves the title
+    // blank on a row that carries its own weight (shape 3): the title
+    // carries down, faithfully, and the employee ends up with two
+    // identically-named KRAs to score. Kept as-is rather than merged —
+    // merging would have to invent a combined weight — but flagged,
+    // because a rating screen listing the same title twice is confusing
+    // and HR can rename one before committing.
+    const seenTitles = new Map();
+    for (const k of kras) {
+      const key = k.kra_title.toLowerCase();
+      if (!k.kra_title) continue;
+      if (seenTitles.has(key)) {
+        warnings.push({ sheet: k.sheet, line: k.line, warning: `"${k.kra_title}" repeats the title on row ${seenTitles.get(key)} — both will be scored separately, so consider giving them distinct names` });
+      } else seenTitles.set(key, k.line);
+    }
     const check = pm.weightsValid(kras);
-    if (!check.ok) errors.push({ line: kras[0].line, error: `${email}: KRA weights must total 100 (currently ${check.total})` });
+    if (!check.ok) errors.push({ sheet: kras[0].sheet, line: kras[0].line, error: `${email}: KRA weights must total 100 (currently ${check.total})` });
   }
 
   return {
     ok: errors.length === 0, fatal: null, rows: out, errors, warnings,
-    summary: { total_rows: out.length, employees: byEmployee.size, errors: errors.length, warnings: warnings.length },
+    summary: {
+      total_rows: out.length, employees: byEmployee.size,
+      sheets_read: nonEmpty.length - skippedSheets.length - missingBySheet.length,
+      sheets_skipped: skippedSheets.length,
+      errors: errors.length, warnings: warnings.length,
+    },
   };
 }
+
 
 const kraUpload = multer({
   storage: multer.memoryStorage(),
@@ -708,8 +1078,13 @@ router.post('/hr/kra-sheet/bulk-upload', (req, res, next) => kraUpload.single('f
     const knownEmails = new Set(employees.map((e) => e.email));
     const empByEmail = new Map(employees.map((e) => [e.email, e]));
 
-    const parsedRows = format === 'xlsx' ? await parseExcelBuffer(req.file.buffer) : parseCsv(req.file.buffer.toString('utf8'));
-    const report = validateKraBulkRows(parsedRows, knownEmails, empByEmail);
+    // Every worksheet, not just the first — the goal sheets in use carry
+    // one tab per role inside a single workbook, so reading only sheet 1
+    // would import a fraction of the file and report success.
+    const sheets = format === 'xlsx'
+      ? await parseExcelSheets(req.file.buffer)
+      : [{ name: null, rows: parseCsv(req.file.buffer.toString('utf8')) }];
+    const report = validateKraBulkRows(sheets, knownEmails, empByEmail);
     if (report.fatal) return res.status(400).json({ error: report.fatal });
     const commit = req.query.commit === '1';
     if (!report.ok) return res.status(422).json({ ok: false, committed: false, ...report });
@@ -739,9 +1114,9 @@ router.post('/hr/kra-sheet/bulk-upload', (req, res, next) => kraUpload.single('f
         let i = 0;
         for (const k of kras) {
           await client.query(
-            `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, sort_order)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-            [T(req), s.id, k.kra_title, k.description, k.weight, k.measures, (i += 10)]);
+            `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, category, sort_order)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [T(req), s.id, k.kra_title, k.description, k.weight, k.measures, k.category || null, (i += 10)]);
         }
         await client.query(`UPDATE pms.kra_sheets SET status='draft', updated_at=now() WHERE id=$1`, [s.id]);
       }
@@ -941,7 +1316,7 @@ router.post('/team/development-plans/:planId/decide', async (req, res) => {
     await db.query(`UPDATE pms.development_plans SET status=$1, manager_comment=$2, decided_at=now(), updated_at=now() WHERE id=$3`,
       [decision, comment || null, p.id]);
     audit(req, `DEVPLAN_${decision.toUpperCase()}`, p.cycle_id, p.employee_id, { comment: comment || null });
-    await notify(T(req), p.employee_id, 'devplan_decided', `Your development plan was ${decision}`, comment || null, '/pms/my-growth');
+    await notify(T(req), p.employee_id, 'devplan_decided', `Your target achievements for the year were ${decision}`, comment || null, '/pms/my-growth');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2679,4 +3054,4 @@ router.post('/hr/kra-sheet/clean-titles', async (req, res) => {
 // they are the pure part of the per-KRA scoring (no db), and the weighted
 // average plus the "no overall until every KRA is rated" rule are exactly
 // the behaviour worth pinning down without standing up a database.
-module.exports = { router, checkAndSendConnectReminders, mergeMidyearEntries, midyearOverall };
+module.exports = { router, checkAndSendConnectReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader };

@@ -79,29 +79,65 @@ const KNOWN = ['emp_code','name','email','department','designation','role_band',
 // real Date (Excel serial dates) or text; both are normalised to strings
 // here so flexDate() in the shared validator handles them identically to a
 // CSV cell, with no format-specific branching downstream.
+//
+// FIRST WORKSHEET ONLY — see parseExcelSheets below for the rest.
 async function parseExcelBuffer(buffer) {
+  const sheets = await parseExcelSheets(buffer);
+  return sheets.length ? sheets[0].rows : [];
+}
+
+// Every worksheet in the workbook, as { name, rows, rowNumbers, merged } —
+// same cell normalisation as parseExcelBuffer above, which now delegates
+// here so there is one implementation of "an Excel cell becomes a string".
+//
+// The employee importer only ever wants the first sheet (one file, one
+// list of people). The KRA importer needs all of them: the goal sheets
+// actually in use carry one tab PER ROLE — "PM KRA", "KRA Technical
+// Manager", "L1 Recon" — inside a single workbook, so reading only the
+// first tab would silently import a twelfth of the file and report
+// success. Sheets the caller cannot make sense of are its business to
+// report, not this function's to hide.
+async function parseExcelSheets(buffer) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
-  const ws = wb.worksheets[0];
-  if (!ws) return [];
-  const rows = [];
-  ws.eachRow({ includeEmpty: false }, (row) => {
-    const cells = [];
-    // row.cellCount reflects the last populated column; iterate by number so
-    // gaps (skipped cells) still line up with the header's column positions.
-    for (let c = 1; c <= row.cellCount; c++) {
-      const cell = row.getCell(c);
-      let v = cell.value;
-      if (v == null) v = '';
-      else if (v instanceof Date) v = v.toISOString().slice(0, 10); // -> yyyy-mm-dd, flexDate handles it
-      else if (typeof v === 'object' && 'text' in v) v = v.text; // rich text
-      else if (typeof v === 'object' && 'result' in v) v = v.result; // formula cell
-      else v = String(v);
-      cells.push(v);
-    }
-    if (cells.some((c) => String(c).trim() !== '')) rows.push(cells);
-  });
-  return rows;
+  const out = [];
+  for (const ws of wb.worksheets) {
+    const rows = [];
+    // Blank rows are dropped (they are formatting, not data), so the index
+    // into `rows` is NOT the row number in the spreadsheet. Carry the real
+    // one alongside: these sheets use blank rows as group separators, and
+    // an error that says "row 5" about the row a human sees as row 6 is
+    // worse than no row number at all.
+    const rowNumbers = [];
+    // Vertical merges, per cell: true when this cell is the CONTINUATION of
+    // a merge that started on an earlier row. ExcelJS reports the master's
+    // value on every cell of a merge, so without this a merged block reads
+    // as the same value repeated down N rows — which for a weight column
+    // means the file's weights appear to total N times what they do. Real
+    // KRA sheets merge a KRA title (and its weight) down across its several
+    // KPI rows, so this is the normal case, not an exotic one.
+    const merged = [];
+    ws.eachRow({ includeEmpty: false }, (row) => {
+      const cells = [];
+      const cont = [];
+      // row.cellCount reflects the last populated column; iterate by number so
+      // gaps (skipped cells) still line up with the header's column positions.
+      for (let c = 1; c <= row.cellCount; c++) {
+        const cell = row.getCell(c);
+        cont.push(!!(cell.isMerged && cell.master && cell.master.row < row.number));
+        let v = cell.value;
+        if (v == null) v = '';
+        else if (v instanceof Date) v = v.toISOString().slice(0, 10); // -> yyyy-mm-dd, flexDate handles it
+        else if (typeof v === 'object' && 'text' in v) v = v.text; // rich text
+        else if (typeof v === 'object' && 'result' in v) v = v.result; // formula cell
+        else v = String(v);
+        cells.push(v);
+      }
+      if (cells.some((c) => String(c).trim() !== '')) { rows.push(cells); rowNumbers.push(row.number); merged.push(cont); }
+    });
+    out.push({ name: ws.name, rows, rowNumbers, merged });
+  }
+  return out;
 }
 
 function validateEmployeeRows(rows) {
@@ -685,4 +721,4 @@ router.post('/import', (req, res, next) => upload.single('file')(req, res, (err)
   } catch (e) { logger.error('employee import', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
-module.exports = { router, validateEmployeeCsv, validateEmployeeXlsx, validateEmployeeRows, flexDate, parseCsv, parseExcelBuffer, detectFormat, loadEmployees };
+module.exports = { router, validateEmployeeCsv, validateEmployeeXlsx, validateEmployeeRows, flexDate, parseCsv, parseExcelBuffer, parseExcelSheets, detectFormat, loadEmployees };

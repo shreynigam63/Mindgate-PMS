@@ -18,7 +18,7 @@ export default function AnnualReviewPage() {
         <span className="chip bg-purple-100 text-purple-700">{data.cycle.name}</span>
         {data.super50?.flag && <span className="chip bg-amber-100 text-amber-700"><Award size={11} className="inline mr-1" />Super 50</span>}
       </div>
-      <p className="text-xs text-navy-400">Consolidates your KRA outcomes, development plan progress, and Aspiring Career status for the year — brings together what's already recorded elsewhere into one view.</p>
+      <p className="text-xs text-navy-400">Consolidates your KRA outcomes, target achievement progress, and Aspiring Career status for the year — brings together what's already recorded elsewhere into one view.</p>
 
       <Section icon={Target} title="KRA Outcomes">
         {!data.kra.outcomes.length && <Empty text="No KRAs recorded for this cycle." />}
@@ -33,8 +33,8 @@ export default function AnnualReviewPage() {
         ))}
       </Section>
 
-      <Section icon={ClipboardList} title="Development Plan Progress">
-        {!data.development_plan.plan ? <Empty text="No development plan for this cycle." /> : (
+      <Section icon={ClipboardList} title="Target achievements for the year — progress">
+        {!data.development_plan.plan ? <Empty text="No target achievements set for this cycle." /> : (
           <>
             <p className="text-xs mb-2">Status: <span className="font-semibold">{data.development_plan.plan.status}</span> · Average progress: <span className="font-semibold">{data.development_plan.avg_progress}%</span></p>
             {data.development_plan.goals.map((g, i) => (

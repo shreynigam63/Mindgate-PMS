@@ -71,21 +71,22 @@ export default function KraOrgOverviewPage() {
         </div>
       </div>
       <div className="card p-4 space-y-2">
-        <p className="lbl">Bulk KRA upload — CSV or Excel (.xlsx), one row per KRA, dry run first (BR-1.1)</p>
+        <p className="lbl">Bulk KRA upload — the standard KRA goal sheet, one row per KRA, dry run first (BR-1.1)</p>
         <div className="flex flex-wrap items-center gap-2">
-          <a className="btn-sec" href={`${API_BASE}/pms/hr/kra-sheet/bulk-upload-template.csv?token=${localStorage.getItem('apms_token')}`}>Download template</a>
+          <a className="btn-sec" href={`${API_BASE}/pms/hr/kra-sheet/bulk-upload-template.xlsx?token=${localStorage.getItem('apms_token')}`}>Download template (.xlsx)</a>
+          <a className="btn-sec" href={`${API_BASE}/pms/hr/kra-sheet/bulk-upload-template.csv?token=${localStorage.getItem('apms_token')}`}>.csv</a>
           <input type="file" accept=".csv,.xlsx,.xls" onChange={e => { setKraFile(e.target.files[0]); setKraReport(null); }} className="text-xs" />
           <button className="btn-sec" disabled={!kraFile} onClick={() => sendKraBulk(false)}>Validate</button>
           <button className="btn-pri" disabled={!kraFile || !(kraReport && kraReport.ok && !kraReport.committed)} onClick={() => sendKraBulk(true)}>Commit load</button>
         </div>
-        <p className="text-[11px] text-navy-400">Columns: employee_email, kra_title, weight, description, measures. Each employee's weights must total 100. Loaded KRAs land as Draft — the employee (or HR) still needs to Submit. The template includes two example rows for a sample employee — delete them before uploading your real data.</p>
+        <p className="text-[11px] text-navy-400">Columns: employee_email, Parameters, KRA (S.M.A.R.T GOALS), KPIs (Measuring Metrics &amp; Data Source), Weightage, Comments — your existing goal sheet, with employee_email added so each row knows whose KRA it is. Every worksheet in the workbook is read, so a multi-tab role sheet uploads in one go. Parameters can be written once per group and left blank below it. Each employee's weights must total 100. Loaded KRAs land as Draft — the employee (or HR) still needs to Submit. The template includes two sample rows — delete them before uploading your real data.</p>
         {kraErr && <p className="text-xs text-rose-600">{kraErr}</p>}
         {kraReport && (
           <div className="text-xs space-y-1">
             <p className="font-semibold">{kraReport.committed ? 'LOADED' : kraReport.ok ? 'VALID — commit to load' : 'REJECTED'}
               {kraReport.summary && ` · ${kraReport.summary.total_rows} rows · ${kraReport.summary.employees} employees · ${kraReport.summary.errors} errors · ${kraReport.summary.warnings} warnings`}</p>
-            {(kraReport.errors || []).map((e, i) => <p key={i} className="text-rose-600">line {e.line}: {e.error}</p>)}
-            {(kraReport.warnings || []).map((w, i) => <p key={i} className="text-amber-700">line {w.line}: {w.warning}</p>)}
+            {(kraReport.errors || []).map((e, i) => <p key={i} className="text-rose-600">{e.sheet ? `${e.sheet} ` : ''}row {e.line}: {e.error}</p>)}
+            {(kraReport.warnings || []).map((w, i) => <p key={i} className="text-amber-700">{w.sheet ? `${w.sheet} ` : ''}row {w.line}: {w.warning}</p>)}
             {(kraReport.skipped || []).map((s, i) => <p key={i} className="text-amber-700">skipped {s.email}: {s.reason}</p>)}
           </div>
         )}

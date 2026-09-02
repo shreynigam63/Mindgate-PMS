@@ -259,7 +259,7 @@ function MyMidYearCard() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="font-bold text-sm">Mid-Year Review · {data.cycle.name}</p>
-          <p className="text-xs text-navy-400">Halfway checkpoint against KRAs and the development plan</p>
+          <p className="text-xs text-navy-400">Halfway checkpoint against KRAs and your target achievements</p>
         </div>
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{phaseLabel(data.cycle.phase)}</span>
       </div>
