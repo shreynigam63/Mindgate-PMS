@@ -2437,6 +2437,344 @@ router.post('/publish', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ---------------- Increment simulation — compensation modelling -----------
+// Requested as a "Simulation Report": model salary increments from the
+// cycle's final ratings and a budget. The system held no compensation data
+// at all, so migration 030 introduces the inputs (what people are paid, and
+// what a rating is worth) alongside the model.
+//
+// EVERY ROUTE HERE IS BEHIND pms_compensation, which managers and Delivery
+// Heads do not have and never should — they can already see their reports'
+// ratings, and pay is a different thing entirely.
+//
+// NOTHING HERE WRITES A SALARY. Simulations are recomputed from their
+// inputs on every read and never stored as figures; pms.compensation is
+// only ever set by an explicit HR upload. A scenario that could quietly
+// become somebody's actual pay is a far more dangerous feature than the
+// one asked for.
+const incr = require('./increment-rules');
+
+async function requireComp(req, res) {
+  if (await hasPermission(req.user, 'pms_compensation')) return true;
+  res.status(403).json({ error: "Requires 'pms_compensation' — compensation data is granted separately from other HR permissions" });
+  return false;
+}
+
+// The salary in force today for everyone: the latest row whose
+// effective_from has arrived. DISTINCT ON is what makes "current" one
+// query rather than a per-employee lookup.
+const CURRENT_CTC_SQL = `
+  SELECT DISTINCT ON (employee_id) employee_id, annual_ctc, currency, effective_from
+    FROM pms.compensation
+   WHERE tenant_id = $1 AND effective_from <= CURRENT_DATE
+   ORDER BY employee_id, effective_from DESC`;
+
+// GET /pms/compensation — what is on record, with who is missing.
+router.get('/compensation', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const r = await db.query(
+      `SELECT e.id AS employee_id, e.name, e.email, e.department, e.designation,
+              c.annual_ctc, c.currency, c.effective_from
+         FROM core.employees e
+         LEFT JOIN (${CURRENT_CTC_SQL}) c ON c.employee_id = e.id
+        WHERE e.tenant_id = $1 AND e.status = 'active'
+        ORDER BY e.name`, [T(req)]);
+    const missing = r.rows.filter((x) => x.annual_ctc == null).length;
+    res.json({ employees: r.rows, on_record: r.rows.length - missing, missing });
+  } catch (e) { logger.error('compensation list', { error: e.message }); res.status(500).json({ error: 'Could not load compensation' }); }
+});
+
+// POST /pms/compensation/upload — the same dry-run-first importer pattern
+// as every other bulk load here, so it behaves the way HR already expects.
+const compUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!/\.(csv|xlsx|xls)$/i.test(file.originalname || '')) return cb(new Error('Only .csv, .xlsx, or .xls files are accepted'));
+    cb(null, true);
+  },
+});
+
+const COMP_REQUIRED = ['employee_email', 'annual_ctc'];
+function validateCompRows(rows, knownEmails) {
+  if (!rows.length) return { ok: false, fatal: 'Empty file', rows: [], errors: [], warnings: [] };
+  const header = rows[0].map((h) => String(h).trim().toLowerCase().replace(/\s+/g, '_'));
+  const missing = COMP_REQUIRED.filter((c) => !header.includes(c));
+  if (missing.length) return { ok: false, fatal: `Missing required column(s): ${missing.join(', ')}`, rows: [], errors: [], warnings: [] };
+  const idx = Object.fromEntries(header.map((h, i) => [h, i]));
+  const out = []; const errors = []; const warnings = [];
+
+  rows.slice(1).forEach((r, n) => {
+    const line = n + 2;
+    const get = (c) => (idx[c] != null ? String(r[idx[c]] ?? '').trim() : '');
+    const email = get('employee_email').toLowerCase();
+    // Commas and currency symbols are how salaries are actually typed into
+    // a spreadsheet; rejecting "12,00,000" would be rejecting the file
+    // everyone has rather than a mistake.
+    const raw = get('annual_ctc').replace(/[,\s₹$]/g, '');
+    const ctc = Number(raw);
+    if (!email) errors.push({ line, error: 'employee_email is empty' });
+    else if (!knownEmails.has(email)) errors.push({ line, error: `employee_email "${email}" not found among active employees` });
+    if (!raw) errors.push({ line, error: 'annual_ctc is empty' });
+    else if (!Number.isFinite(ctc) || ctc < 0) errors.push({ line, error: `annual_ctc must be a positive number (got "${get('annual_ctc')}")` });
+    else if (ctc > 0 && ctc < 1000) warnings.push({ line, warning: `annual_ctc of ${ctc} looks like it might be in lakhs or thousands rather than the full annual figure` });
+
+    const eff = get('effective_from');
+    if (eff && !/^\d{4}-\d{2}-\d{2}$/.test(eff)) errors.push({ line, error: 'effective_from must be yyyy-mm-dd' });
+    out.push({ line, employee_email: email, annual_ctc: ctc, currency: get('currency') || 'INR', effective_from: eff || null });
+  });
+
+  const seen = new Set();
+  for (const r of out) {
+    if (!r.employee_email) continue;
+    const key = `${r.employee_email}|${r.effective_from || 'today'}`;
+    if (seen.has(key)) errors.push({ line: r.line, error: `${r.employee_email} appears twice for the same effective date` });
+    seen.add(key);
+  }
+  return { ok: errors.length === 0, fatal: null, rows: out, errors, warnings,
+    summary: { total_rows: out.length, errors: errors.length, warnings: warnings.length } };
+}
+
+router.post('/compensation/upload', (req, res, next) => compUpload.single('file')(req, res, (err) => {
+  if (err) return res.status(400).json({ error: err.message });
+  next();
+}), async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    if (!req.file) return res.status(400).json({ error: 'file required (multipart field "file")' });
+    const format = detectFormat(req.file);
+    if (format === 'xls-legacy') return res.status(400).json({ error: 'Legacy .xls files are not supported — re-save as .xlsx and upload again.' });
+
+    const employees = (await db.query(
+      `SELECT LOWER(email) AS email, id FROM core.employees WHERE tenant_id=$1 AND status='active'`, [T(req)])).rows;
+    const byEmail = new Map(employees.map((e) => [e.email, e.id]));
+    const sheets = format === 'xlsx' ? await parseExcelSheets(req.file.buffer) : [{ rows: parseCsv(req.file.buffer.toString('utf8')) }];
+    const report = validateCompRows(sheets[0] ? sheets[0].rows : [], new Set(byEmail.keys()));
+    if (report.fatal) return res.status(400).json({ error: report.fatal });
+    if (!report.ok) return res.status(422).json({ ok: false, committed: false, ...report });
+    if (req.query.commit !== '1') return res.json({ ok: true, committed: false, note: 'Dry run — pass ?commit=1 to load.', ...report });
+
+    for (const r of report.rows) {
+      await db.query(
+        `INSERT INTO pms.compensation (tenant_id, employee_id, annual_ctc, currency, effective_from, source, updated_by)
+         VALUES ($1,$2,$3,$4,COALESCE($5::date, CURRENT_DATE),'upload',$6)
+         ON CONFLICT (tenant_id, employee_id, effective_from)
+           DO UPDATE SET annual_ctc=EXCLUDED.annual_ctc, currency=EXCLUDED.currency,
+                         updated_by=EXCLUDED.updated_by, updated_at=now()`,
+        [T(req), byEmail.get(r.employee_email), r.annual_ctc, r.currency, r.effective_from, req.user.email]);
+    }
+    // Audited without the figures. That someone loaded salaries, and how
+    // many, is what an audit trail needs; copying every salary into a
+    // second table that is read far more widely is not.
+    audit(req, 'COMPENSATION_UPLOADED', null, null, { rows: report.rows.length });
+    res.json({ ok: true, committed: true, loaded: report.rows.length, warnings: report.warnings });
+  } catch (e) { logger.error('compensation upload', { error: e.message }); res.status(500).json({ error: 'Could not load the file' }); }
+});
+
+// ---- the matrix: what a rating is worth ----------------------------------
+router.get('/increment-matrix', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const c = await activeCycle(T(req));
+    const r = await db.query(
+      `SELECT * FROM pms.increment_matrix WHERE tenant_id=$1 AND (cycle_id=$2 OR cycle_id IS NULL)
+        ORDER BY (cycle_id IS NULL), sort_order, rating_min DESC`, [T(req), c ? c.id : null]);
+    // A per-cycle matrix wins over the standing one; mixing both would
+    // apply two policies at once.
+    const scoped = r.rows.filter((b) => b.cycle_id);
+    res.json({ bands: scoped.length ? scoped : r.rows, scope: scoped.length ? 'cycle' : 'standing', cycle: c ? { id: c.id, name: c.name } : null });
+  } catch (e) { logger.error('increment matrix read', { error: e.message }); res.status(500).json({ error: 'Could not load the matrix' }); }
+});
+
+router.put('/increment-matrix', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const { bands, cycle_scoped } = req.body || {};
+    if (!Array.isArray(bands)) return res.status(400).json({ error: 'bands array required' });
+    const errors = incr.validateMatrix(bands);
+    if (errors.length) return res.status(422).json({ error: 'The matrix is not usable yet', errors });
+
+    const c = cycle_scoped ? await activeCycle(T(req)) : null;
+    if (cycle_scoped && !c) return res.status(409).json({ error: 'No active cycle to scope the matrix to' });
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        cycle_scoped
+          ? `DELETE FROM pms.increment_matrix WHERE tenant_id=$1 AND cycle_id=$2`
+          : `DELETE FROM pms.increment_matrix WHERE tenant_id=$1 AND cycle_id IS NULL`,
+        cycle_scoped ? [T(req), c.id] : [T(req)]);
+      let order = 0;
+      for (const b of bands) {
+        await client.query(
+          `INSERT INTO pms.increment_matrix (tenant_id, cycle_id, label, rating_min, rating_max, increment_pct, sort_order, updated_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [T(req), cycle_scoped ? c.id : null, (b.label || '').trim() || null,
+           b.rating_min, b.rating_max, b.increment_pct, (order += 10), req.user.email]);
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+    audit(req, 'INCREMENT_MATRIX_SET', c ? c.id : null, null, { bands: bands.length, scope: cycle_scoped ? 'cycle' : 'standing' });
+    res.json({ ok: true, bands: bands.length });
+  } catch (e) { logger.error('increment matrix write', { error: e.message }); res.status(500).json({ error: 'Could not save the matrix' }); }
+});
+
+// ---- the simulation -------------------------------------------------------
+// Rated employees for a cycle, with what they are paid. Published ratings
+// where they exist, falling back to the manager's evaluation so a scenario
+// can be run BEFORE publish — which is when a budget conversation actually
+// happens.
+async function ratedEmployeesFor(tenantId, cycleId) {
+  return (await db.query(
+    `SELECT e.id AS employee_id, e.name, e.department,
+            COALESCE(h.final_rating, me.overall_rating) AS final_rating,
+            c.annual_ctc AS current_ctc, c.currency
+       FROM core.employees e
+       LEFT JOIN pms.employee_performance_history h ON h.employee_id=e.id AND h.cycle_id=$2
+       LEFT JOIN pms.manager_evaluations me ON me.employee_id=e.id AND me.cycle_id=$2 AND me.status='submitted'
+       LEFT JOIN (${CURRENT_CTC_SQL}) c ON c.employee_id=e.id
+      WHERE e.tenant_id=$1 AND e.status='active'
+      ORDER BY e.name`, [tenantId, cycleId])).rows;
+}
+
+async function matrixFor(tenantId, cycleId) {
+  const r = await db.query(
+    `SELECT * FROM pms.increment_matrix WHERE tenant_id=$1 AND (cycle_id=$2 OR cycle_id IS NULL)
+      ORDER BY sort_order`, [tenantId, cycleId]);
+  const scoped = r.rows.filter((b) => b.cycle_id);
+  return scoped.length ? scoped : r.rows.filter((b) => !b.cycle_id);
+}
+
+// Recomputed from the stored inputs every time, never read back as frozen
+// figures — see migration 030 for why.
+async function runSimulation(tenantId, sim) {
+  const [employees, matrix, overrideRows] = await Promise.all([
+    ratedEmployeesFor(tenantId, sim.cycle_id),
+    matrixFor(tenantId, sim.cycle_id),
+    db.query(`SELECT employee_id, increment_pct, reason FROM pms.increment_overrides WHERE simulation_id=$1`, [sim.id]),
+  ]);
+  const overrides = Object.fromEntries(overrideRows.rows.map((o) => [o.employee_id, { increment_pct: Number(o.increment_pct), reason: o.reason }]));
+  const result = incr.simulate({
+    employees, matrix, overrides,
+    budgetAmount: sim.budget_amount == null ? null : Number(sim.budget_amount),
+    scaleToFit: sim.scale_to_fit,
+  });
+  return { ...result, by_department: incr.byDepartment(result.lines), matrix_bands: matrix.length };
+}
+
+router.get('/increment-simulations', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const c = await activeCycle(T(req));
+    if (!c) return res.json({ cycle: null, simulations: [] });
+    const r = await db.query(
+      `SELECT s.*, (SELECT count(*)::int FROM pms.increment_overrides o WHERE o.simulation_id=s.id) AS overrides
+         FROM pms.increment_simulations s WHERE s.tenant_id=$1 AND s.cycle_id=$2 ORDER BY s.created_at DESC`,
+      [T(req), c.id]);
+    res.json({ cycle: { id: c.id, name: c.name }, simulations: r.rows });
+  } catch (e) { logger.error('simulations list', { error: e.message }); res.status(500).json({ error: 'Could not load simulations' }); }
+});
+
+router.post('/increment-simulations', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const { name, budget_amount, scale_to_fit, notes } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name required' });
+    if (budget_amount != null && (!Number.isFinite(Number(budget_amount)) || Number(budget_amount) < 0)) {
+      return res.status(422).json({ error: 'budget_amount must be a positive number' });
+    }
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const existing = (await db.query(
+      `SELECT 1 FROM pms.increment_simulations WHERE tenant_id=$1 AND cycle_id=$2 AND name=$3`,
+      [T(req), c.id, String(name).trim()])).rows[0];
+    if (existing) return res.status(409).json({ error: `A scenario called "${String(name).trim()}" already exists for this cycle` });
+
+    const sim = (await db.query(
+      `INSERT INTO pms.increment_simulations (tenant_id, cycle_id, name, budget_amount, scale_to_fit, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [T(req), c.id, String(name).trim(), budget_amount ?? null, !!scale_to_fit, (notes || '').trim() || null, req.user.email])).rows[0];
+    audit(req, 'INCREMENT_SIMULATION_CREATED', c.id, null, { name: sim.name, budget: sim.budget_amount });
+    res.status(201).json({ ok: true, simulation: sim, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { logger.error('simulation create', { error: e.message }); res.status(500).json({ error: 'Could not create the scenario' }); }
+});
+
+router.get('/increment-simulations/:id', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const sim = (await db.query(`SELECT * FROM pms.increment_simulations WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!sim) return res.status(404).json({ error: 'scenario not found' });
+    res.json({ ok: true, simulation: sim, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { logger.error('simulation read', { error: e.message }); res.status(500).json({ error: 'Could not run the scenario' }); }
+});
+
+router.put('/increment-simulations/:id', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const { budget_amount, scale_to_fit, notes } = req.body || {};
+    if (budget_amount != null && (!Number.isFinite(Number(budget_amount)) || Number(budget_amount) < 0)) {
+      return res.status(422).json({ error: 'budget_amount must be a positive number' });
+    }
+    const sim = (await db.query(
+      `UPDATE pms.increment_simulations
+          SET budget_amount=COALESCE($1,budget_amount),
+              scale_to_fit=COALESCE($2,scale_to_fit),
+              notes=COALESCE($3,notes), updated_at=now()
+        WHERE id=$4 AND tenant_id=$5 RETURNING *`,
+      [budget_amount ?? null, scale_to_fit ?? null, (notes || '').trim() || null, req.params.id, T(req)])).rows[0];
+    if (!sim) return res.status(404).json({ error: 'scenario not found' });
+    res.json({ ok: true, simulation: sim, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { logger.error('simulation update', { error: e.message }); res.status(500).json({ error: 'Could not update the scenario' }); }
+});
+
+router.delete('/increment-simulations/:id', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const r = await db.query(`DELETE FROM pms.increment_simulations WHERE id=$1 AND tenant_id=$2 RETURNING name, cycle_id`, [req.params.id, T(req)]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'scenario not found' });
+    audit(req, 'INCREMENT_SIMULATION_DELETED', r.rows[0].cycle_id, null, { name: r.rows[0].name });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Could not delete the scenario' }); }
+});
+
+// A named exception to the matrix. The reason is REQUIRED: "why did this
+// person get 14% when their band says 8%" is the first question anyone
+// asks of a compensation round, and an override without an answer to it
+// is the thing that makes the whole exercise indefensible.
+router.put('/increment-simulations/:id/overrides/:employeeId', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const { increment_pct, reason } = req.body || {};
+    if (!Number.isFinite(Number(increment_pct)) || Number(increment_pct) < 0) {
+      return res.status(422).json({ error: 'increment_pct must be zero or more' });
+    }
+    if (!reason || !String(reason).trim()) {
+      return res.status(422).json({ error: 'A reason is required — an override without one cannot be defended later' });
+    }
+    const sim = (await db.query(`SELECT * FROM pms.increment_simulations WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!sim) return res.status(404).json({ error: 'scenario not found' });
+    await db.query(
+      `INSERT INTO pms.increment_overrides (tenant_id, simulation_id, employee_id, increment_pct, reason, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (simulation_id, employee_id)
+         DO UPDATE SET increment_pct=EXCLUDED.increment_pct, reason=EXCLUDED.reason, created_by=EXCLUDED.created_by`,
+      [T(req), sim.id, req.params.employeeId, Number(increment_pct), String(reason).trim(), req.user.email]);
+    res.json({ ok: true, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { logger.error('simulation override', { error: e.message }); res.status(500).json({ error: 'Could not set the override' }); }
+});
+
+router.delete('/increment-simulations/:id/overrides/:employeeId', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const sim = (await db.query(`SELECT * FROM pms.increment_simulations WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!sim) return res.status(404).json({ error: 'scenario not found' });
+    await db.query(`DELETE FROM pms.increment_overrides WHERE simulation_id=$1 AND employee_id=$2`, [sim.id, req.params.employeeId]);
+    res.json({ ok: true, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { res.status(500).json({ error: 'Could not clear the override' }); }
+});
+
 // ---------------- Annual Review consolidation — BR-6.1 ---------------------
 // "The system must support an end-of-year review workflow that
 // consolidates KRA outcomes, development plan progress, and career path
