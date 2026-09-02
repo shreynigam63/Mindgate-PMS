@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Download, FileText } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
+import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
 
 export default function MyRatingPage() {
   const [rows, setRows] = useState(null); const [err, setErr] = useState(null);
+  // Bumped after keeping recommendations, to remount the list below it.
+  const [keptKey, setKeptKey] = useState(0);
   useEffect(() => { api('/pms/my/rating').then(r => setRows(r.history)).catch(e => setErr(e.message)); }, []);
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
   if (!rows) return <p className="text-sm text-navy-400">Loading…</p>;
@@ -26,6 +29,11 @@ export default function MyRatingPage() {
           ))}
         </div>
       )}
+      {/* Only once something has actually been published — a summary of a
+          year nobody has closed would be a summary of a work in progress. */}
+      {rows.length > 0 && <AppraisalSummaryPanel stage="employee" onKeep={() => setKeptKey(k => k + 1)} />}
+      {rows.length > 0 && <KeptRecommendations key={keptKey} kind="appraisal_employee" title="What you kept from your summary" />}
+
       <p className="text-[11px] text-navy-400">Questions about a rating? Raise an appraisal query in People Hub — it reaches HR with a tracked thread.</p>
       <a href={`${API_BASE}/gdpr/export?token=${token}`} className="btn-sec inline-flex items-center gap-1 !text-xs">
         <Download size={12} />Download all my data (GDPR export)

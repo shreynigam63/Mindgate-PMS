@@ -15,6 +15,9 @@ const { requireConsent } = require('../../core/consent');
 // also what guarantees career suggestions stay inside the set the
 // career-path form accepts — both resolve eligibility through it.
 const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor } = require('../people');
+// Same house rule, the other direction: the appraisal summary narrates the
+// performance module's own consolidation rather than re-gathering it.
+const { buildAnnualReviewSummary } = require('../performance');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -1097,6 +1100,234 @@ Respond ONLY with JSON:
       meeting: { id: m.id, context: m.context, employee_id: m.employee_id, transcript_captured_at: t.captured_at },
       note: 'Summary of what was said — check it against your own recollection before relying on it.',
     });
+  } catch (e) { fail(res, e); }
+});
+
+
+// ---------------------------------------------------------------------------
+// 16) AI Appraisal Summary — the year, KRA by KRA, at two stages.
+//
+// Requested with both audiences named: a manager/HR PRE-READ before
+// publish, to support the rating decision, and an EMPLOYEE-FACING summary
+// at publish, so the appraisal conversation starts from a shared document
+// instead of a number.
+//
+// TWO PROMPTS, ON PURPOSE, over the same evidence. They are not the same
+// document with a different header. The pre-read is written for someone
+// deciding — it says where the evidence is thin and where self and manager
+// disagree, because that is what a calibration room needs. The employee
+// summary is written for someone receiving — it explains how the year is
+// being read and what to build next, and it never speculates about a
+// rating that has already been decided elsewhere. One prompt trying to do
+// both would do neither, and the wrong one reaching the wrong reader is
+// exactly the failure to avoid.
+//
+// THE EVIDENCE IS buildAnnualReviewSummary(), the same consolidation the
+// Annual Review page renders — imported from the performance module's
+// exported interface, not re-gathered here. A second gatherer would let
+// the summary describe a year no screen agrees with.
+const APPRAISAL_SUMMARY_STAGES = {
+  pre_publish: {
+    kind: 'appraisal_summary_pre',
+    audience: 'the manager and HR, before the rating is published',
+    system: `You write the PRE-READ a manager and HR use while deciding someone's
+year-end rating. You are not deciding it — you never suggest, imply or hint at a
+rating, a grade or a band, and you never say whether one already recorded looks
+right or wrong.
+
+What this reader needs, and nothing else:
+- what the record actually shows against each KRA, weighted by the KRA's weight
+- where the SELF and MANAGER readings differ, said plainly, with both positions
+- where the evidence is THIN — a KRA with no narrative, no connect and no
+  goal against it is the most important thing you can flag, because it is
+  where a rating would be least defensible
+- how the mid-year reading compares with the end-of-year one, where both exist
+
+Ground every bullet in the input. Invent no achievement, date or number. If a
+section of the record is empty, say so rather than filling it.`,
+    schema: `{"by_kra":[{"kra":"exact KRA title","evidence":["..."],"divergence":["where self and manager read it differently"],"thin_evidence":["..."]}],
+ "cross_cutting":{"evidence":["..."],"divergence":["..."],"thin_evidence":["..."]},
+ "discussion_points":["what the calibration conversation should cover"],
+ "evidence_gaps":["what is missing from the record that would have helped"]}`,
+  },
+  employee: {
+    kind: 'appraisal_summary_employee',
+    audience: 'the employee, with their published rating',
+    system: `You write the summary an employee receives with their published appraisal.
+They are reading about their own year, so write TO them, in the second person
+("you"), plainly and without flattery.
+
+The rating has already been decided by their manager and is shown to them
+separately. You never state, restate, justify, question or hint at it — your job
+is to show what the year contained, not to defend a grade.
+
+Cover, per KRA:
+- what they achieved, from the record
+- what got in the way, where the record says so
+- what to build next, tied to that KRA
+
+Then, once: how their target achievements for the year went, and what their
+Aspiring Career milestones show. Be specific about progress that was made —
+someone who moved a milestone from 0 to 60% did something real and should see it
+named.
+
+Ground every bullet in the input and invent nothing. Where the record is thin,
+say the record is thin — never imply the person did little when what is actually
+missing is the write-up.`,
+    schema: `{"by_kra":[{"kra":"exact KRA title","achievements":["..."],"challenges":["..."],"build_next":["..."]}],
+ "cross_cutting":{"achievements":["..."],"challenges":["..."],"build_next":["..."]},
+ "year_in_review":["2-4 bullets on target achievements and Aspiring Career progress"],
+ "record_gaps":["where your own record was thin this year"]}`,
+  },
+};
+
+router.post('/appraisal-summary', async (req, res) => {
+  try {
+    const { stage, employee_id } = req.body || {};
+    const cfg = APPRAISAL_SUMMARY_STAGES[stage];
+    if (!cfg) return res.status(400).json({ error: "stage must be 'pre_publish' or 'employee'" });
+
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const targetId = employee_id || req.user.id;
+    const emp = (await db.query(
+      `SELECT id, name, department, designation, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [targetId, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee not found' });
+
+    // WHO MAY ASK FOR WHICH. The pre-read is decision support and is not
+    // the employee's to pull about themselves — it names where their
+    // evidence is weakest, written for someone weighing a rating. The
+    // employee summary is theirs, and their manager's.
+    const isSelf = targetId === req.user.id;
+    const isMgr = emp.manager_id === req.user.id;
+    const isAdmin = await hasPermission(req.user, 'pms_admin');
+    if (stage === 'pre_publish') {
+      if (!isMgr && !isAdmin && !(await hasPermission(req.user, 'pms_hod'))) {
+        return res.status(403).json({ error: 'The pre-read is for the manager, Delivery Head or HR' });
+      }
+    } else if (!isSelf && !isMgr && !isAdmin) {
+      return res.status(403).json({ error: 'Not your appraisal' });
+    }
+
+    const summary = await buildAnnualReviewSummary(T(req), emp.id, c.id);
+    if (!summary.kra.outcomes.length) {
+      return res.status(409).json({ error: 'No KRAs are mapped for this cycle — there is nothing to summarise the year against.' });
+    }
+
+    const out = await ai.narrate({
+      tenantId: T(req), kind: cfg.kind, ref: { cycle_id: c.id, employee_id: emp.id },
+      requestedBy: req.user.email, maxTokens: 2400,
+      input: {
+        employee: { name: emp.name, department: emp.department, designation: emp.designation },
+        cycle: c.name,
+        written_for: cfg.audience,
+        kra_outcomes: summary.kra.outcomes.map((k) => ({
+          kra: k.title, weight: +k.weight, measures: k.measures,
+          self: k.self, manager: k.manager, midyear: k.midyear,
+        })),
+        midyear_overall: summary.midyear,
+        target_achievements_for_the_year: summary.development_plan,
+        aspiring_career: summary.career_path,
+        rating_history: summary.rating_history,
+      },
+      system: `${cfg.system}\n\n${KRA_BULLET_RULES}\n\nRespond ONLY with JSON:\n${cfg.schema}`,
+    });
+
+    res.json({
+      ok: true, ...out,
+      stage,
+      employee: { id: emp.id, name: emp.name },
+      note: stage === 'pre_publish'
+        ? 'Pre-read for the rating decision — the rating remains yours to set.'
+        : 'A summary of what your year contained. Your rating is shown separately.',
+    });
+  } catch (e) { fail(res, e); }
+});
+
+// ---------------------------------------------------------------------------
+// AI recommendations that stick (migration 029)
+// ---------------------------------------------------------------------------
+// Everything above produces text that appears in a panel and disappears.
+// These three routes are what let a suggestion be kept, acted on, or
+// turned down with a reason — so "the AI suggested X last cycle" is a
+// question with an answer.
+//
+// WHO MAY DECIDE: the person the recommendation is about, or their
+// manager, or an admin. The same rule as the meeting routes, and for the
+// same reason — a suggestion about someone's development belongs to the
+// two people who will act on it.
+const REC_STATUSES = ['suggested', 'accepted', 'dismissed', 'done'];
+
+async function recParty(req, aboutEmployeeId) {
+  if (aboutEmployeeId === req.user.id) return true;
+  if (await hasPermission(req.user, 'pms_admin')) return true;
+  const r = await db.query(`SELECT 1 FROM core.employees WHERE id=$1 AND tenant_id=$2 AND manager_id=$3`,
+    [aboutEmployeeId, T(req), req.user.id]);
+  return !!r.rows[0];
+}
+
+// POST /agentic/recommendations — keep one or more suggestions from a draft.
+router.post('/recommendations', async (req, res) => {
+  try {
+    const { about_employee_id, kind, draft_id, cycle_id, items } = req.body || {};
+    const aboutId = about_employee_id || req.user.id;
+    if (!kind) return res.status(400).json({ error: 'kind required' });
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items array required' });
+    if (!(await recParty(req, aboutId))) return res.status(403).json({ error: 'Not yours to keep' });
+
+    const bad = items.findIndex((i) => !i || !String(i.title || '').trim());
+    if (bad >= 0) return res.status(422).json({ error: `item ${bad + 1} has no title` });
+
+    const saved = [];
+    for (const i of items) {
+      const row = (await db.query(
+        `INSERT INTO agentic.recommendations (tenant_id, draft_id, kind, cycle_id, about_employee_id, ref, title, detail)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [T(req), draft_id || null, kind, cycle_id || null, aboutId,
+         JSON.stringify(i.ref || {}), String(i.title).trim(), (i.detail || '').trim() || null])).rows[0];
+      saved.push(row);
+    }
+    res.status(201).json({ ok: true, recommendations: saved });
+  } catch (e) { fail(res, e); }
+});
+
+// GET /agentic/recommendations?about_employee_id=&kind=&status=
+router.get('/recommendations', async (req, res) => {
+  try {
+    const aboutId = req.query.about_employee_id || req.user.id;
+    if (!(await recParty(req, aboutId))) return res.status(403).json({ error: 'Not yours to read' });
+    const params = [T(req), aboutId];
+    let where = 'tenant_id=$1 AND about_employee_id=$2';
+    if (req.query.kind) { params.push(req.query.kind); where += ` AND kind=$${params.length}`; }
+    if (req.query.status) { params.push(req.query.status); where += ` AND status=$${params.length}`; }
+    const r = await db.query(
+      `SELECT * FROM agentic.recommendations WHERE ${where} ORDER BY created_at DESC LIMIT 200`, params);
+    res.json({ recommendations: r.rows });
+  } catch (e) { fail(res, e); }
+});
+
+// PUT /agentic/recommendations/:id — accept, dismiss, or mark done.
+router.put('/recommendations/:id', async (req, res) => {
+  try {
+    const { status, note } = req.body || {};
+    if (!REC_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${REC_STATUSES.join(', ')}` });
+    }
+    const rec = (await db.query(`SELECT * FROM agentic.recommendations WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!rec) return res.status(404).json({ error: 'recommendation not found' });
+    if (!(await recParty(req, rec.about_employee_id))) return res.status(403).json({ error: 'Not yours to decide' });
+    // A dismissal without a reason teaches nobody anything. Requiring one
+    // is what turns "the AI keeps suggesting rubbish" from a complaint
+    // into a list you can read.
+    if (status === 'dismissed' && !String(note || '').trim()) {
+      return res.status(422).json({ error: 'Say why you are dismissing it — that is what makes a pattern of poor suggestions visible' });
+    }
+    const updated = (await db.query(
+      `UPDATE agentic.recommendations SET status=$1, decided_by=$2, decided_at=now(), decision_note=$3
+        WHERE id=$4 RETURNING *`,
+      [status, req.user.email, (note || '').trim() || null, rec.id])).rows[0];
+    res.json({ ok: true, recommendation: updated });
   } catch (e) { fail(res, e); }
 });
 

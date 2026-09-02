@@ -126,10 +126,18 @@ test('it reads all four sources and resolves each goal to achieved / overdue / i
       ($1,$2,'Run a design review',        '2025-05-31', 20,20),
       ($1,$2,'Mentor a junior',            '2099-12-31', 50,30)`,
     [tenantId, plan.id]);
-  await db.query(
+  const path = (await db.query(
     `INSERT INTO people.career_paths (tenant_id, employee_id, target_role, target_timeline, plan)
-     VALUES ($1,$2,'Technical Manager','18 months','Lead a delivery workstream')`,
-    [tenantId, empId]);
+     VALUES ($1,$2,'Technical Manager','18 months','Lead a delivery workstream') RETURNING id`,
+    [tenantId, empId])).rows[0];
+  // Milestones with real progress (migration 028). Before they existed the
+  // assist was asked to read "progress marked in Aspiring Career" and had
+  // nothing to read — this is what closed that.
+  await db.query(
+    `INSERT INTO people.career_milestones (tenant_id, career_path_id, title, target_date, progress_pct, sort_order) VALUES
+      ($1,$2,'Lead a delivery workstream','2026-06-30',100,10),
+      ($1,$2,'Run a technical design review','2026-09-30',20,20)`,
+    [tenantId, path.id]);
 
   captured = null;
   const token = await login('ra-emp@x.com');
@@ -142,6 +150,8 @@ test('it reads all four sources and resolves each goal to achieved / overdue / i
   assert.equal(input.one_on_one_connects.length, 1);
   assert.equal(input.one_on_one_connects[0].achievements, 'Shipped the August release');
   assert.equal(input.aspiring_career.target_role, 'Technical Manager');
+  assert.equal(input.aspiring_career.milestones.length, 2, 'the milestones travel with the path');
+  assert.equal(input.aspiring_career.progress_pct, 60, '100 and 20, averaged');
 
   // The achieved / not-achieved call is made HERE, from the data, and
   // handed to the model as a fact — not left for it to infer from a
@@ -155,7 +165,8 @@ test('it reads all four sources and resolves each goal to achieved / overdue / i
 
   // The counts come back so a thin answer can be explained by a thin record.
   assert.deepEqual(r.body.evidence_counts,
-    { kras: 2, connects: 1, goals: 3, goals_achieved: 1, aspiring_career_set: true });
+    { kras: 2, connects: 1, goals: 3, goals_achieved: 1, aspiring_career_set: true,
+      career_milestones: 2, career_progress_pct: 60 });
 });
 
 test('the prompt forbids a rating and demands per-KRA bullets', { skip }, async () => {

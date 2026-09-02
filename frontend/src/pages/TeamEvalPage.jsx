@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Send, ChevronDown, ChevronRight } from 'lucide-react';
 import { api, phaseLabel, phaseColor, DraftBadge, KraBullets } from '../utils/api';
+import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
 
 // Matches Self-Appraisal's convention: per-KRA picks in letter grades,
 // the one computed overall in descriptive wording — see that page for
@@ -57,6 +58,7 @@ function EvalEditor({ t, phase, scale, cycleType, reload }) {
   const [err, setErr] = useState(null);
   const [draft, setDraft] = useState(null);
   const [drafting, setDrafting] = useState(false);
+  const [keptKey, setKeptKey] = useState(0);
   const timer = useRef(null);
   const editable = phase === 'manager_eval' && t.eval_status !== 'submitted';
 
@@ -98,6 +100,12 @@ function EvalEditor({ t, phase, scale, cycleType, reload }) {
       {cycleType === 'annual' && (
         <ParameterScoring employeeId={t.employee_id} editable={editable} initialRating={t.overall_rating} />
       )}
+      {/* The pre-read comes BEFORE the rating controls: it is meant to be
+          read while deciding, not checked afterwards. Gated on editable so
+          it does not appear on an evaluation already submitted. */}
+      {editable && <AppraisalSummaryPanel stage="pre_publish" employeeId={t.employee_id} onKeep={() => setKeptKey(k => k + 1)} />}
+      <KeptRecommendations key={keptKey} employeeId={t.employee_id} kind="appraisal_pre_publish" title="Kept discussion points" />
+
       <PerKraRating employeeId={t.employee_id} scale={scale} editable={editable} overallRating={cycleType === 'annual' ? null : f.overall_rating}
         selfSubmitted={t.self_status === 'submitted'}
         selfEntries={t.self_entries || {}} onOverallChange={cycleType === 'annual' ? () => {} : (v) => setF(s => ({ ...s, overall_rating: v }))}

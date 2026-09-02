@@ -29,7 +29,7 @@ async function buildExport(tenantId, employeeId) {
        FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!profile) return null;
 
-  const [kraSheets, selfAppraisals, managerEvals, devPlans, careerPath, connects, pips, ratingHistory, consents, parameterScores, pulseChecks, meetings] = await Promise.all([
+  const [kraSheets, selfAppraisals, managerEvals, devPlans, careerPath, connects, pips, ratingHistory, consents, parameterScores, pulseChecks, meetings, aiRecs] = await Promise.all([
     db.query(`SELECT s.cycle_id, s.status, s.manager_comment, k.title, k.weight, k.measures FROM pms.kra_sheets s LEFT JOIN pms.kras k ON k.sheet_id=s.id WHERE s.tenant_id=$1 AND s.employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, status, entries, overall_self_rating, went_well, could_improve, submitted_at FROM pms.self_appraisals WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, status, overall_rating, strengths, improvement_areas, submitted_at FROM pms.manager_evaluations WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
@@ -53,6 +53,12 @@ async function buildExport(tenantId, employeeId) {
                 LEFT JOIN pms.meeting_transcripts t ON t.meeting_id = m.id
                WHERE m.tenant_id=$1 AND m.employee_id=$2
                ORDER BY COALESCE(m.scheduled_at, m.created_at) DESC`, [tenantId, employeeId]),
+    // AI recommendations kept ABOUT this person, with what was decided.
+    // These are statements about someone's development that a manager can
+    // read months later, so they belong in a subject access response.
+    db.query(`SELECT kind, title, detail, status, decision_note, decided_at, created_at
+                FROM agentic.recommendations
+               WHERE tenant_id=$1 AND about_employee_id=$2 ORDER BY created_at DESC`, [tenantId, employeeId]),
   ]);
 
   return {
@@ -70,6 +76,7 @@ async function buildExport(tenantId, employeeId) {
     annual_review_parameter_scores: parameterScores.rows,
     midyear_pulse_checks: pulseChecks.rows,
     review_meetings: meetings.rows,
+    ai_recommendations: aiRecs.rows,
   };
 }
 

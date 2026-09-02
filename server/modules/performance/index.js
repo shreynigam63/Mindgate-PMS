@@ -3325,4 +3325,10 @@ router.post('/hr/kra-sheet/clean-titles', async (req, res) => {
 // they are the pure part of the per-KRA scoring (no db), and the weighted
 // average plus the "no overall until every KRA is rated" rule are exactly
 // the behaviour worth pinning down without standing up a database.
-module.exports = { router, checkAndSendConnectReminders, runReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader };
+// buildAnnualReviewSummary is EXPORTED, not duplicated. The AI appraisal
+// summary narrates exactly this consolidation — the same KRA outcomes,
+// mid-year readings, target achievements, career progress and parameter
+// scores the Annual Review page shows. Building a second gatherer for the
+// model would mean the summary could describe a year that no screen
+// agrees with.
+module.exports = { router, checkAndSendConnectReminders, runReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader, buildAnnualReviewSummary };
