@@ -130,9 +130,18 @@ services:
       # dynamic reference — after getting two different fromService
       # mechanics wrong across this deploy, a hardcoded value that is known
       # to work beats a third guess at the "correct" dynamic property name.
-      # If the api service is ever renamed, update this literal to match.
+      # Note the "-cx2k" suffix: Render appends a random suffix when the
+      # requested service name is already taken globally, so the hostname
+      # is NOT predictable from the service name in this file — it can
+      # only be read off the api service after the first sync. The value
+      # below is the real, verified hostname for this deployment
+      # (/api/v1/health returned {"ok":true,...} on it). It is also
+      # BUILD-TIME: Vite inlines it into the bundle, so changing it
+      # requires a frontend rebuild, not just a restart. If the api
+      # service is ever renamed or recreated, update this literal to
+      # match and let the static site rebuild.
       - key: VITE_API_URL
-        value: agentic-pms-api.onrender.com
+        value: agentic-pms-api-cx2k.onrender.com
 databases:
   - name: agentic-pms-db
     plan: free
