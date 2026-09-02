@@ -9,6 +9,11 @@ const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
 const { apiPermissionParity, hasPermission } = require('../../core/permissions');
 const ai = require('../../core/ai');
+// Cross-module read via the other module's EXPORTED interface, per the
+// house rule that modules never import each other's internals. This is
+// also what guarantees career suggestions stay inside the set the
+// career-path form accepts — both resolve eligibility through it.
+const { eligibleTransitionsFor } = require('../people');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -465,6 +470,232 @@ Respond ONLY with JSON: {"suggested_kra_ids":["..."],"reasoning":"one sentence"}
     const validIds = new Set(kras.map((k) => k.id));
     const suggested = Array.isArray(out.draft.suggested_kra_ids) ? out.draft.suggested_kra_ids.filter((id) => validIds.has(id)) : [];
     res.json({ ok: true, suggested_kra_ids: suggested, reasoning: out.draft.reasoning || null, kras });
+  } catch (e) { fail(res, e); }
+});
+
+// ---------------------------------------------------------------------------
+// 10) Development-plan suggestions — for the EMPLOYEE, from their own KRAs.
+//
+// Self-service, no special permission, same posture as connect-extract: an
+// employee asking for help shaping their own development plan is not a
+// privileged action. Scoped to req.user.id throughout, so it can only ever
+// read the caller's own KRAs.
+//
+// Sequencing works out for free: the development plan only becomes
+// editable in growth_planning, which is AFTER kra_open closes, so the
+// KRAs read here are already manager-approved and locked. The suggestions
+// are therefore grounded in commitments that will not shift underneath
+// the plan they inform.
+router.post('/devplan-suggest', async (req, res) => {
+  try {
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const emp = (await db.query(
+      `SELECT id, name, department, designation, role_band FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.user.id, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee record not found' });
+
+    const sheet = (await db.query(
+      `SELECT id, status FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, req.user.id])).rows[0];
+    const kras = sheet ? (await db.query(
+      `SELECT title, weight, measures, description FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`,
+      [sheet.id])).rows : [];
+    if (!kras.length) return res.status(409).json({ error: 'No KRAs are mapped to you for this cycle yet — a development plan drawn from nothing would be guesswork.' });
+
+    const plan = (await db.query(
+      `SELECT id, status FROM pms.development_plans WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, req.user.id])).rows[0];
+    const existing = plan ? (await db.query(
+      `SELECT title, description, target_date FROM pms.development_goals WHERE plan_id=$1 ORDER BY sort_order`,
+      [plan.id])).rows : [];
+
+    const input = {
+      employee: { name: emp.name, department: emp.department, designation: emp.designation, role_band: emp.role_band },
+      cycle: c.name,
+      kra_sheet_status: sheet ? sheet.status : null,
+      kras: kras.map((k) => ({ title: k.title, weight: +k.weight, measures: k.measures, description: k.description })),
+      existing_goals: existing.map((g) => ({ title: g.title, description: g.description, target_date: g.target_date })),
+    };
+    const out = await ai.narrate({
+      tenantId: T(req), kind: 'devplan_suggest', ref: { cycle_id: c.id, employee_id: req.user.id },
+      requestedBy: req.user.email, input, maxTokens: 1400,
+      system: `You help an employee shape their own Individual Development Plan from the
+KRAs they are accountable for this cycle. A development goal is about
+building the CAPABILITY needed to deliver a KRA — a skill, a habit, an
+exposure — never a restatement of the KRA itself.
+Tie each suggestion to the KRA it serves by that KRA's exact title, and
+weight your attention by KRA weight: the heaviest KRAs deserve the most
+development thought. Where a goal already exists that covers a KRA, say so
+instead of duplicating it, and note any KRA left with no development
+coverage at all.
+You never suggest, imply or hint at a rating or score of any kind — this
+is planning, not assessment. Ground every sentence in the input; invent no
+KRAs, courses, certifications or internal programme names. Prefer goals
+the employee can act on without budget approval.
+Respond ONLY with JSON:
+{"suggested_goals":[{"title":"short, action-shaped","serves_kra":"exact KRA title","why":"1-2 sentences","how_to_measure":"observable evidence of progress","suggested_timeline":"e.g. by end of Q3"}],
+ "already_covered":["existing goals that adequately cover a KRA"],
+ "uncovered_kras":["KRA titles with no development goal against them"],
+ "gaps":["anything the input lacked that you would have wanted"]}`,
+    });
+    res.json({ ok: true, ...out, note: 'Suggestions only — edit before adding to your plan.' });
+  } catch (e) { fail(res, e); }
+});
+
+// ---------------------------------------------------------------------------
+// 11) Aspiring-career suggestions — for the EMPLOYEE, from their current
+// designation, department and the transitions HR has actually configured.
+//
+// GROUNDED, NOT INVENTED: the target-role field only accepts roles present
+// in people.career_transitions for the employee's current role, and it
+// says so in the UI. An AI free-associating job titles would produce
+// aspirations the form then rejects — advice the employee cannot act on.
+// So the eligible set is resolved through the people module's exported
+// eligibleTransitionsFor() (the same function the form's own validation
+// uses) and handed to the model as a closed list it must choose from.
+// The competencies and typical timelines come from that matrix too, so
+// every number in the output is HR's, not the model's.
+router.post('/career-suggest', async (req, res) => {
+  try {
+    const emp = (await db.query(
+      `SELECT id, name, department, designation, role_band, date_of_joining FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.user.id, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee record not found' });
+    if (!emp.designation) return res.status(409).json({ error: 'Your designation is not set — ask HR to complete your record before asking for career suggestions.' });
+
+    const transitions = await eligibleTransitionsFor(T(req), req.user.id);
+    const current = (await db.query(
+      `SELECT target_role, target_timeline, plan FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`,
+      [T(req), req.user.id])).rows[0];
+
+    const input = {
+      employee: { name: emp.name, designation: emp.designation, department: emp.department, role_band: emp.role_band, joined: emp.date_of_joining },
+      current_aspiration: current || null,
+      // The closed list. Empty means HR has configured no ladder from this
+      // role — reported as such rather than filled in by the model.
+      configured_transitions: transitions.map((t) => ({
+        to_role: t.to_role, to_level: t.to_level,
+        typical_time_months: t.typical_time_months,
+        required_competencies: t.required_competencies || [],
+      })),
+    };
+    const out = await ai.narrate({
+      tenantId: T(req), kind: 'career_suggest', ref: { employee_id: req.user.id },
+      requestedBy: req.user.email, input, maxTokens: 1400,
+      system: `You help an employee think about the role they might aspire to over the
+next one to two years, given their current designation and department.
+HARD CONSTRAINT: you may only propose roles that appear in
+configured_transitions. That list is the organisation's own career
+pathing matrix and the form will reject anything outside it. If the list
+is empty, say plainly that no path has been configured from this role yet
+and that HR needs to define one — do not invent a role, a level, or a
+timeline.
+Use the matrix's own typical_time_months and required_competencies rather
+than estimating your own. You never suggest, imply or hint at a
+performance rating or score, and you never promise a promotion — you are
+describing what an aspiration would require, not what will happen.
+Respond ONLY with JSON:
+{"aspirations":[{"target_role":"exactly as given in configured_transitions","fit":"1-2 sentences on why this follows from their current role and department","typical_time":"from the matrix, or null","competencies_to_build":["from the matrix, phrased as something to work on"],"first_steps":["what to start this cycle"]}],
+ "no_path_configured":true or false,
+ "notes":["anything the employee should discuss with their manager or HR"]}`,
+    });
+    res.json({ ok: true, ...out, note: 'Suggestions only — limited to the transitions HR has configured from your current role.' });
+  } catch (e) { fail(res, e); }
+});
+
+// ---------------------------------------------------------------------------
+// 12) Justification review — reads what was written against a per-KRA
+// mid-year rating and says whether it stands up.
+//
+// This is a WRITING critique, not a second opinion on the rating. The
+// house rule is deterministic numbers, AI narrates: the model is told the
+// rating only so it can judge whether the words support it, and it is
+// forbidden from endorsing, disputing or proposing one. Output keys are
+// named assessment / evidence_strength deliberately — core/ai.js's
+// stripRatingSuggestions() silently DELETES any key called rating, score
+// or overall_rating, so a field named `score` here would vanish from the
+// response with no error at all.
+//
+// PRIVACY: for perspective 'self' the manager's narrative is NOT included
+// in the input. At mid-year the manager may not have signed off yet, and
+// feeding their in-progress assessment into the employee's own review
+// tool would leak it. The manager's own request does receive the
+// employee's self entry, which is the normal asymmetry of a checkpoint
+// review and what makes the critique useful to them.
+router.post('/justification-review', async (req, res) => {
+  try {
+    const { kra_id, perspective, employee_id } = req.body || {};
+    if (!kra_id) return res.status(400).json({ error: 'kra_id required' });
+    if (!['self', 'manager'].includes(perspective)) return res.status(400).json({ error: "perspective must be 'self' or 'manager'" });
+
+    const c = await activeCycleForMidyear(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+
+    let targetId = req.user.id;
+    if (perspective === 'manager') {
+      if (!employee_id) return res.status(400).json({ error: 'employee_id required for the manager perspective' });
+      const emp = (await db.query(`SELECT id, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employee_id, T(req)])).rows[0];
+      if (!emp) return res.status(404).json({ error: 'employee not found' });
+      if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
+      if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: 'Not your report' });
+      targetId = emp.id;
+    }
+
+    const row = (await db.query(
+      `SELECT self_entries, manager_entries FROM pms.midyear_checkins WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, targetId])).rows[0];
+    if (!row) return res.status(404).json({ error: 'no mid-year check-in yet — open the review first' });
+
+    const sheet = (await db.query(
+      `SELECT id FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, targetId])).rows[0];
+    const kra = sheet ? (await db.query(
+      `SELECT id, title, weight, measures, description FROM pms.kras WHERE id=$1 AND sheet_id=$2`,
+      [kra_id, sheet.id])).rows[0] : null;
+    if (!kra) return res.status(404).json({ error: 'KRA not found on this employee\'s sheet for this cycle' });
+
+    const mine = (perspective === 'self' ? row.self_entries : row.manager_entries) || {};
+    const entry = mine[kra_id] || {};
+    if (!entry.narrative || !String(entry.narrative).trim()) {
+      return res.status(422).json({ error: 'Write your justification for this KRA first — there is nothing to review yet.' });
+    }
+
+    const input = {
+      kra: { title: kra.title, weight: +kra.weight, measures: kra.measures, description: kra.description },
+      perspective,
+      // The rating is context for judging the words, never the subject of
+      // the review. See the privacy note above for why the counterpart's
+      // narrative is only included one way.
+      rating_given: entry.rating ?? null,
+      justification: entry.narrative,
+      employee_self_justification: perspective === 'manager'
+        ? ((row.self_entries || {})[kra_id] || {}).narrative || null
+        : undefined,
+    };
+    const out = await ai.narrate({
+      tenantId: T(req), kind: 'justification_review', ref: { cycle_id: c.id, employee_id: targetId, kra_id },
+      requestedBy: req.user.email, input, maxTokens: 900,
+      system: `You review the QUALITY OF WRITING in a justification given against one
+KRA at a mid-year checkpoint. You are a writing coach, not a second
+assessor.
+Judge only whether the words substantiate the rating that was given:
+does it cite specific, checkable facts — deliverables, dates, numbers,
+named outcomes — or does it rest on adjectives and generalities? Measure
+it against the KRA's own stated measures.
+You must NOT endorse, dispute, or propose any rating, and must not say the
+rating is too high or too low. If the justification is thin, say what
+EVIDENCE is missing, not what the rating should be. Judgement of the
+rating belongs to the people in the review.
+Be direct and useful. A vague justification helps nobody, so say so
+plainly, then show what a stronger version would contain.
+Respond ONLY with JSON:
+{"assessment":"one of: evidence-based | partially substantiated | vague",
+ "evidence_strength":"1-2 sentences on what the justification does and does not establish",
+ "missing_evidence":["specific things that would substantiate it, tied to the KRA's measures"],
+ "stronger_example":"a short rewrite showing the shape of a well-evidenced justification, using ONLY facts already present in the input; where a fact is needed but absent, mark it like [add the actual figure]"}`,
+    });
+    res.json({ ok: true, ...out, note: 'Feedback on the write-up only — the rating is yours to decide.' });
   } catch (e) { fail(res, e); }
 });
 

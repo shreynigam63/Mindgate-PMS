@@ -39,7 +39,7 @@ export default function TeamOverviewPage() {
             <tr className="text-left text-navy-400 uppercase text-[10px] border-b border-navy-100">
               <th className="px-3 py-2">Employee</th><th className="px-3 py-2">Dept</th>
               <th className="px-3 py-2">KRA</th><th className="px-3 py-2">Dev Plan</th>
-              <th className="px-3 py-2">Career Path</th>
+              <th className="px-3 py-2">Aspiring Career</th>
               <th className="px-3 py-2">Self-Appraisal</th><th className="px-3 py-2">Manager Eval</th>
               <th className="px-3 py-2">Connects (this cycle)</th>
             </tr>

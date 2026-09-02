@@ -1064,13 +1064,69 @@ function validateRating(value, ratingScale) {
   return { ok: true, value: n };
 }
 
+// ---- Mid-Year per-KRA scoring (migration 023) ----------------------------
+// The KRAs a mid-year rating is scored against: the same sheet the annual
+// self-appraisal uses, read-only here. KRAs lock when kra_open closes,
+// which is two phases before mid_year_review, so what is being scored
+// cannot shift underneath a review in progress.
+async function midyearKras(tenantId, cycleId, employeeId) {
+  const sheet = (await db.query(
+    `SELECT id FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [tenantId, cycleId, employeeId])).rows[0];
+  if (!sheet) return [];
+  return (await db.query(
+    `SELECT id, title, weight, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`,
+    [sheet.id])).rows;
+}
+
+// Merges an incoming per-KRA map onto what is stored, validates every
+// rating a human picked against the cycle's scale, and derives the overall
+// as the WEIGHTED AVERAGE of those — reusing computeWeightedRating(), the
+// same function the annual engine uses, fed KRA weights as weight_pct.
+//
+// The derived overall is deliberately NOT put through validateRating: an
+// average of discrete grades legitimately falls between them (3.7 is a
+// correct answer, not an invalid scale value). Only the per-KRA ratings a
+// person actually picks are checked against the scale.
+//
+// Unknown kra_ids are dropped rather than stored, so a stale browser tab
+// cannot write entries for KRAs that no longer exist on the sheet.
+function mergeMidyearEntries({ kras, stored, incoming, scale }) {
+  const entries = { ...(stored || {}) };
+  const byId = new Map(kras.map((k) => [k.id, k]));
+  for (const [kraId, val] of Object.entries(incoming || {})) {
+    if (!byId.has(kraId) || !val || typeof val !== 'object') continue;
+    const next = { ...(entries[kraId] || {}) };
+    if (val.rating !== undefined) {
+      const rv = validateRating(val.rating, scale);
+      if (!rv.ok) return { error: `${byId.get(kraId).title}: ${rv.reason}` };
+      next.rating = rv.value;
+    }
+    if (val.narrative !== undefined) next.narrative = val.narrative;
+    entries[kraId] = next;
+  }
+  return { entries, ...midyearOverall(kras, entries) };
+}
+
+// Overall from a stored entry map. `complete` is the gate the request
+// asked for: the overall is only ASSIGNED once every KRA carries a
+// rating, so a half-scored review reports no overall at all rather than
+// an average of the part that happens to be filled in.
+function midyearOverall(kras, entries) {
+  const ratings = new Map(kras.map((k) => [k.id, entries && entries[k.id] ? entries[k.id].rating : null]));
+  const w = computeWeightedRating(kras.map((k) => ({ id: k.id, weight_pct: k.weight })), ratings);
+  return { overall: w.complete ? w.rating : null, partial_overall: w.rating, complete: w.complete, missing: w.missing };
+}
+
 router.get('/my/midyear-review', async (req, res) => {
   try {
     const c = await activeCycleForMidyear(T(req));
     if (!c) return res.json({ cycle: null, checkin: null });
     const row = await ensureMidyearCheckin(T(req), c.id, req.user.id);
     const editable = pm.phaseAllows(c.phase, 'midyear_self_edit');
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale }, checkin: row, editable });
+    const kras = await midyearKras(T(req), c.id, req.user.id);
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale }, checkin: row, editable,
+      kras, scoring: midyearOverall(kras, row.self_entries) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1080,7 +1136,28 @@ router.put('/my/midyear-review', async (req, res) => {
     if (!c || !pm.phaseAllows(c.phase, 'midyear_self_edit')) return res.status(409).json({ error: `Mid-Year Review is not open (phase: ${c ? c.phase : 'none'}) — opens once HR moves the cycle from Growth Planning to Mid-Year Review` });
     const row = await ensureMidyearCheckin(T(req), c.id, req.user.id);
     if (row.self_status === 'submitted') return res.status(409).json({ error: 'Already submitted — locked' });
-    const { self_rating, self_narrative } = req.body || {};
+    const { self_rating, self_narrative, entries } = req.body || {};
+    const kras = await midyearKras(T(req), c.id, req.user.id);
+
+    // With KRAs mapped, the overall is DERIVED from the per-KRA ratings and
+    // any directly-supplied self_rating is ignored — the requirement is
+    // that the overall follows from rating every KRA, not that it is picked
+    // separately. Without a KRA sheet there is nothing to average, so the
+    // single rating stays the only thing that can be recorded; that keeps
+    // mid-year usable for someone who has no sheet rather than locking
+    // them out of their own checkpoint.
+    if (kras.length) {
+      const m = mergeMidyearEntries({ kras, stored: row.self_entries, incoming: entries, scale: c.rating_scale });
+      if (m.error) return res.status(422).json({ error: m.error });
+      // Assigned, not COALESCEd: the overall tracks the entries exactly, so
+      // un-rating a KRA must clear it rather than leave a stale figure.
+      await db.query(
+        `UPDATE pms.midyear_checkins SET self_status='in_progress', self_entries=$2,
+           self_rating=$3, self_narrative=COALESCE($4,self_narrative), updated_at=now()
+         WHERE id=$1`,
+        [row.id, JSON.stringify(m.entries), m.overall, self_narrative ?? null]);
+      return res.json({ ok: true, overall_rating: m.overall, partial_overall: m.partial_overall, complete: m.complete, missing: m.missing });
+    }
     const rv = validateRating(self_rating, c.rating_scale);
     if (!rv.ok) return res.status(422).json({ error: rv.reason });
     await db.query(
@@ -1088,7 +1165,7 @@ router.put('/my/midyear-review', async (req, res) => {
          self_rating=COALESCE($2,self_rating), self_narrative=COALESCE($3,self_narrative), updated_at=now()
        WHERE id=$1`,
       [row.id, rv.value, self_narrative ?? null]);
-    res.json({ ok: true });
+    res.json({ ok: true, overall_rating: rv.value, kra_count: 0 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1099,6 +1176,13 @@ router.post('/my/midyear-review/submit', async (req, res) => {
     const row = await ensureMidyearCheckin(T(req), c.id, req.user.id);
     if (row.self_status === 'submitted') return res.status(409).json({ error: 'already submitted' });
     if (!row.self_narrative || !row.self_narrative.trim()) return res.status(422).json({ error: 'Add your reflection before signing.' });
+    // Every KRA rated before signing — the overall is derived from them, so
+    // signing a partly-scored review would sign off no overall at all.
+    const selfKras = await midyearKras(T(req), c.id, req.user.id);
+    if (selfKras.length) {
+      const sc = midyearOverall(selfKras, row.self_entries);
+      if (!sc.complete) return res.status(422).json({ error: `Rate all ${selfKras.length} KRAs before signing — ${sc.missing.length} still unrated.` });
+    }
     await db.query(`UPDATE pms.midyear_checkins SET self_status='submitted', self_submitted_at=now(), updated_at=now() WHERE id=$1`, [row.id]);
     audit(req, 'MIDYEAR_SELF_SUBMITTED', c.id, req.user.id, null);
     if (row.manager_id) await notify(T(req), row.manager_id, 'midyear_self_signed', `${req.user.name} signed their Mid-Year Review`, null, '/pms/team/midyear-review');
@@ -1117,7 +1201,14 @@ router.get('/team/midyear-review/:employeeId', async (req, res) => {
     if (!c) return res.json({ cycle: null, employee: { id: emp.id, name: emp.name }, checkin: null });
     const row = await ensureMidyearCheckin(T(req), c.id, emp.id);
     const editable = pm.phaseAllows(c.phase, 'midyear_manager_edit');
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale }, employee: { id: emp.id, name: emp.name }, checkin: row, editable });
+    const kras = await midyearKras(T(req), c.id, emp.id);
+    // Both sides' scoring state: the manager legitimately sees the
+    // employee's own per-KRA ratings and justifications while writing
+    // theirs, which is the whole point of a checkpoint review.
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale },
+      employee: { id: emp.id, name: emp.name }, checkin: row, editable, kras,
+      scoring: midyearOverall(kras, row.manager_entries),
+      self_scoring: midyearOverall(kras, row.self_entries) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1130,7 +1221,19 @@ router.put('/team/midyear-review/:employeeId', async (req, res) => {
     if (!c || !pm.phaseAllows(c.phase, 'midyear_manager_edit')) return res.status(409).json({ error: `Mid-Year Review is not open (phase: ${c ? c.phase : 'none'})` });
     const row = await ensureMidyearCheckin(T(req), c.id, emp.id);
     if (row.manager_status === 'submitted') return res.status(409).json({ error: 'Already submitted — locked' });
-    const { manager_rating, manager_narrative } = req.body || {};
+    const { manager_rating, manager_narrative, entries } = req.body || {};
+    const kras = await midyearKras(T(req), c.id, emp.id);
+    // Same derivation as the self journey — see PUT /my/midyear-review.
+    if (kras.length) {
+      const m = mergeMidyearEntries({ kras, stored: row.manager_entries, incoming: entries, scale: c.rating_scale });
+      if (m.error) return res.status(422).json({ error: m.error });
+      await db.query(
+        `UPDATE pms.midyear_checkins SET manager_status='in_progress', manager_entries=$2,
+           manager_rating=$3, manager_narrative=COALESCE($4,manager_narrative), updated_at=now()
+         WHERE id=$1`,
+        [row.id, JSON.stringify(m.entries), m.overall, manager_narrative ?? null]);
+      return res.json({ ok: true, overall_rating: m.overall, partial_overall: m.partial_overall, complete: m.complete, missing: m.missing });
+    }
     const rv = validateRating(manager_rating, c.rating_scale);
     if (!rv.ok) return res.status(422).json({ error: rv.reason });
     await db.query(
@@ -1138,7 +1241,7 @@ router.put('/team/midyear-review/:employeeId', async (req, res) => {
          manager_rating=COALESCE($2,manager_rating), manager_narrative=COALESCE($3,manager_narrative), updated_at=now()
        WHERE id=$1`,
       [row.id, rv.value, manager_narrative ?? null]);
-    res.json({ ok: true });
+    res.json({ ok: true, overall_rating: rv.value, kra_count: 0 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1152,6 +1255,11 @@ router.post('/team/midyear-review/:employeeId/submit', async (req, res) => {
     const row = await ensureMidyearCheckin(T(req), c.id, emp.id);
     if (row.manager_status === 'submitted') return res.status(409).json({ error: 'already submitted' });
     if (!row.manager_narrative || !row.manager_narrative.trim()) return res.status(422).json({ error: 'Add your narrative before signing.' });
+    const mgrKras = await midyearKras(T(req), c.id, emp.id);
+    if (mgrKras.length) {
+      const sc = midyearOverall(mgrKras, row.manager_entries);
+      if (!sc.complete) return res.status(422).json({ error: `Rate all ${mgrKras.length} KRAs before signing — ${sc.missing.length} still unrated.` });
+    }
     await db.query(`UPDATE pms.midyear_checkins SET manager_status='submitted', manager_submitted_at=now(), updated_at=now() WHERE id=$1`, [row.id]);
     audit(req, 'MIDYEAR_MANAGER_SUBMITTED', c.id, emp.id, null);
     await notify(T(req), emp.id, 'midyear_manager_signed', `${req.user.name} signed off your Mid-Year Review`, null, '/pms/my/midyear');
@@ -2439,4 +2547,9 @@ router.post('/hr/kra-sheet/clean-titles', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-module.exports = { router, checkAndSendConnectReminders };
+// mergeMidyearEntries and midyearOverall are exported for direct unit
+// testing, the same reason validateEmployeeRows is in core/employees.js:
+// they are the pure part of the per-KRA scoring (no db), and the weighted
+// average plus the "no overall until every KRA is rated" rule are exactly
+// the behaviour worth pinning down without standing up a database.
+module.exports = { router, checkAndSendConnectReminders, mergeMidyearEntries, midyearOverall };

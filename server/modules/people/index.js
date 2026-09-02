@@ -395,7 +395,7 @@ router.put('/career/my-path', async (req, res) => {
   try {
     const phase = await activeCyclePhase(T(req));
     if (!pm.phaseAllows(phase, 'career_edit')) {
-      return res.status(409).json({ error: `Career Path editing is not open (phase: ${phase || 'no active cycle'}) — opens once HR locks KRAs and moves the cycle to Growth Planning` });
+      return res.status(409).json({ error: `Aspiring Career editing is not open (phase: ${phase || 'no active cycle'}) — opens once HR locks KRAs and moves the cycle to Growth Planning` });
     }
     const { target_role, target_timeline, plan } = req.body || {};
     if (!target_role || !String(target_role).trim()) return res.status(400).json({ error: 'target_role required' });
@@ -427,4 +427,11 @@ router.get('/career/team', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-module.exports = { router };
+// eligibleTransitionsFor is part of this module's EXPORTED INTERFACE, not
+// an internal: the agentic module needs the same set of HR-configured
+// transitions to ground its career suggestions in, and the house rule is
+// that modules never reach into each other's internals. Exporting it here
+// is what keeps that read explicit — and it guarantees the AI can only
+// suggest roles the career-path form will actually accept, since both
+// sides now resolve eligibility through this one function.
+module.exports = { router, eligibleTransitionsFor };

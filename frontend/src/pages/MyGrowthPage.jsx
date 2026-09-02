@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Send, CheckCircle2, RotateCcw } from 'lucide-react';
-import { api, phaseLabel, phaseColor } from '../utils/api';
+import { Plus, Trash2, Send, CheckCircle2, RotateCcw, Sparkles } from 'lucide-react';
+import { api, phaseLabel, phaseColor, DraftBadge } from '../utils/api';
 
 const STATUS_COLOR = {
   draft: 'bg-slate-100 text-navy-600',
@@ -55,6 +55,59 @@ function DevelopmentPlanCard() {
   );
 }
 
+// AI development-plan suggestions, drawn from the employee's own approved
+// KRAs. Lives inside GoalList because that is where setGoals is — a
+// suggestion is only useful if it can be dropped straight into the editor,
+// and lifting the panel out would mean plumbing a callback back down for
+// no gain.
+function DevPlanAiPanel({ onAdd }) {
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState(null);
+
+  const ask = async () => {
+    setBusy(true); setErr(null);
+    try { setRes(await api('/agentic/devplan-suggest', { method: 'POST' })); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const d = res && res.draft;
+
+  return (
+    <div className="space-y-2">
+      <div className="bg-gradient-to-r from-teal-50 to-cyan-50 border border-teal-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold text-teal-800">+ Suggest goals from my KRAs</p>
+          <p className="text-[11px] text-navy-500">Reads the KRAs you are accountable for this cycle and proposes development goals that build the capability each one needs.</p>
+        </div>
+        <button className="btn-pri !bg-teal-700" disabled={busy} onClick={ask}>
+          <Sparkles size={13} className="inline mr-1" />{busy ? 'Thinking…' : 'Suggest goals'}
+        </button>
+      </div>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      {d && (
+        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-[11px] space-y-3">
+          <DraftBadge />
+          {(d.suggested_goals || []).map((g, i) => (
+            <div key={i} className="border border-navy-600 rounded-lg p-2.5 space-y-1">
+              <p className="font-semibold text-sm">{g.title}</p>
+              {g.serves_kra && <p className="text-teal-300">Serves KRA: {g.serves_kra}</p>}
+              {g.why && <p>{g.why}</p>}
+              {g.how_to_measure && <p className="text-slate-300">Evidence of progress: {g.how_to_measure}</p>}
+              {g.suggested_timeline && <p className="text-slate-400">Suggested timeline: {g.suggested_timeline}</p>}
+              <button className="btn-sec !bg-navy-700 !text-white !border-navy-600 !text-[11px] !py-1"
+                onClick={() => onAdd(g)}>Add as goal (then edit)</button>
+            </div>
+          ))}
+          {(d.uncovered_kras || []).length > 0 && <p className="text-amber-300">KRAs with no development goal yet: {d.uncovered_kras.join(' · ')}</p>}
+          {(d.already_covered || []).length > 0 && <p className="text-slate-400">Already covered: {d.already_covered.join(' · ')}</p>}
+          {(d.gaps || []).length > 0 && <p className="text-slate-400">Input gaps: {d.gaps.join(' · ')}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GoalList({ goals: initial, editable, onSaved }) {
   const [goals, setGoals] = useState(initial);
   const [err, setErr] = useState(null);
@@ -89,8 +142,18 @@ function GoalList({ goals: initial, editable, onSaved }) {
     );
   }
 
+  const addSuggested = (g) => setGoals((gs) => [...gs, {
+    title: g.title || '',
+    // The reasoning and the measure are what make a goal reviewable later,
+    // so both are carried into the description rather than dropped.
+    description: [g.why, g.how_to_measure ? `Evidence of progress: ${g.how_to_measure}` : null].filter(Boolean).join('\n\n'),
+    target_date: '', progress_pct: 0,
+  }]);
+
   return (
     <div className="space-y-3">
+      <DevPlanAiPanel onAdd={addSuggested} />
+      <p className="text-[11px] text-navy-400">Added suggestions are unsaved until you press <b>Save goals</b>.</p>
       {goals.map((g, i) => (
         <div key={g.id || i} className="border border-navy-100 rounded-xl p-3.5 space-y-3 bg-white">
           <div className="flex items-start gap-2">
@@ -140,7 +203,67 @@ function ProgressBar({ value, onChange, readOnly }) {
   );
 }
 
-// ---------------- Career Path (BR-3.1/3.2) ----------------------------------
+// ---------------- Aspiring Career (BR-3.1/3.2) ------------------------------
+// Displayed as "Aspiring Career"; the table, API fields and route all still
+// say career_path/people.career_paths. Renaming only the label was
+// deliberate — the stored shape is referenced by the annual review, the
+// team overview and the HR pathing matrix, and churning those for a
+// wording change would be a breaking change for no user-visible gain.
+// AI aspiring-career suggestions. Constrained server-side to the
+// transitions HR configured from the employee's current role, so anything
+// it proposes is a role the select below will actually accept.
+function CareerAiPanel({ onUse }) {
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState(null);
+  const ask = async () => {
+    setBusy(true); setErr(null);
+    try { setRes(await api('/agentic/career-suggest', { method: 'POST' })); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const d = res && res.draft;
+
+  return (
+    <div className="space-y-2">
+      <div className="bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold text-indigo-800">+ Where could I aim next?</p>
+          <p className="text-[11px] text-navy-500">Reads your designation and department against the career paths HR has configured, and suggests what a one-to-two year aspiration could look like.</p>
+        </div>
+        <button className="btn-pri !bg-indigo-700" disabled={busy} onClick={ask}>
+          <Sparkles size={13} className="inline mr-1" />{busy ? 'Thinking…' : 'Suggest a path'}
+        </button>
+      </div>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      {d && (
+        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-[11px] space-y-3">
+          <DraftBadge />
+          {d.no_path_configured && <p className="text-amber-300">No career path is configured from your current role yet — HR needs to define one in the Career Pathing Matrix.</p>}
+          {(d.aspirations || []).map((a, i) => (
+            <div key={i} className="border border-navy-600 rounded-lg p-2.5 space-y-1">
+              <p className="font-semibold text-sm">{a.target_role}</p>
+              {a.fit && <p>{a.fit}</p>}
+              {a.typical_time && <p className="text-indigo-300">Typical time: {a.typical_time}</p>}
+              {(a.competencies_to_build || []).length > 0 && (
+                <div><p className="text-slate-300 font-semibold">Competencies to build</p>
+                  <ul className="list-disc pl-4">{a.competencies_to_build.map((c, n) => <li key={n}>{c}</li>)}</ul></div>
+              )}
+              {(a.first_steps || []).length > 0 && (
+                <div><p className="text-slate-300 font-semibold">Start this cycle</p>
+                  <ul className="list-disc pl-4">{a.first_steps.map((c, n) => <li key={n}>{c}</li>)}</ul></div>
+              )}
+              <button className="btn-sec !bg-navy-700 !text-white !border-navy-600 !text-[11px] !py-1"
+                onClick={() => onUse(a)}>Use this (then edit)</button>
+            </div>
+          ))}
+          {(d.notes || []).length > 0 && <p className="text-slate-400">{d.notes.join(' · ')}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CareerPathCard() {
   const [data, setData] = useState(null);
   const [form, setForm] = useState({ target_role: '', target_timeline: '', plan: '' });
@@ -168,9 +291,16 @@ function CareerPathCard() {
   return (
     <div className="card p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <p className="font-bold text-sm flex-1">Career Path</p>
+        <p className="font-bold text-sm flex-1">Aspiring Career</p>
         {data.cycle_phase && <span className={`chip ${phaseColor(data.cycle_phase)}`}>{phaseLabel(data.cycle_phase)}</span>}
       </div>
+      {editable && <CareerAiPanel onUse={(a) => setForm((fm) => ({
+        target_role: a.target_role || fm.target_role,
+        target_timeline: a.typical_time || fm.target_timeline,
+        plan: [a.fit, (a.competencies_to_build || []).length ? `Competencies to build:\n- ${a.competencies_to_build.join('\n- ')}` : null,
+               (a.first_steps || []).length ? `First steps:\n- ${a.first_steps.join('\n- ')}` : null].filter(Boolean).join('\n\n'),
+      }))} />}
+      {editable && <p className="text-[11px] text-navy-400">Unsaved until you press <b>Save</b>.</p>}
       <div>
         <label className="lbl">Target role</label>
         {data.eligible_target_roles.length ? (
@@ -198,7 +328,7 @@ function CareerPathCard() {
           {saved && <span className="text-[11px] text-emerald-600 font-medium ml-2">Saved ✓</span>}
         </>
       ) : (
-        <p className="text-xs text-navy-400">Career Path editing opens in the {phaseLabel('growth_planning')} phase, once HR locks KRAs.</p>
+        <p className="text-xs text-navy-400">Aspiring Career editing opens in the {phaseLabel('growth_planning')} phase, once HR locks KRAs.</p>
       )}
     </div>
   );
