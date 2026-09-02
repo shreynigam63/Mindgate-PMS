@@ -260,6 +260,51 @@ router.post('/cycles/:id/phase', async (req, res) => {
 
 // ---------------- KRA sheets -------------------------------------------------
 // My sheet for the active cycle (auto-created on first touch with my manager).
+// The mid-year ratings for one employee's KRAs, keyed by kra_id.
+//
+// WHY THIS IS SHARED. Mid-year scoring already reads the KRA sheet — it is
+// per-KRA, and always was — but it was only ever visible on its own page,
+// and fed nothing afterwards. Asked for it to be part of the KRA process,
+// which means the same numbers have to reach the KRA sheet and the Annual
+// Review without either of them growing a second copy of the lookup.
+//
+// Returns null (not an empty object) when there is no check-in at all, so
+// a caller can tell "mid-year never happened" from "mid-year happened and
+// this KRA was not rated" — the second is worth showing, the first is not.
+async function midyearEntriesFor(tenantId, cycleId, employeeId) {
+  const row = (await db.query(
+    `SELECT self_entries, manager_entries, self_rating, manager_rating, self_status, manager_status
+       FROM pms.midyear_checkins WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [tenantId, cycleId, employeeId])).rows[0];
+  if (!row) return null;
+  // Nothing rated on either side is the same as no mid-year for display
+  // purposes — an empty panel helps nobody.
+  const self = row.self_entries || {};
+  const manager = row.manager_entries || {};
+  if (!Object.keys(self).length && !Object.keys(manager).length) return null;
+  return {
+    self_entries: self,
+    manager_entries: manager,
+    self_overall: row.self_rating,
+    manager_overall: row.manager_rating,
+    self_status: row.self_status,
+    manager_status: row.manager_status,
+  };
+}
+
+// Attaches each KRA's mid-year self/manager rating to the KRA row itself,
+// so a consumer reads one list instead of joining two.
+function withMidyear(kras, midyear) {
+  if (!midyear) return kras.map((k) => ({ ...k, midyear: null }));
+  return kras.map((k) => ({
+    ...k,
+    midyear: {
+      self: midyear.self_entries[k.id] || null,
+      manager: midyear.manager_entries[k.id] || null,
+    },
+  }));
+}
+
 router.get('/my/kra-sheet', async (req, res) => {
   try {
     const c = await activeCycle(T(req));
@@ -272,7 +317,17 @@ router.get('/my/kra-sheet', async (req, res) => {
         [T(req), c.id, req.user.id, mgr ? mgr.manager_id : null])).rows[0];
     }
     const kras = (await db.query(`SELECT * FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, sheet: s, kras, weights: pm.weightsValid(kras) });
+    // The mid-year rating travels WITH the KRA now, rather than living
+    // only on the Mid-Year Review page. Read-only here: mid-year is still
+    // scored on its own page, under its own phase gate — this is the same
+    // number shown where the KRA it belongs to is.
+    const midyear = await midyearEntriesFor(T(req), c.id, req.user.id);
+    res.json({
+      cycle: { id: c.id, name: c.name, phase: c.phase }, sheet: s,
+      kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
+      midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+                           self_status: midyear.self_status, manager_status: midyear.manager_status } : null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -414,7 +469,15 @@ router.get('/team/kra-sheets/:sheetId/kras', async (req, res) => {
     if ((!viewEmp || viewEmp.manager_id !== req.user.id) && !(await hasPermission(req.user, 'pms_admin')))
       return res.status(403).json({ error: 'Not your report' });
     const kras = (await db.query(`SELECT * FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
-    res.json({ sheet: s, kras, weights: pm.weightsValid(kras) });
+    // Same mid-year join as the employee's own sheet — a manager looking
+    // at a report's KRAs should see the halfway rating against each one
+    // without opening a second page.
+    const midyear = await midyearEntriesFor(T(req), s.cycle_id, s.employee_id);
+    res.json({
+      sheet: s, kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
+      midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+                           self_status: midyear.self_status, manager_status: midyear.manager_status } : null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -545,7 +608,13 @@ router.get('/hr/kra-sheet/:employeeId', async (req, res) => {
     if (!emp) return res.status(404).json({ error: 'employee not found' });
     const s = await ensureKraSheet(T(req), c.id, emp.id);
     const kras = (await db.query(`SELECT * FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, employee: emp, sheet: s, kras, weights: pm.weightsValid(kras) });
+    const midyear = await midyearEntriesFor(T(req), c.id, emp.id);
+    res.json({
+      cycle: { id: c.id, name: c.name, phase: c.phase }, employee: emp, sheet: s,
+      kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
+      midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+                           self_status: midyear.self_status, manager_status: midyear.manager_status } : null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2383,10 +2452,20 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId) {
   const managerEval = (await db.query(`SELECT status, entries, overall_rating, strengths, improvement_areas FROM pms.manager_evaluations WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
   // KRA "outcomes" = each KRA's definition joined with its self-rating and
   // manager-rating, keyed by kra_id in the two entries jsonb blobs above.
+  //
+  // Mid-year joins them as the MID-POINT reference. It is the same KRA
+  // being rated at the halfway mark, and the end-of-year conversation is
+  // poorer without it: "rated 3 at mid-year, 5 now" is a story, two
+  // separate pages showing 3 and 5 is not. Deliberately shown ALONGSIDE
+  // the self and manager ratings rather than blended into them — how much
+  // mid-year should count towards a final rating is a policy decision, not
+  // one to make in an aggregation function.
+  const midyear = await midyearEntriesFor(tenantId, cycleId, employeeId);
   const kraOutcomes = kras.map((k) => ({
     ...k,
     self: selfAppraisal?.entries?.[k.id] || null,
     manager: managerEval?.entries?.[k.id] || null,
+    midyear: midyear ? { self: midyear.self_entries[k.id] || null, manager: midyear.manager_entries[k.id] || null } : null,
   }));
 
   const devPlan = (await db.query(`SELECT id, status, manager_comment FROM pms.development_plans WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
@@ -2417,6 +2496,10 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId) {
 
   return {
     kra: { sheet: kraSheet || null, outcomes: kraOutcomes },
+    midyear: midyear ? {
+      self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+      self_status: midyear.self_status, manager_status: midyear.manager_status,
+    } : null,
     development_plan: { plan: devPlan || null, goals: devGoals, avg_progress: devAvgProgress },
     career_path: careerPath || null,
     parameter_scores: { parameters: params, scores: scoreMap, weighted_rating: weighted.rating, complete: weighted.complete },

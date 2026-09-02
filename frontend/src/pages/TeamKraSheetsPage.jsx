@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Check, Undo2 } from 'lucide-react';
 import { api } from '../utils/api';
+import { MidYearOnKra } from './MyKRASheetPage';
 
 // Fix guide item #5 (BR-1.3): confirmed root cause was that no frontend
 // page anywhere called the existing, working GET /team/kra-sheets and
@@ -105,6 +106,7 @@ function SheetEditor({ sheet, reload }) {
               </div>
               {k.description && <p className="text-navy-600">{k.description}</p>}
               {k.measures && <p className="text-navy-400"><b>Measures:</b> {k.measures}</p>}
+              <MidYearOnKra midyear={k.midyear} />
             </div>
           ))}
           <p className={`text-[11px] font-medium ${detail.weights.ok ? 'text-emerald-600' : 'text-rose-600'}`}>

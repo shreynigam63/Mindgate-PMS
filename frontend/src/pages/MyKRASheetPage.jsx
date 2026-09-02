@@ -50,6 +50,7 @@ export default function MyKRASheetPage() {
           </div>
           <textarea className="inp" rows={2} placeholder="Description" value={k.description || ''} onChange={set(i, 'description')} disabled={!editable} />
           <input className="inp" placeholder="How it will be measured" value={k.measures || ''} onChange={set(i, 'measures')} disabled={!editable} />
+          <MidYearOnKra midyear={k.midyear} />
         </div>
       ))}
       {editable && (
@@ -62,6 +63,30 @@ export default function MyKRASheetPage() {
         </div>
       )}
       {!editable && !locked && <p className="text-xs text-navy-400">KRA editing opens in the {phaseLabel('kra_open')} phase.</p>}
+    </div>
+  );
+}
+
+// The mid-year rating, against the KRA it was given for.
+//
+// Mid-year scoring has always been per-KRA, but it lived only on its own
+// page — so the KRA sheet showed what someone signed up to and nothing
+// about how it was going. Read-only here on purpose: mid-year is still
+// scored on the Mid-Year Review page, under its own phase gate. This is
+// the same number, shown where it means something.
+export function MidYearOnKra({ midyear }) {
+  if (!midyear || (!midyear.self && !midyear.manager)) return null;
+  const cell = (label, entry) => (
+    <span>
+      {label} <b>{entry?.rating ?? '—'}</b>
+      {entry?.narrative && <span className="text-navy-400"> — {entry.narrative}</span>}
+    </span>
+  );
+  return (
+    <div className="flex flex-wrap gap-3 text-[11px] text-navy-500 bg-navy-50 rounded-md px-2 py-1">
+      <span className="font-semibold text-navy-600">Mid-year:</span>
+      {cell('self', midyear.self)}
+      {cell('manager', midyear.manager)}
     </div>
   );
 }
