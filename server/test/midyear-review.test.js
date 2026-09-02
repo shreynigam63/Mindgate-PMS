@@ -168,8 +168,18 @@ test('a newer, earlier-phase cycle does not shadow the one actually at mid_year_
     `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase, created_at) VALUES ($1,'MY Newer Draft','FYND','annual','draft', now() + interval '1 hour')`,
     [tenantId]);
 
-  const empAuth = await login('my-emp@x.com');
-  const get = await api('/pms/my/midyear-review', empAuth.token);
+  // As MY Fresh, who has NOT submitted — so `editable` is still a live
+  // signal here. Asked as my-emp, who signed off in an earlier test, it
+  // would read false for a reason that has nothing to do with which cycle
+  // was resolved, and would prove nothing either way.
+  const { token } = await login('my-fresh@x.com');
+  const get = await api('/pms/my/midyear-review', token);
   assert.equal(get.body.cycle.name, 'MY Cycle', 'resolves to the cycle actually at mid_year_review, not the newer draft one');
-  assert.equal(get.body.editable, true);
+  assert.equal(get.body.editable, true, 'and that cycle is open — a draft cycle would have made this false');
+
+  // The employee who already signed still sees the same resolved cycle,
+  // locked. Both halves of the flag, on one resolver call.
+  const signed = await api('/pms/my/midyear-review', (await login('my-emp@x.com')).token);
+  assert.equal(signed.body.cycle.name, 'MY Cycle');
+  assert.equal(signed.body.editable, false);
 });

@@ -1362,25 +1362,43 @@ router.put('/my/self-appraisal', async (req, res) => {
     // manager's 7-parameter scoring — the per-KRA average below is left
     // for non-annual cycles only, so the two computations never fight
     // over the same column.
-    let overallRating = a.overall_self_rating;
+    //
+    // REFUSED, NOT IGNORED, on an annual cycle. This used to accept
+    // overall_self_rating, quietly drop it and answer 200 — the caller
+    // was told their rating had been saved when it had not. The manager's
+    // side of the same rule already refuses with a 409 that names where
+    // the number actually comes from; this now matches it, which is both
+    // the house rule against silent failure and the only way a caller can
+    // tell the difference between "stored" and "discarded".
+    if (c.cycle_type === 'annual' && b.overall_self_rating !== undefined) {
+      return res.status(409).json({ error: 'On an annual cycle, overall_self_rating is computed from the 7 organisational parameters — use PUT /pms/my/parameter-scores instead' });
+    }
+    // null = leave the stored value untouched (COALESCE below keeps it),
+    // matching the manager side. Reading the current value and writing it
+    // straight back would clobber a 7-parameter score computed between
+    // this read and the update.
+    let overallRating = null;
     if (b.entries && c.cycle_type !== 'annual') {
       const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
       const kras = sheet ? (await db.query(`SELECT id, weight AS weight_pct FROM pms.kras WHERE sheet_id=$1`, [sheet.id])).rows : [];
       const scores = new Map(kras.map((k) => [k.id, b.entries[k.id] ? b.entries[k.id].self_rating : null]));
       const { rating } = computeWeightedRating(kras, scores);
       if (rating != null) overallRating = rating;
-    } else if (b.overall_self_rating != null && c.cycle_type !== 'annual') {
+    } else if (b.overall_self_rating != null) {
       const rv = validateRating(b.overall_self_rating, c.rating_scale);
       if (!rv.ok) return res.status(422).json({ error: rv.reason });
       overallRating = rv.value;
     }
     await db.query(
       `UPDATE pms.self_appraisals SET status='in_progress',
-         entries=COALESCE($2,entries), overall_self_rating=$3,
+         entries=COALESCE($2,entries), overall_self_rating=COALESCE($3,overall_self_rating),
          went_well=COALESCE($4,went_well), could_improve=COALESCE($5,could_improve), updated_at=now()
        WHERE id=$1`,
       [a.id, b.entries ? JSON.stringify(b.entries) : null, overallRating, b.went_well ?? null, b.could_improve ?? null]);
-    res.json({ ok: true, overall_self_rating: overallRating });
+    // The effective value, not the local one — a PUT that touched only
+    // went_well must report the rating that is actually stored rather than
+    // the null that means "unchanged".
+    res.json({ ok: true, overall_self_rating: overallRating ?? a.overall_self_rating });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1638,7 +1656,13 @@ router.get('/my/midyear-review', async (req, res) => {
     const c = await activeCycleForMidyear(T(req));
     if (!c) return res.json({ cycle: null, checkin: null });
     const row = await ensureMidyearCheckin(T(req), c.id, req.user.id);
-    const editable = pm.phaseAllows(c.phase, 'midyear_self_edit');
+    // Both conditions, not just the phase. The PUT below already refuses a
+    // submitted row with 409, so the lock was enforced — but this flag said
+    // "editable" anyway, and the page compensated with its own
+    // `editable && !selfSigned`. An API that reports a state its own writes
+    // contradict is a trap for the next caller, and there is nothing to
+    // stop the two rules drifting apart.
+    const editable = pm.phaseAllows(c.phase, 'midyear_self_edit') && row.self_status !== 'submitted';
     const kras = await midyearKras(T(req), c.id, req.user.id);
     res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale }, checkin: row, editable,
       kras, scoring: midyearOverall(kras, row.self_entries) });
@@ -1722,7 +1746,8 @@ router.get('/team/midyear-review/:employeeId', async (req, res) => {
     const c = await activeCycleForMidyear(T(req));
     if (!c) return res.json({ cycle: null, employee: { id: emp.id, name: emp.name }, checkin: null });
     const row = await ensureMidyearCheckin(T(req), c.id, emp.id);
-    const editable = pm.phaseAllows(c.phase, 'midyear_manager_edit');
+    // Same rule on the manager's side, for the same reason.
+    const editable = pm.phaseAllows(c.phase, 'midyear_manager_edit') && row.manager_status !== 'submitted';
     const kras = await midyearKras(T(req), c.id, emp.id);
     // Both sides' scoring state: the manager legitimately sees the
     // employee's own per-KRA ratings and justifications while writing
@@ -2039,7 +2064,11 @@ router.get('/my/parameter-scores', async (req, res) => {
     const scored = (await db.query(`SELECT parameter_id, score FROM pms.parameter_scores WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND scored_by_role='self'`, [T(req), c.id, req.user.id])).rows;
     const scoreMap = Object.fromEntries(scored.map((s) => [s.parameter_id, Number(s.score)]));
     const weighted = computeWeightedRating(params, scoreMap);
-    const editable = pm.phaseAllows(c.phase, 'self_edit');
+    // Phase AND not-yet-submitted, matching what the PUT below actually
+    // enforces (409 'Already submitted — locked'). Same fix as the two
+    // mid-year GETs: the flag must not claim a state the writes refuse.
+    const a = (await db.query(`SELECT status FROM pms.self_appraisals WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
+    const editable = pm.phaseAllows(c.phase, 'self_edit') && !(a && a.status === 'submitted');
     res.json({ parameters: params, scores: scoreMap, weighted_rating: weighted.rating, complete: weighted.complete, missing: weighted.missing, editable });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
