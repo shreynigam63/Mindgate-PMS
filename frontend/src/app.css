@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Liquid-glass canvas: a soft, low-saturation gradient wash sits behind the
+   whole app (fixed, so it doesn't scroll away) — the frosted chrome panels
+   (sidebar/header, see App.jsx) blur and float above it, while content
+   cards stay flat, opaque white for data legibility. Glass at the
+   navigation layer, clarity at the data layer — not glass everywhere,
+   which would fight readability in a dense HR tool. */
+body {
+  @apply text-navy-900 antialiased;
+  background:
+    radial-gradient(1100px 620px at 8% -8%, rgba(236, 64, 122, 0.10), transparent 60%),
+    radial-gradient(900px 620px at 100% 0%, rgba(23, 162, 184, 0.12), transparent 55%),
+    radial-gradient(1200px 800px at 50% 120%, rgba(27, 59, 111, 0.08), transparent 60%),
+    #eef2f8;
+  background-attachment: fixed;
+}
+
+.card { @apply bg-white/90 border border-navy-100/70 rounded-2xl shadow-card; }
+
+.glass {
+  @apply backdrop-blur-xl bg-white/55 border border-white/60 shadow-glass;
+}
+
+.btn { @apply text-xs font-semibold px-3.5 py-2 rounded-xl cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-default; }
+.btn-pri { @apply btn text-white bg-navy-700 hover:bg-navy-800; }
+.btn-sec { @apply btn text-navy-700 border border-navy-100 bg-white/80 hover:bg-navy-50; }
+.inp { @apply w-full text-sm px-3.5 py-2.5 bg-white/90 border border-navy-100 rounded-xl focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 placeholder:text-navy-400/50; }
+.lbl { @apply text-[11px] font-semibold text-navy-400 uppercase tracking-wide block mb-1; }
+.chip { @apply text-[10px] font-semibold px-2.5 py-1 rounded-full; }

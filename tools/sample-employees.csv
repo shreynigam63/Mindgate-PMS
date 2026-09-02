@@ -1,0 +1,5 @@
+emp_code,name,email,department,designation,role_band,manager_email,date_of_joining,status
+E001,Asha Rao,asha.rao@client.com,Leadership,CEO,L1,,01-04-2018,active
+E002,Vikram Shah,vikram.shah@client.com,Engineering,VP Engineering,L2,asha.rao@client.com,15 Jun 2019,active
+E003,"Kumar, Anil",anil.kumar@client.com,Engineering,Engineer,L5,vikram.shah@client.com,26th Aug 2024,active
+E004,Meera Iyer,meera.iyer@client.com,HR,HR Manager,L3,asha.rao@client.com,2021-01-09,active

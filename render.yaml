@@ -1,0 +1,117 @@
+# Agentic PMS — per-client Render blueprint (dev/reference; client prod may
+# be their own cloud per deploy-and-transfer). One instance = one tenant.
+#
+# LOWEST-COST TESTING CONFIG. api + frontend are on Render's free plan.
+# The database is NOT — Render allows only ONE free-tier Postgres per
+# workspace, and this workspace ("Nilesh's workspace") already has one in
+# use elsewhere, so the free plan here fails outright ("cannot have more
+# than one active free tier database"). The database instead uses
+# basic-256mb, Render's cheapest PAID Postgres tier (~$6-7/month) and its
+# own documented default — this is the lowest possible cost for a working
+# deployment given that constraint, not a compromise chosen for any other
+# reason. Total: ~$6-7/month instead of the original ~$17.50/month
+# (api + frontend now cost nothing).
+#
+# Two real, known limitations worth knowing before UAT — not bugs in this
+# app, just what these specific plans mean:
+#   1. Free web services sleep after 15 minutes idle, waking on the next
+#      request (30-60s cold start). The daily Quarterly Connect reminder
+#      check (server/index.js's setInterval, wired to BR-4.4) won't fire
+#      on a strict 24h clock while asleep — it re-runs at boot every time
+#      the app wakes from an incoming request instead (Render's sleep/
+#      wake is a full process restart), so it still eventually fires, just
+#      not with guaranteed daily precision. To test that feature on demand
+#      regardless of sleep state: POST /pms/connects/check-reminders
+#      (HR-only) runs the same check immediately.
+#   2. The paid basic-256mb database does NOT expire like the free tier
+#      would have — this is a real, durable database, so test data
+#      persists normally. (If cost ever needs to drop further, the only
+#      way to get Postgres to $0 here is freeing up or deleting whatever
+#      already occupies this workspace's one free-database slot.)
+# Before going to real production: remove `plan: free` from the two
+# services below (or set an explicit paid plan) so the app is always-on —
+# no code changes needed, this is purely an infrastructure-tier choice.
+services:
+  - type: web
+    name: agentic-pms-api
+    env: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      # fromDatabase auto-links this to the agentic-pms-db resource
+      # created by the SAME blueprint — Render fills in the real
+      # connection string itself the moment the database exists. This
+      # value literally cannot be known ahead of time (Render assigns the
+      # internal hostname dynamically), so it must never be a manual
+      # "enter value" field — that was a mistake in an earlier version of
+      # this file.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: agentic-pms-db
+          property: connectionString
+      # generateValue lets Render generate and store a cryptographically
+      # random secret itself at deploy time — safer than asking a human
+      # to type one into a browser field, and one less secret anyone
+      # needs to remember or lose.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TENANT_SLUG
+        value: CHANGE_ME
+      # TESTING PHASE ONLY: "true" for now, since no real SSO exists yet
+      # (see core/auth.js's own comments — production auth is meant to be
+      # the client's IdP via OIDC, never actually built). Found the hard
+      # way that a fixed `value:` here, whatever it's set to, gets
+      # RE-APPLIED and silently overwrites any manual toggle made in the
+      # Render dashboard on every Blueprint sync — a person had correctly
+      # switched this to "true" by hand, then a later sync (needed for an
+      # unrelated fix) quietly reverted it back to "false" and broke
+      # login again with no visible warning that it had happened. Keeping
+      # the desired value HERE, in version control, is what actually
+      # holds across syncs — a dashboard-only toggle does not.
+      # MUST be set back to "false" before any real production handoff —
+      # dev-login is a break-glass mechanism, not real authentication.
+      - key: AUTH_DEV
+        value: "true"
+  - type: web
+    name: agentic-pms-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    # This app is a React single-page app (client-side routing via
+    # react-router). Without this rewrite, a hard refresh or a directly-
+    # opened/shared URL like /admin/cycles fails with "Not Found" — the
+    # browser asks Render's static file server for that exact path, but
+    # the only real file that exists is index.html; react-router only
+    # understands /admin/cycles AFTER that file's JavaScript has loaded
+    # and taken over. Clicking a link inside the app works fine (no real
+    # HTTP request happens, react-router intercepts it client-side) —
+    # only a fresh page load hits this, which is exactly why it looked
+    # fine while testing by clicking around, then broke the moment a URL
+    # was shared or refreshed. This rewrite sends every path Render
+    # doesn't recognise as a real file back to index.html instead of
+    # 404ing, so react-router gets a chance to load first and take over.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # BUG FOUND VIA A LIVE DEPLOY, FIXED HERE: fromService's `property:
+      # host` returns the PRIVATE-NETWORK-ONLY hostname (confirmed against
+      # Render's own docs: "Web services and private services only. The
+      # service's hostname on the private network") — a browser can never
+      # resolve that; it produced net::ERR_NAME_NOT_RESOLVED for every API
+      # call in production. Fixed with the actual, confirmed-working public
+      # hostname (verified directly: this exact URL returned a real
+      # response at /api/v1/health) as a plain literal value instead of a
+      # dynamic reference — after getting two different fromService
+      # mechanics wrong across this deploy, a hardcoded value that is known
+      # to work beats a third guess at the "correct" dynamic property name.
+      # If the api service is ever renamed, update this literal to match.
+      - key: VITE_API_URL
+        value: agentic-pms-api.onrender.com
+databases:
+  - name: agentic-pms-db
+    plan: basic-256mb
