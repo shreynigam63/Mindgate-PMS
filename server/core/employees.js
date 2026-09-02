@@ -565,7 +565,28 @@ router.put('/department-heads/:department', async (req, res) => {
       `INSERT INTO core.department_heads (tenant_id, department, employee_id) VALUES ($1,$2,$3)
        ON CONFLICT (tenant_id, department) DO UPDATE SET employee_id=EXCLUDED.employee_id`,
       [req.user.tenant_id, department, employee_id]);
-    audit(req, 'DEPARTMENT_HEAD_SET', null, employee_id, { department });
+    // Audits inline against core.audit_log, matching this file's other two
+    // audit writes (employee delete, CSV import). This line previously
+    // called audit(...) — a helper that exists only in
+    // modules/performance/index.js and writes to a DIFFERENT table
+    // (pms.audit_log, keyed by cycle_id/employee_id) — so it threw
+    // "ReferenceError: audit is not defined" on EVERY successful call.
+    // Found by exercising the route against a live deploy: the
+    // department head was already committed by the INSERT above, then
+    // the throw was caught below and returned 500, so callers saw a
+    // failure for work that had actually succeeded — and HR had no way
+    // to tell the assignment stuck. Anything that reads the state
+    // afterwards (GET /department-heads, the HOD queue) showed it
+    // correctly, which is exactly what made it confusing.
+    //
+    // Logged, not thrown, for the same reason: the write it records has
+    // already committed, so a failed audit insert must not turn a
+    // completed assignment back into an error response.
+    await db.query(
+      `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+       VALUES ($1,$2,'DEPARTMENT_HEAD_SET','department_heads',$3,$4)`,
+      [req.user.tenant_id, req.user.email, employee_id, JSON.stringify({ department })])
+      .catch(e => logger.warn('department head audit failed', { error: e.message }));
     res.json({ ok: true, department, head: { employee_id: emp.id, name: emp.name, email: emp.email } });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
