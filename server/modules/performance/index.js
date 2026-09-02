@@ -313,10 +313,33 @@ router.post('/my/kra-sheet/submit', async (req, res) => {
     if (!w.ok) return res.status(422).json({ error: `KRA weights must total 100 (currently ${w.total})` });
     await db.query(`UPDATE pms.kra_sheets SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [s.id]);
     audit(req, 'KRA_SUBMITTED', c.id, req.user.id, { kras: kras.length });
-    if (s.manager_id) await notify(T(req), s.manager_id, 'kra_submitted', `KRA sheet submitted by ${req.user.name}`, null, '/pms/team');
-    res.json({ ok: true });
+    const n = await notifySheetSubmitted(req, T(req), req.user.id, req.user.name, false);
+    // Surfaced rather than swallowed: a sheet that reaches nobody is the
+    // flow quietly stalling, and the employee is the only one who can see
+    // this response.
+    res.json({ ok: true, manager_notified: n.notified, ...(n.reason ? { warning: `Submitted, but no manager was notified — ${n.reason}. Ask HR to set your reporting manager.` } : {}) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// Who to notify that a sheet is waiting for approval.
+//
+// Reads the employee's CURRENT manager from core.employees rather than
+// pms.kra_sheets.manager_id. That column is a snapshot taken when the
+// sheet row was created, and GET /team/kra-sheets and the decide guard
+// both already ignore it for exactly that reason — it drifts when an
+// HRMS import resolves a manager_email late, or when someone changes
+// manager mid-cycle. Using the snapshot here meant the sheet correctly
+// appeared in the NEW manager's queue while the "submitted" notification
+// went to the OLD one, or to nobody when it was unset at creation. All
+// three now resolve the manager the same way.
+async function notifySheetSubmitted(req, tenantId, employeeId, byName, onBehalf) {
+  const emp = (await db.query(`SELECT manager_id, name FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+  if (!emp || !emp.manager_id) return { notified: false, reason: 'no manager set on the employee record' };
+  await notify(tenantId, emp.manager_id, 'kra_submitted',
+    onBehalf ? `KRA sheet submitted for ${emp.name} by ${byName}` : `KRA sheet submitted by ${byName}`,
+    onBehalf ? 'Submitted on their behalf by HR.' : null, '/pms/team');
+  return { notified: true };
+}
 
 // Manager: my team's sheets + approve/return.
 router.get('/team/kra-sheets', async (req, res) => {
@@ -521,7 +544,57 @@ router.post('/hr/kra-sheet/:employeeId/submit', async (req, res) => {
     if (!w.ok) return res.status(422).json({ error: `KRA weights must total 100 (currently ${w.total})` });
     await db.query(`UPDATE pms.kra_sheets SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [s.id]);
     audit(req, 'KRA_SUBMITTED_ON_BEHALF', c.id, req.params.employeeId, { kras: kras.length });
-    res.json({ ok: true });
+    // HR's on-behalf path is a deliberate backstop for employees who do not
+    // self-serve, so it has to feed the SAME approval flow. It previously
+    // did not notify anyone, so a sheet HR submitted sat in the manager's
+    // queue with nothing telling them it had arrived — the flow stalled
+    // precisely for the people who most needed HR to step in.
+    const n = await notifySheetSubmitted(req, T(req), req.params.employeeId, req.user.name, true);
+    res.json({ ok: true, manager_notified: n.notified, ...(n.reason ? { warning: `Submitted, but no manager was notified — ${n.reason}.` } : {}) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// HR: reopen an APPROVED sheet for edits.
+//
+// Closes a genuine dead end. Three separate places told users to "return
+// it for edits first" or "ask HR to return it" — the employee PUT, the HR
+// PUT and the bulk upload all refuse an approved sheet — but no route
+// could actually move one out of `approved`: the manager's decide route
+// only accepts status='submitted'. So a typo found after approval was
+// frozen for the rest of the cycle, and the advice the app itself gave
+// was impossible to follow.
+//
+// Lands on `returned`, not `draft`, so it re-enters the existing flow at
+// a state the employee's screen already understands and displays with the
+// reason attached — and so it must be re-submitted and re-approved rather
+// than quietly becoming live again.
+//
+// Requires the cycle to still allow KRA editing. Reopening into a phase
+// where nobody can edit would produce a sheet that is unlocked and
+// unusable at the same time; failing here with an instruction to roll the
+// cycle back is the honest outcome.
+router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const { comment } = req.body || {};
+    if (!comment || !String(comment).trim()) {
+      return res.status(422).json({ error: 'A reopen needs a comment — the employee must know what to change.' });
+    }
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    if (!pm.phaseAllows(c.phase, 'kra_edit')) {
+      return res.status(409).json({ error: `KRA editing is closed in the ${c.phase} phase — roll the cycle back to KRA Setting before reopening a sheet, or the employee will not be able to edit it.` });
+    }
+    const s = (await db.query(`SELECT * FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.params.employeeId])).rows[0];
+    if (!s) return res.status(404).json({ error: 'sheet not found' });
+    if (s.status !== 'approved') return res.status(409).json({ error: `sheet is ${s.status}, not approved — only an approved sheet needs reopening` });
+
+    await db.query(
+      `UPDATE pms.kra_sheets SET status='returned', manager_comment=$1, decided_at=now(), updated_at=now() WHERE id=$2`,
+      [String(comment).trim(), s.id]);
+    audit(req, 'KRA_REOPENED', c.id, s.employee_id, { comment: String(comment).trim(), from: 'approved' });
+    await notify(T(req), s.employee_id, 'kra_reopened', 'Your approved KRA sheet was reopened for edits', String(comment).trim(), '/pms');
+    res.json({ ok: true, status: 'returned' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -1,5 +1,5 @@
 import { useEffect, useState, Fragment } from 'react';
-import { Search, UserCog, Plus, Trash2, Send } from 'lucide-react';
+import { Search, UserCog, Plus, Trash2, Send, RotateCcw } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 
 const STATUS_COLOR = {
@@ -139,6 +139,42 @@ export default function KraOrgOverviewPage() {
   );
 }
 
+// Reopening an approved sheet. Requires a reason, which the employee sees
+// as the returned-sheet comment — the same rule the manager's own "return"
+// already enforces, for the same reason: nobody should have work sent back
+// without being told why.
+function ReopenApproved({ employeeId, onDone }) {
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const reopen = async () => {
+    setErr(null);
+    if (!comment.trim()) { setErr('Give a reason — the employee sees it as the return comment.'); return; }
+    setBusy(true);
+    try { await api(`/pms/hr/kra-sheet/${employeeId}/reopen`, { method: 'POST', body: JSON.stringify({ comment }) }); onDone(); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="bg-navy-50 rounded-lg p-3 space-y-2">
+      <p className="text-xs text-navy-500">
+        This sheet is <b>approved</b> and locked. Reopening returns it to the employee for edits — they will need to
+        resubmit, and their manager will need to approve it again.
+      </p>
+      <textarea className="inp" rows={2} placeholder="Why is this being reopened? The employee will see this."
+        value={comment} onChange={(e) => setComment(e.target.value)} />
+      <div className="flex items-center gap-2">
+        <button className="btn-sec" disabled={busy} onClick={reopen}>
+          <RotateCcw size={12} className="inline mr-1" />{busy ? 'Reopening…' : 'Reopen for edits'}
+        </button>
+        {err && <span className="text-xs text-rose-600">{err}</span>}
+      </div>
+    </div>
+  );
+}
+
 function OnBehalfEditor({ employeeId, onDone }) {
   const [sheet, setSheet] = useState(null);
   const [kras, setKras] = useState([]);
@@ -164,7 +200,10 @@ function OnBehalfEditor({ employeeId, onDone }) {
   };
 
   if (!sheet) return <p className="text-xs text-navy-400">Loading…</p>;
-  if (sheet.status === 'approved') return <p className="text-xs text-navy-400">Sheet is approved — return it before editing on behalf.</p>;
+  // An approved sheet used to end here, telling HR to "return it" with
+  // nothing anywhere in the app able to do that. The reopen control is
+  // that missing action.
+  if (sheet.status === 'approved') return <ReopenApproved employeeId={employeeId} onDone={onDone} />;
 
   // Fixed: same root cause as the earlier "7 Organizational Parameters"
   // bug — a flex row where the title field (flex-1) shared space with a

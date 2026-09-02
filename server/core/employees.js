@@ -210,6 +210,36 @@ function detectFormat(file) {
 }
 
 // ---------- Load (transactional, two-pass for manager links) ---------------
+// Who in this file manages someone else, and therefore needs a role that
+// can actually approve their work.
+//
+// THE GAP THIS CLOSES: the importer establishes the ORG CHART
+// (manager_email -> manager_id) but has never written core.user_roles,
+// and principalByEmail defaults a missing row to 'employee'. Since
+// pms_team_eval comes from the manager/hod/hr/admin bundles, every
+// manager imported from an HRMS could RECEIVE their reports' KRA
+// submissions and then be refused at the approval step with
+// "Requires 'pms_team_eval'" — the flow dead-ended on exactly the person
+// it needed. Found live from a manager's own login.
+function managersInFile(rows) {
+  const emails = new Set(rows.map((r) => r.email));
+  const managing = new Set();
+  for (const r of rows) if (r.manager_email && emails.has(r.manager_email)) managing.add(r.manager_email);
+  return [...managing];
+}
+
+// Which of those would actually be granted — i.e. have no explicit role
+// yet. Read-only, so the dry run can show HR the same list the commit
+// will act on rather than surprising them after the fact.
+async function pendingManagerRoleGrants(tenantId, rows) {
+  const candidates = managersInFile(rows);
+  if (!candidates.length) return [];
+  const existing = (await db.query(
+    `SELECT LOWER(email) AS email FROM core.user_roles WHERE tenant_id=$1 AND LOWER(email) = ANY($2::text[])`,
+    [tenantId, candidates])).rows.map((r) => r.email);
+  return candidates.filter((e) => !existing.includes(e));
+}
+
 async function loadEmployees(tenantId, rows) {
   const client = await db.getClient();
   try {
@@ -263,8 +293,23 @@ async function loadEmployees(tenantId, rows) {
             AND dp.manager_id IS DISTINCT FROM e.manager_id`,
         [tenantId, r.email]);
     }
+    // Grant the manager role to anyone this file shows managing someone,
+    // who has no explicit role yet.
+    //
+    // ON CONFLICT DO NOTHING is load-bearing, not defensive: it means an
+    // existing role is never touched. Without it a re-import would
+    // DOWNGRADE an HR or admin who also happens to manage people, quietly
+    // stripping permissions on a routine sync. Upgrades only, and only
+    // into the gap.
+    const grants = [];
+    for (const email of managersInFile(rows)) {
+      const r = await client.query(
+        `INSERT INTO core.user_roles (tenant_id, email, role) VALUES ($1,$2,'manager')
+         ON CONFLICT DO NOTHING RETURNING email`, [tenantId, email]);
+      if (r.rowCount) grants.push(email);
+    }
     await client.query('COMMIT');
-    return { loaded: rows.length };
+    return { loaded: rows.length, manager_roles_granted: grants };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     throw e;
@@ -614,11 +659,28 @@ router.post('/import', (req, res, next) => upload.single('file')(req, res, (err)
     if (report.fatal) return res.status(400).json({ error: report.fatal });
     const commit = req.query.commit === '1';
     if (!report.ok) return res.status(422).json({ ok: false, committed: false, ...report });
-    if (!commit) return res.json({ ok: true, committed: false, note: 'Dry run — pass ?commit=1 to load.', ...report });
+    if (!commit) {
+      // Show the role grants the commit WOULD make. HR should see who is
+      // about to gain approval rights before it happens, not discover it
+      // afterwards — same reasoning as reporting per-row errors here.
+      const willGrant = await pendingManagerRoleGrants(req.user.tenant_id, report.rows);
+      return res.json({ ok: true, committed: false, note: 'Dry run — pass ?commit=1 to load.',
+        manager_roles_to_grant: willGrant, ...report });
+    }
     const loaded = await loadEmployees(req.user.tenant_id, report.rows);
     await db.query(`INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details)
                     VALUES ($1,$2,'EMPLOYEE_CSV_IMPORT','employees',$3)`,
-      [req.user.tenant_id, req.user.email, JSON.stringify(report.summary)]);
+      [req.user.tenant_id, req.user.email,
+       JSON.stringify({ ...report.summary, manager_roles_granted: loaded.manager_roles_granted })]);
+    // Granting approval rights is a permission change, so it is audited in
+    // its own right rather than only as a line inside the import summary —
+    // "why can this person approve" needs a queryable answer.
+    for (const email of loaded.manager_roles_granted || []) {
+      await db.query(`INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+                      VALUES ($1,$2,'ROLE_GRANTED','user_roles',$3,$4)`,
+        [req.user.tenant_id, req.user.email, email,
+         JSON.stringify({ role: 'manager', reason: 'manages someone in the imported file; had no explicit role' })]);
+    }
     res.json({ ok: true, committed: true, ...loaded, warnings: report.warnings, summary: report.summary });
   } catch (e) { logger.error('employee import', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
