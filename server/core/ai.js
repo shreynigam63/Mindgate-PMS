@@ -62,6 +62,13 @@ async function ensureTable() {
   )`);
 }
 
+// Token allowance added on top of each route's own answer budget, to
+// cover reasoning tokens (see the max_tokens comment in narrate()).
+// Sized generously on purpose: unused allowance costs nothing — only
+// tokens actually generated are billed — whereas too little silently
+// truncates the JSON and produces an unusable draft.
+const REASONING_HEADROOM = 8000;
+
 // The one entry point. Returns {draft, id} or throws with a clear message.
 async function narrate({ tenantId, kind, ref, system, input, requestedBy, maxTokens = 1500 }) {
   if (!aiEnabled()) {
@@ -76,7 +83,30 @@ async function narrate({ tenantId, kind, ref, system, input, requestedBy, maxTok
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: MODEL, max_tokens: maxTokens, system,
+      // max_tokens = the caller's answer budget PLUS headroom for
+      // reasoning tokens.
+      //
+      // Why the headroom exists: each route above passes a maxTokens
+      // sized for the LENGTH OF THE JSON IT WANTS BACK (400 for a short
+      // autotag, 1600 for engagement themes). That sizing was correct
+      // for a model that returns only an answer. On current models,
+      // reasoning is on by default and its tokens are billed and
+      // counted against this SAME max_tokens ceiling — so the answer
+      // gets whatever is left, and a route asking for 400 could be cut
+      // off before it emits any JSON at all.
+      //
+      // Found by exercising POST /agentic/cycle-health against a live
+      // deploy: the model returned well-formed JSON that stopped
+      // mid-string ("HR: collect 1 outstanding self), parseAiJson()
+      // failed on the truncated text, and the response fell back to
+      // {_unparsed: "..."} — no crash, no error, just an unusable
+      // draft. That fallback is what made this quiet rather than loud.
+      //
+      // Adding headroom instead of inflating each route's number keeps
+      // the per-route intent readable as "how long should the answer
+      // be", which is the only thing those call sites can sensibly
+      // reason about.
+      model: MODEL, max_tokens: maxTokens + REASONING_HEADROOM, system,
       messages: [{ role: 'user', content: `Deterministic input (do not alter any number in it):\n${JSON.stringify(input, null, 2)}\n\nRespond ONLY with the JSON your instructions describe.` }],
     }),
   });
@@ -87,8 +117,26 @@ async function narrate({ tenantId, kind, ref, system, input, requestedBy, maxTok
   }
   const data = await res.json();
   const text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+  // A reply cut off at the token ceiling is reported, not just absorbed.
+  // The _unparsed fallback below is a genuinely useful backstop for a
+  // model that answers in prose, but it swallowed truncation just as
+  // quietly — an operator saw only an unusable draft with nothing in the
+  // logs pointing at the cause. This distinguishes the two, per this
+  // repo's no-silent-failure rule: truncation is a misconfiguration
+  // (max_tokens too low for the model's reasoning), not model prose.
+  if (data.stop_reason === 'max_tokens') {
+    logger.warn('ai reply hit the token ceiling — draft may be truncated', {
+      kind, model: MODEL, max_tokens: maxTokens + REASONING_HEADROOM,
+      answer_budget: maxTokens, output_tokens: data.usage && data.usage.output_tokens,
+    });
+  }
   let draft = parseAiJson(text);
-  if (!draft) draft = { _unparsed: text.slice(0, 2000), note: 'Model reply was not valid JSON; raw text preserved.' };
+  if (!draft) {
+    draft = { _unparsed: text.slice(0, 2000), note: 'Model reply was not valid JSON; raw text preserved.' };
+    logger.warn('ai reply was not valid JSON', {
+      kind, model: MODEL, stop_reason: data.stop_reason, chars: text.length,
+    });
+  }
   draft = stripRatingSuggestions(draft);
   draft._draft = true; // every consumer labels this as a draft
 
