@@ -19,6 +19,7 @@
 const express = require('express');
 const db = require('./db');
 const { authenticate } = require('./auth');
+const { guardUuidParams } = require('./http');
 const { apiPermissionParity, hasPermission } = require('./permissions');
 
 async function buildExport(tenantId, employeeId) {
@@ -61,6 +62,9 @@ async function buildExport(tenantId, employeeId) {
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
+// Malformed uuid path params are rejected with 400 here, before any
+// handler can pass one into a query (see core/http.js).
+guardUuidParams(router);
 
 router.get('/export', async (req, res) => {
   try {

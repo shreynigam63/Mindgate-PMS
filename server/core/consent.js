@@ -23,6 +23,7 @@
 const express = require('express');
 const db = require('./db');
 const { authenticate } = require('./auth');
+const { guardUuidParams } = require('./http');
 const { apiPermissionParity, hasPermission } = require('./permissions');
 
 const DEFAULT_TYPE = 'meeting_ai_insights';
@@ -47,6 +48,9 @@ async function requireConsent(tenantId, employeeId, consentType = DEFAULT_TYPE) 
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
+// Malformed uuid path params are rejected with 400 here, before any
+// handler can pass one into a query (see core/http.js).
+guardUuidParams(router);
 const T = (req) => req.user.tenant_id;
 
 // GET /consent/me — the employee's own consent status (all types on record).

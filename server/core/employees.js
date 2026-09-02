@@ -25,6 +25,7 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const logger = require('./logger');
 const { authenticate } = require('./auth');
+const { guardUuidParams } = require('./http');
 const { apiPermissionParity, hasPermission } = require('./permissions');
 
 // ---------- CSV parsing (self-contained; handles quotes and commas) --------
@@ -282,6 +283,9 @@ const upload = multer({
 });
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
+// Malformed uuid path params are rejected with 400 here, before any
+// handler can pass one into a query (see core/http.js).
+guardUuidParams(router);
 
 // GET /employees/import-template.csv — download link for the bulk import
 // form. Found missing during QA (no way to see the expected columns

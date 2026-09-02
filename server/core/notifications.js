@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('./db');
 const { authenticate } = require('./auth');
+const { guardUuidParams } = require('./http');
 
 async function notify(tenantId, employeeId, kind, title, body, link) {
   await db.query(`INSERT INTO core.notifications (tenant_id, employee_id, kind, title, body, link)
@@ -10,6 +11,9 @@ async function notify(tenantId, employeeId, kind, title, body, link) {
 
 const router = express.Router();
 router.use(authenticate);
+// Malformed uuid path params are rejected with 400 here, before any
+// handler can pass one into a query (see core/http.js).
+guardUuidParams(router);
 router.get('/', async (req, res) => {
   const r = await db.query(
     `SELECT id, kind, title, body, link, read_at, created_at FROM core.notifications
