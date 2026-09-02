@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "main": "index.js",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node index.js",
     "migrate": "node core/migrate.js",
