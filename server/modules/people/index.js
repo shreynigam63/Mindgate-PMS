@@ -532,4 +532,19 @@ router.get('/career/team', async (req, res) => {
 // is what keeps that read explicit — and it guarantees the AI can only
 // suggest roles the career-path form will actually accept, since both
 // sides now resolve eligibility through this one function.
-module.exports = { router, eligibleTransitionsFor, careerPathDiagnostics };
+// One employee's own Aspiring Career row, for other modules to read.
+//
+// Exported rather than left to a cross-schema SELECT elsewhere: the house
+// rule is that a module reaches another module through its interface, not
+// into its tables. The agentic module needs this to fold career progress
+// into a review assist, and going through here means a change to how a
+// career path is stored is one edit, not a hunt across the repo.
+async function careerPathFor(tenantId, employeeId) {
+  const r = await db.query(
+    `SELECT target_role, target_timeline, plan, updated_at
+       FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`,
+    [tenantId, employeeId]);
+  return r.rows[0] || null;
+}
+
+module.exports = { router, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor };

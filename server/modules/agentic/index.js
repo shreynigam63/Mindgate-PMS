@@ -13,7 +13,7 @@ const ai = require('../../core/ai');
 // house rule that modules never import each other's internals. This is
 // also what guarantees career suggestions stay inside the set the
 // career-path form accepts — both resolve eligibility through it.
-const { eligibleTransitionsFor, careerPathDiagnostics } = require('../people');
+const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor } = require('../people');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -810,6 +810,179 @@ Respond ONLY with JSON:
  "stronger_example":"a short rewrite showing the shape of a well-evidenced justification, using ONLY facts already present in the input; where a fact is needed but absent, mark it like [add the actual figure]"}`,
     });
     res.json({ ok: true, ...out, note: 'Feedback on the write-up only — the rating is yours to decide.' });
+  } catch (e) { fail(res, e); }
+});
+
+
+// ---------------------------------------------------------------------------
+// 14) Review assist — for the EMPLOYEE, on BOTH the mid-year review and the
+// annual self-appraisal.
+//
+// Requested in these words: read the one-on-one connects, what was and was
+// not achieved on the development plan, and any progress marked in
+// Aspiring Career; then give achievements, blockers and gaps against every
+// KRA, so the employee starts from their own evidence rather than a blank
+// box.
+//
+// HOW THIS DIFFERS FROM midyear-draft, which already existed: that one
+// writes the NARRATIVE, from KRAs and connects. This one assembles the
+// EVIDENCE, from four sources, and lays it out per KRA. They answer
+// different questions — "what do I say" versus "what actually happened" —
+// and an employee who has just been handed the second writes a better
+// version of the first.
+//
+// SELF-SERVICE, and only about yourself. There is no employee_id
+// parameter: it reads req.user.id and nothing else. This pulls together
+// someone's connects, their development plan and their career aspirations
+// in one response, which is a fuller picture of a person than any single
+// screen shows — so it is deliberately not addressable at anyone else,
+// not even by an admin.
+const REVIEW_ASSIST_STAGES = {
+  midyear: {
+    label: 'mid-year review',
+    period: 'the first half of the cycle so far',
+    kind: 'midyear_assist',
+  },
+  annual: {
+    label: 'annual self-appraisal',
+    period: 'the full cycle',
+    kind: 'annual_assist',
+  },
+};
+
+router.post('/review-assist', async (req, res) => {
+  try {
+    const stage = (req.body || {}).stage;
+    const cfg = REVIEW_ASSIST_STAGES[stage];
+    if (!cfg) return res.status(400).json({ error: "stage must be 'midyear' or 'annual'" });
+
+    const c = stage === 'midyear' ? await activeCycleForMidyear(T(req)) : await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const emp = (await db.query(
+      `SELECT id, name, department, designation FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.user.id, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee record not found' });
+
+    const sheet = (await db.query(
+      `SELECT id FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, req.user.id])).rows[0];
+    const kras = sheet ? (await db.query(
+      `SELECT title, weight, measures, category FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`,
+      [sheet.id])).rows : [];
+    // Without KRAs there is nothing to organise the evidence UNDER, and a
+    // per-KRA answer with no KRAs would be the model inventing headings.
+    if (!kras.length) {
+      return res.status(409).json({ error: 'No KRAs are mapped to you for this cycle yet — there is nothing to assess your work against.' });
+    }
+
+    // SOURCE 1 — the one-on-one connects held this cycle. Both parties'
+    // structured fields, because the whole point is evidence the employee
+    // may have forgotten they already recorded.
+    const connects = (await db.query(
+      `SELECT held_at, topic, COALESCE(discussion_notes, notes) AS discussion,
+              achievements, blockers, feedback
+         FROM pms.connects
+        WHERE tenant_id=$1 AND employee_id=$2 AND held_at >= COALESCE($3, held_at)
+        ORDER BY held_at DESC LIMIT 12`,
+      [T(req), req.user.id, c.opens_at || null])).rows;
+
+    // SOURCE 2 — "Target achievements for the year" (the development
+    // plan), WITH progress, so achieved and not-achieved are separable.
+    const plan = (await db.query(
+      `SELECT id, status FROM pms.development_plans WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, req.user.id])).rows[0];
+    const goals = plan ? (await db.query(
+      `SELECT title, description, target_date, progress_pct
+         FROM pms.development_goals WHERE plan_id=$1 ORDER BY sort_order`,
+      [plan.id])).rows : [];
+
+    // SOURCE 3 — Aspiring Career, through the people module's exported
+    // reader rather than a reach into its table (same house rule as the
+    // career-suggest endpoint above). Role names and timelines come from
+    // HR's configured matrix, not from the model.
+    const career = await careerPathFor(T(req), req.user.id);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const input = {
+      employee: { name: emp.name, department: emp.department, designation: emp.designation },
+      cycle: { name: c.name, phase: c.phase, opened: c.opens_at },
+      stage: cfg.label,
+      period_covered: cfg.period,
+      today,
+      kras: kras.map((k) => ({ title: k.title, category: k.category, weight: +k.weight, measures: k.measures })),
+      one_on_one_connects: connects,
+      target_achievements_for_the_year: goals.map((g) => {
+        // pg hands back a DATE column as a Date object, and comparing one
+        // to an ISO string coerces it to "Sat May 31 2025 ..." — which
+        // then compares lexically and calls every overdue goal on track.
+        // Normalise to yyyy-mm-dd first and compare like with like.
+        const targetDate = g.target_date ? new Date(g.target_date).toISOString().slice(0, 10) : null;
+        return {
+          title: g.title, description: g.description, target_date: targetDate,
+          progress_pct: g.progress_pct,
+          // Stated rather than left for the model to infer, so "not
+          // achieved" is a fact about the data and not a judgement it made
+          // up from a percentage and a date it could read either way.
+          state: g.progress_pct >= 100 ? 'achieved'
+            : (targetDate && targetDate < today ? 'overdue and incomplete' : 'in progress'),
+        };
+      }),
+      development_plan_status: plan ? plan.status : 'not started',
+      aspiring_career: career,
+    };
+
+    const out = await ai.narrate({
+      tenantId: T(req), kind: cfg.kind, ref: { cycle_id: c.id, employee_id: req.user.id },
+      requestedBy: req.user.email, input, maxTokens: 2000,
+      system: `You assemble the EVIDENCE an employee already has, so they can write their
+${cfg.label} from it instead of from memory. You are not writing the review — you
+are laying out, KRA by KRA, what the record shows.
+
+Your sources, all in the input, and nothing else:
+- one_on_one_connects: what was discussed, achieved, blocked and fed back
+- target_achievements_for_the_year: their development goals and each one's
+  state, which is given to you — do not recompute or dispute it
+- aspiring_career: the role they are working towards, if they have set one
+- kras: what they are accountable for, with weights
+
+For each KRA give:
+- achievements: what the record actually shows they did against it
+- blockers: obstacles named in the record, not obstacles you infer
+- gaps: where the record says little or nothing about a KRA they carry.
+  A KRA with no evidence is the most useful thing you can tell them, so
+  never pad it with generic filler to avoid an empty-looking section.
+
+Ground every bullet in a source. If a point comes from a connect, a goal
+or the career plan, say so in a few words ("from the 12 Aug connect",
+"goal 60% complete"). Invent no achievement, no date and no number.
+Never suggest, imply or hint at a rating — this is preparation, not
+assessment.
+
+${KRA_BULLET_RULES}
+
+Respond ONLY with JSON:
+{"by_kra":[{"kra":"exact KRA title","achievements":["..."],"blockers":["..."],"gaps":["..."]}],
+ "cross_cutting":{"achievements":["..."],"blockers":["..."],"gaps":["..."]},
+ "career_progress":["what the record shows towards their aspired role, or empty"],
+ "sources_missing":["a source that was empty and would have helped"]}`,
+    });
+
+    const d = out.draft || {};
+    res.json({
+      ok: true, ...out,
+      // What the model was actually given, so the employee can see the
+      // answer is thin because the record is thin — not because the
+      // feature is broken.
+      evidence_counts: {
+        kras: kras.length,
+        connects: connects.length,
+        goals: goals.length,
+        goals_achieved: goals.filter((g) => g.progress_pct >= 100).length,
+        aspiring_career_set: !!career,
+      },
+      draft: d,
+      note: 'Evidence from your own records — edit and add to it before you submit.',
+    });
   } catch (e) { fail(res, e); }
 });
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Send, CheckCircle2, Clock, ChevronDown, ChevronRight } from 'lucide-react';
 import { api, phaseLabel, phaseColor, DraftBadge, KraBullets } from '../utils/api';
+import ReviewAssist from './ReviewAssist';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -274,6 +275,8 @@ function MyMidYearCard() {
           Mid-Year Review opens once HR moves the cycle from Growth Planning to Mid-Year Review (currently: {phaseLabel(data.cycle.phase)}).
         </p>
       )}
+
+      {editable && <ReviewAssist stage="midyear" label="mid-year review" />}
 
       {editable && (
         <div className="bg-gradient-to-r from-fuchsia-50 to-rose-50 border border-fuchsia-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
