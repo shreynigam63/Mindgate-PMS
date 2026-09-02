@@ -119,6 +119,16 @@ function GoalList({ goals: initial, editable, onSaved }) {
 
   const saveAll = async () => {
     setErr(null);
+    // Checked here as well as on the server so the employee is told which
+    // goals need a date without a round trip. The server check is the one
+    // that actually enforces it — this is only to answer faster.
+    const titled = goals.filter(g => (g.title || '').trim());
+    const undated = titled.filter(g => !(g.target_date || '').trim());
+    if (undated.length) {
+      setErr(`Add a target date to ${undated.length === 1 ? 'this goal' : `these ${undated.length} goals`} before saving: ${undated.map(g => g.title.trim()).join(', ')}`);
+      return;
+    }
+    if (!titled.length) { setErr('Add at least one goal with a title.'); return; }
     try { await api('/pms/my/development-plan/goals', { method: 'PUT', body: JSON.stringify({ goals }) }); onSaved(); }
     catch (e) { setErr(e.message); }
   };
@@ -133,7 +143,16 @@ function GoalList({ goals: initial, editable, onSaved }) {
         {!goals.length && <p className="text-xs text-navy-400">No development goals recorded.</p>}
         {goals.map(g => (
           <div key={g.id} className="text-xs bg-navy-50 rounded-lg p-2 space-y-1">
-            <p className="font-semibold">{g.title}</p>
+            {/* The target date was always saved and returned; this view just
+                never drew it, while the manager's view of the same goals did
+                — so the person who set the date was the one who could not
+                see it. Same "Target: <date>" format as that view. */}
+            <div className="flex items-start justify-between gap-2">
+              <p className="font-semibold flex-1">{g.title}</p>
+              {g.target_date
+                ? <span className="text-navy-400 shrink-0">Target: {new Date(g.target_date).toLocaleDateString()}</span>
+                : <span className="text-amber-600 shrink-0">No target date</span>}
+            </div>
             {g.description && <p className="text-navy-500">{g.description}</p>}
             <ProgressBar value={g.progress_pct} onChange={(v) => setProgress(g.id, v)} />
           </div>
@@ -142,18 +161,26 @@ function GoalList({ goals: initial, editable, onSaved }) {
     );
   }
 
+  // The suggestion's timeline is prose the model chose ("by end of Q3",
+  // "within 6 months"), not a date. It is carried into the description so
+  // it is not lost, and deliberately NOT parsed into target_date: turning
+  // vague wording into a hard deadline would invent precision the model
+  // never gave and silently commit the employee to a date nobody picked.
+  // The date field is left empty and required, so it is a conscious choice.
   const addSuggested = (g) => setGoals((gs) => [...gs, {
     title: g.title || '',
-    // The reasoning and the measure are what make a goal reviewable later,
-    // so both are carried into the description rather than dropped.
-    description: [g.why, g.how_to_measure ? `Evidence of progress: ${g.how_to_measure}` : null].filter(Boolean).join('\n\n'),
+    description: [
+      g.why,
+      g.how_to_measure ? `Evidence of progress: ${g.how_to_measure}` : null,
+      g.suggested_timeline ? `Suggested timeline: ${g.suggested_timeline} — set a target date above.` : null,
+    ].filter(Boolean).join('\n\n'),
     target_date: '', progress_pct: 0,
   }]);
 
   return (
     <div className="space-y-3">
       <DevPlanAiPanel onAdd={addSuggested} />
-      <p className="text-[11px] text-navy-400">Added suggestions are unsaved until you press <b>Save goals</b>.</p>
+      <p className="text-[11px] text-navy-400">Added suggestions arrive as editable goals — set a <b>target date</b> on each, then press <b>Save goals</b>, then submit for approval.</p>
       {goals.map((g, i) => (
         <div key={g.id || i} className="border border-navy-100 rounded-xl p-3.5 space-y-3 bg-white">
           <div className="flex items-start gap-2">
@@ -165,8 +192,10 @@ function GoalList({ goals: initial, editable, onSaved }) {
             <button className="btn-sec !p-1.5 mt-6 shrink-0" onClick={() => remove(i)} title="Remove goal"><Trash2 size={13} /></button>
           </div>
           <div className="max-w-[200px]">
-            <label className="lbl">Target date</label>
-            <input className="inp w-full" type="date" value={g.target_date || ''} onChange={e => update(i, 'target_date', e.target.value)} />
+            <label className="lbl">Target date <span className="text-rose-600">*</span></label>
+            <input className={`inp w-full ${!(g.target_date || '') ? '!border-rose-300 !bg-rose-50/50' : ''}`}
+              type="date" required value={g.target_date || ''} onChange={e => update(i, 'target_date', e.target.value)} />
+            {!(g.target_date || '') && <p className="text-[11px] text-rose-600 mt-1">Required before this goal can be saved.</p>}
           </div>
           <div>
             <label className="lbl">Description (optional)</label>

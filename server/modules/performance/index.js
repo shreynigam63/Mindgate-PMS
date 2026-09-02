@@ -776,6 +776,32 @@ router.get('/my/development-plan', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// A development goal without a target date is an intention, not a plan —
+// nothing to review against and nothing to be late for. Required from the
+// moment a goal is SAVED, so a plan cannot reach `submitted` carrying
+// dateless goals in the first place.
+//
+// Accepts the yyyy-mm-dd an <input type="date"> produces and checks it is
+// a real calendar date, so 2026-02-30 is rejected here rather than by
+// Postgres as a 500. No future-date rule: backfilling a goal against a
+// date already passed is legitimate, and inventing that constraint would
+// block it for no stated reason.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+function goalsMissingTargetDate(goals) {
+  const bad = [];
+  goals.forEach((g, i) => {
+    const title = (g.title && String(g.title).trim()) || `Goal ${i + 1}`;
+    if (!g.title || !String(g.title).trim()) return; // untitled rows are dropped anyway
+    const d = g.target_date ? String(g.target_date).trim() : '';
+    if (!d) { bad.push({ title, reason: 'no target date' }); return; }
+    if (!ISO_DATE.test(d) || Number.isNaN(new Date(d + 'T00:00:00Z').getTime())
+        || new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) !== d) {
+      bad.push({ title, reason: `"${d}" is not a valid date` });
+    }
+  });
+  return bad;
+}
+
 router.put('/my/development-plan/goals', async (req, res) => {
   try {
     const c = await activeCycle(T(req));
@@ -784,6 +810,16 @@ router.put('/my/development-plan/goals', async (req, res) => {
     if (!p) return res.status(404).json({ error: 'plan not found — GET /my/development-plan first' });
     if (p.status === 'approved') return res.status(409).json({ error: 'plan is approved — ask HR to return it for edits' });
     const goals = Array.isArray(req.body && req.body.goals) ? req.body.goals : [];
+    // Per-goal reasons rather than one flat "invalid" — the same
+    // reporting shape the CSV importer uses, so the employee is told
+    // exactly which goals to fix instead of hunting for the bad one.
+    const missing = goalsMissingTargetDate(goals);
+    if (missing.length) {
+      return res.status(422).json({
+        error: `Every goal needs a target date before it can be saved — ${missing.length} ${missing.length === 1 ? 'is' : 'are'} missing one.`,
+        goals: missing,
+      });
+    }
     const client = await db.getClient();
     try {
       await client.query('BEGIN');
@@ -810,12 +846,30 @@ router.post('/my/development-plan/submit', async (req, res) => {
     if (!c || !pm.phaseAllows(c.phase, 'devplan_submit')) return res.status(409).json({ error: 'Development plan submission is not open' });
     const p = (await db.query(`SELECT * FROM pms.development_plans WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
     if (!p) return res.status(404).json({ error: 'plan not found' });
-    const goals = (await db.query(`SELECT id FROM pms.development_goals WHERE plan_id=$1`, [p.id])).rows;
+    const goals = (await db.query(`SELECT id, title, target_date FROM pms.development_goals WHERE plan_id=$1`, [p.id])).rows;
     if (!goals.length) return res.status(422).json({ error: 'Add at least one development goal before submitting' });
+    // Re-checked here, not just on save: goals stored before the target
+    // date became required still exist, and they must be caught rather
+    // than sailing through to a manager for approval. Re-saving the plan
+    // with dates filled in is the fix, which the message says.
+    const undated = goals.filter((g) => !g.target_date).map((g) => g.title);
+    if (undated.length) {
+      return res.status(422).json({
+        error: `Every goal needs a target date before submitting — ${undated.length} ${undated.length === 1 ? 'has' : 'have'} none. Add the dates and save the plan again.`,
+        goals: undated,
+      });
+    }
     await db.query(`UPDATE pms.development_plans SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [p.id]);
     audit(req, 'DEVPLAN_SUBMITTED', c.id, req.user.id, { goals: goals.length });
-    if (p.manager_id) await notify(T(req), p.manager_id, 'devplan_submitted', `Development plan submitted by ${req.user.name}`, null, '/pms/team');
-    res.json({ ok: true });
+    // Live manager, not development_plans.manager_id — that column is the
+    // same creation-time snapshot the KRA sheet had, and it drifts the same
+    // way when an HRMS import resolves a manager late or someone changes
+    // manager mid-cycle. Fixed here for the same reason it was fixed there.
+    const empRow = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
+    const mgrId = empRow && empRow.manager_id;
+    if (mgrId) await notify(T(req), mgrId, 'devplan_submitted', `Development plan submitted by ${req.user.name}`, null, '/pms/team');
+    res.json({ ok: true, manager_notified: !!mgrId,
+      ...(mgrId ? {} : { warning: 'Submitted, but no manager was notified — no reporting manager is set on your record.' }) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

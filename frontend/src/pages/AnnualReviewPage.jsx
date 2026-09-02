@@ -39,7 +39,10 @@ export default function AnnualReviewPage() {
             <p className="text-xs mb-2">Status: <span className="font-semibold">{data.development_plan.plan.status}</span> · Average progress: <span className="font-semibold">{data.development_plan.avg_progress}%</span></p>
             {data.development_plan.goals.map((g, i) => (
               <div key={i} className="text-xs py-1">
-                <p className="font-semibold">{g.title}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-semibold flex-1">{g.title}</p>
+                  {g.target_date && <span className="text-navy-400 shrink-0">Target: {new Date(g.target_date).toLocaleDateString()}</span>}
+                </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   <div className="flex-1 h-1.5 bg-navy-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${g.progress_pct}%` }} /></div>
                   <span className="text-navy-400 w-8 text-right">{g.progress_pct}%</span>
