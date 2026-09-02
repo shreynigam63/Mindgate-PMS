@@ -1,16 +1,21 @@
 # Agentic PMS — per-client Render blueprint (dev/reference; client prod may
 # be their own cloud per deploy-and-transfer). One instance = one tenant.
 #
-# LOWEST-COST TESTING CONFIG. api + frontend are on Render's free plan.
-# The database is NOT — Render allows only ONE free-tier Postgres per
-# workspace, and this workspace ("Nilesh's workspace") already has one in
-# use elsewhere, so the free plan here fails outright ("cannot have more
-# than one active free tier database"). The database instead uses
-# basic-256mb, Render's cheapest PAID Postgres tier (~$6-7/month) and its
-# own documented default — this is the lowest possible cost for a working
-# deployment given that constraint, not a compromise chosen for any other
-# reason. Total: ~$6-7/month instead of the original ~$17.50/month
-# (api + frontend now cost nothing).
+# ZERO-COST TESTING CONFIG. All three resources are on Render's free
+# plan, so this deployment currently costs nothing to run.
+#
+# The database was previously pinned to the paid basic-256mb tier for one
+# reason only: Render allows just ONE free-tier Postgres per workspace,
+# and the workspace this Blueprint was first written against had already
+# spent its slot elsewhere, so `plan: free` failed outright with "cannot
+# have more than one active free tier database". That constraint does not
+# apply in the workspace this now deploys to — its free slot is
+# available — so the database is back on `free` and the paid tier is no
+# longer being bought to work around a limit that isn't there.
+#
+# If a sync ever fails with that "more than one active free tier
+# database" error again, the slot is occupied: either free the existing
+# free database or set this back to `basic-256mb` (~$6-7/month).
 #
 # Two real, known limitations worth knowing before UAT — not bugs in this
 # app, just what these specific plans mean:
@@ -23,14 +28,23 @@
 #      not with guaranteed daily precision. To test that feature on demand
 #      regardless of sleep state: POST /pms/connects/check-reminders
 #      (HR-only) runs the same check immediately.
-#   2. The paid basic-256mb database does NOT expire like the free tier
-#      would have — this is a real, durable database, so test data
-#      persists normally. (If cost ever needs to drop further, the only
-#      way to get Postgres to $0 here is freeing up or deleting whatever
-#      already occupies this workspace's one free-database slot.)
-# Before going to real production: remove `plan: free` from the two
-# services below (or set an explicit paid plan) so the app is always-on —
-# no code changes needed, this is purely an infrastructure-tier choice.
+#   2. FREE POSTGRES IS NOT DURABLE. Render removes free databases at the
+#      end of their trial window, and the free tier takes no automatic
+#      backups — so everything in it (the tenant, every employee, every
+#      cycle and rating, and the evidence/closure-letter file bytes that
+#      migration 013 stores in Postgres rather than on disk) is lost when
+#      that window closes, with no restore path. It is a fine place to
+#      run UAT on disposable data. It is NOT a place to accumulate
+#      anything you would mind re-entering, and it must not be where real
+#      employee records live. Check the current expiry window and storage
+#      cap on Render's pricing page before planning UAT around it, and
+#      move to a paid tier (which does not expire and is backed up)
+#      before any real data goes in.
+#
+# Before going to real production: move all three resources off `free`
+# (set an explicit paid plan) so the app is always-on and the database is
+# durable and backed up. No code changes needed — this is purely an
+# infrastructure-tier choice.
 services:
   - type: web
     name: agentic-pms-api
@@ -121,4 +135,4 @@ services:
         value: agentic-pms-api.onrender.com
 databases:
   - name: agentic-pms-db
-    plan: basic-256mb
+    plan: free
