@@ -9,6 +9,7 @@ const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
 const { apiPermissionParity, hasPermission } = require('../../core/permissions');
 const ai = require('../../core/ai');
+const { requireConsent } = require('../../core/consent');
 // Cross-module read via the other module's EXPORTED interface, per the
 // house rule that modules never import each other's internals. This is
 // also what guarantees career suggestions stay inside the set the
@@ -982,6 +983,109 @@ Respond ONLY with JSON:
       },
       draft: d,
       note: 'Evidence from your own records — edit and add to it before you submit.',
+    });
+  } catch (e) { fail(res, e); }
+});
+
+
+// ---------------------------------------------------------------------------
+// 15) Meeting summary, KRA-wise — the half of the Google Meet request that
+// can be built without connecting Google Meet.
+//
+// Requested: once PMS is integrated with Meet, AI should listen to the
+// whole conversation and afterwards give the employee and manager a
+// KRA-wise summary, so nobody writes it up from scratch. That is two
+// pieces: CAPTURING the conversation (needs Meet, deliberately not built —
+// see core/meetings.js) and SUMMARISING it (needs only the text). This is
+// the second piece, finished and usable today against a pasted transcript,
+// so connecting Meet later adds capture and changes nothing here.
+//
+// CONSENT IS RE-CHECKED HERE, not assumed from the fact that a transcript
+// exists. Storing it required consent; an employee who has since revoked
+// it has withdrawn permission for exactly this — "used for AI insights" is
+// the wording of the consent they gave. The row stays (it is a record of a
+// real meeting); what stops is feeding it to a model.
+router.post('/meeting-summary', async (req, res) => {
+  try {
+    const { meeting_id } = req.body || {};
+    if (!meeting_id) return res.status(400).json({ error: 'meeting_id required' });
+    const m = (await db.query(
+      `SELECT m.*, e.name AS employee_name
+         FROM pms.review_meetings m
+         JOIN core.employees e ON e.id = m.employee_id AND e.tenant_id = m.tenant_id
+        WHERE m.id=$1 AND m.tenant_id=$2`, [meeting_id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+
+    // Same two parties as the meeting routes: the employee it is about,
+    // their manager, or an admin.
+    const isSelf = m.employee_id === req.user.id;
+    const isMgr = !!(await db.query(`SELECT 1 FROM core.employees WHERE id=$1 AND tenant_id=$2 AND manager_id=$3`,
+      [m.employee_id, T(req), req.user.id])).rows[0];
+    if (!isSelf && !isMgr && !(await hasPermission(req.user, 'pms_admin'))) {
+      return res.status(403).json({ error: 'Not your meeting' });
+    }
+
+    const t = (await db.query(`SELECT content, captured_at FROM pms.meeting_transcripts WHERE meeting_id=$1`, [m.id])).rows[0];
+    if (!t) {
+      return res.status(409).json({
+        error: 'No transcript is stored for this meeting yet — paste one in, or connect a provider that can capture it.',
+      });
+    }
+    await requireConsent(T(req), m.employee_id);
+
+    const c = await activeCycle(T(req));
+    const sheet = c ? (await db.query(
+      `SELECT id FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, m.employee_id])).rows[0] : null;
+    const kras = sheet ? (await db.query(
+      `SELECT title, weight, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [sheet.id])).rows : [];
+    if (!kras.length) {
+      return res.status(409).json({ error: 'No KRAs are mapped to this employee for the current cycle — there is nothing to organise the summary under.' });
+    }
+
+    const out = await ai.narrate({
+      tenantId: T(req), kind: 'meeting_summary', ref: { meeting_id: m.id, employee_id: m.employee_id },
+      requestedBy: req.user.email, maxTokens: 2000,
+      input: {
+        employee: m.employee_name,
+        meeting: { context: m.context, scheduled_at: m.scheduled_at, provider: m.provider },
+        kras: kras.map((k) => ({ title: k.title, weight: +k.weight, measures: k.measures })),
+        transcript: t.content,
+      },
+      system: `You summarise a recorded one-on-one between an employee and their manager,
+organised by the employee's KRAs, so neither of them has to write the meeting up
+from scratch.
+
+Work ONLY from the transcript. It is a record of what two people said: report
+what was said, not what you would conclude from it. Where the two disagreed,
+say so rather than picking a side. Attribute a point to whoever made it when
+that matters ("their manager raised", "they said").
+
+Put each point under the KRA it concerns, by that KRA's exact title. Anything
+discussed that belongs to no KRA — leave, tooling, personal circumstances —
+goes under cross_cutting, and anything sensitive that is plainly not
+performance content should be left out entirely rather than summarised.
+
+Actions must be things somebody actually committed to in the conversation,
+with the owner named. Do not invent an action because a topic seemed to
+need one.
+
+Never suggest, imply or hint at a rating. This is a record of a
+conversation, not an assessment of it.
+
+${KRA_BULLET_RULES}
+
+Respond ONLY with JSON:
+{"by_kra":[{"kra":"exact KRA title","discussed":["..."],"agreed_actions":["owner — what they committed to"],"concerns":["..."]}],
+ "cross_cutting":{"discussed":["..."],"agreed_actions":["..."],"concerns":["..."]},
+ "kras_not_discussed":["exact titles of KRAs the conversation never touched"],
+ "follow_up_needed":["anything left unresolved"]}`,
+    });
+
+    res.json({
+      ok: true, ...out,
+      meeting: { id: m.id, context: m.context, employee_id: m.employee_id, transcript_captured_at: t.captured_at },
+      note: 'Summary of what was said — check it against your own recollection before relying on it.',
     });
   } catch (e) { fail(res, e); }
 });

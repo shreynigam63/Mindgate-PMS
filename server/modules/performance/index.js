@@ -19,6 +19,7 @@ const { guardUuidParams } = require('../../core/http');
 const { apiPermissionParity, hasPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const { requireConsent } = require('../../core/consent');
+const meetings = require('../../core/meetings');
 const { isSuper50Eligible, computeWeightedRating } = require('./rating-rules');
 const { isConnectDue, shouldRemindAgain, computeCadenceProgress } = require('./connect-reminders');
 const { runReminders } = require('./reminders');
@@ -2676,6 +2677,130 @@ router.post('/connects/check-reminders', async (req, res) => {
     const reminded = await checkAndSendConnectReminders(T(req));
     audit(req, 'CONNECT_REMINDERS_CHECKED', null, null, { reminded });
     res.json({ ok: true, reminded });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ---------------- Meetings for connects / mid-year / annual ----------------
+// PROVISION FOR GOOGLE MEET, NOT A CONNECTION TO IT. Requested in those
+// terms: keep the provision, strictly do not connect it now. So the model,
+// the routes and the consent gate all exist and work end to end with a
+// pasted link today; connecting Meet later fills in the same rows from a
+// provider instead. See core/meetings.js for the seam and migration 027
+// for why transcripts are a separate table.
+//
+// Who may act: the employee themselves or their manager (or an admin). A
+// one-on-one belongs to both people in it, so either can schedule it —
+// this mirrors how pms.connects is already handled.
+async function meetingParty(req, employeeId) {
+  if (employeeId === req.user.id) return true;
+  if (await hasPermission(req.user, 'pms_admin')) return true;
+  const r = await db.query(`SELECT 1 FROM core.employees WHERE id=$1 AND tenant_id=$2 AND manager_id=$3`,
+    [employeeId, T(req), req.user.id]);
+  return !!r.rows[0];
+}
+
+// GET /pms/meetings/providers — what can be used to schedule one, and for
+// anything that cannot, why not. Returned rather than hidden so the UI can
+// show Google Meet as a real, named, not-yet-connected option instead of
+// silently offering nothing.
+router.get('/meetings/providers', async (req, res) => {
+  res.json({ providers: meetings.listProviders() });
+});
+
+// GET /pms/meetings?employee_id=&context= — the meetings on record.
+router.get('/meetings', async (req, res) => {
+  try {
+    const employeeId = req.query.employee_id || req.user.id;
+    if (!(await meetingParty(req, employeeId))) return res.status(403).json({ error: 'Not your meeting' });
+    const params = [T(req), employeeId];
+    let where = 'm.tenant_id=$1 AND m.employee_id=$2';
+    if (req.query.context) { meetings.requireContext(req.query.context); params.push(req.query.context); where += ` AND m.context=$${params.length}`; }
+    const r = await db.query(
+      `SELECT m.*, (t.id IS NOT NULL) AS has_transcript
+         FROM pms.review_meetings m
+         LEFT JOIN pms.meeting_transcripts t ON t.meeting_id = m.id
+        WHERE ${where} ORDER BY COALESCE(m.scheduled_at, m.created_at) DESC LIMIT 50`, params);
+    res.json({ meetings: r.rows });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// POST /pms/meetings — record a meeting for a connect, mid-year or annual.
+router.post('/meetings', async (req, res) => {
+  try {
+    const { employee_id, context, ref_id, meeting_url, scheduled_at } = req.body || {};
+    const provider = (req.body || {}).provider || meetings.MANUAL;
+    const employeeId = employee_id || req.user.id;
+    meetings.requireContext(context);
+    // Refuses google_meet with 501 and a reason — the one place the "not
+    // connected now" instruction is actually enforced, rather than assumed.
+    meetings.requireProvider(provider);
+    if (!(await meetingParty(req, employeeId))) return res.status(403).json({ error: 'Not your meeting' });
+    if (!meeting_url || !/^https?:\/\//i.test(String(meeting_url))) {
+      return res.status(400).json({ error: 'meeting_url must be an http(s) link' });
+    }
+    const row = (await db.query(
+      `INSERT INTO pms.review_meetings (tenant_id, cycle_id, employee_id, context, ref_id, provider, meeting_url, scheduled_at, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [T(req), (await activeCycle(T(req)))?.id || null, employeeId, context, ref_id || null,
+       provider, String(meeting_url).trim(), scheduled_at || null, req.user.id])).rows[0];
+    audit(req, 'MEETING_SCHEDULED', row.cycle_id, employeeId, { context, provider });
+    res.status(201).json({ ok: true, meeting: row });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+router.delete('/meetings/:id', async (req, res) => {
+  try {
+    const m = (await db.query(`SELECT * FROM pms.review_meetings WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+    if (!(await meetingParty(req, m.employee_id))) return res.status(403).json({ error: 'Not your meeting' });
+    await db.query(`DELETE FROM pms.review_meetings WHERE id=$1`, [m.id]);
+    audit(req, 'MEETING_DELETED', m.cycle_id, m.employee_id, { context: m.context });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /pms/meetings/:id/transcript — store what was said.
+//
+// THE CONSENT GATE IS THE POINT OF THIS ROUTE. A transcript is a record of
+// two people discussing someone's performance; BRD §6 requires the
+// employee's explicit consent before any meeting recording or
+// transcription feeds an AI feature, and core/consent.js was written for
+// exactly this call. Consent is checked against the EMPLOYEE the review is
+// about — never the person uploading, who is usually their manager and
+// cannot consent on their behalf.
+//
+// Today the content arrives from a human pasting it. When Google Meet is
+// connected, the provider fetches it and lands in the same row through the
+// same gate — which is why the gate lives here and not in a UI handler.
+router.put('/meetings/:id/transcript', async (req, res) => {
+  try {
+    const { content } = req.body || {};
+    if (!content || !String(content).trim()) return res.status(400).json({ error: 'content required' });
+    const m = (await db.query(`SELECT * FROM pms.review_meetings WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+    if (!(await meetingParty(req, m.employee_id))) return res.status(403).json({ error: 'Not your meeting' });
+    await requireConsent(T(req), m.employee_id);
+    const row = (await db.query(
+      `INSERT INTO pms.meeting_transcripts (tenant_id, meeting_id, provider, content, consent_employee_id, captured_by)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (meeting_id) DO UPDATE SET content=EXCLUDED.content, captured_by=EXCLUDED.captured_by,
+                                              captured_at=now(), consent_checked_at=now()
+       RETURNING id, captured_at`,
+      [T(req), m.id, m.provider, String(content).trim(), m.employee_id, req.user.id])).rows[0];
+    audit(req, 'MEETING_TRANSCRIPT_STORED', m.cycle_id, m.employee_id, { context: m.context, chars: String(content).trim().length });
+    res.json({ ok: true, transcript_id: row.id, captured_at: row.captured_at });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+router.get('/meetings/:id/transcript', async (req, res) => {
+  try {
+    const m = (await db.query(`SELECT * FROM pms.review_meetings WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+    if (!(await meetingParty(req, m.employee_id))) return res.status(403).json({ error: 'Not your meeting' });
+    const t = (await db.query(`SELECT id, content, captured_at, provider FROM pms.meeting_transcripts WHERE meeting_id=$1`, [m.id])).rows[0];
+    if (!t) return res.status(404).json({ error: 'no transcript stored for this meeting' });
+    res.json({ transcript: t });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

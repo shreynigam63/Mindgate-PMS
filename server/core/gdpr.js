@@ -29,7 +29,7 @@ async function buildExport(tenantId, employeeId) {
        FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!profile) return null;
 
-  const [kraSheets, selfAppraisals, managerEvals, devPlans, careerPath, connects, pips, ratingHistory, consents, parameterScores, pulseChecks] = await Promise.all([
+  const [kraSheets, selfAppraisals, managerEvals, devPlans, careerPath, connects, pips, ratingHistory, consents, parameterScores, pulseChecks, meetings] = await Promise.all([
     db.query(`SELECT s.cycle_id, s.status, s.manager_comment, k.title, k.weight, k.measures FROM pms.kra_sheets s LEFT JOIN pms.kras k ON k.sheet_id=s.id WHERE s.tenant_id=$1 AND s.employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, status, entries, overall_self_rating, went_well, could_improve, submitted_at FROM pms.self_appraisals WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, status, overall_rating, strengths, improvement_areas, submitted_at FROM pms.manager_evaluations WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
@@ -41,6 +41,18 @@ async function buildExport(tenantId, employeeId) {
     db.query(`SELECT consent_type, granted, granted_at, revoked_at FROM core.employee_consents WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, parameter_id, score, updated_at FROM pms.parameter_scores WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, parameter_id, score, updated_at FROM pms.pulse_checks WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
+    // Review meetings and, where one was captured with their consent, the
+    // TRANSCRIPT IN FULL. A recording of someone discussing their own
+    // performance is about as personal as anything this system holds — a
+    // subject access request that returned every rating but omitted the
+    // conversation would not be a complete answer. Added with the table
+    // (migration 027) rather than left for someone to notice later.
+    db.query(`SELECT m.context, m.provider, m.meeting_url, m.scheduled_at, m.created_at,
+                     t.content AS transcript, t.captured_at AS transcript_captured_at, t.consent_checked_at
+                FROM pms.review_meetings m
+                LEFT JOIN pms.meeting_transcripts t ON t.meeting_id = m.id
+               WHERE m.tenant_id=$1 AND m.employee_id=$2
+               ORDER BY COALESCE(m.scheduled_at, m.created_at) DESC`, [tenantId, employeeId]),
   ]);
 
   return {
@@ -57,6 +69,7 @@ async function buildExport(tenantId, employeeId) {
     consents: consents.rows,
     annual_review_parameter_scores: parameterScores.rows,
     midyear_pulse_checks: pulseChecks.rows,
+    review_meetings: meetings.rows,
   };
 }
 

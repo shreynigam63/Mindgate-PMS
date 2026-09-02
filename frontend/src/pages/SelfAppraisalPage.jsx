@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Send, Paperclip, Trash2, Download, Star } from 'lucide-react';
 import { api, phaseLabel, phaseColor, API_BASE } from '../utils/api';
 import ReviewAssist from './ReviewAssist';
+import MeetingPanel from './MeetingPanel';
 
 // Requested: per-KRA rating uses letter grades (A+ down to C), but the
 // computed OVERALL average is shown with the older descriptive wording
@@ -102,6 +103,7 @@ export default function SelfAppraisalPage() {
           the employee already built — connects, target achievements,
           Aspiring Career — read back to them per KRA before they write. */}
       {open && <ReviewAssist stage="annual" label="self-appraisal" />}
+      {open && <MeetingPanel context="annual" title="Appraisal discussion with your manager" />}
 
       <div className="card p-3 space-y-1">
         <label className="lbl mb-0">{isAnnual ? 'Overall Annual Rating (weighted average of the 7 parameters below)' : 'Overall self-rating (weighted average of the KRAs below)'}</label>
