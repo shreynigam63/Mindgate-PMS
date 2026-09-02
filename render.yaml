@@ -57,8 +57,15 @@ services:
       # needs to remember or lose.
       - key: JWT_SECRET
         generateValue: true
+      # One instance = one tenant. This value NAMES the tenant: index.js
+      # resolves it on boot and, on a fresh database, creates the
+      # core.tenants row from it, after which every record in the
+      # instance carries that tenant_id. Changing it later therefore does
+      # not rename anything — it silently resolves to a DIFFERENT tenant
+      # and the app comes up empty, with the original data still in the
+      # database under the old slug. Set it once, before the first sync.
       - key: TENANT_SLUG
-        value: CHANGE_ME
+        value: mindgate
       # TESTING PHASE ONLY: "true" for now, since no real SSO exists yet
       # (see core/auth.js's own comments — production auth is meant to be
       # the client's IdP via OIDC, never actually built). Found the hard
