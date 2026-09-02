@@ -95,6 +95,28 @@ services:
       # dev-login is a break-glass mechanism, not real authentication.
       - key: AUTH_DEV
         value: "true"
+      # ---- Agentic / AI features (OPTIONAL) ----------------------------
+      # core/ai.js gates every agentic endpoint on this key: absent, they
+      # return a clean 503 ("Agentic features are not configured on this
+      # instance") and the rest of the app is completely unaffected — the
+      # AI is additive, never load-bearing.
+      #
+      # sync: false is the important part. It declares that this variable
+      # EXISTS without putting its value in git: Render prompts for the
+      # value on first sync, stores it, and — unlike a literal `value:` —
+      # PRESERVES what you entered across every later Blueprint sync.
+      # A plain `value:` here would be two separate mistakes at once: it
+      # would commit a live API key to a public repo, and it would be
+      # re-applied on each sync (the same overwrite behaviour documented
+      # on AUTH_DEV above). Never give this a `value:`.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Overrides core/ai.js's built-in default of claude-sonnet-4-5,
+      # which is a generation behind. The request body ai.js sends is
+      # plain model/max_tokens/system/messages, so newer models are
+      # drop-in with no code change. Not a secret — safe as a literal.
+      - key: AI_MODEL
+        value: claude-opus-5
   - type: web
     name: agentic-pms-frontend
     env: static
