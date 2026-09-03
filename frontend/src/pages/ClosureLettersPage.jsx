@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Sparkles, FileDown, CheckCircle2 } from 'lucide-react';
-import { api, DraftBadge, API_BASE } from '../utils/api';
+import { api, API_BASE } from '../utils/api';
+import { AiModal } from './AiDraftPanel';
 
 export default function ClosureLettersPage() {
   const [data, setData] = useState(null);
@@ -66,19 +67,31 @@ function LetterRow({ l, reload }) {
           <button className="btn-sec" disabled={busy} onClick={askDraft}><Sparkles size={13} className="inline mr-1 text-amber-500" />{busy ? 'Drafting…' : 'Draft with AI'}</button>
         )}
       </div>
+      {/* A whole letter, editable, with the generate action at the end —
+          the longest thing on this page by far. In the popup it gets the
+          room to be read and edited, and the row underneath stays a row.
+          The draft survives closing: reopening shows the edits, and
+          "Draft with AI" writes a fresh one. */}
+      {!l.generated && draft && !open && (
+        <button className="text-[11px] font-semibold text-navy-600 hover:underline self-start" onClick={() => setOpen(true)}>
+          Reopen the draft letter
+        </button>
+      )}
       {open && draft && (
-        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
-          <DraftBadge />
-          <textarea className="inp !bg-navy-700 !text-white !border-navy-600 w-full" rows={2} value={draft.salutation}
+        <AiModal title={`Closure letter — ${l.employee_name}`} onClose={() => setOpen(false)}
+          footer={<div className="flex items-center gap-3">
+            <button className="btn-pri" disabled={busy} onClick={generate}>{busy ? 'Generating…' : 'Generate PDF'}</button>
+            <span className="text-navy-400">Nothing is sent — this produces the branded PDF for you to review.</span>
+          </div>}>
+          <textarea className="inp w-full" rows={2} value={draft.salutation}
             onChange={e => setDraft(d => ({ ...d, salutation: e.target.value }))} />
           {draft.body_paragraphs.map((p, i) => (
-            <textarea key={i} className="inp !bg-navy-700 !text-white !border-navy-600 w-full" rows={3} value={p}
+            <textarea key={i} className="inp w-full" rows={4} value={p}
               onChange={e => setDraft(d => ({ ...d, body_paragraphs: d.body_paragraphs.map((x, j) => j === i ? e.target.value : x) }))} />
           ))}
-          <textarea className="inp !bg-navy-700 !text-white !border-navy-600 w-full" rows={2} value={draft.closing_line}
+          <textarea className="inp w-full" rows={2} value={draft.closing_line}
             onChange={e => setDraft(d => ({ ...d, closing_line: e.target.value }))} />
-          <button className="btn-pri" disabled={busy} onClick={generate}>{busy ? 'Generating…' : 'Generate PDF'}</button>
-        </div>
+        </AiModal>
       )}
       {err && <p className="text-xs text-rose-600">{err}</p>}
     </div>

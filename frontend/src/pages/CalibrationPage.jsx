@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Sparkles, SlidersHorizontal } from 'lucide-react';
-import { api, DraftBadge } from '../utils/api';
+import { api } from '../utils/api';
+import { AiModal } from './AiDraftPanel';
 
 const NINE_BOX = ['low-low', 'low-mid', 'low-high', 'mid-low', 'mid-mid', 'mid-high', 'high-low', 'high-mid', 'high-high'];
 
@@ -8,13 +9,14 @@ export default function CalibrationPage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [brief, setBrief] = useState(null);
+  const [briefOpen, setBriefOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const load = () => api('/pms/calibration').then(setData).catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
 
   const askBrief = async () => {
     setBusy(true); setErr(null);
-    try { const r = await api('/agentic/calibration-brief', { method: 'POST' }); setBrief(r.draft); }
+    try { const r = await api('/agentic/calibration-brief', { method: 'POST' }); setBrief(r.draft); setBriefOpen(true); }
     catch (e) { setErr(e.message); }
     setBusy(false);
   };
@@ -35,14 +37,27 @@ export default function CalibrationPage() {
         <button className="btn-sec" disabled={busy} onClick={askBrief}><Sparkles size={13} className="inline mr-1 text-amber-500" />{busy ? 'Drafting…' : 'Session brief (agent)'}</button>
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
-      {brief && (
-        <div className="bg-navy-800 text-slate-100 rounded-xl p-4 text-xs space-y-2">
-          <DraftBadge />
+      {/* The brief opens over the page rather than pushing the
+          distribution and the rating table down — those are what the
+          session is actually run against, and the brief is read once. */}
+      {brief && !briefOpen && (
+        <button className="text-[11px] font-semibold text-navy-600 hover:underline" onClick={() => setBriefOpen(true)}>
+          Reopen the session brief
+        </button>
+      )}
+      {brief && briefOpen && (
+        <AiModal title="Calibration session brief" onClose={() => setBriefOpen(false)}>
           <p className="text-sm font-semibold">{brief.headline}</p>
-          {(brief.deviations || []).map((d, i) => <p key={i}>• {d}</p>)}
-          {(brief.discussion_points || []).length > 0 && <p><b>Discuss:</b> {brief.discussion_points.join(' · ')}</p>}
-          {brief.outstanding && <p className="text-amber-300">{brief.outstanding}</p>}
-        </div>
+          {(brief.deviations || []).length > 0 && (
+            <div><p className="font-semibold text-navy-500">Deviations</p>
+              <ul className="list-disc pl-4">{brief.deviations.map((d, i) => <li key={i}>{d}</li>)}</ul></div>
+          )}
+          {(brief.discussion_points || []).length > 0 && (
+            <div><p className="font-semibold text-navy-500">Discuss</p>
+              <ul className="list-disc pl-4">{brief.discussion_points.map((d, i) => <li key={i}>{d}</li>)}</ul></div>
+          )}
+          {brief.outstanding && <p className="text-amber-700">{brief.outstanding}</p>}
+        </AiModal>
       )}
       <div className="card p-4">
         <p className="lbl">Distribution vs bell-curve targets</p>

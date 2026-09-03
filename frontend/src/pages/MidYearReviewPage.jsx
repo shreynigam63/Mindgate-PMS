@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Send, CheckCircle2, Clock, ChevronDown, ChevronRight } from 'lucide-react';
-import { api, phaseLabel, phaseColor, DraftBadge, KraBullets, Bullets } from '../utils/api';
+import { api, phaseLabel, phaseColor, KraBullets, Bullets } from '../utils/api';
+import { AiModal } from './AiDraftPanel';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
 
@@ -61,6 +62,9 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
   const [local, setLocal] = useState(() => entries || {});
   const [reviews, setReviews] = useState({});
   const [busy, setBusy] = useState(null);
+  // Which KRA's review is open. One at a time — this is a per-KRA answer,
+  // and eight of them stacked down the page is what made this screen long.
+  const [openReview, setOpenReview] = useState(null);
   const timers = useRef({});
 
   const get = (id, field) => (local[id] && local[id][field] != null ? local[id][field] : '');
@@ -86,6 +90,7 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
       if (perspective === 'manager') body.employee_id = employeeId;
       const r = await api('/agentic/justification-review', { method: 'POST', body: JSON.stringify(body) });
       setReviews((p) => ({ ...p, [id]: r }));
+      setOpenReview(id);
     } catch (e) { setReviews((p) => ({ ...p, [id]: { error: e.message } })); }
     setBusy(null);
   };
@@ -138,29 +143,40 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
               </button>
             )}
 
+            {/* The verdict chip stays on the KRA — it is one word and it
+                is the reason to open anything. The reasoning behind it
+                opens over the page instead of adding a block under every
+                KRA on the sheet. */}
             {r && (r.error
               ? <p className="text-[11px] text-rose-600">{r.error}</p>
               : (
-                <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-[11px] space-y-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <DraftBadge />
-                    {(r.draft || {}).assessment && <span className={`chip ${TONE[(r.draft.assessment || '').toLowerCase()] || 'bg-navy-100 text-navy-700'}`}>{r.draft.assessment}</span>}
-                  </div>
-                  {/* Bullets now, not a paragraph. stronger_example below
-                      stays prose deliberately — it models the paragraph the
-                      employee should write in their own justification box,
-                      so bulleting it would demonstrate the wrong thing. */}
-                  <Bullets items={(r.draft || {}).evidence_strength} />
-                  {((r.draft || {}).missing_evidence || []).length > 0 && (
-                    <div><p className="text-amber-300 font-semibold">Missing evidence</p>
-                      <ul className="list-disc pl-4">{r.draft.missing_evidence.map((m, n) => <li key={n}>{m}</li>)}</ul></div>
-                  )}
-                  {(r.draft || {}).stronger_example && (
-                    <div><p className="text-emerald-300 font-semibold">A stronger version would read like</p>
-                      <p className="italic">{r.draft.stronger_example}</p></div>
-                  )}
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  {(r.draft || {}).assessment && <span className={`chip ${TONE[(r.draft.assessment || '').toLowerCase()] || 'bg-navy-100 text-navy-700'}`}>{r.draft.assessment}</span>}
+                  <button className="font-semibold text-navy-600 hover:underline" onClick={() => setOpenReview(k.id)}>
+                    Read the AI review
+                  </button>
                 </div>
               ))}
+            {openReview === k.id && r && !r.error && (
+              <AiModal title={`Justification review — ${k.title}`} onClose={() => setOpenReview(null)}>
+                {(r.draft || {}).assessment && (
+                  <span className={`chip ${TONE[(r.draft.assessment || '').toLowerCase()] || 'bg-navy-100 text-navy-700'}`}>{r.draft.assessment}</span>
+                )}
+                {/* Bullets, not a paragraph. stronger_example below stays
+                    prose deliberately — it models the paragraph the
+                    employee should write in their own justification box,
+                    so bulleting it would demonstrate the wrong thing. */}
+                <Bullets items={(r.draft || {}).evidence_strength} />
+                {((r.draft || {}).missing_evidence || []).length > 0 && (
+                  <div><p className="text-amber-700 font-semibold">Missing evidence</p>
+                    <ul className="list-disc pl-4">{r.draft.missing_evidence.map((m, n) => <li key={n}>{m}</li>)}</ul></div>
+                )}
+                {(r.draft || {}).stronger_example && (
+                  <div><p className="text-emerald-700 font-semibold">A stronger version would read like</p>
+                    <p className="italic">{r.draft.stronger_example}</p></div>
+                )}
+              </AiModal>
+            )}
           </div>
         );
       })}
@@ -198,6 +214,7 @@ function MyMidYearCard() {
   const [saveState, setSaveState] = useState('idle');
   const [drafting, setDrafting] = useState(false);
   const [draft, setDraft] = useState(null);
+  const [draftOpen, setDraftOpen] = useState(false);
   const timer = useRef(null);
 
   const load = () => api('/pms/my/midyear-review').then((r) => {
@@ -227,7 +244,7 @@ function MyMidYearCard() {
   const pickRating = (value) => { setSelfRating(value); persist({ self_rating: value }); };
   const askDraft = async () => {
     setDrafting(true); setErr(null);
-    try { const r = await api('/agentic/midyear-draft', { method: 'POST', body: JSON.stringify({ employee_id: data.checkin.employee_id, perspective: 'self' }) }); setDraft(r); }
+    try { const r = await api('/agentic/midyear-draft', { method: 'POST', body: JSON.stringify({ employee_id: data.checkin.employee_id, perspective: 'self' }) }); setDraft(r); setDraftOpen(true); }
     catch (e) { setErr(e.message); }
     setDrafting(false);
   };
@@ -295,17 +312,25 @@ function MyMidYearCard() {
           </button>
         </div>
       )}
-      {draft && (
-        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
-          <DraftBadge />
+      {/* Three lists per KRA — the draft used to sit between the
+          narrative box and the per-KRA ratings and push both apart. It
+          opens over the page now; copying into the narrative closes it,
+          because at that point the text is in the box behind. */}
+      {draft && !draftOpen && (
+        <button className="text-[11px] font-semibold text-navy-600 hover:underline self-start" onClick={() => setDraftOpen(true)}>
+          Reopen the AI draft
+        </button>
+      )}
+      {draft && draftOpen && (
+        <AiModal title="Mid-year draft" onClose={() => setDraftOpen(false)}
+          footer={<button className="btn-pri"
+            onClick={() => { setSelfNarrative(draft.narrative); persist({ self_narrative: draft.narrative }); setDraftOpen(false); }}>
+            Copy into narrative (then edit)
+          </button>}>
           <KraBullets byKra={draft.by_kra} crossCutting={draft.cross_cutting}
             sections={[['progress', 'Progress'], ['blockers', 'Blockers'], ['focus_next', 'Focus for the next half']]} />
-          {(draft.gaps || []).length > 0 && <p className="text-amber-300">Input gaps: {draft.gaps.join(' · ')}</p>}
-          <button className="btn-sec !bg-navy-700 !text-white !border-navy-600"
-            onClick={() => { setSelfNarrative(draft.narrative); persist({ self_narrative: draft.narrative }); }}>
-            Copy into narrative (then edit)
-          </button>
-        </div>
+          {(draft.gaps || []).length > 0 && <p className="text-amber-700">Input gaps: {draft.gaps.join(' · ')}</p>}
+        </AiModal>
       )}
 
       <div className="grid sm:grid-cols-2 gap-3">
@@ -383,6 +408,7 @@ function TeamMidYearDetail({ employeeId }) {
   const [saveState, setSaveState] = useState('idle');
   const [drafting, setDrafting] = useState(false);
   const [draft, setDraft] = useState(null);
+  const [draftOpen, setDraftOpen] = useState(false);
   const timer = useRef(null);
 
   const load = () => api(`/pms/team/midyear-review/${employeeId}`).then((r) => {
@@ -410,7 +436,7 @@ function TeamMidYearDetail({ employeeId }) {
   const pickRating = (value) => { setManagerRating(value); persist({ manager_rating: value }); };
   const askDraft = async () => {
     setDrafting(true); setErr(null);
-    try { const r = await api('/agentic/midyear-draft', { method: 'POST', body: JSON.stringify({ employee_id: employeeId, perspective: 'manager' }) }); setDraft(r); }
+    try { const r = await api('/agentic/midyear-draft', { method: 'POST', body: JSON.stringify({ employee_id: employeeId, perspective: 'manager' }) }); setDraft(r); setDraftOpen(true); }
     catch (e) { setErr(e.message); }
     setDrafting(false);
   };
@@ -452,17 +478,25 @@ function TeamMidYearDetail({ employeeId }) {
           </button>
         </div>
       )}
-      {draft && (
-        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
-          <DraftBadge />
+      {/* Three lists per KRA — the draft used to sit between the
+          narrative box and the per-KRA ratings and push both apart. It
+          opens over the page now; copying into the narrative closes it,
+          because at that point the text is in the box behind. */}
+      {draft && !draftOpen && (
+        <button className="text-[11px] font-semibold text-navy-600 hover:underline self-start" onClick={() => setDraftOpen(true)}>
+          Reopen the AI draft
+        </button>
+      )}
+      {draft && draftOpen && (
+        <AiModal title="Mid-year draft" onClose={() => setDraftOpen(false)}
+          footer={<button className="btn-pri"
+            onClick={() => { setManagerNarrative(draft.narrative); persist({ manager_narrative: draft.narrative }); setDraftOpen(false); }}>
+            Copy into narrative (then edit)
+          </button>}>
           <KraBullets byKra={draft.by_kra} crossCutting={draft.cross_cutting}
             sections={[['progress', 'Progress'], ['blockers', 'Blockers'], ['focus_next', 'Focus for the next half']]} />
-          {(draft.gaps || []).length > 0 && <p className="text-amber-300">Input gaps: {draft.gaps.join(' · ')}</p>}
-          <button className="btn-sec !bg-navy-700 !text-white !border-navy-600"
-            onClick={() => { setManagerNarrative(draft.narrative); persist({ manager_narrative: draft.narrative }); }}>
-            Copy into narrative (then edit)
-          </button>
-        </div>
+          {(draft.gaps || []).length > 0 && <p className="text-amber-700">Input gaps: {draft.gaps.join(' · ')}</p>}
+        </AiModal>
       )}
       {hasKras ? (
         <>

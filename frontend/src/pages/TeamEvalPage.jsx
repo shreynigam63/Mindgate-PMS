@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Send, ChevronDown, ChevronRight } from 'lucide-react';
-import { api, phaseLabel, phaseColor, DraftBadge, KraBullets } from '../utils/api';
+import { api, phaseLabel, phaseColor, KraBullets } from '../utils/api';
+import { AiModal } from './AiDraftPanel';
 import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
 
 // Matches Self-Appraisal's convention: per-KRA picks in letter grades,
@@ -57,6 +58,7 @@ function EvalEditor({ t, phase, scale, cycleType, reload }) {
   const [state, setState] = useState('idle');
   const [err, setErr] = useState(null);
   const [draft, setDraft] = useState(null);
+  const [draftOpen, setDraftOpen] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [keptKey, setKeptKey] = useState(0);
   const timer = useRef(null);
@@ -74,7 +76,7 @@ function EvalEditor({ t, phase, scale, cycleType, reload }) {
   };
   const askDraft = async () => {
     setDrafting(true); setErr(null);
-    try { const r = await api('/agentic/appraisal-draft', { method: 'POST', body: JSON.stringify({ employee_id: t.employee_id }) }); setDraft(r.draft); }
+    try { const r = await api('/agentic/appraisal-draft', { method: 'POST', body: JSON.stringify({ employee_id: t.employee_id }) }); setDraft(r.draft); setDraftOpen(true); }
     catch (e) { setErr(e.message); }
     setDrafting(false);
   };
@@ -119,21 +121,30 @@ function EvalEditor({ t, phase, scale, cycleType, reload }) {
         )}
         {badge && <span className={`text-[11px] font-medium ${badge[1]}`}>{badge[0]}</span>}
       </div>
-      {draft && (
-        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
-          <DraftBadge />
+      {/* The manager's evaluation form is the point of this card; the
+          draft opens over it rather than sitting between the KRA ratings
+          and the Strengths box. Copying closes it — the text is then in
+          the fields behind. */}
+      {draft && !draftOpen && (
+        <button className="text-[11px] font-semibold text-navy-600 hover:underline self-start" onClick={() => setDraftOpen(true)}>
+          Reopen the AI draft
+        </button>
+      )}
+      {draft && draftOpen && (
+        <AiModal title={`Appraisal draft — ${t.name}`} onClose={() => setDraftOpen(false)}
+          footer={<button className="btn-pri" onClick={() => {
+            setF(s => ({ ...s, strengths: draft.strengths || s.strengths, improvement_areas: draft.improvement_areas || s.improvement_areas }));
+            persist({ strengths: draft.strengths, improvement_areas: draft.improvement_areas });
+            setDraftOpen(false);
+          }}>Copy into fields (then edit)</button>}>
           <KraBullets byKra={draft.by_kra} crossCutting={draft.cross_cutting}
             sections={[['strengths', 'Strengths'], ['improvement_areas', 'Improvement areas']]} />
           {(draft.evidence_notes || []).length > 0 && (
-            <div><p className="font-semibold">Worth verifying</p>
+            <div><p className="font-semibold text-navy-500">Worth verifying</p>
               <ul className="list-disc pl-4">{draft.evidence_notes.map((n, i) => <li key={i}>{n}</li>)}</ul></div>
           )}
-          {(draft.gaps || []).length > 0 && <p className="text-amber-300">Input gaps: {draft.gaps.join(' · ')}</p>}
-          <button className="btn-sec !bg-navy-700 !text-white !border-navy-600" onClick={() => {
-            setF(s => ({ ...s, strengths: draft.strengths || s.strengths, improvement_areas: draft.improvement_areas || s.improvement_areas }));
-            persist({ strengths: draft.strengths, improvement_areas: draft.improvement_areas });
-          }}>Copy into fields (then edit)</button>
-        </div>
+          {(draft.gaps || []).length > 0 && <p className="text-amber-700">Input gaps: {draft.gaps.join(' · ')}</p>}
+        </AiModal>
       )}
       <div><label className="lbl">Strengths</label>
         <textarea className="inp" rows={3} value={f.strengths} onChange={setText('strengths')} disabled={!editable} /></div>

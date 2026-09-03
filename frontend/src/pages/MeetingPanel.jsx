@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Video, Sparkles, Trash2, Link2 } from 'lucide-react';
-import { api, DraftBadge, KraBullets } from '../utils/api';
+import { api, KraBullets } from '../utils/api';
+import { AiModal } from './AiDraftPanel';
 
 // Meetings for a one-on-one connect, a mid-year review or an annual
 // appraisal — and the KRA-wise summary of what was said.
@@ -24,6 +25,7 @@ export default function MeetingPanel({ employeeId, context, refId, title }) {
   const [openId, setOpenId] = useState(null);
   const [text, setText] = useState('');
   const [summary, setSummary] = useState(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const q = new URLSearchParams({ context, ...(employeeId ? { employee_id: employeeId } : {}) });
   const load = () => api(`/pms/meetings?${q}`).then((r) => setList(r.meetings)).catch((e) => setErr(e.message));
@@ -57,7 +59,7 @@ export default function MeetingPanel({ employeeId, context, refId, title }) {
 
   const summarise = async (id) => {
     setBusy(true); setErr(null); setSummary(null);
-    try { setSummary(await api('/agentic/meeting-summary', { method: 'POST', body: JSON.stringify({ meeting_id: id }) })); }
+    try { setSummary(await api('/agentic/meeting-summary', { method: 'POST', body: JSON.stringify({ meeting_id: id }) })); setSummaryOpen(true); }
     catch (e) { setErr(e.message); }
     setBusy(false);
   };
@@ -117,19 +119,26 @@ export default function MeetingPanel({ employeeId, context, refId, title }) {
         </div>
       ))}
 
-      {d && (
-        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
-          <DraftBadge />
+      {/* This panel is embedded inside other screens (self-appraisal,
+          mid-year, a connect), so a KRA-wise summary printed inline pushes
+          whatever is hosting it down the page. */}
+      {d && !summaryOpen && (
+        <button className="text-[11px] font-semibold text-navy-600 hover:underline self-start" onClick={() => setSummaryOpen(true)}>
+          Reopen the meeting summary
+        </button>
+      )}
+      {d && summaryOpen && (
+        <AiModal title="What the meeting covered" onClose={() => setSummaryOpen(false)}>
           <KraBullets byKra={d.by_kra} crossCutting={d.cross_cutting}
             sections={[['discussed', 'Discussed'], ['agreed_actions', 'Agreed actions'], ['concerns', 'Concerns']]} />
           {(d.kras_not_discussed || []).length > 0 && (
-            <p className="text-amber-300">Not discussed: {d.kras_not_discussed.join(' · ')}</p>
+            <p className="text-amber-700">Not discussed: {d.kras_not_discussed.join(' · ')}</p>
           )}
           {(d.follow_up_needed || []).length > 0 && (
-            <div><p className="font-semibold">Left unresolved</p>
+            <div><p className="font-semibold text-navy-500">Left unresolved</p>
               <ul className="list-disc pl-4">{d.follow_up_needed.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
           )}
-        </div>
+        </AiModal>
       )}
     </div>
   );

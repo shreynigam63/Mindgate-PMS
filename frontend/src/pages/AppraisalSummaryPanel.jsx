@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { FileText, RefreshCw, Check, X } from 'lucide-react';
-import { api, DraftBadge, KraBullets } from '../utils/api';
+import { Check, X } from 'lucide-react';
+import { api, KraBullets } from '../utils/api';
+import AiDraftPanel from './AiDraftPanel';
 
 // The AI Appraisal Summary, at whichever of its two stages the caller is.
 //
@@ -16,9 +17,7 @@ const STAGES = {
     cta: 'Build the pre-read',
     sections: [['evidence', 'Evidence'], ['divergence', 'Self vs manager'], ['thin_evidence', 'Thin evidence']],
     extras: [['discussion_points', 'For the calibration conversation'], ['evidence_gaps', 'Missing from the record']],
-    tone: 'from-amber-50 to-orange-50 border-amber-100',
-    button: '!bg-amber-700',
-    label: 'text-amber-800',
+    accent: 'amber',
   },
   employee: {
     title: 'AI summary of your year',
@@ -26,61 +25,46 @@ const STAGES = {
     cta: 'Summarise my year',
     sections: [['achievements', 'Achievements'], ['challenges', 'What got in the way'], ['build_next', 'Build next']],
     extras: [['year_in_review', 'Target achievements and Aspiring Career'], ['record_gaps', 'Where your record was thin']],
-    tone: 'from-sky-50 to-indigo-50 border-sky-100',
-    button: '!bg-sky-700',
-    label: 'text-sky-800',
+    accent: 'sky',
   },
 };
 
 export default function AppraisalSummaryPanel({ stage, employeeId, onKeep }) {
   const cfg = STAGES[stage];
-  const [busy, setBusy] = useState(false);
-  const [out, setOut] = useState(null);
-  const [err, setErr] = useState(null);
-
-  const run = async () => {
-    setBusy(true); setErr(null);
-    try {
-      setOut(await api('/agentic/appraisal-summary', {
-        method: 'POST', body: JSON.stringify({ stage, employee_id: employeeId }),
-      }));
-    } catch (e) { setErr(e.message); setOut(null); }
-    setBusy(false);
-  };
-
-  const d = out && out.draft;
 
   return (
-    <div className="space-y-2">
-      <div className={`bg-gradient-to-r ${cfg.tone} border rounded-xl p-3 flex flex-wrap items-center justify-between gap-3`}>
-        <div>
-          <p className={`text-xs font-bold ${cfg.label}`}>✦ {cfg.title}</p>
-          <p className="text-[11px] text-navy-500 max-w-2xl">{cfg.blurb}</p>
-        </div>
-        <button className={`btn-pri ${cfg.button}`} disabled={busy} onClick={run}>
-          {out ? <RefreshCw size={13} className="inline mr-1" /> : <FileText size={13} className="inline mr-1" />}
-          {busy ? 'Reading the year…' : out ? 'Refresh' : cfg.cta}
-        </button>
-      </div>
-
-      {err && <p className="text-xs text-rose-600">{err}</p>}
-
-      {d && (
-        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
-          <DraftBadge />
-          <KraBullets byKra={d.by_kra} crossCutting={d.cross_cutting} sections={cfg.sections} />
-          {cfg.extras.map(([key, label]) => ((d[key] || []).length > 0 && (
-            <div key={key}>
-              <p className="font-semibold">{label}</p>
-              <ul className="list-disc pl-4">{d[key].map((x, i) => <li key={i}>{x}</li>)}</ul>
-            </div>
-          )))}
-          {onKeep && (
-            <KeepBar draft={d} draftId={out.id} employeeId={employeeId} stage={stage} onKeep={onKeep} />
-          )}
-        </div>
-      )}
-    </div>
+    <AiDraftPanel
+      accent={cfg.accent}
+      title={`✦ ${cfg.title}`}
+      description={cfg.blurb}
+      idleLabel={cfg.cta}
+      busyLabel="Reading the year…"
+      againLabel="Refresh"
+      modalTitle={cfg.title}
+      run={() => api('/agentic/appraisal-summary', { method: 'POST', body: JSON.stringify({ stage, employee_id: employeeId }) })}
+      summary={(out) => {
+        const n = ((out.draft || {}).by_kra || []).length;
+        return `Read ${n} KRA${n === 1 ? '' : 's'} across the year`;
+      }}
+      footer={onKeep ? (out) => (
+        <KeepBar draft={out.draft} draftId={out.id} employeeId={employeeId} stage={stage} onKeep={onKeep} />
+      ) : null}
+    >
+      {(out) => {
+        const d = out.draft || {};
+        return (
+          <div className="space-y-3">
+            <KraBullets byKra={d.by_kra} crossCutting={d.cross_cutting} sections={cfg.sections} />
+            {cfg.extras.map(([key, label]) => ((d[key] || []).length > 0 && (
+              <div key={key}>
+                <p className="font-semibold text-navy-500">{label}</p>
+                <ul className="list-disc pl-4">{d[key].map((x, i) => <li key={i}>{x}</li>)}</ul>
+              </div>
+            )))}
+          </div>
+        );
+      }}
+    </AiDraftPanel>
   );
 }
 
@@ -110,14 +94,17 @@ function KeepBar({ draft, draftId, employeeId, stage, onKeep }) {
     } catch (e) { setErr(e.message); }
   };
 
+  // In the popup footer now, so it stays put while the summary scrolls —
+  // this is the one action on the panel and it used to sit at the bottom
+  // of a long block where it was easy to scroll past.
   return (
-    <div className="pt-1 border-t border-navy-700">
+    <div>
       {saved
-        ? <p className="text-[11px] text-emerald-300">Kept {items.length} — they are on the record now, to accept or turn down later.</p>
-        : <button className="btn-sec !bg-navy-700 !text-white !border-navy-600 !text-[11px] !py-1" onClick={keep}>
+        ? <p className="text-emerald-700">Kept {items.length} — they are on the record now, to accept or turn down later.</p>
+        : <button className="btn-pri !text-[11px] !py-1" onClick={keep}>
             Keep these {items.length} {key === 'build_next' ? 'suggestions' : 'discussion points'}
           </button>}
-      {err && <p className="text-[11px] text-rose-300">{err}</p>}
+      {err && <p className="text-[11px] text-rose-600">{err}</p>}
     </div>
   );
 }

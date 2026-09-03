@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Send, CheckCircle2, RotateCcw, Sparkles } from 'lucide-react';
-import { api, phaseLabel, phaseColor, DraftBadge, Bullets } from '../utils/api';
+import { Plus, Trash2, Send, CheckCircle2, RotateCcw } from 'lucide-react';
+import { api, phaseLabel, phaseColor, Bullets } from '../utils/api';
+import AiDraftPanel from './AiDraftPanel';
 
 const STATUS_COLOR = {
   draft: 'bg-slate-100 text-navy-600',
@@ -85,33 +86,43 @@ function groupBySrvKra(goals) {
 // and lifting the panel out would mean plumbing a callback back down for
 // no gain.
 function DevPlanAiPanel({ onAdd }) {
-  const [busy, setBusy] = useState(false);
-  const [res, setRes] = useState(null);
-  const [err, setErr] = useState(null);
-
-  const ask = async () => {
-    setBusy(true); setErr(null);
-    try { setRes(await api('/agentic/devplan-suggest', { method: 'POST' })); }
-    catch (e) { setErr(e.message); }
-    setBusy(false);
-  };
-  const d = res && res.draft;
+  // Which suggestions have already been dropped into the editor behind the
+  // popup. Keyed by KRA + title rather than by index: the list is grouped
+  // for display, so an index is an index into a group, not into the answer.
+  const [added, setAdded] = useState({});
+  const keyOf = (g, i) => `${g.serves_kra || ''}|${g.title || ''}|${i}`;
 
   return (
-    <div className="space-y-2">
-      <div className="bg-gradient-to-r from-teal-50 to-cyan-50 border border-teal-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold text-teal-800">+ Suggest goals from my KRAs</p>
-          <p className="text-[11px] text-navy-500">Reads the KRAs you are accountable for this cycle and proposes development goals that build the capability each one needs.</p>
-        </div>
-        <button className="btn-pri !bg-teal-700" disabled={busy} onClick={ask}>
-          <Sparkles size={13} className="inline mr-1" />{busy ? 'Thinking…' : 'Suggest goals'}
-        </button>
-      </div>
-      {err && <p className="text-xs text-rose-600">{err}</p>}
-      {d && (
-        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-[11px] space-y-3">
-          <DraftBadge />
+    <AiDraftPanel
+      accent="teal"
+      title="+ Suggest goals from my KRAs"
+      description="Reads the KRAs you are accountable for this cycle and proposes development goals that build the capability each one needs."
+      idleLabel="Suggest goals"
+      againLabel="Suggest again"
+      modalTitle="Suggested goals from your KRAs"
+      run={async () => {
+        setAdded({});
+        const r = await api('/agentic/devplan-suggest', { method: 'POST' });
+        return r.draft;
+      }}
+      summary={(d) => {
+        const n = (d.suggested_goals || []).length;
+        const kras = new Set((d.suggested_goals || []).map((g) => g.serves_kra).filter(Boolean)).size;
+        return `${n} suggestion${n === 1 ? '' : 's'}${kras ? ` across ${kras} KRA${kras === 1 ? '' : 's'}` : ''}`;
+      }}
+      footer={(d) => {
+        const n = Object.keys(added).length;
+        return (
+          <p className="text-navy-500">
+            {n
+              ? `${n} added to your plan below — set a target date on each, then Save goals.`
+              : 'Adding a goal drops it into the editor behind this window; you can add several before closing.'}
+          </p>
+        );
+      }}
+    >
+      {(d) => (
+        <div className="space-y-3">
           {/* Grouped by the KRA each goal serves, rather than one flat list
               of cards each repeating "Serves KRA: …". The model already
               tags every goal with serves_kra by exact title, so the
@@ -121,30 +132,47 @@ function DevPlanAiPanel({ onAdd }) {
               obviously odd, instead of being dropped. */}
           {groupBySrvKra(d.suggested_goals).map(([kra, goals]) => (
             <div key={kra} className="space-y-1.5">
-              <p className="text-teal-300 font-semibold">{kra}</p>
-              {goals.map((g, i) => (
-                <div key={i} className="border border-navy-600 rounded-lg p-2.5 space-y-1">
-                  <p className="font-semibold text-sm">{g.title}</p>
-                  <Bullets items={g.why} />
-                  {hasAny(g.how_to_measure) && (
-                    <div className="text-slate-300">
-                      <p className="opacity-80">Evidence of progress</p>
-                      <Bullets items={g.how_to_measure} />
-                    </div>
-                  )}
-                  {g.suggested_timeline && <p className="text-slate-400">Suggested timeline: {g.suggested_timeline}</p>}
-                  <button className="btn-sec !bg-navy-700 !text-white !border-navy-600 !text-[11px] !py-1"
-                    onClick={() => onAdd(g)}>Add as goal (then edit)</button>
-                </div>
-              ))}
+              <p className="text-teal-700 font-semibold">{kra}</p>
+              {goals.map((g, i) => {
+                const k = keyOf(g, i);
+                return (
+                  <div key={k} className="border border-navy-100 rounded-lg p-3 space-y-1 bg-navy-50/60">
+                    <p className="font-semibold text-sm">{g.title}</p>
+                    <Bullets items={g.why} />
+                    {hasAny(g.how_to_measure) && (
+                      <div className="text-navy-500">
+                        <p className="font-semibold">Evidence of progress</p>
+                        <Bullets items={g.how_to_measure} />
+                      </div>
+                    )}
+                    {g.suggested_timeline && <p className="text-navy-400">Suggested timeline: {g.suggested_timeline}</p>}
+                    {/* Stays open after adding, and says so. Adding four
+                        goals otherwise means reopening this four times. */}
+                    {added[k] ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="chip bg-emerald-100 text-emerald-700">Added ✓</span>
+                        <button className="text-[11px] text-navy-400 hover:text-navy-600"
+                          onClick={() => { setAdded((p) => { const n = { ...p }; delete n[k]; return n; }); onAdd(g, { undo: true }); }}>
+                          Undo
+                        </button>
+                      </span>
+                    ) : (
+                      <button className="btn-sec !text-[11px] !py-1"
+                        onClick={() => { onAdd(g); setAdded((p) => ({ ...p, [k]: true })); }}>
+                        Add as goal (then edit)
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ))}
-          {(d.uncovered_kras || []).length > 0 && <p className="text-amber-300">KRAs with no development goal yet: {d.uncovered_kras.join(' · ')}</p>}
-          {(d.already_covered || []).length > 0 && <p className="text-slate-400">Already covered: {d.already_covered.join(' · ')}</p>}
-          {(d.gaps || []).length > 0 && <p className="text-slate-400">Input gaps: {d.gaps.join(' · ')}</p>}
+          {(d.uncovered_kras || []).length > 0 && <p className="text-amber-700">KRAs with no development goal yet: {d.uncovered_kras.join(' · ')}</p>}
+          {(d.already_covered || []).length > 0 && <p className="text-navy-400">Already covered: {d.already_covered.join(' · ')}</p>}
+          {(d.gaps || []).length > 0 && <p className="text-navy-400">Input gaps: {d.gaps.join(' · ')}</p>}
         </div>
       )}
-    </div>
+    </AiDraftPanel>
   );
 }
 
@@ -217,15 +245,31 @@ function GoalList({ goals: initial, editable, onSaved }) {
   const asLines = (v, prefix = '• ') => (Array.isArray(v)
     ? v.filter(Boolean).map((x) => `${prefix}${String(x).trim()}`).join('\n')
     : (v ? String(v).trim() : ''));
-  const addSuggested = (g) => setGoals((gs) => [...gs, {
-    title: g.title || '',
-    description: [
-      asLines(g.why),
-      hasAny(g.how_to_measure) ? `Evidence of progress:\n${asLines(g.how_to_measure)}` : null,
-      g.suggested_timeline ? `Suggested timeline: ${g.suggested_timeline} — set a target date above.` : null,
-    ].filter(Boolean).join('\n\n'),
-    target_date: '', progress_pct: 0,
-  }]);
+  // Undo removes the goal this suggestion added, and only that one: the
+  // LAST unsaved row whose title still matches, so undoing does not touch
+  // a saved goal that happens to share a name, nor an edit made in
+  // between. Unsaved is the test that matters — a row with an id came from
+  // the server, not from the popup.
+  const addSuggested = (g, opts = {}) => {
+    if (opts.undo) {
+      setGoals((gs) => {
+        for (let i = gs.length - 1; i >= 0; i -= 1) {
+          if (!gs[i].id && (gs[i].title || '') === (g.title || '')) return gs.filter((_, j) => j !== i);
+        }
+        return gs;
+      });
+      return;
+    }
+    setGoals((gs) => [...gs, {
+      title: g.title || '',
+      description: [
+        asLines(g.why),
+        hasAny(g.how_to_measure) ? `Evidence of progress:\n${asLines(g.how_to_measure)}` : null,
+        g.suggested_timeline ? `Suggested timeline: ${g.suggested_timeline} — set a target date above.` : null,
+      ].filter(Boolean).join('\n\n'),
+      target_date: '', progress_pct: 0,
+    }]);
+  };
 
   return (
     <div className="space-y-3">
@@ -292,60 +336,60 @@ function ProgressBar({ value, onChange, readOnly }) {
 // transitions HR configured from the employee's current role, so anything
 // it proposes is a role the select below will actually accept.
 function CareerAiPanel({ onUse }) {
-  const [busy, setBusy] = useState(false);
-  const [res, setRes] = useState(null);
-  const [err, setErr] = useState(null);
-  const ask = async () => {
-    setBusy(true); setErr(null);
-    try { setRes(await api('/agentic/career-suggest', { method: 'POST' })); }
-    catch (e) { setErr(e.message); }
-    setBusy(false);
-  };
-  const d = res && res.draft;
+  const [used, setUsed] = useState(null);
 
   return (
-    <div className="space-y-2">
-      <div className="bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold text-indigo-800">+ Where could I aim next?</p>
-          <p className="text-[11px] text-navy-500">Reads your designation and department against the career paths HR has configured, and suggests what a one-to-two year aspiration could look like.</p>
-        </div>
-        <button className="btn-pri !bg-indigo-700" disabled={busy} onClick={ask}>
-          <Sparkles size={13} className="inline mr-1" />{busy ? 'Thinking…' : 'Suggest a path'}
-        </button>
-      </div>
-      {err && <p className="text-xs text-rose-600">{err}</p>}
-      {d && (
-        <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-[11px] space-y-3">
-          <DraftBadge />
-          {d.no_path_configured && <p className="text-amber-300">No career path is configured from your current role yet — HR needs to define one in the Career Pathing Matrix.</p>}
+    <AiDraftPanel
+      accent="indigo"
+      title="+ Where could I aim next?"
+      description="Reads your designation and department against the career paths HR has configured, and suggests what a one-to-two year aspiration could look like."
+      idleLabel="Suggest a path"
+      againLabel="Suggest again"
+      modalTitle="Possible next roles"
+      run={async () => { setUsed(null); const r = await api('/agentic/career-suggest', { method: 'POST' }); return r.draft; }}
+      summary={(d) => {
+        if (d.no_path_configured) return 'No career path configured from your current role';
+        const n = (d.aspirations || []).length;
+        return `${n} possible next role${n === 1 ? '' : 's'}`;
+      }}
+      footer={() => <p className="text-navy-500">{used ? `“${used}” filled in below — edit it, then save.` : 'Choosing one fills in the form behind this window.'}</p>}
+    >
+      {(d) => (
+        <div className="space-y-3">
+          {d.no_path_configured && <p className="text-amber-700">No career path is configured from your current role yet — HR needs to define one in the Career Pathing Matrix.</p>}
           {(d.aspirations || []).map((a, i) => (
-            <div key={i} className="border border-navy-600 rounded-lg p-2.5 space-y-1">
+            <div key={i} className="border border-navy-100 rounded-lg p-3 space-y-1 bg-navy-50/60">
               <p className="font-semibold text-sm">{a.target_role}</p>
               {a.fit && <p>{a.fit}</p>}
-              {a.typical_time && <p className="text-indigo-300">Typical time: {a.typical_time}</p>}
+              {a.typical_time && <p className="text-indigo-700">Typical time: {a.typical_time}</p>}
               {(a.competencies_to_build || []).length > 0 && (
-                <div><p className="text-slate-300 font-semibold">Competencies to build</p>
+                <div><p className="text-navy-500 font-semibold">Competencies to build</p>
                   <ul className="list-disc pl-4">{a.competencies_to_build.map((c, n) => <li key={n}>{c}</li>)}</ul></div>
               )}
               {(a.first_steps || []).length > 0 && (
-                <div><p className="text-slate-300 font-semibold">Start this cycle</p>
+                <div><p className="text-navy-500 font-semibold">Start this cycle</p>
                   <ul className="list-disc pl-4">{a.first_steps.map((c, n) => <li key={n}>{c}</li>)}</ul></div>
               )}
               {(a.suggested_milestones || []).length > 0 && (
-                <div><p className="text-slate-300 font-semibold">Milestones to track</p>
+                <div><p className="text-navy-500 font-semibold">Milestones to track</p>
                   <ul className="list-disc pl-4">{a.suggested_milestones.map((m, n) => (
-                    <li key={n}>{m.title}{m.description && <span className="text-slate-400"> — {m.description}</span>}</li>
+                    <li key={n}>{m.title}{m.description && <span className="text-navy-400"> — {m.description}</span>}</li>
                   ))}</ul></div>
               )}
-              <button className="btn-sec !bg-navy-700 !text-white !border-navy-600 !text-[11px] !py-1"
-                onClick={() => onUse(a)}>Use this (then edit)</button>
+              {/* One aspiration is chosen, not several — the form holds a
+                  single target role — so this marks the chosen one rather
+                  than counting adds the way the goal list does. */}
+              {used === a.target_role ? (
+                <span className="chip bg-emerald-100 text-emerald-700">Filled in below ✓</span>
+              ) : (
+                <button className="btn-sec !text-[11px] !py-1" onClick={() => { onUse(a); setUsed(a.target_role); }}>Use this (then edit)</button>
+              )}
             </div>
           ))}
-          {(d.notes || []).length > 0 && <p className="text-slate-400">{d.notes.join(' · ')}</p>}
+          {(d.notes || []).length > 0 && <p className="text-navy-400">{d.notes.join(' · ')}</p>}
         </div>
       )}
-    </div>
+    </AiDraftPanel>
   );
 }
 

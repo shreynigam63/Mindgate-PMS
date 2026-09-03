@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, CheckCircle2, Clock, Sparkles } from 'lucide-react';
 import { api, Bullets } from '../utils/api';
+import { AiModal } from './AiDraftPanel';
 import MeetingPanel from './MeetingPanel';
 
 export default function ConnectsPage() {
@@ -208,6 +209,7 @@ function NewConnectForm({ me, team, onSaved }) {
 
 function ConnectRow({ cn, me, reload }) {
   const [insight, setInsight] = useState(null);
+  const [insightOpen, setInsightOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   // Requested with a reference screenshot: "AI auto-tag KRAs" — suggests
@@ -230,7 +232,7 @@ function ConnectRow({ cn, me, reload }) {
   };
   const askInsights = async () => {
     setBusy(true); setErr(null);
-    try { const r = await api('/agentic/connect-insights', { method: 'POST', body: JSON.stringify({ employee_id: cn.employee_id }) }); setInsight(r); }
+    try { const r = await api('/agentic/connect-insights', { method: 'POST', body: JSON.stringify({ employee_id: cn.employee_id }) }); setInsight(r); setInsightOpen(true); }
     catch (e) { setErr(e.message); }
     setBusy(false);
   };
@@ -333,7 +335,20 @@ function ConnectRow({ cn, me, reload }) {
         {!cn.signed_off && (!me || me.id === cn.manager_id) && <button className="btn-sec" onClick={signOff}>Sign off</button>}
         <button className="btn-sec" disabled={busy} onClick={askInsights}><Sparkles size={12} className="inline mr-1 text-amber-500" />{busy ? 'Thinking…' : 'AI insights'}</button>
       </div>
-      {insight && <AiInsightsPanel insight={insight} onRefresh={askInsights} busy={busy} />}
+      {/* A connect row is a compact thing in a list of connect rows. The
+          read across recent connects opens over the list instead of
+          expanding one row to several screens. */}
+      {insight && !insightOpen && (
+        <button className="text-[11px] font-semibold text-indigo-600 hover:underline self-start" onClick={() => setInsightOpen(true)}>
+          Reopen AI insights{insight.status ? ` — ${insight.status}` : ''}
+        </button>
+      )}
+      {insight && insightOpen && (
+        <AiModal title="What the recent connects show" onClose={() => setInsightOpen(false)}
+          footer={<button className="btn-sec" disabled={busy} onClick={askInsights}>{busy ? 'Thinking…' : 'Refresh'}</button>}>
+          <AiInsightsPanel insight={insight} />
+        </AiModal>
+      )}
       <MeetingPanel employeeId={cn.employee_id} context="connect" refId={cn.id}
         title="Meeting for this connect" />
       {err && <p className="text-xs text-rose-600">{err}</p>}
@@ -365,17 +380,12 @@ function groupThemes(themes) {
   return order.map((kra) => [kra, byKra.get(kra)]);
 }
 
-function AiInsightsPanel({ insight, onRefresh, busy }) {
+function AiInsightsPanel({ insight }) {
   return (
-    <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-4 text-xs space-y-3">
-      <div className="flex items-center gap-2">
-        <Sparkles size={13} className="text-indigo-500" />
-        <span className="font-bold tracking-wide text-indigo-700 text-[11px] uppercase">AI Insights</span>
-        {insight.status && <span className={`chip ${INSIGHT_STATUS_COLOR[insight.status] || 'bg-navy-50 text-navy-600'}`}>{insight.status}</span>}
-        <button className="ml-auto text-indigo-500 font-semibold flex items-center gap-1" disabled={busy} onClick={onRefresh}>
-          <Sparkles size={11} />refresh
-        </button>
-      </div>
+    <div className="space-y-3">
+      {/* The header and the refresh button belong to the modal now, so
+          this renders the content only — it is no longer a card. */}
+      {insight.status && <span className={`chip ${INSIGHT_STATUS_COLOR[insight.status] || 'bg-navy-50 text-navy-600'}`}>{insight.status}</span>}
       {insight.headline && <p className="italic text-navy-700">"{insight.headline}"</p>}
       <div className="grid sm:grid-cols-2 gap-4">
         <div>

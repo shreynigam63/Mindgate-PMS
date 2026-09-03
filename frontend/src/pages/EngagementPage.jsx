@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Sparkles, Play, Square } from 'lucide-react';
-import { api, DraftBadge } from '../utils/api';
+import { api } from '../utils/api';
+import { AiModal } from './AiDraftPanel';
 
 export default function EngagementPage() {
   const [data, setData] = useState(null);
@@ -8,6 +9,7 @@ export default function EngagementPage() {
   const [taking, setTaking] = useState(null);
   const [results, setResults] = useState(null);
   const [themes, setThemes] = useState(null);
+  const [themesOpen, setThemesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const load = () => Promise.all([api('/engagement/surveys'), api('/engagement/my/invitations')])
     .then(([s, i]) => setData({ ...s, invitations: i.invitations })).catch(e => setErr(e.message));
@@ -28,7 +30,7 @@ export default function EngagementPage() {
   };
   const askThemes = async (surveyId) => {
     setBusy(true);
-    try { const r = await api('/agentic/engagement-themes', { method: 'POST', body: JSON.stringify({ survey_id: surveyId }) }); setThemes(r.draft); }
+    try { const r = await api('/agentic/engagement-themes', { method: 'POST', body: JSON.stringify({ survey_id: surveyId }) }); setThemes(r.draft); setThemesOpen(true); }
     catch (e) { alert(e.message); }
     setBusy(false);
   };
@@ -96,14 +98,25 @@ export default function EngagementPage() {
                 : <p className="text-navy-600">n={q.n} · avg {q.average}{q.enps !== undefined && <> · <b>eNPS {q.enps}</b></>}</p>}
             </div>
           ))}
-          {themes && (
-            <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
-              <DraftBadge />
+          {/* Themes open over the page. The question-by-question numbers
+              above are what the results card is for; the themes are a read
+              of the free text and should not push them off screen. */}
+          {themes && !themesOpen && (
+            <button className="text-[11px] font-semibold text-navy-600 hover:underline self-start" onClick={() => setThemesOpen(true)}>
+              Reopen the {(themes.themes || []).length} theme{(themes.themes || []).length === 1 ? '' : 's'}
+            </button>
+          )}
+          {themes && themesOpen && (
+            <AiModal title={`Themes — ${results.survey.title}`} onClose={() => setThemesOpen(false)}>
               {(themes.themes || []).map((t, i) => (
-                <div key={i}><p className="font-bold">{t.name} <span className="text-navy-400 font-normal">({t.prevalence})</span></p>
-                  <p>{t.summary}</p>{t.representative_quote && <p className="text-navy-400 italic">"{t.representative_quote}"</p>}</div>
+                <div key={i} className="border border-navy-100 rounded-lg p-3 bg-navy-50/60 space-y-1">
+                  <p className="font-bold">{t.name} <span className="text-navy-400 font-normal">({t.prevalence})</span></p>
+                  <p>{t.summary}</p>
+                  {t.representative_quote && <p className="text-navy-400 italic">"{t.representative_quote}"</p>}
+                </div>
               ))}
-            </div>
+              {!(themes.themes || []).length && <p className="text-navy-400">No themes came back — there may be too few text answers to read.</p>}
+            </AiModal>
           )}
         </div>
       )}

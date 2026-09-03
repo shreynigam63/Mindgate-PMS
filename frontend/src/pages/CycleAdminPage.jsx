@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Plus, ArrowRight, RotateCcw, Rocket, Activity, BellRing, Sparkles, Trash2, Save, X, Info, History, ChevronDown, ChevronUp } from 'lucide-react';
-import { api, PHASES, phaseLabel, phaseColor, DraftBadge } from '../utils/api';
+import { Plus, ArrowRight, RotateCcw, Rocket, Activity, BellRing, Trash2, Save, X, Info, History, ChevronDown, ChevronUp } from 'lucide-react';
+import { api, PHASES, phaseLabel, phaseColor } from '../utils/api';
+import { AiModal } from './AiDraftPanel';
 
 export default function CycleAdminPage() {
   const [cycles, setCycles] = useState(null);
   const [err, setErr] = useState(null);
   const [health, setHealth] = useState(null);
+  const [healthOpen, setHealthOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sweep, setSweep] = useState(null);
   const load = () => api('/pms/cycles').then(r => setCycles(r.cycles)).catch(e => setErr(e.message));
@@ -59,7 +61,7 @@ export default function CycleAdminPage() {
   };
   const cycleHealth = async () => {
     setBusy(true); setErr(null);
-    try { const r = await api('/agentic/cycle-health', { method: 'POST' }); setHealth(r); }
+    try { const r = await api('/agentic/cycle-health', { method: 'POST' }); setHealth(r); setHealthOpen(true); }
     catch (e) { setErr(e.message); }
     setBusy(false);
   };
@@ -104,14 +106,23 @@ export default function CycleAdminPage() {
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {sweep && <p className="text-xs text-emerald-700">{sweep}</p>}
-      {health?.draft && (
-        <div className="bg-navy-800 text-slate-100 rounded-xl p-4 text-xs space-y-2">
-          <div className="flex items-center gap-2"><Sparkles size={13} className="text-amber-300" /><DraftBadge /></div>
+      {/* Over the page, not above the cycle list — this screen's job is
+          the cycles and their phase controls. */}
+      {health?.draft && !healthOpen && (
+        <button className="text-[11px] font-semibold text-navy-600 hover:underline" onClick={() => setHealthOpen(true)}>
+          Reopen the cycle health read
+        </button>
+      )}
+      {health?.draft && healthOpen && (
+        <AiModal title="Cycle health" onClose={() => setHealthOpen(false)}>
           <p className="text-sm font-semibold">{health.draft.headline}</p>
           {health.draft.bottleneck && <p><b>Bottleneck:</b> {health.draft.bottleneck}</p>}
-          {(health.draft.chase_this_week || []).map((c, i) => <p key={i}>→ {c}</p>)}
+          {(health.draft.chase_this_week || []).length > 0 && (
+            <div><p className="font-semibold text-navy-500">Chase this week</p>
+              <ul className="list-disc pl-4">{health.draft.chase_this_week.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
+          )}
           {(health.draft.caveats || []).length > 0 && <p className="text-navy-400">Caveats: {health.draft.caveats.join(' · ')}</p>}
-        </div>
+        </AiModal>
       )}
       {cycles.map(c => {
         const i = PHASES.indexOf(c.phase);
