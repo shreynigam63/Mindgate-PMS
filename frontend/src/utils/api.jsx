@@ -33,3 +33,41 @@ export const phaseColor = (p) => ({ draft: 'bg-navy-50 text-navy-600', kra_open:
 export function DraftBadge() {
   return <span className="chip bg-amber-100 text-amber-700">AI DRAFT — edit before use</span>;
 }
+
+// AI drafts are returned as short bullets grouped by KRA, and every screen
+// that shows one renders them the same way — a KRA heading, then its
+// bullets, with anything spanning KRAs under "Across KRAs" at the end.
+//
+// `sections` names the lists to show and how to label them, e.g.
+// [['progress','Progress'], ['blockers','Blockers']]. A KRA with nothing in
+// any of the requested lists is skipped rather than shown as an empty
+// heading — the model is told to leave a list empty rather than pad it, so
+// empty is a real answer and printing a bare heading would misrepresent it.
+export function KraBullets({ byKra, crossCutting, sections }) {
+  const groups = (Array.isArray(byKra) ? byKra : [])
+    .map((g) => ({ kra: g.kra, lists: sections.map(([key, label]) => [label, (g[key] || []).filter(Boolean)]).filter(([, v]) => v.length) }))
+    .filter((g) => g.lists.length);
+  const cross = sections
+    .map(([key, label]) => [label, (((crossCutting || {})[key]) || []).filter(Boolean)])
+    .filter(([, v]) => v.length);
+  if (!groups.length && !cross.length) return null;
+
+  const Block = ({ heading, lists }) => (
+    <div>
+      <p className="font-semibold">{heading}</p>
+      {lists.map(([label, points]) => (
+        <div key={label} className="mt-0.5">
+          {lists.length > 1 && <p className="opacity-70">{label}</p>}
+          <ul className="list-disc pl-4">{points.map((p, i) => <li key={i}>{p}</li>)}</ul>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="space-y-2">
+      {groups.map((g, i) => <Block key={i} heading={g.kra} lists={g.lists} />)}
+      {cross.length > 0 && <Block heading="Across KRAs" lists={cross} />}
+    </div>
+  );
+}

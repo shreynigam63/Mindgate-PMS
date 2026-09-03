@@ -115,7 +115,13 @@ test('rolling back closes the phase being left, with a "no longer open" body, no
   const before = await notificationsFor(hodId);
   const beforeCount = before.length;
 
-  await api(`/pms/cycles/${cycleId}/phase`, token, { method: 'POST', body: JSON.stringify({ rollback: true, to: 'calibration' }) });
+  // The cycle is at hod_eval, so rolling BACK goes to manager_eval — the
+  // step before it. This asked for 'calibration', which is the step
+  // AFTER, so the phase machine correctly refused it (409) and no notice
+  // was ever sent; the test then failed on the missing notification
+  // rather than on the behaviour it was written to check.
+  const rolled = await api(`/pms/cycles/${cycleId}/phase`, token, { method: 'POST', body: JSON.stringify({ rollback: true, to: 'manager_eval' }) });
+  assert.equal(rolled.status, 200, JSON.stringify(rolled.body));
   // Rolling back FROM hod_eval closes hod_eval's own audience (Delivery Heads).
   const after = await notificationsFor(hodId);
   assert.equal(after.length, beforeCount + 1);

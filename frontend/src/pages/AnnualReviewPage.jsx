@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Target, ClipboardList, TrendingUp, Star, Award } from 'lucide-react';
+import { Target, ClipboardList, TrendingUp, Star, Award, Clock } from 'lucide-react';
 import { api } from '../utils/api';
 
 export default function AnnualReviewPage() {
@@ -18,14 +18,20 @@ export default function AnnualReviewPage() {
         <span className="chip bg-purple-100 text-purple-700">{data.cycle.name}</span>
         {data.super50?.flag && <span className="chip bg-amber-100 text-amber-700"><Award size={11} className="inline mr-1" />Super 50</span>}
       </div>
-      <p className="text-xs text-navy-400">Consolidates your KRA outcomes, development plan progress, and Aspiring Career status for the year — brings together what's already recorded elsewhere into one view.</p>
+      <p className="text-xs text-navy-400">Consolidates your KRA outcomes, target achievement progress, and Aspiring Career status for the year — brings together what's already recorded elsewhere into one view.</p>
 
       <Section icon={Target} title="KRA Outcomes">
         {!data.kra.outcomes.length && <Empty text="No KRAs recorded for this cycle." />}
         {data.kra.outcomes.map(k => (
           <div key={k.id} className="border-b border-navy-100 last:border-0 py-2 text-xs">
             <p className="font-semibold">{k.title} <span className="text-navy-400 font-normal">({k.weight}%)</span></p>
-            <div className="flex gap-4 mt-1">
+            <div className="flex flex-wrap gap-4 mt-1">
+              {/* Mid-year first — it is the earlier reading, and "3 at
+                  mid-year, 5 now" is the shape of the year. Shown next to
+                  the others, never blended into them. */}
+              {k.midyear && (k.midyear.self || k.midyear.manager) && (
+                <span className="text-navy-500">Mid-year: self <b>{k.midyear.self?.rating ?? '—'}</b> · manager <b>{k.midyear.manager?.rating ?? '—'}</b></span>
+              )}
               <span>Self: <b>{k.self?.self_rating ?? '—'}</b> {k.self?.narrative && <span className="text-navy-500">— {k.self.narrative}</span>}</span>
               <span>Manager: <b>{k.manager?.rating ?? '—'}</b> {k.manager?.comment && <span className="text-navy-500">— {k.manager.comment}</span>}</span>
             </div>
@@ -33,8 +39,19 @@ export default function AnnualReviewPage() {
         ))}
       </Section>
 
-      <Section icon={ClipboardList} title="Development Plan Progress">
-        {!data.development_plan.plan ? <Empty text="No development plan for this cycle." /> : (
+      {data.midyear && (
+        <Section icon={Clock} title="Mid-Year checkpoint">
+          <p className="text-xs">
+            Self <b>{data.midyear.self_overall ?? '—'}</b> ({data.midyear.self_status}) · Manager <b>{data.midyear.manager_overall ?? '—'}</b> ({data.midyear.manager_status})
+          </p>
+          <p className="text-[11px] text-navy-400 mt-1">
+            The halfway reading, per KRA above. It is a reference point for the conversation, not an input to the final rating.
+          </p>
+        </Section>
+      )}
+
+      <Section icon={ClipboardList} title="Target achievements for the year — progress">
+        {!data.development_plan.plan ? <Empty text="No target achievements set for this cycle." /> : (
           <>
             <p className="text-xs mb-2">Status: <span className="font-semibold">{data.development_plan.plan.status}</span> · Average progress: <span className="font-semibold">{data.development_plan.avg_progress}%</span></p>
             {data.development_plan.goals.map((g, i) => (

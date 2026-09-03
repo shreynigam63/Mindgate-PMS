@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Send, CheckCircle2, Clock, ChevronDown, ChevronRight } from 'lucide-react';
-import { api, phaseLabel, phaseColor, DraftBadge } from '../utils/api';
+import { api, phaseLabel, phaseColor, DraftBadge, KraBullets } from '../utils/api';
+import ReviewAssist from './ReviewAssist';
+import MeetingPanel from './MeetingPanel';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -259,7 +261,7 @@ function MyMidYearCard() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="font-bold text-sm">Mid-Year Review · {data.cycle.name}</p>
-          <p className="text-xs text-navy-400">Halfway checkpoint against KRAs and the development plan</p>
+          <p className="text-xs text-navy-400">Halfway checkpoint against KRAs and your target achievements</p>
         </div>
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{phaseLabel(data.cycle.phase)}</span>
       </div>
@@ -275,6 +277,9 @@ function MyMidYearCard() {
         </p>
       )}
 
+      {editable && <ReviewAssist stage="midyear" label="mid-year review" />}
+      {editable && <MeetingPanel context="midyear" title="Mid-year discussion with your manager" />}
+
       {editable && (
         <div className="bg-gradient-to-r from-fuchsia-50 to-rose-50 border border-fuchsia-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -289,7 +294,8 @@ function MyMidYearCard() {
       {draft && (
         <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
           <DraftBadge />
-          <p>{draft.narrative}</p>
+          <KraBullets byKra={draft.by_kra} crossCutting={draft.cross_cutting}
+            sections={[['progress', 'Progress'], ['blockers', 'Blockers'], ['focus_next', 'Focus for the next half']]} />
           {(draft.gaps || []).length > 0 && <p className="text-amber-300">Input gaps: {draft.gaps.join(' · ')}</p>}
           <button className="btn-sec !bg-navy-700 !text-white !border-navy-600"
             onClick={() => { setSelfNarrative(draft.narrative); persist({ self_narrative: draft.narrative }); }}>
@@ -329,7 +335,7 @@ function MyMidYearCard() {
         <div className="border border-navy-100 rounded-xl p-3 space-y-2">
           <p className="text-[10px] uppercase font-bold text-navy-400">From the manager</p>
           <p className="text-xs"><b>Mid-year rating:</b> {overallLabel(data.checkin.manager_rating) ?? '—'}</p>
-          <p className="text-xs text-navy-500">{data.checkin.manager_narrative || 'Not written yet.'}</p>
+          <p className="text-xs text-navy-500 whitespace-pre-wrap">{data.checkin.manager_narrative || 'Not written yet.'}</p>
         </div>
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
@@ -432,7 +438,7 @@ function TeamMidYearDetail({ employeeId }) {
       </div>
       <div className="bg-navy-50 rounded-lg p-3 text-xs space-y-1">
         <p className="font-bold text-navy-500 uppercase text-[10px]">Their reflection</p>
-        {data.checkin.self_narrative ? <p>{data.checkin.self_narrative}</p> : <p className="text-navy-400">Not written yet.</p>}
+        {data.checkin.self_narrative ? <p className="whitespace-pre-wrap">{data.checkin.self_narrative}</p> : <p className="text-navy-400">Not written yet.</p>}
       </div>
       {editable && (
         <div className="bg-gradient-to-r from-fuchsia-50 to-rose-50 border border-fuchsia-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
@@ -445,7 +451,9 @@ function TeamMidYearDetail({ employeeId }) {
       {draft && (
         <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-xs space-y-2">
           <DraftBadge />
-          <p>{draft.narrative}</p>
+          <KraBullets byKra={draft.by_kra} crossCutting={draft.cross_cutting}
+            sections={[['progress', 'Progress'], ['blockers', 'Blockers'], ['focus_next', 'Focus for the next half']]} />
+          {(draft.gaps || []).length > 0 && <p className="text-amber-300">Input gaps: {draft.gaps.join(' · ')}</p>}
           <button className="btn-sec !bg-navy-700 !text-white !border-navy-600"
             onClick={() => { setManagerNarrative(draft.narrative); persist({ manager_narrative: draft.narrative }); }}>
             Copy into narrative (then edit)

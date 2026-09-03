@@ -90,7 +90,7 @@ export default function CompletionReportPage() {
         )}
       </div>
       <p className="text-xs text-navy-400 -mt-2">
-        "Complete" means KRA approved, Development Plan approved, Self-Appraisal submitted, and Manager Evaluation submitted.
+        "Complete" means KRA approved, target achievements approved, Self-Appraisal submitted, and Manager Evaluation submitted.
         Delivery Head Review isn't counted here — it isn't the employee's own action to finish.
       </p>
       {reseedMsg && <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">{reseedMsg}</p>}

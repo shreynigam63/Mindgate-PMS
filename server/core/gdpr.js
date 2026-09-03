@@ -22,14 +22,25 @@ const { authenticate } = require('./auth');
 const { guardUuidParams } = require('./http');
 const { apiPermissionParity, hasPermission } = require('./permissions');
 
-async function buildExport(tenantId, employeeId) {
+// includeRestricted: HR-only material that is deliberately not shown to
+// the employee in the product — today, the AI analysis of their annual
+// review meeting (migration 031).
+//
+// "NOT VISIBLE IN THE APP" AND "NOT DISCLOSABLE" ARE DIFFERENT THINGS, and
+// only the first was asked for. So the employee's own self-serve export
+// leaves it out, matching the product decision, while HR's export of that
+// employee includes it — which is what lets a formal subject access
+// request be answered completely, by a person who knows what they are
+// releasing, rather than either leaking automatically or being quietly
+// impossible to fulfil.
+async function buildExport(tenantId, employeeId, { includeRestricted = false } = {}) {
   const profile = (await db.query(
     `SELECT id, emp_code, name, email, department, designation, role_band, manager_id, date_of_joining, status,
             last_appraisal_rating, last_appraisal_at, potential_rating, nine_box_cell, super50_flag, super50_since
        FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!profile) return null;
 
-  const [kraSheets, selfAppraisals, managerEvals, devPlans, careerPath, connects, pips, ratingHistory, consents, parameterScores, pulseChecks] = await Promise.all([
+  const [kraSheets, selfAppraisals, managerEvals, devPlans, careerPath, connects, pips, ratingHistory, consents, parameterScores, pulseChecks, meetings, aiRecs] = await Promise.all([
     db.query(`SELECT s.cycle_id, s.status, s.manager_comment, k.title, k.weight, k.measures FROM pms.kra_sheets s LEFT JOIN pms.kras k ON k.sheet_id=s.id WHERE s.tenant_id=$1 AND s.employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, status, entries, overall_self_rating, went_well, could_improve, submitted_at FROM pms.self_appraisals WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, status, overall_rating, strengths, improvement_areas, submitted_at FROM pms.manager_evaluations WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
@@ -41,6 +52,24 @@ async function buildExport(tenantId, employeeId) {
     db.query(`SELECT consent_type, granted, granted_at, revoked_at FROM core.employee_consents WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, parameter_id, score, updated_at FROM pms.parameter_scores WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT cycle_id, parameter_id, score, updated_at FROM pms.pulse_checks WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
+    // Review meetings and, where one was captured with their consent, the
+    // TRANSCRIPT IN FULL. A recording of someone discussing their own
+    // performance is about as personal as anything this system holds — a
+    // subject access request that returned every rating but omitted the
+    // conversation would not be a complete answer. Added with the table
+    // (migration 027) rather than left for someone to notice later.
+    db.query(`SELECT m.context, m.provider, m.meeting_url, m.scheduled_at, m.created_at,
+                     t.content AS transcript, t.captured_at AS transcript_captured_at, t.consent_checked_at
+                FROM pms.review_meetings m
+                LEFT JOIN pms.meeting_transcripts t ON t.meeting_id = m.id
+               WHERE m.tenant_id=$1 AND m.employee_id=$2
+               ORDER BY COALESCE(m.scheduled_at, m.created_at) DESC`, [tenantId, employeeId]),
+    // AI recommendations kept ABOUT this person, with what was decided.
+    // These are statements about someone's development that a manager can
+    // read months later, so they belong in a subject access response.
+    db.query(`SELECT kind, title, detail, status, decision_note, decided_at, created_at
+                FROM agentic.recommendations
+               WHERE tenant_id=$1 AND about_employee_id=$2 ORDER BY created_at DESC`, [tenantId, employeeId]),
   ]);
 
   return {
@@ -57,7 +86,22 @@ async function buildExport(tenantId, employeeId) {
     consents: consents.rows,
     annual_review_parameter_scores: parameterScores.rows,
     midyear_pulse_checks: pulseChecks.rows,
+    review_meetings: meetings.rows,
+    ai_recommendations: aiRecs.rows,
+    ...(includeRestricted ? { hr_only: await restrictedSections(tenantId, employeeId) } : {}),
   };
+}
+
+// Nested under hr_only rather than mixed in at the top level, so anyone
+// looking at an export file can see at a glance which part of it is
+// material the employee has never been shown in the product.
+async function restrictedSections(tenantId, employeeId) {
+  const analyses = await db.query(
+    `SELECT a.cycle_id, c.name AS cycle_name, a.entries, a.overall, a.analysed_by, a.created_at, a.updated_at
+       FROM pms.parameter_ai_analyses a JOIN pms.cycles c ON c.id = a.cycle_id
+      WHERE a.tenant_id=$1 AND a.employee_id=$2 ORDER BY a.updated_at DESC`,
+    [tenantId, employeeId]);
+  return { annual_review_parameter_ai_analysis: analyses.rows };
 }
 
 const router = express.Router();
@@ -77,7 +121,7 @@ router.get('/export', async (req, res) => {
 router.get('/export/:employeeId', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
-    const data = await buildExport(req.user.tenant_id, req.params.employeeId);
+    const data = await buildExport(req.user.tenant_id, req.params.employeeId, { includeRestricted: true });
     if (!data) return res.status(404).json({ error: 'employee not found' });
     res.setHeader('Content-Disposition', `attachment; filename="data-export-${req.params.employeeId}.json"`);
     res.json(data);

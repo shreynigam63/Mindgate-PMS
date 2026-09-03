@@ -9,16 +9,80 @@ const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
 const { apiPermissionParity, hasPermission } = require('../../core/permissions');
 const ai = require('../../core/ai');
+const { requireConsent } = require('../../core/consent');
 // Cross-module read via the other module's EXPORTED interface, per the
 // house rule that modules never import each other's internals. This is
 // also what guarantees career suggestions stay inside the set the
 // career-path form accepts — both resolve eligibility through it.
-const { eligibleTransitionsFor, careerPathDiagnostics } = require('../people');
+const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor } = require('../people');
+// Same house rule, the other direction: the appraisal summary narrates the
+// performance module's own consolidation rather than re-gathering it.
+const { buildAnnualReviewSummary } = require('../performance');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
 const T = (req) => req.user.tenant_id;
 const fail = (res, e) => res.status(e.status || 500).json({ error: e.message });
+
+// ---------------------------------------------------------------------------
+// House style for every AI draft in this module: SHORT BULLETS, GROUPED BY
+// KRA. Requested after a mid-year draft came back as three dense
+// paragraphs — accurate, but nobody reads a wall of text about their own
+// half-year, and a manager copying it into an evaluation field has to
+// unpick which sentence belongs to which KRA before they can edit it.
+//
+// The rules are stated as constraints the model can check itself against
+// (a word count, a bullet count, an exact-title requirement) rather than
+// adjectives like "concise", which every model already believes it is.
+//
+// EXACT TITLES matter beyond tidiness: grouping is only useful if the
+// group names match the KRAs the employee actually has, and a paraphrased
+// title silently detaches a bullet from the KRA it is about.
+// The grouping unit differs by feature — most drafts group by KRA, the
+// annual-review parameter analysis groups by parameter — so it is an
+// argument to the rules rather than string surgery on them. It was the
+// latter briefly: a string replace that stops matching when someone
+// reflows a prompt fails SILENTLY, leaving the model told to group by the
+// wrong thing with nothing anywhere to show it went wrong.
+function bulletRules({ unit = 'KRA', unitWord = 'title', crossCutting = true } = {}) {
+  return `FORMAT — a hard requirement, not a preference:
+- Write BULLETS, never paragraphs. One idea per bullet.
+- Each bullet is a single sentence of at most 18 words. Do not start it
+  with a dash, a number or a bullet character — the UI adds those.
+- Group every bullet under the ${unit} it concerns, naming that ${unit} by its
+  EXACT ${unitWord} as given in the input. Never paraphrase a ${unitWord}, never
+  invent a ${unit}, never merge two.
+- At most 3 bullets per list. If you have nothing the input supports for
+  a list, return it empty rather than padding it.${crossCutting ? `
+- Anything that genuinely spans ${unit}s goes in the cross-cutting section,
+  not repeated under each ${unit}.` : ''}
+- Plain professional English: no "leveraged", "spearheaded" or "synergy",
+  no praise the input does not support, no filler adjectives.`;
+}
+
+// The default, used by every KRA-grouped draft. Kept as a constant because
+// most callers want exactly this, and `${KRA_BULLET_RULES}` at a call site
+// reads better than `${bulletRules()}`.
+const KRA_BULLET_RULES = bulletRules();
+
+// The bullets, rendered as the plain text that goes into a form field.
+//
+// WHY THE SERVER RENDERS IT: these drafts feed a "copy into the field"
+// button, and the field is a plain textarea. Composing that text here
+// keeps one source of truth — the same grouping the panel shows is the
+// grouping that lands in the box — instead of the screen and the server
+// each having their own idea of what the draft said.
+function renderKraBullets(byKra, key, crossCutting) {
+  const blocks = [];
+  for (const group of Array.isArray(byKra) ? byKra : []) {
+    const points = Array.isArray(group && group[key]) ? group[key].filter((p) => String(p || '').trim()) : [];
+    if (!points.length) continue;
+    blocks.push(`${group.kra}\n${points.map((p) => `- ${String(p).trim()}`).join('\n')}`);
+  }
+  const cross = Array.isArray(crossCutting) ? crossCutting.filter((p) => String(p || '').trim()) : [];
+  if (cross.length) blocks.push(`Across KRAs\n${cross.map((p) => `- ${String(p).trim()}`).join('\n')}`);
+  return blocks.join('\n\n');
+}
 
 async function activeCycle(tenantId) {
   const r = await db.query(
@@ -68,17 +132,38 @@ router.post('/appraisal-draft', async (req, res) => {
     };
     const out = await ai.narrate({
       tenantId: T(req), kind: 'appraisal_draft', ref: { cycle_id: c.id, employee_id },
-      requestedBy: req.user.email, input,
+      // Bullets under every KRA need more room than the two paragraphs
+      // this used to return.
+      requestedBy: req.user.email, input, maxTokens: 1600,
       system: `You draft the WRITTEN portions of a manager's performance evaluation from the
 employee's KRAs and self-appraisal. You never suggest, imply, or hint at a
 numeric rating — judgement is the manager's alone; if the self-appraisal
 contains self-ratings, ignore the numbers and use only the narratives.
-Ground every sentence in the input; invent nothing. If the self-appraisal is
-missing or unsubmitted, say so and draft only from the KRAs.
+Ground every bullet in the input; invent nothing. If the self-appraisal is
+missing or unsubmitted, say so in gaps and draft only from the KRAs.
+
+${KRA_BULLET_RULES}
+
 Respond ONLY with JSON:
-{"strengths":"2-4 sentences","improvement_areas":"2-4 sentences","evidence_notes":["short pointers the manager may verify"],"gaps":["anything the input lacked"]}`,
+{"by_kra":[{"kra":"exact KRA title","strengths":["..."],"improvement_areas":["..."]}],
+ "cross_cutting":{"strengths":["..."],"improvement_areas":["..."]},
+ "evidence_notes":["short pointers the manager may verify"],
+ "gaps":["anything the input lacked"]}`,
     });
-    res.json({ ok: true, ...out, note: 'Draft only — edit before use; ratings are yours to decide.' });
+    // The two textareas this feeds want text, not JSON — rendered here so
+    // the box gets exactly the grouping the panel shows.
+    const d = out.draft || {};
+    const cross = d.cross_cutting || {};
+    res.json({
+      ok: true,
+      ...out,
+      draft: {
+        ...d,
+        strengths: renderKraBullets(d.by_kra, 'strengths', cross.strengths),
+        improvement_areas: renderKraBullets(d.by_kra, 'improvement_areas', cross.improvement_areas),
+      },
+      note: 'Draft only — edit before use; ratings are yours to decide.',
+    });
   } catch (e) { fail(res, e); }
 });
 
@@ -121,23 +206,45 @@ router.post('/midyear-draft', async (req, res) => {
     };
     const out = await ai.narrate({
       tenantId: T(req), kind: 'midyear_draft', ref: { cycle_id: c.id, employee_id },
-      requestedBy: req.user.email, input, maxTokens: 800,
-      system: perspective === 'self'
+      // Per-KRA bullets across three sections need far more room than the
+      // 2-4 sentence narrative this used to produce: eight KRAs is
+      // realistic, and a truncated draft is a draft nobody can use.
+      requestedBy: req.user.email, input, maxTokens: 1600,
+      system: `${perspective === 'self'
         ? `You draft an EMPLOYEE's own mid-year reflection, in first person ("I"), from their KRAs
-and their own logged 1-on-1 connects this cycle. Cover highlights, challenges, and focus for
-next half. Ground everything in the input; invent nothing. Never suggest or imply a rating.
-Respond ONLY with JSON: {"narrative":"2-4 sentences, first person","gaps":["anything the input lacked"]}`
+and their own logged 1-on-1 connects this cycle. Ground everything in the input; invent
+nothing. Never suggest or imply a rating.`
         : `You draft a MANAGER's mid-year narrative about ONE employee, from their KRAs, the
 manager's own logged 1-on-1 connects this cycle, and (if available) the employee's own
 submitted self-reflection. Ground everything in the input; invent nothing. Never suggest or
-imply a numeric rating — judgement is the manager's alone.
-Respond ONLY with JSON: {"narrative":"2-4 sentences","gaps":["anything the input lacked"]}`,
+imply a numeric rating — judgement is the manager's alone.`}
+
+${KRA_BULLET_RULES}
+
+Respond ONLY with JSON:
+{"by_kra":[{"kra":"exact KRA title","progress":["..."],"blockers":["..."],"focus_next":["..."]}],
+ "cross_cutting":{"progress":["..."],"blockers":["..."],"focus_next":["..."]},
+ "gaps":["anything the input lacked"]}`,
     });
     // Same bug as connect-insights/connect-autotag, fixed the same way:
     // ai.narrate() returns { id, created_at, draft } — the actual output
-    // is under .draft. MidYearReviewPage.jsx already reads draft.narrative
-    // (top-level), so spreading out.draft is what actually matches it.
-    res.json({ ok: true, ...out.draft });
+    // is under .draft. MidYearReviewPage.jsx reads the fields at the top
+    // level, so spreading out.draft is what actually matches it.
+    //
+    // narrative is composed from the same bullets the panel renders,
+    // because the "use this draft" button writes it into a plain textarea.
+    const d = out.draft || {};
+    const cross = d.cross_cutting || {};
+    const sections = [
+      ['Progress', renderKraBullets(d.by_kra, 'progress', cross.progress)],
+      ['Blockers', renderKraBullets(d.by_kra, 'blockers', cross.blockers)],
+      ['Focus for the next half', renderKraBullets(d.by_kra, 'focus_next', cross.focus_next)],
+    ].filter(([, body]) => body);
+    res.json({
+      ok: true,
+      ...d,
+      narrative: sections.map(([h, body]) => `${h}\n${body}`).join('\n\n'),
+    });
   } catch (e) { fail(res, e); }
 });
 
@@ -209,7 +316,7 @@ no identities and you must not speculate about who wrote anything or single
 out text that could identify a person (a role+event combination, a unique
 complaint). Quote at most one short representative fragment per theme.
 Respond ONLY with JSON:
-{"themes":[{"name":"...","prevalence":"rough share of verbatims","summary":"2-3 sentences","representative_quote":"short fragment or null"}],"tensions":["where feedback disagrees with itself"],"suggested_followups":["..."]}`,
+{"themes":[{"name":"...","prevalence":"rough share of verbatims","summary":"one sentence, at most 20 words","representative_quote":"short fragment or null"}],"tensions":["where feedback disagrees with itself"],"suggested_followups":["..."]}`,
     });
     res.json({ ok: true, ...out });
   } catch (e) { fail(res, e); }
@@ -620,7 +727,12 @@ than estimating your own. You never suggest, imply or hint at a
 performance rating or score, and you never promise a promotion — you are
 describing what an aspiration would require, not what will happen.
 Respond ONLY with JSON:
-{"aspirations":[{"target_role":"exactly as given in configured_transitions","fit":"1-2 sentences on why this follows from their current role and department","typical_time":"from the matrix, or null","competencies_to_build":["from the matrix, phrased as something to work on"],"first_steps":["what to start this cycle"]}],
+Each suggested_milestone must be a step the employee could actually put a
+date against and mark progress on — "Lead one delivery workstream
+end to end", not "grow as a leader". Three to five per aspiration, in the
+order they would be done.
+Respond ONLY with JSON:
+{"aspirations":[{"target_role":"exactly as given in configured_transitions","fit":"1-2 sentences on why this follows from their current role and department","typical_time":"from the matrix, or null","competencies_to_build":["from the matrix, phrased as something to work on"],"first_steps":["what to start this cycle"],"suggested_milestones":[{"title":"short, datable, checkable","description":"one sentence on what done looks like"}]}],
  "no_path_configured":true or false,
  "notes":["anything the employee should discuss with their manager or HR"]}`,
     });
@@ -723,4 +835,784 @@ Respond ONLY with JSON:
   } catch (e) { fail(res, e); }
 });
 
-module.exports = { router };
+
+// ---------------------------------------------------------------------------
+// 14) Review assist — for the EMPLOYEE, on BOTH the mid-year review and the
+// annual self-appraisal.
+//
+// Requested in these words: read the one-on-one connects, what was and was
+// not achieved on the development plan, and any progress marked in
+// Aspiring Career; then give achievements, blockers and gaps against every
+// KRA, so the employee starts from their own evidence rather than a blank
+// box.
+//
+// HOW THIS DIFFERS FROM midyear-draft, which already existed: that one
+// writes the NARRATIVE, from KRAs and connects. This one assembles the
+// EVIDENCE, from four sources, and lays it out per KRA. They answer
+// different questions — "what do I say" versus "what actually happened" —
+// and an employee who has just been handed the second writes a better
+// version of the first.
+//
+// SELF-SERVICE, and only about yourself. There is no employee_id
+// parameter: it reads req.user.id and nothing else. This pulls together
+// someone's connects, their development plan and their career aspirations
+// in one response, which is a fuller picture of a person than any single
+// screen shows — so it is deliberately not addressable at anyone else,
+// not even by an admin.
+const REVIEW_ASSIST_STAGES = {
+  midyear: {
+    label: 'mid-year review',
+    period: 'the first half of the cycle so far',
+    kind: 'midyear_assist',
+  },
+  annual: {
+    label: 'annual self-appraisal',
+    period: 'the full cycle',
+    kind: 'annual_assist',
+  },
+};
+
+router.post('/review-assist', async (req, res) => {
+  try {
+    const stage = (req.body || {}).stage;
+    const cfg = REVIEW_ASSIST_STAGES[stage];
+    if (!cfg) return res.status(400).json({ error: "stage must be 'midyear' or 'annual'" });
+
+    const c = stage === 'midyear' ? await activeCycleForMidyear(T(req)) : await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const emp = (await db.query(
+      `SELECT id, name, department, designation FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.user.id, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee record not found' });
+
+    const sheet = (await db.query(
+      `SELECT id FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, req.user.id])).rows[0];
+    const kras = sheet ? (await db.query(
+      `SELECT title, weight, measures, category FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`,
+      [sheet.id])).rows : [];
+    // Without KRAs there is nothing to organise the evidence UNDER, and a
+    // per-KRA answer with no KRAs would be the model inventing headings.
+    if (!kras.length) {
+      return res.status(409).json({ error: 'No KRAs are mapped to you for this cycle yet — there is nothing to assess your work against.' });
+    }
+
+    // SOURCE 1 — the one-on-one connects held this cycle. Both parties'
+    // structured fields, because the whole point is evidence the employee
+    // may have forgotten they already recorded.
+    const connects = (await db.query(
+      `SELECT held_at, topic, COALESCE(discussion_notes, notes) AS discussion,
+              achievements, blockers, feedback
+         FROM pms.connects
+        WHERE tenant_id=$1 AND employee_id=$2 AND held_at >= COALESCE($3, held_at)
+        ORDER BY held_at DESC LIMIT 12`,
+      [T(req), req.user.id, c.opens_at || null])).rows;
+
+    // SOURCE 2 — "Target achievements for the year" (the development
+    // plan), WITH progress, so achieved and not-achieved are separable.
+    const plan = (await db.query(
+      `SELECT id, status FROM pms.development_plans WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, req.user.id])).rows[0];
+    const goals = plan ? (await db.query(
+      `SELECT title, description, target_date, progress_pct
+         FROM pms.development_goals WHERE plan_id=$1 ORDER BY sort_order`,
+      [plan.id])).rows : [];
+
+    // SOURCE 3 — Aspiring Career, through the people module's exported
+    // reader rather than a reach into its table (same house rule as the
+    // career-suggest endpoint above). Role names and timelines come from
+    // HR's configured matrix, not from the model. Since migration 028 this
+    // carries real MILESTONE PROGRESS rather than only the plan text, so
+    // "any progress marked in Aspiring Career" is now something the model
+    // can actually be shown.
+    const career = await careerPathFor(T(req), req.user.id);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const input = {
+      employee: { name: emp.name, department: emp.department, designation: emp.designation },
+      cycle: { name: c.name, phase: c.phase, opened: c.opens_at },
+      stage: cfg.label,
+      period_covered: cfg.period,
+      today,
+      kras: kras.map((k) => ({ title: k.title, category: k.category, weight: +k.weight, measures: k.measures })),
+      one_on_one_connects: connects,
+      target_achievements_for_the_year: goals.map((g) => {
+        // pg hands back a DATE column as a Date object, and comparing one
+        // to an ISO string coerces it to "Sat May 31 2025 ..." — which
+        // then compares lexically and calls every overdue goal on track.
+        // Normalise to yyyy-mm-dd first and compare like with like.
+        const targetDate = g.target_date ? new Date(g.target_date).toISOString().slice(0, 10) : null;
+        return {
+          title: g.title, description: g.description, target_date: targetDate,
+          progress_pct: g.progress_pct,
+          // Stated rather than left for the model to infer, so "not
+          // achieved" is a fact about the data and not a judgement it made
+          // up from a percentage and a date it could read either way.
+          state: g.progress_pct >= 100 ? 'achieved'
+            : (targetDate && targetDate < today ? 'overdue and incomplete' : 'in progress'),
+        };
+      }),
+      development_plan_status: plan ? plan.status : 'not started',
+      aspiring_career: career,
+    };
+
+    const out = await ai.narrate({
+      tenantId: T(req), kind: cfg.kind, ref: { cycle_id: c.id, employee_id: req.user.id },
+      requestedBy: req.user.email, input, maxTokens: 2000,
+      system: `You assemble the EVIDENCE an employee already has, so they can write their
+${cfg.label} from it instead of from memory. You are not writing the review — you
+are laying out, KRA by KRA, what the record shows.
+
+Your sources, all in the input, and nothing else:
+- one_on_one_connects: what was discussed, achieved, blocked and fed back
+- target_achievements_for_the_year: their development goals and each one's
+  state, which is given to you — do not recompute or dispute it
+- aspiring_career: the role they are working towards, if they have set one
+- kras: what they are accountable for, with weights
+
+For each KRA give:
+- achievements: what the record actually shows they did against it
+- blockers: obstacles named in the record, not obstacles you infer
+- gaps: where the record says little or nothing about a KRA they carry.
+  A KRA with no evidence is the most useful thing you can tell them, so
+  never pad it with generic filler to avoid an empty-looking section.
+
+Ground every bullet in a source. If a point comes from a connect, a goal
+or the career plan, say so in a few words ("from the 12 Aug connect",
+"goal 60% complete"). Invent no achievement, no date and no number.
+Never suggest, imply or hint at a rating — this is preparation, not
+assessment.
+
+${KRA_BULLET_RULES}
+
+Respond ONLY with JSON:
+{"by_kra":[{"kra":"exact KRA title","achievements":["..."],"blockers":["..."],"gaps":["..."]}],
+ "cross_cutting":{"achievements":["..."],"blockers":["..."],"gaps":["..."]},
+ "career_progress":["what the record shows towards their aspired role, or empty"],
+ "sources_missing":["a source that was empty and would have helped"]}`,
+    });
+
+    const d = out.draft || {};
+    res.json({
+      ok: true, ...out,
+      // What the model was actually given, so the employee can see the
+      // answer is thin because the record is thin — not because the
+      // feature is broken.
+      evidence_counts: {
+        kras: kras.length,
+        connects: connects.length,
+        goals: goals.length,
+        goals_achieved: goals.filter((g) => g.progress_pct >= 100).length,
+        aspiring_career_set: !!career,
+        career_milestones: career && career.milestones ? career.milestones.length : 0,
+        career_progress_pct: career ? career.progress_pct : null,
+      },
+      draft: d,
+      note: 'Evidence from your own records — edit and add to it before you submit.',
+    });
+  } catch (e) { fail(res, e); }
+});
+
+
+// ---------------------------------------------------------------------------
+// 15) Meeting summary, KRA-wise — the half of the Google Meet request that
+// can be built without connecting Google Meet.
+//
+// Requested: once PMS is integrated with Meet, AI should listen to the
+// whole conversation and afterwards give the employee and manager a
+// KRA-wise summary, so nobody writes it up from scratch. That is two
+// pieces: CAPTURING the conversation (needs Meet, deliberately not built —
+// see core/meetings.js) and SUMMARISING it (needs only the text). This is
+// the second piece, finished and usable today against a pasted transcript,
+// so connecting Meet later adds capture and changes nothing here.
+//
+// CONSENT IS RE-CHECKED HERE, not assumed from the fact that a transcript
+// exists. Storing it required consent; an employee who has since revoked
+// it has withdrawn permission for exactly this — "used for AI insights" is
+// the wording of the consent they gave. The row stays (it is a record of a
+// real meeting); what stops is feeding it to a model.
+router.post('/meeting-summary', async (req, res) => {
+  try {
+    const { meeting_id } = req.body || {};
+    if (!meeting_id) return res.status(400).json({ error: 'meeting_id required' });
+    const m = (await db.query(
+      `SELECT m.*, e.name AS employee_name
+         FROM pms.review_meetings m
+         JOIN core.employees e ON e.id = m.employee_id AND e.tenant_id = m.tenant_id
+        WHERE m.id=$1 AND m.tenant_id=$2`, [meeting_id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+
+    // Same two parties as the meeting routes: the employee it is about,
+    // their manager, or an admin.
+    const isSelf = m.employee_id === req.user.id;
+    const isMgr = !!(await db.query(`SELECT 1 FROM core.employees WHERE id=$1 AND tenant_id=$2 AND manager_id=$3`,
+      [m.employee_id, T(req), req.user.id])).rows[0];
+    if (!isSelf && !isMgr && !(await hasPermission(req.user, 'pms_admin'))) {
+      return res.status(403).json({ error: 'Not your meeting' });
+    }
+
+    const t = (await db.query(`SELECT content, captured_at FROM pms.meeting_transcripts WHERE meeting_id=$1`, [m.id])).rows[0];
+    if (!t) {
+      return res.status(409).json({
+        error: 'No transcript is stored for this meeting yet — paste one in, or connect a provider that can capture it.',
+      });
+    }
+    await requireConsent(T(req), m.employee_id);
+
+    const c = await activeCycle(T(req));
+    const sheet = c ? (await db.query(
+      `SELECT id FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, m.employee_id])).rows[0] : null;
+    const kras = sheet ? (await db.query(
+      `SELECT title, weight, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [sheet.id])).rows : [];
+    if (!kras.length) {
+      return res.status(409).json({ error: 'No KRAs are mapped to this employee for the current cycle — there is nothing to organise the summary under.' });
+    }
+
+    const out = await ai.narrate({
+      tenantId: T(req), kind: 'meeting_summary', ref: { meeting_id: m.id, employee_id: m.employee_id },
+      requestedBy: req.user.email, maxTokens: 2000,
+      input: {
+        employee: m.employee_name,
+        meeting: { context: m.context, scheduled_at: m.scheduled_at, provider: m.provider },
+        kras: kras.map((k) => ({ title: k.title, weight: +k.weight, measures: k.measures })),
+        transcript: t.content,
+      },
+      system: `You summarise a recorded one-on-one between an employee and their manager,
+organised by the employee's KRAs, so neither of them has to write the meeting up
+from scratch.
+
+Work ONLY from the transcript. It is a record of what two people said: report
+what was said, not what you would conclude from it. Where the two disagreed,
+say so rather than picking a side. Attribute a point to whoever made it when
+that matters ("their manager raised", "they said").
+
+Put each point under the KRA it concerns, by that KRA's exact title. Anything
+discussed that belongs to no KRA — leave, tooling, personal circumstances —
+goes under cross_cutting, and anything sensitive that is plainly not
+performance content should be left out entirely rather than summarised.
+
+Actions must be things somebody actually committed to in the conversation,
+with the owner named. Do not invent an action because a topic seemed to
+need one.
+
+Never suggest, imply or hint at a rating. This is a record of a
+conversation, not an assessment of it.
+
+${KRA_BULLET_RULES}
+
+Respond ONLY with JSON:
+{"by_kra":[{"kra":"exact KRA title","discussed":["..."],"agreed_actions":["owner — what they committed to"],"concerns":["..."]}],
+ "cross_cutting":{"discussed":["..."],"agreed_actions":["..."],"concerns":["..."]},
+ "kras_not_discussed":["exact titles of KRAs the conversation never touched"],
+ "follow_up_needed":["anything left unresolved"]}`,
+    });
+
+    res.json({
+      ok: true, ...out,
+      meeting: { id: m.id, context: m.context, employee_id: m.employee_id, transcript_captured_at: t.captured_at },
+      note: 'Summary of what was said — check it against your own recollection before relying on it.',
+    });
+  } catch (e) { fail(res, e); }
+});
+
+
+// ---------------------------------------------------------------------------
+// 16) AI Appraisal Summary — the year, KRA by KRA, at two stages.
+//
+// Requested with both audiences named: a manager/HR PRE-READ before
+// publish, to support the rating decision, and an EMPLOYEE-FACING summary
+// at publish, so the appraisal conversation starts from a shared document
+// instead of a number.
+//
+// TWO PROMPTS, ON PURPOSE, over the same evidence. They are not the same
+// document with a different header. The pre-read is written for someone
+// deciding — it says where the evidence is thin and where self and manager
+// disagree, because that is what a calibration room needs. The employee
+// summary is written for someone receiving — it explains how the year is
+// being read and what to build next, and it never speculates about a
+// rating that has already been decided elsewhere. One prompt trying to do
+// both would do neither, and the wrong one reaching the wrong reader is
+// exactly the failure to avoid.
+//
+// THE EVIDENCE IS buildAnnualReviewSummary(), the same consolidation the
+// Annual Review page renders — imported from the performance module's
+// exported interface, not re-gathered here. A second gatherer would let
+// the summary describe a year no screen agrees with.
+const APPRAISAL_SUMMARY_STAGES = {
+  pre_publish: {
+    kind: 'appraisal_summary_pre',
+    audience: 'the manager and HR, before the rating is published',
+    system: `You write the PRE-READ a manager and HR use while deciding someone's
+year-end rating. You are not deciding it — you never suggest, imply or hint at a
+rating, a grade or a band, and you never say whether one already recorded looks
+right or wrong.
+
+What this reader needs, and nothing else:
+- what the record actually shows against each KRA, weighted by the KRA's weight
+- where the SELF and MANAGER readings differ, said plainly, with both positions
+- where the evidence is THIN — a KRA with no narrative, no connect and no
+  goal against it is the most important thing you can flag, because it is
+  where a rating would be least defensible
+- how the mid-year reading compares with the end-of-year one, where both exist
+
+Ground every bullet in the input. Invent no achievement, date or number. If a
+section of the record is empty, say so rather than filling it.`,
+    schema: `{"by_kra":[{"kra":"exact KRA title","evidence":["..."],"divergence":["where self and manager read it differently"],"thin_evidence":["..."]}],
+ "cross_cutting":{"evidence":["..."],"divergence":["..."],"thin_evidence":["..."]},
+ "discussion_points":["what the calibration conversation should cover"],
+ "evidence_gaps":["what is missing from the record that would have helped"]}`,
+  },
+  employee: {
+    kind: 'appraisal_summary_employee',
+    audience: 'the employee, with their published rating',
+    system: `You write the summary an employee receives with their published appraisal.
+They are reading about their own year, so write TO them, in the second person
+("you"), plainly and without flattery.
+
+The rating has already been decided by their manager and is shown to them
+separately. You never state, restate, justify, question or hint at it — your job
+is to show what the year contained, not to defend a grade.
+
+Cover, per KRA:
+- what they achieved, from the record
+- what got in the way, where the record says so
+- what to build next, tied to that KRA
+
+Then, once: how their target achievements for the year went, and what their
+Aspiring Career milestones show. Be specific about progress that was made —
+someone who moved a milestone from 0 to 60% did something real and should see it
+named.
+
+Ground every bullet in the input and invent nothing. Where the record is thin,
+say the record is thin — never imply the person did little when what is actually
+missing is the write-up.`,
+    schema: `{"by_kra":[{"kra":"exact KRA title","achievements":["..."],"challenges":["..."],"build_next":["..."]}],
+ "cross_cutting":{"achievements":["..."],"challenges":["..."],"build_next":["..."]},
+ "year_in_review":["2-4 bullets on target achievements and Aspiring Career progress"],
+ "record_gaps":["where your own record was thin this year"]}`,
+  },
+};
+
+router.post('/appraisal-summary', async (req, res) => {
+  try {
+    const { stage, employee_id } = req.body || {};
+    const cfg = APPRAISAL_SUMMARY_STAGES[stage];
+    if (!cfg) return res.status(400).json({ error: "stage must be 'pre_publish' or 'employee'" });
+
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const targetId = employee_id || req.user.id;
+    const emp = (await db.query(
+      `SELECT id, name, department, designation, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [targetId, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee not found' });
+
+    // WHO MAY ASK FOR WHICH. The pre-read is decision support and is not
+    // the employee's to pull about themselves — it names where their
+    // evidence is weakest, written for someone weighing a rating. The
+    // employee summary is theirs, and their manager's.
+    const isSelf = targetId === req.user.id;
+    const isMgr = emp.manager_id === req.user.id;
+    const isAdmin = await hasPermission(req.user, 'pms_admin');
+    if (stage === 'pre_publish') {
+      if (!isMgr && !isAdmin && !(await hasPermission(req.user, 'pms_hod'))) {
+        return res.status(403).json({ error: 'The pre-read is for the manager, Delivery Head or HR' });
+      }
+    } else if (!isSelf && !isMgr && !isAdmin) {
+      return res.status(403).json({ error: 'Not your appraisal' });
+    }
+
+    const summary = await buildAnnualReviewSummary(T(req), emp.id, c.id);
+    if (!summary.kra.outcomes.length) {
+      return res.status(409).json({ error: 'No KRAs are mapped for this cycle — there is nothing to summarise the year against.' });
+    }
+
+    const out = await ai.narrate({
+      tenantId: T(req), kind: cfg.kind, ref: { cycle_id: c.id, employee_id: emp.id },
+      requestedBy: req.user.email, maxTokens: 2400,
+      input: {
+        employee: { name: emp.name, department: emp.department, designation: emp.designation },
+        cycle: c.name,
+        written_for: cfg.audience,
+        kra_outcomes: summary.kra.outcomes.map((k) => ({
+          kra: k.title, weight: +k.weight, measures: k.measures,
+          self: k.self, manager: k.manager, midyear: k.midyear,
+        })),
+        midyear_overall: summary.midyear,
+        target_achievements_for_the_year: summary.development_plan,
+        aspiring_career: summary.career_path,
+        rating_history: summary.rating_history,
+      },
+      system: `${cfg.system}\n\n${KRA_BULLET_RULES}\n\nRespond ONLY with JSON:\n${cfg.schema}`,
+    });
+
+    res.json({
+      ok: true, ...out,
+      stage,
+      employee: { id: emp.id, name: emp.name },
+      note: stage === 'pre_publish'
+        ? 'Pre-read for the rating decision — the rating remains yours to set.'
+        : 'A summary of what your year contained. Your rating is shown separately.',
+    });
+  } catch (e) { fail(res, e); }
+});
+
+// ---------------------------------------------------------------------------
+// 17) 7-parameter analysis of the annual review meeting — HR ADMIN ONLY.
+//
+// THE FEATURE, as described: the employee, their manager and HR hold the
+// annual review conversation on a call. AI reads the transcript against
+// the seven organisational parameters and reports, for each one, what the
+// conversation actually showed — alongside that parameter's configured
+// weightage. Visible to the HR admin, and strictly not to the employee or
+// their manager.
+//
+// FOUR THINGS THIS DELIBERATELY DOES NOT DO, each because of what the
+// feature is: a hidden assessment of a named person.
+//
+// 1. IT MINTS NO SCORE. The official 7-parameter rating is scored by
+//    humans (pms.parameter_scores) and computed by
+//    computeWeightedRating(). A numeric AI score for the same parameters
+//    would be a second rating, derived from a recording, that the person
+//    it describes cannot see or contest — and HR would inevitably weigh
+//    "the AI said 3" against a manager's 5. The model gives a QUALITATIVE
+//    SIGNAL (strong / mixed / concern / not_discussed) and prose. That is
+//    the calibration value without the shadow rating. It is also the house
+//    rule: deterministic numbers, AI narrates — and core/ai.js's
+//    stripRatingSuggestions() would delete a key called `score` anyway.
+//
+// 2. IT DOES NOT RUN WITHOUT CONSENT. BRD §6 requires explicit employee
+//    consent before any meeting recording or transcription feeds an AI
+//    feature. Consent is re-checked here at USE, not assumed from the
+//    transcript existing — someone who has revoked it has withdrawn
+//    permission for exactly this.
+//
+// 3. EVERY READ IS AUDITED, not just every write. A confidential
+//    assessment somebody can open without trace is the kind of thing that
+//    is impossible to answer questions about afterwards. Reads are cheap;
+//    the record is the point.
+//
+// 4. IT IS NOT IN THE EMPLOYEE'S OWN DATA EXPORT, but it IS in the one HR
+//    pulls for them. "Not visible in the product" and "not disclosable"
+//    are different things, and only the first was asked for. See
+//    core/gdpr.js.
+//
+// The weightage shown against each parameter is the CONFIGURED number from
+// pms.review_parameters, never something the model produced.
+const PARAM_SIGNALS = ['strong', 'mixed', 'concern', 'not_discussed'];
+
+async function requireHrAdmin(req, res) {
+  if (await hasPermission(req.user, 'pms_admin')) return true;
+  // The message says who this is for rather than only that they are
+  // refused — a manager hitting this should understand it is not an
+  // oversight they should ask to have fixed.
+  res.status(403).json({ error: "Requires 'pms_admin' — the parameter analysis is visible to HR only, by design" });
+  return false;
+}
+
+const auditAgentic = (req, action, details) =>
+  db.query(`INSERT INTO pms.audit_log (tenant_id, actor_email, action, cycle_id, employee_id, details)
+            VALUES ($1,$2,$3,$4,$5,$6)`,
+    [T(req), req.user.email, action, details.cycle_id || null, details.employee_id || null, JSON.stringify(details)])
+    .catch((e) => logger.warn('agentic audit failed', { error: e.message }));
+
+// POST /agentic/parameter-analysis { meeting_id }
+router.post('/parameter-analysis', async (req, res) => {
+  try {
+    if (!(await requireHrAdmin(req, res))) return;
+    const { meeting_id } = req.body || {};
+    if (!meeting_id) return res.status(400).json({ error: 'meeting_id required' });
+
+    const m = (await db.query(
+      `SELECT m.*, e.name AS employee_name, e.department, e.designation
+         FROM pms.review_meetings m
+         JOIN core.employees e ON e.id = m.employee_id AND e.tenant_id = m.tenant_id
+        WHERE m.id=$1 AND m.tenant_id=$2`, [meeting_id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+    if (m.context !== 'annual') {
+      return res.status(409).json({ error: `This analysis is for the annual review meeting — that meeting is recorded as "${m.context}"` });
+    }
+
+    const t = (await db.query(`SELECT content, captured_at FROM pms.meeting_transcripts WHERE meeting_id=$1`, [m.id])).rows[0];
+    if (!t) return res.status(409).json({ error: 'No transcript is stored for this meeting yet — there is nothing to analyse.' });
+    await requireConsent(T(req), m.employee_id);
+
+    const c = (await db.query(`SELECT * FROM pms.cycles WHERE id=$1 AND tenant_id=$2`, [m.cycle_id, T(req)])).rows[0]
+      || (await db.query(`SELECT * FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled') ORDER BY created_at DESC LIMIT 1`, [T(req)])).rows[0];
+    if (!c) return res.status(409).json({ error: 'No cycle to attach this analysis to' });
+
+    const params = (await db.query(
+      `SELECT id, name, weight_pct FROM pms.review_parameters WHERE tenant_id=$1 AND active=true ORDER BY sort_order`,
+      [T(req)])).rows;
+    if (!params.length) return res.status(409).json({ error: 'No organisational parameters are configured for this tenant' });
+
+    const out = await ai.narrate({
+      tenantId: T(req), kind: 'parameter_analysis', ref: { cycle_id: c.id, employee_id: m.employee_id, meeting_id: m.id },
+      requestedBy: req.user.email, maxTokens: 2600,
+      input: {
+        employee: { name: m.employee_name, department: m.department, designation: m.designation },
+        cycle: c.name,
+        meeting: { held: m.scheduled_at, transcript_captured: t.captured_at },
+        // Names and weightages both come from the tenant's configuration.
+        // The model is told the weightage so it can judge how much a
+        // parameter's evidence matters to report on — never so it can
+        // compute anything with it.
+        parameters: params.map((p) => ({ name: p.name, weight_pct: Number(p.weight_pct) })),
+        transcript: t.content,
+      },
+      system: `You read the transcript of an annual performance review meeting between an
+employee, their manager and HR, and report what the conversation showed against each
+of the organisation's review parameters. The reader is HR.
+
+WORK ONLY FROM THE TRANSCRIPT. It is a record of what people said. Report what was
+said, not what you would conclude about the person. Where the employee and the
+manager characterised something differently, say so and give both — that difference
+is often the most useful thing in the meeting.
+
+FOR EACH PARAMETER, exactly as named in the input:
+- signal: one of "strong", "mixed", "concern", or "not_discussed". Use
+  "not_discussed" whenever the conversation did not genuinely cover that
+  parameter. A meeting that never touched a parameter is a fact worth
+  reporting; inventing a reading of it is not.
+- summary: what the conversation showed about it.
+- evidence: short paraphrases or brief quoted fragments from the meeting that
+  support what you said. Every point in summary must be traceable to one of
+  these. No evidence means the signal is "not_discussed".
+- alignment: only where the conversation actually discussed how the person
+  works with company policy, process or values. Otherwise an empty list.
+
+YOU NEVER PRODUCE A RATING, a score, a grade, a band or a number of any kind for a
+parameter or for the person overall, and you never say what rating the evidence
+would support. The organisation's rating is set by people, from their own scoring.
+You are describing a conversation.
+
+Do not speculate about anyone's motives, health, personal circumstances, or
+anything protected. If the meeting strayed into those, leave it out entirely
+rather than summarising it.
+
+${bulletRules({ unit: 'parameter', unitWord: 'name', crossCutting: false })}
+
+Respond ONLY with JSON:
+{"by_parameter":[{"parameter":"exact parameter name","signal":"strong|mixed|concern|not_discussed","summary":["..."],"evidence":["..."],"alignment":["..."]}],
+ "went_well":["what the meeting identified as going well"],
+ "went_wrong":["what the meeting identified as not going well"],
+ "improvement_areas":["what the meeting agreed needs to improve"],
+ "achievements":["specific achievements named in the meeting"],
+ "meeting_gaps":["parameters or topics the conversation never reached"]}`,
+    });
+
+    const draft = out.draft || {};
+    // Stitched to the CONFIGURED parameters, not to whatever the model
+    // named. A parameter the model skipped, or renamed, comes back as
+    // not_discussed against the real row rather than silently vanishing
+    // from a report someone is about to rely on.
+    const byName = new Map((draft.by_parameter || []).map((p) => [String(p.parameter || '').trim().toLowerCase(), p]));
+    const entries = {};
+    for (const p of params) {
+      const got = byName.get(p.name.trim().toLowerCase());
+      const signal = got && PARAM_SIGNALS.includes(got.signal) ? got.signal : 'not_discussed';
+      entries[p.id] = {
+        parameter: p.name,
+        weight_pct: Number(p.weight_pct),
+        signal,
+        summary: Array.isArray(got && got.summary) ? got.summary : [],
+        evidence: Array.isArray(got && got.evidence) ? got.evidence : [],
+        alignment: Array.isArray(got && got.alignment) ? got.alignment : [],
+      };
+    }
+    const overall = {
+      went_well: draft.went_well || [], went_wrong: draft.went_wrong || [],
+      improvement_areas: draft.improvement_areas || [], achievements: draft.achievements || [],
+      meeting_gaps: draft.meeting_gaps || [],
+    };
+
+    const saved = (await db.query(
+      `INSERT INTO pms.parameter_ai_analyses (tenant_id, cycle_id, employee_id, meeting_id, draft_id, entries, overall, analysed_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (tenant_id, cycle_id, employee_id) DO UPDATE SET
+         meeting_id=EXCLUDED.meeting_id, draft_id=EXCLUDED.draft_id, entries=EXCLUDED.entries,
+         overall=EXCLUDED.overall, analysed_by=EXCLUDED.analysed_by, updated_at=now()
+       RETURNING *`,
+      [T(req), c.id, m.employee_id, m.id, out.id, JSON.stringify(entries), JSON.stringify(overall), req.user.email])).rows[0];
+
+    auditAgentic(req, 'PARAMETER_ANALYSIS_RUN', { cycle_id: c.id, employee_id: m.employee_id, meeting_id: m.id });
+    res.json({ ok: true, ...(await shapeAnalysis(T(req), saved)) });
+  } catch (e) { fail(res, e); }
+});
+
+// The stored analysis, joined to the manager's ACTUAL scores for the same
+// parameters. That comparison is the whole reason HR wants this: the
+// scores are what the rating is built from, the analysis is what the
+// conversation contained, and seeing them side by side is calibration.
+// Both halves are deterministic — the scores from the database, the
+// weightage from configuration.
+async function shapeAnalysis(tenantId, row) {
+  const params = (await db.query(
+    `SELECT id, name, weight_pct, sort_order FROM pms.review_parameters WHERE tenant_id=$1 AND active=true ORDER BY sort_order`,
+    [tenantId])).rows;
+  const scored = (await db.query(
+    `SELECT parameter_id, score, scored_by_role FROM pms.parameter_scores
+      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [tenantId, row.cycle_id, row.employee_id])).rows;
+  const scoreOf = (pid, role) => {
+    const s = scored.find((x) => x.parameter_id === pid && x.scored_by_role === role);
+    return s ? Number(s.score) : null;
+  };
+  const entries = row.entries || {};
+  return {
+    analysis: {
+      id: row.id, cycle_id: row.cycle_id, employee_id: row.employee_id, meeting_id: row.meeting_id,
+      analysed_by: row.analysed_by, created_at: row.created_at, updated_at: row.updated_at,
+      restricted_to: row.restricted_to,
+    },
+    by_parameter: params.map((p) => ({
+      parameter_id: p.id,
+      parameter: p.name,
+      weight_pct: Number(p.weight_pct),
+      ...(entries[p.id] || { signal: 'not_discussed', summary: [], evidence: [], alignment: [] }),
+      manager_score: scoreOf(p.id, 'manager'),
+      self_score: scoreOf(p.id, 'self'),
+    })),
+    overall: row.overall || {},
+  };
+}
+
+// GET /agentic/parameter-analysis?employee_id=&cycle_id=
+router.get('/parameter-analysis', async (req, res) => {
+  try {
+    if (!(await requireHrAdmin(req, res))) return;
+    const { employee_id, cycle_id } = req.query;
+    if (!employee_id) return res.status(400).json({ error: 'employee_id required' });
+    const params = [T(req), employee_id];
+    let where = 'tenant_id=$1 AND employee_id=$2';
+    if (cycle_id) { params.push(cycle_id); where += ` AND cycle_id=$${params.length}`; }
+    const row = (await db.query(
+      `SELECT * FROM pms.parameter_ai_analyses WHERE ${where} ORDER BY updated_at DESC LIMIT 1`, params)).rows[0];
+    if (!row) return res.status(404).json({ error: 'no analysis on record for this employee' });
+    // Audited on READ. See the block comment above: a confidential
+    // assessment anyone can open without trace cannot be answered for
+    // later.
+    auditAgentic(req, 'PARAMETER_ANALYSIS_VIEWED', { cycle_id: row.cycle_id, employee_id: row.employee_id });
+    res.json({ ok: true, ...(await shapeAnalysis(T(req), row)) });
+  } catch (e) { fail(res, e); }
+});
+
+// Which employees have one, for the HR list. Names and dates only — no
+// content, so the index itself discloses nothing about anybody.
+router.get('/parameter-analysis/index', async (req, res) => {
+  try {
+    if (!(await requireHrAdmin(req, res))) return;
+    const r = await db.query(
+      `SELECT a.employee_id, e.name, e.department, a.cycle_id, c.name AS cycle_name,
+              a.analysed_by, a.updated_at
+         FROM pms.parameter_ai_analyses a
+         JOIN core.employees e ON e.id=a.employee_id AND e.tenant_id=a.tenant_id
+         JOIN pms.cycles c ON c.id=a.cycle_id
+        WHERE a.tenant_id=$1 ORDER BY a.updated_at DESC LIMIT 200`, [T(req)]);
+    res.json({ analyses: r.rows });
+  } catch (e) { fail(res, e); }
+});
+
+// Retract one. HR can delete an analysis they judge wrong or unfair rather
+// than being stuck with it — a hidden assessment that cannot be withdrawn
+// is worse than one that can.
+router.delete('/parameter-analysis/:id', async (req, res) => {
+  try {
+    if (!(await requireHrAdmin(req, res))) return;
+    const r = await db.query(
+      `DELETE FROM pms.parameter_ai_analyses WHERE id=$1 AND tenant_id=$2 RETURNING cycle_id, employee_id`,
+      [req.params.id, T(req)]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'analysis not found' });
+    auditAgentic(req, 'PARAMETER_ANALYSIS_DELETED', { cycle_id: r.rows[0].cycle_id, employee_id: r.rows[0].employee_id });
+    res.json({ ok: true });
+  } catch (e) { fail(res, e); }
+});
+
+// ---------------------------------------------------------------------------
+// AI recommendations that stick (migration 029)
+// ---------------------------------------------------------------------------
+// Everything above produces text that appears in a panel and disappears.
+// These three routes are what let a suggestion be kept, acted on, or
+// turned down with a reason — so "the AI suggested X last cycle" is a
+// question with an answer.
+//
+// WHO MAY DECIDE: the person the recommendation is about, or their
+// manager, or an admin. The same rule as the meeting routes, and for the
+// same reason — a suggestion about someone's development belongs to the
+// two people who will act on it.
+const REC_STATUSES = ['suggested', 'accepted', 'dismissed', 'done'];
+
+async function recParty(req, aboutEmployeeId) {
+  if (aboutEmployeeId === req.user.id) return true;
+  if (await hasPermission(req.user, 'pms_admin')) return true;
+  const r = await db.query(`SELECT 1 FROM core.employees WHERE id=$1 AND tenant_id=$2 AND manager_id=$3`,
+    [aboutEmployeeId, T(req), req.user.id]);
+  return !!r.rows[0];
+}
+
+// POST /agentic/recommendations — keep one or more suggestions from a draft.
+router.post('/recommendations', async (req, res) => {
+  try {
+    const { about_employee_id, kind, draft_id, cycle_id, items } = req.body || {};
+    const aboutId = about_employee_id || req.user.id;
+    if (!kind) return res.status(400).json({ error: 'kind required' });
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items array required' });
+    if (!(await recParty(req, aboutId))) return res.status(403).json({ error: 'Not yours to keep' });
+
+    const bad = items.findIndex((i) => !i || !String(i.title || '').trim());
+    if (bad >= 0) return res.status(422).json({ error: `item ${bad + 1} has no title` });
+
+    const saved = [];
+    for (const i of items) {
+      const row = (await db.query(
+        `INSERT INTO agentic.recommendations (tenant_id, draft_id, kind, cycle_id, about_employee_id, ref, title, detail)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [T(req), draft_id || null, kind, cycle_id || null, aboutId,
+         JSON.stringify(i.ref || {}), String(i.title).trim(), (i.detail || '').trim() || null])).rows[0];
+      saved.push(row);
+    }
+    res.status(201).json({ ok: true, recommendations: saved });
+  } catch (e) { fail(res, e); }
+});
+
+// GET /agentic/recommendations?about_employee_id=&kind=&status=
+router.get('/recommendations', async (req, res) => {
+  try {
+    const aboutId = req.query.about_employee_id || req.user.id;
+    if (!(await recParty(req, aboutId))) return res.status(403).json({ error: 'Not yours to read' });
+    const params = [T(req), aboutId];
+    let where = 'tenant_id=$1 AND about_employee_id=$2';
+    if (req.query.kind) { params.push(req.query.kind); where += ` AND kind=$${params.length}`; }
+    if (req.query.status) { params.push(req.query.status); where += ` AND status=$${params.length}`; }
+    const r = await db.query(
+      `SELECT * FROM agentic.recommendations WHERE ${where} ORDER BY created_at DESC LIMIT 200`, params);
+    res.json({ recommendations: r.rows });
+  } catch (e) { fail(res, e); }
+});
+
+// PUT /agentic/recommendations/:id — accept, dismiss, or mark done.
+router.put('/recommendations/:id', async (req, res) => {
+  try {
+    const { status, note } = req.body || {};
+    if (!REC_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${REC_STATUSES.join(', ')}` });
+    }
+    const rec = (await db.query(`SELECT * FROM agentic.recommendations WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!rec) return res.status(404).json({ error: 'recommendation not found' });
+    if (!(await recParty(req, rec.about_employee_id))) return res.status(403).json({ error: 'Not yours to decide' });
+    // A dismissal without a reason teaches nobody anything. Requiring one
+    // is what turns "the AI keeps suggesting rubbish" from a complaint
+    // into a list you can read.
+    if (status === 'dismissed' && !String(note || '').trim()) {
+      return res.status(422).json({ error: 'Say why you are dismissing it — that is what makes a pattern of poor suggestions visible' });
+    }
+    const updated = (await db.query(
+      `UPDATE agentic.recommendations SET status=$1, decided_by=$2, decided_at=now(), decision_note=$3
+        WHERE id=$4 RETURNING *`,
+      [status, req.user.email, (note || '').trim() || null, rec.id])).rows[0];
+    res.json({ ok: true, recommendation: updated });
+  } catch (e) { fail(res, e); }
+});
+
+module.exports = { router, renderKraBullets, KRA_BULLET_RULES, bulletRules };

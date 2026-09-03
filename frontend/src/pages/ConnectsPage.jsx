@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, CheckCircle2, Clock, Sparkles } from 'lucide-react';
 import { api } from '../utils/api';
+import MeetingPanel from './MeetingPanel';
 
 export default function ConnectsPage() {
   const [data, setData] = useState(null);
@@ -329,6 +330,8 @@ function ConnectRow({ cn, me, reload }) {
         <button className="btn-sec" disabled={busy} onClick={askInsights}><Sparkles size={12} className="inline mr-1 text-amber-500" />{busy ? 'Thinking…' : 'AI insights'}</button>
       </div>
       {insight && <AiInsightsPanel insight={insight} onRefresh={askInsights} busy={busy} />}
+      <MeetingPanel employeeId={cn.employee_id} context="connect" refId={cn.id}
+        title="Meeting for this connect" />
       {err && <p className="text-xs text-rose-600">{err}</p>}
     </div>
   );

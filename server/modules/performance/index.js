@@ -11,6 +11,7 @@
 const express = require('express');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
+const ExcelJS = require('exceljs');
 const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
@@ -18,9 +19,11 @@ const { guardUuidParams } = require('../../core/http');
 const { apiPermissionParity, hasPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const { requireConsent } = require('../../core/consent');
+const meetings = require('../../core/meetings');
 const { isSuper50Eligible, computeWeightedRating } = require('./rating-rules');
 const { isConnectDue, shouldRemindAgain, computeCadenceProgress } = require('./connect-reminders');
-const { parseCsv, parseExcelBuffer, detectFormat } = require('../../core/employees');
+const { runReminders } = require('./reminders');
+const { parseCsv, parseExcelSheets, detectFormat } = require('../../core/employees');
 const pm = require('./phase-machine');
 
 const router = express.Router();
@@ -183,7 +186,7 @@ router.put('/cycles/:id/pip-threshold', async (req, res) => {
 // the whole tenant every time.
 const PHASE_OPEN_NOTICES = {
   kra_open: [{ audience: 'all', title: 'KRA Setting is now open', body: 'Set your KRAs for this cycle.' }],
-  growth_planning: [{ audience: 'all', title: 'Growth Planning is now open', body: 'Set your Development Plan and Career Path for this cycle.' }],
+  growth_planning: [{ audience: 'all', title: 'Growth Planning is now open', body: 'Set your target achievements for the year and your Aspiring Career for this cycle.' }],
   mid_year_review: [
     { audience: 'all', title: 'Mid-Year Review is now open', body: 'Your Mid-Year Review is open — add your reflection and self-rating.' },
     { audience: 'managers', title: 'Mid-Year Review is now open for your team', body: 'Mid-Year Review is open for your direct reports.' },
@@ -257,6 +260,51 @@ router.post('/cycles/:id/phase', async (req, res) => {
 
 // ---------------- KRA sheets -------------------------------------------------
 // My sheet for the active cycle (auto-created on first touch with my manager).
+// The mid-year ratings for one employee's KRAs, keyed by kra_id.
+//
+// WHY THIS IS SHARED. Mid-year scoring already reads the KRA sheet — it is
+// per-KRA, and always was — but it was only ever visible on its own page,
+// and fed nothing afterwards. Asked for it to be part of the KRA process,
+// which means the same numbers have to reach the KRA sheet and the Annual
+// Review without either of them growing a second copy of the lookup.
+//
+// Returns null (not an empty object) when there is no check-in at all, so
+// a caller can tell "mid-year never happened" from "mid-year happened and
+// this KRA was not rated" — the second is worth showing, the first is not.
+async function midyearEntriesFor(tenantId, cycleId, employeeId) {
+  const row = (await db.query(
+    `SELECT self_entries, manager_entries, self_rating, manager_rating, self_status, manager_status
+       FROM pms.midyear_checkins WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [tenantId, cycleId, employeeId])).rows[0];
+  if (!row) return null;
+  // Nothing rated on either side is the same as no mid-year for display
+  // purposes — an empty panel helps nobody.
+  const self = row.self_entries || {};
+  const manager = row.manager_entries || {};
+  if (!Object.keys(self).length && !Object.keys(manager).length) return null;
+  return {
+    self_entries: self,
+    manager_entries: manager,
+    self_overall: row.self_rating,
+    manager_overall: row.manager_rating,
+    self_status: row.self_status,
+    manager_status: row.manager_status,
+  };
+}
+
+// Attaches each KRA's mid-year self/manager rating to the KRA row itself,
+// so a consumer reads one list instead of joining two.
+function withMidyear(kras, midyear) {
+  if (!midyear) return kras.map((k) => ({ ...k, midyear: null }));
+  return kras.map((k) => ({
+    ...k,
+    midyear: {
+      self: midyear.self_entries[k.id] || null,
+      manager: midyear.manager_entries[k.id] || null,
+    },
+  }));
+}
+
 router.get('/my/kra-sheet', async (req, res) => {
   try {
     const c = await activeCycle(T(req));
@@ -269,7 +317,17 @@ router.get('/my/kra-sheet', async (req, res) => {
         [T(req), c.id, req.user.id, mgr ? mgr.manager_id : null])).rows[0];
     }
     const kras = (await db.query(`SELECT * FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, sheet: s, kras, weights: pm.weightsValid(kras) });
+    // The mid-year rating travels WITH the KRA now, rather than living
+    // only on the Mid-Year Review page. Read-only here: mid-year is still
+    // scored on its own page, under its own phase gate — this is the same
+    // number shown where the KRA it belongs to is.
+    const midyear = await midyearEntriesFor(T(req), c.id, req.user.id);
+    res.json({
+      cycle: { id: c.id, name: c.name, phase: c.phase }, sheet: s,
+      kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
+      midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+                           self_status: midyear.self_status, manager_status: midyear.manager_status } : null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -411,7 +469,15 @@ router.get('/team/kra-sheets/:sheetId/kras', async (req, res) => {
     if ((!viewEmp || viewEmp.manager_id !== req.user.id) && !(await hasPermission(req.user, 'pms_admin')))
       return res.status(403).json({ error: 'Not your report' });
     const kras = (await db.query(`SELECT * FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
-    res.json({ sheet: s, kras, weights: pm.weightsValid(kras) });
+    // Same mid-year join as the employee's own sheet — a manager looking
+    // at a report's KRAs should see the halfway rating against each one
+    // without opening a second page.
+    const midyear = await midyearEntriesFor(T(req), s.cycle_id, s.employee_id);
+    res.json({
+      sheet: s, kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
+      midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+                           self_status: midyear.self_status, manager_status: midyear.manager_status } : null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -460,33 +526,77 @@ async function ensureKraSheet(tenantId, cycleId, employeeId) {
   return s;
 }
 
-// GET /pms/hr/kra-sheet/bulk-upload-template.csv — same reasoning as the
-// employee import template: a real "Download template" link instead of
-// asking HR to guess the expected columns. Header matches
-// KRA_BULK_KNOWN exactly; example rows show two KRAs for one employee
-// whose weights sum to 100, since that grouping rule is the least
-// obvious part of the format — remove the example rows before uploading.
+// ---- Bulk KRA upload template (.xlsx and .csv) -----------------------------
+// A real "Download template" link instead of asking HR to guess the
+// expected columns.
+//
+// The template IS the client's own KRA goal sheet: the same headers, in
+// the same order, with the same guidance banner on row 1 and the header
+// on row 2 — because that is the file people already have open, and a
+// template that looks like something else invites a rewrite instead of an
+// upload. employee_email is the single addition (see KRA_BULK_KNOWN
+// above for why it has to exist).
+//
+// Example rows show two KRAs for one sample employee whose weights sum to
+// 100, since that grouping rule is the least obvious part of the format,
+// and they show Parameters filled once per group with the following rows
+// left blank — the forward-fill the real sheets use.
 //
 // MUST be registered before GET /hr/kra-sheet/:employeeId below — Express
 // matches routes in registration order, and ":employeeId" matches ANY
-// path segment, including this literal one. Registering it after :employeeId
-// caused exactly this: a request for .../bulk-upload-template.csv was
-// swallowed by the param route, which then tried to use the literal
-// string "bulk-upload-template.csv" as a uuid in a SQL query and failed
-// with "invalid input syntax for type uuid" — found live during testing.
+// path segment, including these literal ones. Registering it after
+// :employeeId caused exactly this: a request for
+// .../bulk-upload-template.csv was swallowed by the param route, which
+// then tried to use the literal string "bulk-upload-template.csv" as a
+// uuid in a SQL query and failed with "invalid input syntax for type
+// uuid" — found live during testing.
+const KRA_TEMPLATE_BANNER = 'Fill employee_email for every row. Parameters may be written once per group and left blank on the rows below it. Each employee’s Weightage must total 100. Delete the sample rows before uploading.';
+const KRA_TEMPLATE_HEADERS = [
+  'employee_email', 'Parameters', 'KRA \n(S.M.A.R.T GOALS)',
+  'KPIs \n(Measuring Metrics & Data Source)', 'Weightage', 'Comments',
+];
+const KRA_TEMPLATE_SAMPLE = [
+  ['jane.sample@example.com', 'Financial', 'Project Budget Adherence', 'Manage project delivery within allocated budget', 60, 'Delete this sample row'],
+  ['jane.sample@example.com', '', 'On-Time Project Delivery', '100% milestone achievement as per project plan', 40, 'Delete this sample row'],
+];
+
+router.get('/hr/kra-sheet/bulk-upload-template.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('KRA');
+    ws.addRow([KRA_TEMPLATE_BANNER]);
+    ws.mergeCells(1, 1, 1, KRA_TEMPLATE_HEADERS.length);
+    ws.getRow(1).font = { italic: true };
+    const header = ws.addRow(KRA_TEMPLATE_HEADERS);
+    header.font = { bold: true };
+    header.alignment = { wrapText: true, vertical: 'middle' };
+    for (const row of KRA_TEMPLATE_SAMPLE) ws.addRow(row);
+    ws.columns.forEach((col, i) => { col.width = [30, 18, 38, 46, 12, 30][i] || 20; });
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="kra_bulk_upload_template.xlsx"');
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('kra template xlsx', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
+});
+
+// Same columns as the .xlsx, for anyone who would rather work in a plain
+// text file. Kept because the previous template was a CSV and the link
+// may be bookmarked; newlines inside the header cells are flattened to
+// spaces, which normKraHeader() treats identically.
 router.get('/hr/kra-sheet/bulk-upload-template.csv', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
-    const rows = [
-      KRA_BULK_KNOWN.join(','),
-      ['jane.sample@example.com', 'Improve client response time to <24hrs', '60', 'Own first-response SLA for assigned accounts', 'Avg response time tracked in helpdesk'].join(','),
-      ['jane.sample@example.com', 'Complete onboarding automation project', '40', 'Reduce manual setup steps for new joiners', 'Onboarding checklist automated in HRMS'].join(','),
-    ];
-    const csv = rows.join('\n') + '\n';
+    const cell = (v) => {
+      const t = String(v).replace(/\s*\n\s*/g, ' ');
+      return /[",]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const csv = [KRA_TEMPLATE_HEADERS, ...KRA_TEMPLATE_SAMPLE]
+      .map((r) => r.map(cell).join(',')).join('\n') + '\n';
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="kra_bulk_upload_template.csv"');
     res.send(csv);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { logger.error('kra template csv', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
 });
 
 router.get('/hr/kra-sheet/:employeeId', async (req, res) => {
@@ -498,7 +608,13 @@ router.get('/hr/kra-sheet/:employeeId', async (req, res) => {
     if (!emp) return res.status(404).json({ error: 'employee not found' });
     const s = await ensureKraSheet(T(req), c.id, emp.id);
     const kras = (await db.query(`SELECT * FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, employee: emp, sheet: s, kras, weights: pm.weightsValid(kras) });
+    const midyear = await midyearEntriesFor(T(req), c.id, emp.id);
+    res.json({
+      cycle: { id: c.id, name: c.name, phase: c.phase }, employee: emp, sheet: s,
+      kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
+      midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+                           self_status: midyear.self_status, manager_status: midyear.manager_status } : null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -603,43 +719,346 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
 // entry work in PMS." The existing bulk importer (core/employees.js) only
 // covers employee MASTER data (name/email/manager/etc) — this is the
 // missing piece for KRA CONTENT itself. Deliberately reuses the exact same
-// parsing/validation/dry-run pattern (same shared parseCsv/parseExcelBuffer,
-// same header-normalisation, same per-row line-numbered errors, same
-// ?commit=1-required-to-load default) so behaviour is consistent and
-// familiar to whoever already uses the employee importer.
+// parsing/validation/dry-run pattern (same shared parseCsv/Excel reader,
+// same per-row line-numbered errors, same ?commit=1-required-to-load
+// default) so behaviour is consistent and familiar to whoever already uses
+// the employee importer.
 //
-// Columns (header row, case-insensitive, order-free):
-//   employee_email, kra_title, weight, description, measures
 // Rows are grouped by employee_email; each employee's KRA weights must sum
 // to 100 (same weightsValid() rule as the single-entry route) before ANY
 // row commits — a bad file for one employee should not partially load.
+// COLUMNS. The template is the client's own KRA goal sheet, headers taken
+// verbatim, plus one column those sheets have no way to carry:
+//
+//   employee_email | Parameters | KRA (S.M.A.R.T GOALS)
+//                  | KPIs (Measuring Metrics & Data Source)
+//                  | Weightage | Comments
+//
+// employee_email is ours. The source sheets are per-ROLE, not per-person —
+// one workbook holds a tab called "PM KRA", another "L1 Recon" — so the
+// file never says whose KRAs these are. Importing needs a person, so HR
+// fills that one column in. Everything else is their header, unchanged, so
+// an existing sheet needs a column added rather than a rewrite.
+//
+// The older flat header (employee_email, kra_title, weight, description,
+// measures) still works: both spellings map to the same canonical field
+// below, so files built against the previous CSV template keep importing.
 const KRA_BULK_REQUIRED = ['employee_email', 'kra_title', 'weight'];
-const KRA_BULK_KNOWN = ['employee_email', 'kra_title', 'weight', 'description', 'measures'];
+const KRA_BULK_KNOWN = ['employee_email', 'category', 'kra_title', 'measures', 'weight', 'description'];
 
-function validateKraBulkRows(rows, knownEmails, empByEmail) {
-  if (!rows.length) return { ok: false, fatal: 'Empty file', rows: [], errors: [], warnings: [] };
-  const header = rows[0].map((h) => String(h).trim().toLowerCase().replace(/\s+/g, '_'));
-  const missing = KRA_BULK_REQUIRED.filter((c) => !header.includes(c));
-  if (missing.length) return { ok: false, fatal: `Missing required column(s): ${missing.join(', ')}`, rows: [], errors: [], warnings: [] };
-  const unknown = header.filter((h) => !KRA_BULK_KNOWN.includes(h));
-  const idx = Object.fromEntries(header.map((h, i) => [h, i]));
-  const out = []; const errors = []; const warnings = [];
+// Header text -> canonical field. Keys are already normalised by
+// normKraHeader(), so "KRA \n(S.M.A.R.T GOALS)" arrives here as "kra".
+//
+// "weigthtage" is not a typo in this file — it is the spelling in one of
+// the workbooks in circulation ("Weigthtage"), sitting alongside sheets
+// that spell it "Weightage". Both are real files HR will upload, so both
+// are accepted rather than making someone hunt a transposition in a
+// column heading to find out why their import said the weight column was
+// missing.
+const KRA_HEADER_ALIASES = {
+  employee_email: 'employee_email', email: 'employee_email', emp_email: 'employee_email',
+  parameters: 'category', parameter: 'category', category: 'category',
+  kra: 'kra_title', kra_title: 'kra_title', kras: 'kra_title', key_result_area: 'kra_title', goal: 'kra_title',
+  kpis: 'measures', kpi: 'measures', measures: 'measures', measure: 'measures',
+  weightage: 'weight', weigthtage: 'weight', weight: 'weight', weight_pct: 'weight', weightage_pct: 'weight',
+  comments: 'description', comment: 'description', description: 'description', remarks: 'description',
+};
 
-  rows.slice(1).forEach((r, n) => {
-    const line = n + 2; // 1-based + header
-    const get = (c) => (idx[c] != null ? String(r[idx[c]] ?? '').trim() : '');
-    const rec = {
-      line,
+// Parentheses are dropped before matching so the long qualifiers in the
+// client headers ("(S.M.A.R.T GOALS)", "(Measuring Metrics & Data
+// Source)") don't have to be reproduced character-for-character — those
+// are guidance to whoever fills the sheet, not part of the column's
+// identity, and they differ subtly between the workbooks.
+function normKraHeader(h) {
+  return String(h ?? '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/%/g, '_pct')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+// WHY THIS EXISTS: the real sheets do not start with a header row. Row 1
+// is a merged banner ("Please see Guideline Sheet for reference (Apr 2025
+// - Mar 2026)") repeated across every cell, and the actual column names
+// are on row 2. Assuming row 1 would read that banner as the header and
+// report every column as unknown and every required column as missing —
+// which is a true statement about row 1 and useless to the person holding
+// a perfectly valid sheet.
+//
+// So find the header instead of assuming it: the first row within the
+// first HEADER_SCAN_ROWS that names both a KRA-title column and a weight
+// column. Those two are what make a row a KRA, and requiring both
+// together is what stops a banner or a stray note from being mistaken for
+// a header.
+const HEADER_SCAN_ROWS = 10;
+function headerFieldsIn(row) {
+  return new Set(row.map((c) => KRA_HEADER_ALIASES[normKraHeader(c)]).filter(Boolean));
+}
+function findKraHeaderRow(rows) {
+  for (let i = 0; i < Math.min(rows.length, HEADER_SCAN_ROWS); i++) {
+    const fields = headerFieldsIn(rows[i]);
+    if (fields.has('kra_title') && fields.has('weight')) return i;
+  }
+  return -1;
+}
+
+// Where the data actually starts. One of the sheets splits its header over
+// TWO rows — "KRA" / "KPIs" / "Weightage" on one, then "(S.M.A.R.T GOALS)"
+// / "(Measuring Metrics & Data Source)" / "Weightage" on the next — so the
+// second row would otherwise be read as a KRA whose weightage is the word
+// "Weightage". Two or more cells naming known columns is a header, not
+// data: a real KRA row would have to be titled "KRA" and weighted
+// "Weightage" to be mistaken for one.
+const STACKED_HEADER_LIMIT = 2;
+function findKraDataStart(rows, headerRow) {
+  let i = headerRow + 1;
+  while (i < rows.length && i <= headerRow + STACKED_HEADER_LIMIT && headerFieldsIn(rows[i]).size >= 2) i++;
+  return i;
+}
+
+// A weight shared across n KRAs, as the k-th KRA's share, to two decimals
+// and summing to EXACTLY the shared value. A plain division does not: 10
+// across 3 gives 3.33 three times, and the sheet's 100 becomes 99.99 —
+// which then trips the "weights must total 100" check and rejects a file
+// that was correct before we divided it. The rounding remainder goes to
+// the earliest KRAs (3.34, 3.33, 3.33), so the total is preserved by
+// construction rather than by luck.
+function splitShare(raw, n, k) {
+  const total = Number(raw);
+  if (!Number.isFinite(total) || n <= 0) return NaN;
+  const cents = Math.round(total * 100);
+  const base = Math.floor(cents / n);
+  const remainder = cents - base * n;
+  return (base + (k < remainder ? 1 : 0)) / 100;
+}
+
+// One worksheet -> records. Returns null when the sheet has no header row
+// at all, which the caller reports as a skipped sheet rather than an
+// error: these workbooks routinely carry a "Guidelines" or "Ratings" tab
+// alongside the KRA tabs, and refusing the whole upload because of one
+// reference tab would be wrong.
+//
+// rowNumbers and merged, when the caller has them, describe the sheet as
+// it looks on screen: rowNumbers because blank rows are dropped during
+// parsing (so the array index is not the row the person filling the sheet
+// sees), and merged because these sheets lean heavily on vertical merges.
+// Both degrade safely — a CSV supplies neither and is read row-for-row,
+// which is exactly right for a CSV.
+//
+// THE TWO MERGE SHAPES, both taken from the real sheets:
+//
+//   1. One KRA, several KPIs. "Internal Process Adherence" spans rows
+//      17-20 with the title and weight cells merged down and a different
+//      KPI on each row. That is ONE KRA with four measures, not four KRAs
+//      each worth 15.
+//
+//   2. One weight, several KRAs. Rows 21-23 merge the WEIGHT cell (15)
+//      across two distinct KRA titles. The sheet is saying those KRAs are
+//      together worth 15.
+//
+// Reading either literally is what makes a 100-point sheet total 305.
+function parseKraSheet(sheetName, rows, rowNumbers, merged) {
+  const headerRow = findKraHeaderRow(rows);
+  if (headerRow < 0) return null;
+  const dataStart = findKraDataStart(rows, headerRow);
+  const rowNumberAt = (i) => (rowNumbers && rowNumbers[i] != null ? rowNumbers[i] : i + 1);
+
+  const mapped = rows[headerRow].map((c) => KRA_HEADER_ALIASES[normKraHeader(c)] || null);
+  const idx = {};
+  mapped.forEach((field, i) => { if (field && idx[field] == null) idx[field] = i; });
+  const unknown = rows[headerRow]
+    .map((c, i) => (mapped[i] ? null : String(c ?? '').trim()))
+    .filter((h) => h);
+
+  const records = [];
+  const notes = [];
+  // Parameters is FORWARD-FILLED in the source sheets: written once at the
+  // top of a group ("Financial") and left blank on every following row of
+  // that group. Reading each cell literally would give the first KRA of
+  // each group a category and the rest none — so carry the last non-empty
+  // value down, which is how the sheet reads on screen. The KRA title is
+  // carried the same way for the same reason (shape 3 below).
+  let carriedCategory = null;
+  let carriedTitle = null;
+  let block = null;   // the weight cell currently in force (shape 2 above)
+  let current = null; // the KRA currently being built (shape 1 above)
+  let pastTotal = false; // the "100" row marks the end of the KRA table
+
+  rows.forEach((r, i) => {
+    if (i < dataStart) return;
+    const line = rowNumberAt(i);
+    const get = (field) => (idx[field] != null ? String(r[idx[field]] ?? '').trim() : '');
+    const isCont = (field) => !!(merged && merged[i] && idx[field] != null && merged[i][idx[field]]);
+
+    const cat = get('category');
+    if (cat) carriedCategory = cat;
+
+    const title = get('kra_title');
+    if (title) carriedTitle = title;
+    const kpi = get('measures');
+    const weightRaw = get('weight');
+
+    // Nothing but a category — a group heading with no KRAs under it yet.
+    if (!title && !kpi && !weightRaw) { notes.push({ line, kind: 'empty', text: cat }); return; }
+
+    // No title and no KPI, but something in the weight column: the footer
+    // rows every one of these sheets ends with — a "100" total, and a note
+    // like "Max 8 Key KRAs". Neither is a KRA, and neither is an error, but
+    // both are reported rather than dropped silently so the row count is
+    // explainable. A number is called a total; anything else is described
+    // as what it is, because calling "Max 8 Key KRAs" a total would be a
+    // confidently wrong answer.
+    if (!title && !kpi) {
+      const isTotal = Number.isFinite(Number(weightRaw));
+      if (isTotal) pastTotal = true;
+      notes.push({ line, kind: isTotal ? 'total' : 'note', text: weightRaw });
+      block = null;
+      current = null;
+      return;
+    }
+
+    // Below the total row these sheets carry loose jottings — "FTR", "OC
+    // implementation" — in the KRA column with nothing else on the row.
+    // The total is where the table ends, so an unweighted row after it is
+    // a note, not a KRA missing its weight. Reported, not dropped: if one
+    // of them really was meant to be a KRA, HR sees it named here.
+    if (pastTotal && !weightRaw) { notes.push({ line, kind: 'trailing', text: title || kpi }); return; }
+
+    // A fresh weight cell opens a new block; a merged continuation of the
+    // one above keeps the current block, so its value is counted once.
+    if (weightRaw && !isCont('weight')) block = { raw: weightRaw, line, kras: [] };
+
+    // WHAT MAKES A ROW ANOTHER MEASURE RATHER THAN ANOTHER KRA. The
+    // deciding column is the WEIGHT, because that is what the sheet is
+    // apportioning: a row that carries its own weight is its own weighted
+    // line even when the title above it is left blank (shape 3), and a row
+    // whose weight is merged from above is part of what that weight covers
+    // (shape 1). Getting this backwards is what turned the Delivery
+    // Manager sheet's 100 into 85 — three rows with blank titles but real
+    // weights of their own were folded into the KRA above and their weight
+    // dropped on the floor.
+    const continuesPrevious = current
+      && ((isCont('weight') && (isCont('kra_title') || !title)) || (!title && !weightRaw));
+    if (continuesPrevious) {
+      if (kpi && !current.measure_lines.includes(kpi)) current.measure_lines.push(kpi);
+      const extra = get('description');
+      if (extra && !current.description_lines.includes(extra)) current.description_lines.push(extra);
+      return;
+    }
+
+    // A row with no weight of its own does not belong to the block above:
+    // it is a KRA the sheet forgot to weight, and it must be reported as
+    // that rather than quietly given a share of someone else's weight.
+    const rowBlock = weightRaw ? block : null;
+    current = {
+      sheet: sheetName,
+      line, // the row HR sees on screen, so an error points at it
       employee_email: get('employee_email').toLowerCase(),
-      kra_title: get('kra_title'),
-      weight: Number(get('weight')),
-      description: get('description') || null,
-      measures: get('measures') || null,
+      category: carriedCategory,
+      // Blank title + its own weight: shape 3. The title carries down from
+      // the row above, the same way the category does.
+      kra_title: title || carriedTitle || '',
+      measure_lines: kpi ? [kpi] : [],
+      description_lines: get('description') ? [get('description')] : [],
+      weight_raw: weightRaw,
+      block: rowBlock,
     };
-    if (!rec.employee_email) errors.push({ line, error: 'employee_email is empty' });
-    else if (!knownEmails.has(rec.employee_email)) errors.push({ line, error: `employee_email "${rec.employee_email}" not found among active employees` });
-    if (!rec.kra_title) errors.push({ line, error: 'kra_title is empty' });
-    if (!Number.isFinite(rec.weight) || rec.weight <= 0) errors.push({ line, error: `weight must be a positive number (got "${get('weight')}")` });
+    if (rowBlock) rowBlock.kras.push(current);
+    records.push(current);
+  });
+
+  // Weight is assigned only now, because a block's share is not knowable
+  // until every KRA sharing it has been seen. A block covering one KRA —
+  // every row of a CSV, and most rows of these sheets — gives that KRA its
+  // full weight, so the ordinary case is unchanged.
+  const shared = [];
+  for (const rec of records) {
+    const b = rec.block;
+    delete rec.block;
+    rec.measures = rec.measure_lines.length ? rec.measure_lines.join('\n') : null;
+    rec.description = rec.description_lines.length ? rec.description_lines.join('\n') : null;
+    delete rec.measure_lines; delete rec.description_lines;
+    if (!b) { rec.weight = Number(rec.weight_raw); continue; }
+    const n = b.kras.length || 1;
+    rec.weight = splitShare(b.raw, n, b.kras.indexOf(rec));
+    if (n > 1 && !shared.includes(b)) shared.push(b);
+  }
+
+  const missing = KRA_BULK_REQUIRED.filter((c) => idx[c] == null);
+  return { headerRowNumber: rowNumberAt(headerRow), missing, unknown, records, notes, shared };
+}
+
+// sheets: [{ name, rows }] — one entry for a CSV, one per worksheet for an
+// .xlsx. Multi-sheet is the normal case here, not an edge case: the
+// workbooks in use carry a dozen role tabs each.
+function validateKraBulkRows(sheets, knownEmails, empByEmail) {
+  if (!Array.isArray(sheets)) sheets = [];
+  // Back-compat: a bare array of rows (the old single-sheet signature, and
+  // what parseCsv returns) is one unnamed sheet.
+  if (sheets.length && Array.isArray(sheets[0])) sheets = [{ name: null, rows: sheets }];
+  const nonEmpty = sheets.filter((s) => s.rows && s.rows.length);
+  if (!nonEmpty.length) return { ok: false, fatal: 'Empty file', rows: [], errors: [], warnings: [] };
+
+  const out = []; const errors = []; const warnings = [];
+  const skippedSheets = []; const missingBySheet = [];
+
+  for (const sheet of nonEmpty) {
+    const parsed = parseKraSheet(sheet.name, sheet.rows, sheet.rowNumbers, sheet.merged);
+    if (!parsed) { skippedSheets.push(sheet.name || 'file'); continue; }
+    if (parsed.missing.length) { missingBySheet.push({ sheet: sheet.name, missing: parsed.missing }); continue; }
+    if (parsed.unknown.length) {
+      warnings.push({ sheet: sheet.name, line: parsed.headerRowNumber, warning: `ignored column(s) with no place in a KRA: ${parsed.unknown.join(', ')}` });
+    }
+    // A weight cell merged across several DIFFERENT KRAs says those KRAs
+    // are together worth that much. Splitting it evenly is the only
+    // reading that keeps the sheet's own total intact, but it is a
+    // decision made on the author's behalf, so it is stated rather than
+    // performed quietly — HR can set explicit weights before committing.
+    for (const b of parsed.shared) {
+      warnings.push({
+        sheet: sheet.name, line: b.line,
+        warning: `weightage ${b.raw} is merged across ${b.kras.length} KRAs (${b.kras.map((k) => k.kra_title).join('; ')}) — split as ${b.kras.map((k) => k.weight).join(' / ')}`,
+      });
+    }
+    for (const n of parsed.notes) {
+      warnings.push({
+        sheet: sheet.name, line: n.line,
+        warning: n.kind === 'total' ? `row read as the sheet's weightage total (${n.text}), not a KRA`
+          : n.kind === 'empty' ? `row skipped — nothing on it but the category "${n.text}"`
+          : n.kind === 'trailing' ? `row skipped — "${n.text}" sits below the total row and carries no weightage`
+          : `row skipped — no KRA title, and the weightage column reads "${n.text}"`,
+      });
+    }
+    out.push(...parsed.records);
+  }
+
+  // FATAL vs REPORTED. No usable sheet anywhere means there is nothing to
+  // import and the file is wrong — say so up front. But if SOME sheet
+  // parsed, a sheet missing employee_email is a fixable per-sheet problem,
+  // reported as an error with the sheet named, not a wall the whole upload
+  // hits with no indication of which tab is at fault.
+  if (!out.length && missingBySheet.length) {
+    const first = missingBySheet[0];
+    const where = first.sheet ? `sheet "${first.sheet}": ` : '';
+    return { ok: false, fatal: `${where}missing required column(s): ${first.missing.join(', ')}`, rows: [], errors: [], warnings: [] };
+  }
+  if (!out.length) {
+    return { ok: false, fatal: 'No KRA table found — expected a header row naming a KRA column and a Weightage column', rows: [], errors: [], warnings: [] };
+  }
+  for (const m of missingBySheet) {
+    errors.push({ sheet: m.sheet, line: 1, error: `sheet "${m.sheet}" is missing required column(s): ${m.missing.join(', ')} — it was not imported` });
+  }
+  for (const name of skippedSheets) {
+    warnings.push({ sheet: name, line: 1, warning: `sheet "${name}" has no KRA header row and was skipped` });
+  }
+
+  for (const rec of out) {
+    const at = { sheet: rec.sheet, line: rec.line };
+    if (!rec.employee_email) errors.push({ ...at, error: 'employee_email is empty' });
+    else if (!knownEmails.has(rec.employee_email)) errors.push({ ...at, error: `employee_email "${rec.employee_email}" not found among active employees` });
+    if (!rec.kra_title) errors.push({ ...at, error: 'KRA title is empty' });
+    if (!Number.isFinite(rec.weight) || rec.weight <= 0) errors.push({ ...at, error: `weightage must be a positive number (got "${rec.weight_raw}")` });
     // Found live: a bulk upload where the source file's kra_title column
     // had "(Employee Name - Designation)" typed onto the end of every
     // title, presumably by whoever filled the sheet — not something our
@@ -650,18 +1069,19 @@ function validateKraBulkRows(rows, knownEmails, empByEmail) {
     if (emp && rec.kra_title) {
       const titleLower = rec.kra_title.toLowerCase();
       if (emp.name && titleLower.includes(emp.name.toLowerCase())) {
-        warnings.push({ line, warning: `kra_title appears to include the employee's own name ("${emp.name}") — consider removing it for a cleaner display` });
+        warnings.push({ ...at, warning: `KRA title appears to include the employee's own name ("${emp.name}") — consider removing it for a cleaner display` });
       } else if (emp.designation && titleLower.includes(emp.designation.toLowerCase())) {
-        warnings.push({ line, warning: `kra_title appears to include the employee's own designation ("${emp.designation}") — consider removing it for a cleaner display` });
+        warnings.push({ ...at, warning: `KRA title appears to include the employee's own designation ("${emp.designation}") — consider removing it for a cleaner display` });
       }
     }
-    out.push(rec);
-  });
-
-  if (unknown.length) warnings.push({ line: 1, warning: `ignored unknown column(s): ${unknown.join(', ')}` });
+  }
 
   // Per-employee weight-sum check — same rule PUT /my/kra-sheet/kras enforces
   // at submit time, checked here up front so a bad file fails as a whole.
+  //
+  // Grouped by EMPLOYEE, not by sheet, deliberately: a person's KRAs can be
+  // split across tabs (a support engineer carrying both an "L1 Support" and
+  // an "L1 Monitoring" block), and 100 is the total for the person.
   const byEmployee = new Map();
   for (const r of out) {
     if (!r.employee_email) continue;
@@ -669,15 +1089,36 @@ function validateKraBulkRows(rows, knownEmails, empByEmail) {
     byEmployee.get(r.employee_email).push(r);
   }
   for (const [email, kras] of byEmployee) {
+    // Two KRAs under one title happen when the sheet leaves the title
+    // blank on a row that carries its own weight (shape 3): the title
+    // carries down, faithfully, and the employee ends up with two
+    // identically-named KRAs to score. Kept as-is rather than merged —
+    // merging would have to invent a combined weight — but flagged,
+    // because a rating screen listing the same title twice is confusing
+    // and HR can rename one before committing.
+    const seenTitles = new Map();
+    for (const k of kras) {
+      const key = k.kra_title.toLowerCase();
+      if (!k.kra_title) continue;
+      if (seenTitles.has(key)) {
+        warnings.push({ sheet: k.sheet, line: k.line, warning: `"${k.kra_title}" repeats the title on row ${seenTitles.get(key)} — both will be scored separately, so consider giving them distinct names` });
+      } else seenTitles.set(key, k.line);
+    }
     const check = pm.weightsValid(kras);
-    if (!check.ok) errors.push({ line: kras[0].line, error: `${email}: KRA weights must total 100 (currently ${check.total})` });
+    if (!check.ok) errors.push({ sheet: kras[0].sheet, line: kras[0].line, error: `${email}: KRA weights must total 100 (currently ${check.total})` });
   }
 
   return {
     ok: errors.length === 0, fatal: null, rows: out, errors, warnings,
-    summary: { total_rows: out.length, employees: byEmployee.size, errors: errors.length, warnings: warnings.length },
+    summary: {
+      total_rows: out.length, employees: byEmployee.size,
+      sheets_read: nonEmpty.length - skippedSheets.length - missingBySheet.length,
+      sheets_skipped: skippedSheets.length,
+      errors: errors.length, warnings: warnings.length,
+    },
   };
 }
+
 
 const kraUpload = multer({
   storage: multer.memoryStorage(),
@@ -708,8 +1149,13 @@ router.post('/hr/kra-sheet/bulk-upload', (req, res, next) => kraUpload.single('f
     const knownEmails = new Set(employees.map((e) => e.email));
     const empByEmail = new Map(employees.map((e) => [e.email, e]));
 
-    const parsedRows = format === 'xlsx' ? await parseExcelBuffer(req.file.buffer) : parseCsv(req.file.buffer.toString('utf8'));
-    const report = validateKraBulkRows(parsedRows, knownEmails, empByEmail);
+    // Every worksheet, not just the first — the goal sheets in use carry
+    // one tab per role inside a single workbook, so reading only sheet 1
+    // would import a fraction of the file and report success.
+    const sheets = format === 'xlsx'
+      ? await parseExcelSheets(req.file.buffer)
+      : [{ name: null, rows: parseCsv(req.file.buffer.toString('utf8')) }];
+    const report = validateKraBulkRows(sheets, knownEmails, empByEmail);
     if (report.fatal) return res.status(400).json({ error: report.fatal });
     const commit = req.query.commit === '1';
     if (!report.ok) return res.status(422).json({ ok: false, committed: false, ...report });
@@ -739,9 +1185,9 @@ router.post('/hr/kra-sheet/bulk-upload', (req, res, next) => kraUpload.single('f
         let i = 0;
         for (const k of kras) {
           await client.query(
-            `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, sort_order)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-            [T(req), s.id, k.kra_title, k.description, k.weight, k.measures, (i += 10)]);
+            `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, category, sort_order)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [T(req), s.id, k.kra_title, k.description, k.weight, k.measures, k.category || null, (i += 10)]);
         }
         await client.query(`UPDATE pms.kra_sheets SET status='draft', updated_at=now() WHERE id=$1`, [s.id]);
       }
@@ -941,7 +1387,7 @@ router.post('/team/development-plans/:planId/decide', async (req, res) => {
     await db.query(`UPDATE pms.development_plans SET status=$1, manager_comment=$2, decided_at=now(), updated_at=now() WHERE id=$3`,
       [decision, comment || null, p.id]);
     audit(req, `DEVPLAN_${decision.toUpperCase()}`, p.cycle_id, p.employee_id, { comment: comment || null });
-    await notify(T(req), p.employee_id, 'devplan_decided', `Your development plan was ${decision}`, comment || null, '/pms/my-growth');
+    await notify(T(req), p.employee_id, 'devplan_decided', `Your target achievements for the year were ${decision}`, comment || null, '/pms/my-growth');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -985,25 +1431,43 @@ router.put('/my/self-appraisal', async (req, res) => {
     // manager's 7-parameter scoring — the per-KRA average below is left
     // for non-annual cycles only, so the two computations never fight
     // over the same column.
-    let overallRating = a.overall_self_rating;
+    //
+    // REFUSED, NOT IGNORED, on an annual cycle. This used to accept
+    // overall_self_rating, quietly drop it and answer 200 — the caller
+    // was told their rating had been saved when it had not. The manager's
+    // side of the same rule already refuses with a 409 that names where
+    // the number actually comes from; this now matches it, which is both
+    // the house rule against silent failure and the only way a caller can
+    // tell the difference between "stored" and "discarded".
+    if (c.cycle_type === 'annual' && b.overall_self_rating !== undefined) {
+      return res.status(409).json({ error: 'On an annual cycle, overall_self_rating is computed from the 7 organisational parameters — use PUT /pms/my/parameter-scores instead' });
+    }
+    // null = leave the stored value untouched (COALESCE below keeps it),
+    // matching the manager side. Reading the current value and writing it
+    // straight back would clobber a 7-parameter score computed between
+    // this read and the update.
+    let overallRating = null;
     if (b.entries && c.cycle_type !== 'annual') {
       const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
       const kras = sheet ? (await db.query(`SELECT id, weight AS weight_pct FROM pms.kras WHERE sheet_id=$1`, [sheet.id])).rows : [];
       const scores = new Map(kras.map((k) => [k.id, b.entries[k.id] ? b.entries[k.id].self_rating : null]));
       const { rating } = computeWeightedRating(kras, scores);
       if (rating != null) overallRating = rating;
-    } else if (b.overall_self_rating != null && c.cycle_type !== 'annual') {
+    } else if (b.overall_self_rating != null) {
       const rv = validateRating(b.overall_self_rating, c.rating_scale);
       if (!rv.ok) return res.status(422).json({ error: rv.reason });
       overallRating = rv.value;
     }
     await db.query(
       `UPDATE pms.self_appraisals SET status='in_progress',
-         entries=COALESCE($2,entries), overall_self_rating=$3,
+         entries=COALESCE($2,entries), overall_self_rating=COALESCE($3,overall_self_rating),
          went_well=COALESCE($4,went_well), could_improve=COALESCE($5,could_improve), updated_at=now()
        WHERE id=$1`,
       [a.id, b.entries ? JSON.stringify(b.entries) : null, overallRating, b.went_well ?? null, b.could_improve ?? null]);
-    res.json({ ok: true, overall_self_rating: overallRating });
+    // The effective value, not the local one — a PUT that touched only
+    // went_well must report the rating that is actually stored rather than
+    // the null that means "unchanged".
+    res.json({ ok: true, overall_self_rating: overallRating ?? a.overall_self_rating });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1027,6 +1491,17 @@ router.post('/my/self-appraisal/submit', async (req, res) => {
     }
     await db.query(`UPDATE pms.self_appraisals SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [a.id]);
     audit(req, 'SELF_APPRAISAL_SUBMITTED', c.id, req.user.id, null);
+    // Requested: the manager hears about a submission the moment it
+    // happens, not on the next reminder sweep. Mid-year already did this;
+    // the annual appraisal did not, so the manager only found out by
+    // opening the team page. The manager is resolved live rather than
+    // from any snapshot, for the reason spelled out in
+    // notifySheetSubmitted.
+    const mgr = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
+    if (mgr && mgr.manager_id) {
+      await notify(T(req), mgr.manager_id, 'self_appraisal_submitted',
+        `${req.user.name} submitted their self-appraisal`, null, '/pms/team');
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1250,7 +1725,13 @@ router.get('/my/midyear-review', async (req, res) => {
     const c = await activeCycleForMidyear(T(req));
     if (!c) return res.json({ cycle: null, checkin: null });
     const row = await ensureMidyearCheckin(T(req), c.id, req.user.id);
-    const editable = pm.phaseAllows(c.phase, 'midyear_self_edit');
+    // Both conditions, not just the phase. The PUT below already refuses a
+    // submitted row with 409, so the lock was enforced — but this flag said
+    // "editable" anyway, and the page compensated with its own
+    // `editable && !selfSigned`. An API that reports a state its own writes
+    // contradict is a trap for the next caller, and there is nothing to
+    // stop the two rules drifting apart.
+    const editable = pm.phaseAllows(c.phase, 'midyear_self_edit') && row.self_status !== 'submitted';
     const kras = await midyearKras(T(req), c.id, req.user.id);
     res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale }, checkin: row, editable,
       kras, scoring: midyearOverall(kras, row.self_entries) });
@@ -1312,7 +1793,14 @@ router.post('/my/midyear-review/submit', async (req, res) => {
     }
     await db.query(`UPDATE pms.midyear_checkins SET self_status='submitted', self_submitted_at=now(), updated_at=now() WHERE id=$1`, [row.id]);
     audit(req, 'MIDYEAR_SELF_SUBMITTED', c.id, req.user.id, null);
-    if (row.manager_id) await notify(T(req), row.manager_id, 'midyear_self_signed', `${req.user.name} signed their Mid-Year Review`, null, '/pms/team/midyear-review');
+    // The LIVE manager, not the manager_id snapshotted on the check-in row
+    // when it was created. Same bug the KRA flow had: an employee whose
+    // manager changed mid-cycle had their submission announced to the
+    // person who no longer manages them, while the person who has to act
+    // on it heard nothing.
+    const liveMgr = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
+    const notifyMgr = (liveMgr && liveMgr.manager_id) || row.manager_id;
+    if (notifyMgr) await notify(T(req), notifyMgr, 'midyear_self_signed', `${req.user.name} signed their Mid-Year Review`, null, '/pms/team/midyear-review');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1327,7 +1815,8 @@ router.get('/team/midyear-review/:employeeId', async (req, res) => {
     const c = await activeCycleForMidyear(T(req));
     if (!c) return res.json({ cycle: null, employee: { id: emp.id, name: emp.name }, checkin: null });
     const row = await ensureMidyearCheckin(T(req), c.id, emp.id);
-    const editable = pm.phaseAllows(c.phase, 'midyear_manager_edit');
+    // Same rule on the manager's side, for the same reason.
+    const editable = pm.phaseAllows(c.phase, 'midyear_manager_edit') && row.manager_status !== 'submitted';
     const kras = await midyearKras(T(req), c.id, emp.id);
     // Both sides' scoring state: the manager legitimately sees the
     // employee's own per-KRA ratings and justifications while writing
@@ -1644,7 +2133,11 @@ router.get('/my/parameter-scores', async (req, res) => {
     const scored = (await db.query(`SELECT parameter_id, score FROM pms.parameter_scores WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND scored_by_role='self'`, [T(req), c.id, req.user.id])).rows;
     const scoreMap = Object.fromEntries(scored.map((s) => [s.parameter_id, Number(s.score)]));
     const weighted = computeWeightedRating(params, scoreMap);
-    const editable = pm.phaseAllows(c.phase, 'self_edit');
+    // Phase AND not-yet-submitted, matching what the PUT below actually
+    // enforces (409 'Already submitted — locked'). Same fix as the two
+    // mid-year GETs: the flag must not claim a state the writes refuse.
+    const a = (await db.query(`SELECT status FROM pms.self_appraisals WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
+    const editable = pm.phaseAllows(c.phase, 'self_edit') && !(a && a.status === 'submitted');
     res.json({ parameters: params, scores: scoreMap, weighted_rating: weighted.rating, complete: weighted.complete, missing: weighted.missing, editable });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1944,6 +2437,344 @@ router.post('/publish', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ---------------- Increment simulation — compensation modelling -----------
+// Requested as a "Simulation Report": model salary increments from the
+// cycle's final ratings and a budget. The system held no compensation data
+// at all, so migration 030 introduces the inputs (what people are paid, and
+// what a rating is worth) alongside the model.
+//
+// EVERY ROUTE HERE IS BEHIND pms_compensation, which managers and Delivery
+// Heads do not have and never should — they can already see their reports'
+// ratings, and pay is a different thing entirely.
+//
+// NOTHING HERE WRITES A SALARY. Simulations are recomputed from their
+// inputs on every read and never stored as figures; pms.compensation is
+// only ever set by an explicit HR upload. A scenario that could quietly
+// become somebody's actual pay is a far more dangerous feature than the
+// one asked for.
+const incr = require('./increment-rules');
+
+async function requireComp(req, res) {
+  if (await hasPermission(req.user, 'pms_compensation')) return true;
+  res.status(403).json({ error: "Requires 'pms_compensation' — compensation data is granted separately from other HR permissions" });
+  return false;
+}
+
+// The salary in force today for everyone: the latest row whose
+// effective_from has arrived. DISTINCT ON is what makes "current" one
+// query rather than a per-employee lookup.
+const CURRENT_CTC_SQL = `
+  SELECT DISTINCT ON (employee_id) employee_id, annual_ctc, currency, effective_from
+    FROM pms.compensation
+   WHERE tenant_id = $1 AND effective_from <= CURRENT_DATE
+   ORDER BY employee_id, effective_from DESC`;
+
+// GET /pms/compensation — what is on record, with who is missing.
+router.get('/compensation', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const r = await db.query(
+      `SELECT e.id AS employee_id, e.name, e.email, e.department, e.designation,
+              c.annual_ctc, c.currency, c.effective_from
+         FROM core.employees e
+         LEFT JOIN (${CURRENT_CTC_SQL}) c ON c.employee_id = e.id
+        WHERE e.tenant_id = $1 AND e.status = 'active'
+        ORDER BY e.name`, [T(req)]);
+    const missing = r.rows.filter((x) => x.annual_ctc == null).length;
+    res.json({ employees: r.rows, on_record: r.rows.length - missing, missing });
+  } catch (e) { logger.error('compensation list', { error: e.message }); res.status(500).json({ error: 'Could not load compensation' }); }
+});
+
+// POST /pms/compensation/upload — the same dry-run-first importer pattern
+// as every other bulk load here, so it behaves the way HR already expects.
+const compUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!/\.(csv|xlsx|xls)$/i.test(file.originalname || '')) return cb(new Error('Only .csv, .xlsx, or .xls files are accepted'));
+    cb(null, true);
+  },
+});
+
+const COMP_REQUIRED = ['employee_email', 'annual_ctc'];
+function validateCompRows(rows, knownEmails) {
+  if (!rows.length) return { ok: false, fatal: 'Empty file', rows: [], errors: [], warnings: [] };
+  const header = rows[0].map((h) => String(h).trim().toLowerCase().replace(/\s+/g, '_'));
+  const missing = COMP_REQUIRED.filter((c) => !header.includes(c));
+  if (missing.length) return { ok: false, fatal: `Missing required column(s): ${missing.join(', ')}`, rows: [], errors: [], warnings: [] };
+  const idx = Object.fromEntries(header.map((h, i) => [h, i]));
+  const out = []; const errors = []; const warnings = [];
+
+  rows.slice(1).forEach((r, n) => {
+    const line = n + 2;
+    const get = (c) => (idx[c] != null ? String(r[idx[c]] ?? '').trim() : '');
+    const email = get('employee_email').toLowerCase();
+    // Commas and currency symbols are how salaries are actually typed into
+    // a spreadsheet; rejecting "12,00,000" would be rejecting the file
+    // everyone has rather than a mistake.
+    const raw = get('annual_ctc').replace(/[,\s₹$]/g, '');
+    const ctc = Number(raw);
+    if (!email) errors.push({ line, error: 'employee_email is empty' });
+    else if (!knownEmails.has(email)) errors.push({ line, error: `employee_email "${email}" not found among active employees` });
+    if (!raw) errors.push({ line, error: 'annual_ctc is empty' });
+    else if (!Number.isFinite(ctc) || ctc < 0) errors.push({ line, error: `annual_ctc must be a positive number (got "${get('annual_ctc')}")` });
+    else if (ctc > 0 && ctc < 1000) warnings.push({ line, warning: `annual_ctc of ${ctc} looks like it might be in lakhs or thousands rather than the full annual figure` });
+
+    const eff = get('effective_from');
+    if (eff && !/^\d{4}-\d{2}-\d{2}$/.test(eff)) errors.push({ line, error: 'effective_from must be yyyy-mm-dd' });
+    out.push({ line, employee_email: email, annual_ctc: ctc, currency: get('currency') || 'INR', effective_from: eff || null });
+  });
+
+  const seen = new Set();
+  for (const r of out) {
+    if (!r.employee_email) continue;
+    const key = `${r.employee_email}|${r.effective_from || 'today'}`;
+    if (seen.has(key)) errors.push({ line: r.line, error: `${r.employee_email} appears twice for the same effective date` });
+    seen.add(key);
+  }
+  return { ok: errors.length === 0, fatal: null, rows: out, errors, warnings,
+    summary: { total_rows: out.length, errors: errors.length, warnings: warnings.length } };
+}
+
+router.post('/compensation/upload', (req, res, next) => compUpload.single('file')(req, res, (err) => {
+  if (err) return res.status(400).json({ error: err.message });
+  next();
+}), async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    if (!req.file) return res.status(400).json({ error: 'file required (multipart field "file")' });
+    const format = detectFormat(req.file);
+    if (format === 'xls-legacy') return res.status(400).json({ error: 'Legacy .xls files are not supported — re-save as .xlsx and upload again.' });
+
+    const employees = (await db.query(
+      `SELECT LOWER(email) AS email, id FROM core.employees WHERE tenant_id=$1 AND status='active'`, [T(req)])).rows;
+    const byEmail = new Map(employees.map((e) => [e.email, e.id]));
+    const sheets = format === 'xlsx' ? await parseExcelSheets(req.file.buffer) : [{ rows: parseCsv(req.file.buffer.toString('utf8')) }];
+    const report = validateCompRows(sheets[0] ? sheets[0].rows : [], new Set(byEmail.keys()));
+    if (report.fatal) return res.status(400).json({ error: report.fatal });
+    if (!report.ok) return res.status(422).json({ ok: false, committed: false, ...report });
+    if (req.query.commit !== '1') return res.json({ ok: true, committed: false, note: 'Dry run — pass ?commit=1 to load.', ...report });
+
+    for (const r of report.rows) {
+      await db.query(
+        `INSERT INTO pms.compensation (tenant_id, employee_id, annual_ctc, currency, effective_from, source, updated_by)
+         VALUES ($1,$2,$3,$4,COALESCE($5::date, CURRENT_DATE),'upload',$6)
+         ON CONFLICT (tenant_id, employee_id, effective_from)
+           DO UPDATE SET annual_ctc=EXCLUDED.annual_ctc, currency=EXCLUDED.currency,
+                         updated_by=EXCLUDED.updated_by, updated_at=now()`,
+        [T(req), byEmail.get(r.employee_email), r.annual_ctc, r.currency, r.effective_from, req.user.email]);
+    }
+    // Audited without the figures. That someone loaded salaries, and how
+    // many, is what an audit trail needs; copying every salary into a
+    // second table that is read far more widely is not.
+    audit(req, 'COMPENSATION_UPLOADED', null, null, { rows: report.rows.length });
+    res.json({ ok: true, committed: true, loaded: report.rows.length, warnings: report.warnings });
+  } catch (e) { logger.error('compensation upload', { error: e.message }); res.status(500).json({ error: 'Could not load the file' }); }
+});
+
+// ---- the matrix: what a rating is worth ----------------------------------
+router.get('/increment-matrix', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const c = await activeCycle(T(req));
+    const r = await db.query(
+      `SELECT * FROM pms.increment_matrix WHERE tenant_id=$1 AND (cycle_id=$2 OR cycle_id IS NULL)
+        ORDER BY (cycle_id IS NULL), sort_order, rating_min DESC`, [T(req), c ? c.id : null]);
+    // A per-cycle matrix wins over the standing one; mixing both would
+    // apply two policies at once.
+    const scoped = r.rows.filter((b) => b.cycle_id);
+    res.json({ bands: scoped.length ? scoped : r.rows, scope: scoped.length ? 'cycle' : 'standing', cycle: c ? { id: c.id, name: c.name } : null });
+  } catch (e) { logger.error('increment matrix read', { error: e.message }); res.status(500).json({ error: 'Could not load the matrix' }); }
+});
+
+router.put('/increment-matrix', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const { bands, cycle_scoped } = req.body || {};
+    if (!Array.isArray(bands)) return res.status(400).json({ error: 'bands array required' });
+    const errors = incr.validateMatrix(bands);
+    if (errors.length) return res.status(422).json({ error: 'The matrix is not usable yet', errors });
+
+    const c = cycle_scoped ? await activeCycle(T(req)) : null;
+    if (cycle_scoped && !c) return res.status(409).json({ error: 'No active cycle to scope the matrix to' });
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        cycle_scoped
+          ? `DELETE FROM pms.increment_matrix WHERE tenant_id=$1 AND cycle_id=$2`
+          : `DELETE FROM pms.increment_matrix WHERE tenant_id=$1 AND cycle_id IS NULL`,
+        cycle_scoped ? [T(req), c.id] : [T(req)]);
+      let order = 0;
+      for (const b of bands) {
+        await client.query(
+          `INSERT INTO pms.increment_matrix (tenant_id, cycle_id, label, rating_min, rating_max, increment_pct, sort_order, updated_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [T(req), cycle_scoped ? c.id : null, (b.label || '').trim() || null,
+           b.rating_min, b.rating_max, b.increment_pct, (order += 10), req.user.email]);
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+    audit(req, 'INCREMENT_MATRIX_SET', c ? c.id : null, null, { bands: bands.length, scope: cycle_scoped ? 'cycle' : 'standing' });
+    res.json({ ok: true, bands: bands.length });
+  } catch (e) { logger.error('increment matrix write', { error: e.message }); res.status(500).json({ error: 'Could not save the matrix' }); }
+});
+
+// ---- the simulation -------------------------------------------------------
+// Rated employees for a cycle, with what they are paid. Published ratings
+// where they exist, falling back to the manager's evaluation so a scenario
+// can be run BEFORE publish — which is when a budget conversation actually
+// happens.
+async function ratedEmployeesFor(tenantId, cycleId) {
+  return (await db.query(
+    `SELECT e.id AS employee_id, e.name, e.department,
+            COALESCE(h.final_rating, me.overall_rating) AS final_rating,
+            c.annual_ctc AS current_ctc, c.currency
+       FROM core.employees e
+       LEFT JOIN pms.employee_performance_history h ON h.employee_id=e.id AND h.cycle_id=$2
+       LEFT JOIN pms.manager_evaluations me ON me.employee_id=e.id AND me.cycle_id=$2 AND me.status='submitted'
+       LEFT JOIN (${CURRENT_CTC_SQL}) c ON c.employee_id=e.id
+      WHERE e.tenant_id=$1 AND e.status='active'
+      ORDER BY e.name`, [tenantId, cycleId])).rows;
+}
+
+async function matrixFor(tenantId, cycleId) {
+  const r = await db.query(
+    `SELECT * FROM pms.increment_matrix WHERE tenant_id=$1 AND (cycle_id=$2 OR cycle_id IS NULL)
+      ORDER BY sort_order`, [tenantId, cycleId]);
+  const scoped = r.rows.filter((b) => b.cycle_id);
+  return scoped.length ? scoped : r.rows.filter((b) => !b.cycle_id);
+}
+
+// Recomputed from the stored inputs every time, never read back as frozen
+// figures — see migration 030 for why.
+async function runSimulation(tenantId, sim) {
+  const [employees, matrix, overrideRows] = await Promise.all([
+    ratedEmployeesFor(tenantId, sim.cycle_id),
+    matrixFor(tenantId, sim.cycle_id),
+    db.query(`SELECT employee_id, increment_pct, reason FROM pms.increment_overrides WHERE simulation_id=$1`, [sim.id]),
+  ]);
+  const overrides = Object.fromEntries(overrideRows.rows.map((o) => [o.employee_id, { increment_pct: Number(o.increment_pct), reason: o.reason }]));
+  const result = incr.simulate({
+    employees, matrix, overrides,
+    budgetAmount: sim.budget_amount == null ? null : Number(sim.budget_amount),
+    scaleToFit: sim.scale_to_fit,
+  });
+  return { ...result, by_department: incr.byDepartment(result.lines), matrix_bands: matrix.length };
+}
+
+router.get('/increment-simulations', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const c = await activeCycle(T(req));
+    if (!c) return res.json({ cycle: null, simulations: [] });
+    const r = await db.query(
+      `SELECT s.*, (SELECT count(*)::int FROM pms.increment_overrides o WHERE o.simulation_id=s.id) AS overrides
+         FROM pms.increment_simulations s WHERE s.tenant_id=$1 AND s.cycle_id=$2 ORDER BY s.created_at DESC`,
+      [T(req), c.id]);
+    res.json({ cycle: { id: c.id, name: c.name }, simulations: r.rows });
+  } catch (e) { logger.error('simulations list', { error: e.message }); res.status(500).json({ error: 'Could not load simulations' }); }
+});
+
+router.post('/increment-simulations', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const { name, budget_amount, scale_to_fit, notes } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name required' });
+    if (budget_amount != null && (!Number.isFinite(Number(budget_amount)) || Number(budget_amount) < 0)) {
+      return res.status(422).json({ error: 'budget_amount must be a positive number' });
+    }
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const existing = (await db.query(
+      `SELECT 1 FROM pms.increment_simulations WHERE tenant_id=$1 AND cycle_id=$2 AND name=$3`,
+      [T(req), c.id, String(name).trim()])).rows[0];
+    if (existing) return res.status(409).json({ error: `A scenario called "${String(name).trim()}" already exists for this cycle` });
+
+    const sim = (await db.query(
+      `INSERT INTO pms.increment_simulations (tenant_id, cycle_id, name, budget_amount, scale_to_fit, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [T(req), c.id, String(name).trim(), budget_amount ?? null, !!scale_to_fit, (notes || '').trim() || null, req.user.email])).rows[0];
+    audit(req, 'INCREMENT_SIMULATION_CREATED', c.id, null, { name: sim.name, budget: sim.budget_amount });
+    res.status(201).json({ ok: true, simulation: sim, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { logger.error('simulation create', { error: e.message }); res.status(500).json({ error: 'Could not create the scenario' }); }
+});
+
+router.get('/increment-simulations/:id', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const sim = (await db.query(`SELECT * FROM pms.increment_simulations WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!sim) return res.status(404).json({ error: 'scenario not found' });
+    res.json({ ok: true, simulation: sim, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { logger.error('simulation read', { error: e.message }); res.status(500).json({ error: 'Could not run the scenario' }); }
+});
+
+router.put('/increment-simulations/:id', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const { budget_amount, scale_to_fit, notes } = req.body || {};
+    if (budget_amount != null && (!Number.isFinite(Number(budget_amount)) || Number(budget_amount) < 0)) {
+      return res.status(422).json({ error: 'budget_amount must be a positive number' });
+    }
+    const sim = (await db.query(
+      `UPDATE pms.increment_simulations
+          SET budget_amount=COALESCE($1,budget_amount),
+              scale_to_fit=COALESCE($2,scale_to_fit),
+              notes=COALESCE($3,notes), updated_at=now()
+        WHERE id=$4 AND tenant_id=$5 RETURNING *`,
+      [budget_amount ?? null, scale_to_fit ?? null, (notes || '').trim() || null, req.params.id, T(req)])).rows[0];
+    if (!sim) return res.status(404).json({ error: 'scenario not found' });
+    res.json({ ok: true, simulation: sim, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { logger.error('simulation update', { error: e.message }); res.status(500).json({ error: 'Could not update the scenario' }); }
+});
+
+router.delete('/increment-simulations/:id', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const r = await db.query(`DELETE FROM pms.increment_simulations WHERE id=$1 AND tenant_id=$2 RETURNING name, cycle_id`, [req.params.id, T(req)]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'scenario not found' });
+    audit(req, 'INCREMENT_SIMULATION_DELETED', r.rows[0].cycle_id, null, { name: r.rows[0].name });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Could not delete the scenario' }); }
+});
+
+// A named exception to the matrix. The reason is REQUIRED: "why did this
+// person get 14% when their band says 8%" is the first question anyone
+// asks of a compensation round, and an override without an answer to it
+// is the thing that makes the whole exercise indefensible.
+router.put('/increment-simulations/:id/overrides/:employeeId', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const { increment_pct, reason } = req.body || {};
+    if (!Number.isFinite(Number(increment_pct)) || Number(increment_pct) < 0) {
+      return res.status(422).json({ error: 'increment_pct must be zero or more' });
+    }
+    if (!reason || !String(reason).trim()) {
+      return res.status(422).json({ error: 'A reason is required — an override without one cannot be defended later' });
+    }
+    const sim = (await db.query(`SELECT * FROM pms.increment_simulations WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!sim) return res.status(404).json({ error: 'scenario not found' });
+    await db.query(
+      `INSERT INTO pms.increment_overrides (tenant_id, simulation_id, employee_id, increment_pct, reason, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (simulation_id, employee_id)
+         DO UPDATE SET increment_pct=EXCLUDED.increment_pct, reason=EXCLUDED.reason, created_by=EXCLUDED.created_by`,
+      [T(req), sim.id, req.params.employeeId, Number(increment_pct), String(reason).trim(), req.user.email]);
+    res.json({ ok: true, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { logger.error('simulation override', { error: e.message }); res.status(500).json({ error: 'Could not set the override' }); }
+});
+
+router.delete('/increment-simulations/:id/overrides/:employeeId', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const sim = (await db.query(`SELECT * FROM pms.increment_simulations WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!sim) return res.status(404).json({ error: 'scenario not found' });
+    await db.query(`DELETE FROM pms.increment_overrides WHERE simulation_id=$1 AND employee_id=$2`, [sim.id, req.params.employeeId]);
+    res.json({ ok: true, ...(await runSimulation(T(req), sim)) });
+  } catch (e) { res.status(500).json({ error: 'Could not clear the override' }); }
+});
+
 // ---------------- Annual Review consolidation — BR-6.1 ---------------------
 // "The system must support an end-of-year review workflow that
 // consolidates KRA outcomes, development plan progress, and career path
@@ -1959,10 +2790,20 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId) {
   const managerEval = (await db.query(`SELECT status, entries, overall_rating, strengths, improvement_areas FROM pms.manager_evaluations WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
   // KRA "outcomes" = each KRA's definition joined with its self-rating and
   // manager-rating, keyed by kra_id in the two entries jsonb blobs above.
+  //
+  // Mid-year joins them as the MID-POINT reference. It is the same KRA
+  // being rated at the halfway mark, and the end-of-year conversation is
+  // poorer without it: "rated 3 at mid-year, 5 now" is a story, two
+  // separate pages showing 3 and 5 is not. Deliberately shown ALONGSIDE
+  // the self and manager ratings rather than blended into them — how much
+  // mid-year should count towards a final rating is a policy decision, not
+  // one to make in an aggregation function.
+  const midyear = await midyearEntriesFor(tenantId, cycleId, employeeId);
   const kraOutcomes = kras.map((k) => ({
     ...k,
     self: selfAppraisal?.entries?.[k.id] || null,
     manager: managerEval?.entries?.[k.id] || null,
+    midyear: midyear ? { self: midyear.self_entries[k.id] || null, manager: midyear.manager_entries[k.id] || null } : null,
   }));
 
   const devPlan = (await db.query(`SELECT id, status, manager_comment FROM pms.development_plans WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
@@ -1993,6 +2834,10 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId) {
 
   return {
     kra: { sheet: kraSheet || null, outcomes: kraOutcomes },
+    midyear: midyear ? {
+      self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+      self_status: midyear.self_status, manager_status: midyear.manager_status,
+    } : null,
     development_plan: { plan: devPlan || null, goals: devGoals, avg_progress: devAvgProgress },
     career_path: careerPath || null,
     parameter_scores: { parameters: params, scores: scoreMap, weighted_rating: weighted.rating, complete: weighted.complete },
@@ -2261,12 +3106,151 @@ async function checkAndSendConnectReminders(tenantId) {
   return reminded;
 }
 
+// POST /pms/reminders/run — the same sweep the boot loop runs, on demand.
+// Exists because the engine is a catch-up rather than a clock (see
+// reminders.js): if HR opens a phase late, or the free instance slept
+// through a reminder morning, this is how someone makes the sweep happen
+// now instead of waiting for the next daily tick. Safe to press twice —
+// the ledger's unique key means a second run sends nothing.
+router.post('/reminders/run', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const counts = await runReminders(T(req));
+    audit(req, 'REMINDERS_RUN', null, null, counts);
+    res.json({ ok: true, ...counts });
+  } catch (e) { logger.error('reminders run', { error: e.message }); res.status(500).json({ error: 'Could not run the reminder sweep' }); }
+});
+
 router.post('/connects/check-reminders', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
     const reminded = await checkAndSendConnectReminders(T(req));
     audit(req, 'CONNECT_REMINDERS_CHECKED', null, null, { reminded });
     res.json({ ok: true, reminded });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ---------------- Meetings for connects / mid-year / annual ----------------
+// PROVISION FOR GOOGLE MEET, NOT A CONNECTION TO IT. Requested in those
+// terms: keep the provision, strictly do not connect it now. So the model,
+// the routes and the consent gate all exist and work end to end with a
+// pasted link today; connecting Meet later fills in the same rows from a
+// provider instead. See core/meetings.js for the seam and migration 027
+// for why transcripts are a separate table.
+//
+// Who may act: the employee themselves or their manager (or an admin). A
+// one-on-one belongs to both people in it, so either can schedule it —
+// this mirrors how pms.connects is already handled.
+async function meetingParty(req, employeeId) {
+  if (employeeId === req.user.id) return true;
+  if (await hasPermission(req.user, 'pms_admin')) return true;
+  const r = await db.query(`SELECT 1 FROM core.employees WHERE id=$1 AND tenant_id=$2 AND manager_id=$3`,
+    [employeeId, T(req), req.user.id]);
+  return !!r.rows[0];
+}
+
+// GET /pms/meetings/providers — what can be used to schedule one, and for
+// anything that cannot, why not. Returned rather than hidden so the UI can
+// show Google Meet as a real, named, not-yet-connected option instead of
+// silently offering nothing.
+router.get('/meetings/providers', async (req, res) => {
+  res.json({ providers: meetings.listProviders() });
+});
+
+// GET /pms/meetings?employee_id=&context= — the meetings on record.
+router.get('/meetings', async (req, res) => {
+  try {
+    const employeeId = req.query.employee_id || req.user.id;
+    if (!(await meetingParty(req, employeeId))) return res.status(403).json({ error: 'Not your meeting' });
+    const params = [T(req), employeeId];
+    let where = 'm.tenant_id=$1 AND m.employee_id=$2';
+    if (req.query.context) { meetings.requireContext(req.query.context); params.push(req.query.context); where += ` AND m.context=$${params.length}`; }
+    const r = await db.query(
+      `SELECT m.*, (t.id IS NOT NULL) AS has_transcript
+         FROM pms.review_meetings m
+         LEFT JOIN pms.meeting_transcripts t ON t.meeting_id = m.id
+        WHERE ${where} ORDER BY COALESCE(m.scheduled_at, m.created_at) DESC LIMIT 50`, params);
+    res.json({ meetings: r.rows });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// POST /pms/meetings — record a meeting for a connect, mid-year or annual.
+router.post('/meetings', async (req, res) => {
+  try {
+    const { employee_id, context, ref_id, meeting_url, scheduled_at } = req.body || {};
+    const provider = (req.body || {}).provider || meetings.MANUAL;
+    const employeeId = employee_id || req.user.id;
+    meetings.requireContext(context);
+    // Refuses google_meet with 501 and a reason — the one place the "not
+    // connected now" instruction is actually enforced, rather than assumed.
+    meetings.requireProvider(provider);
+    if (!(await meetingParty(req, employeeId))) return res.status(403).json({ error: 'Not your meeting' });
+    if (!meeting_url || !/^https?:\/\//i.test(String(meeting_url))) {
+      return res.status(400).json({ error: 'meeting_url must be an http(s) link' });
+    }
+    const row = (await db.query(
+      `INSERT INTO pms.review_meetings (tenant_id, cycle_id, employee_id, context, ref_id, provider, meeting_url, scheduled_at, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [T(req), (await activeCycle(T(req)))?.id || null, employeeId, context, ref_id || null,
+       provider, String(meeting_url).trim(), scheduled_at || null, req.user.id])).rows[0];
+    audit(req, 'MEETING_SCHEDULED', row.cycle_id, employeeId, { context, provider });
+    res.status(201).json({ ok: true, meeting: row });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+router.delete('/meetings/:id', async (req, res) => {
+  try {
+    const m = (await db.query(`SELECT * FROM pms.review_meetings WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+    if (!(await meetingParty(req, m.employee_id))) return res.status(403).json({ error: 'Not your meeting' });
+    await db.query(`DELETE FROM pms.review_meetings WHERE id=$1`, [m.id]);
+    audit(req, 'MEETING_DELETED', m.cycle_id, m.employee_id, { context: m.context });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /pms/meetings/:id/transcript — store what was said.
+//
+// THE CONSENT GATE IS THE POINT OF THIS ROUTE. A transcript is a record of
+// two people discussing someone's performance; BRD §6 requires the
+// employee's explicit consent before any meeting recording or
+// transcription feeds an AI feature, and core/consent.js was written for
+// exactly this call. Consent is checked against the EMPLOYEE the review is
+// about — never the person uploading, who is usually their manager and
+// cannot consent on their behalf.
+//
+// Today the content arrives from a human pasting it. When Google Meet is
+// connected, the provider fetches it and lands in the same row through the
+// same gate — which is why the gate lives here and not in a UI handler.
+router.put('/meetings/:id/transcript', async (req, res) => {
+  try {
+    const { content } = req.body || {};
+    if (!content || !String(content).trim()) return res.status(400).json({ error: 'content required' });
+    const m = (await db.query(`SELECT * FROM pms.review_meetings WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+    if (!(await meetingParty(req, m.employee_id))) return res.status(403).json({ error: 'Not your meeting' });
+    await requireConsent(T(req), m.employee_id);
+    const row = (await db.query(
+      `INSERT INTO pms.meeting_transcripts (tenant_id, meeting_id, provider, content, consent_employee_id, captured_by)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (meeting_id) DO UPDATE SET content=EXCLUDED.content, captured_by=EXCLUDED.captured_by,
+                                              captured_at=now(), consent_checked_at=now()
+       RETURNING id, captured_at`,
+      [T(req), m.id, m.provider, String(content).trim(), m.employee_id, req.user.id])).rows[0];
+    audit(req, 'MEETING_TRANSCRIPT_STORED', m.cycle_id, m.employee_id, { context: m.context, chars: String(content).trim().length });
+    res.json({ ok: true, transcript_id: row.id, captured_at: row.captured_at });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+router.get('/meetings/:id/transcript', async (req, res) => {
+  try {
+    const m = (await db.query(`SELECT * FROM pms.review_meetings WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+    if (!(await meetingParty(req, m.employee_id))) return res.status(403).json({ error: 'Not your meeting' });
+    const t = (await db.query(`SELECT id, content, captured_at, provider FROM pms.meeting_transcripts WHERE meeting_id=$1`, [m.id])).rows[0];
+    if (!t) return res.status(404).json({ error: 'no transcript stored for this meeting' });
+    res.json({ transcript: t });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2679,4 +3663,10 @@ router.post('/hr/kra-sheet/clean-titles', async (req, res) => {
 // they are the pure part of the per-KRA scoring (no db), and the weighted
 // average plus the "no overall until every KRA is rated" rule are exactly
 // the behaviour worth pinning down without standing up a database.
-module.exports = { router, checkAndSendConnectReminders, mergeMidyearEntries, midyearOverall };
+// buildAnnualReviewSummary is EXPORTED, not duplicated. The AI appraisal
+// summary narrates exactly this consolidation — the same KRA outcomes,
+// mid-year readings, target achievements, career progress and parameter
+// scores the Annual Review page shows. Building a second gatherer for the
+// model would mean the summary could describe a year that no screen
+// agrees with.
+module.exports = { router, checkAndSendConnectReminders, runReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader, buildAnnualReviewSummary };

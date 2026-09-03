@@ -7,7 +7,11 @@ const BUNDLES = {
   employee: ['pms_self', 'engagement_take', 'people_view'],
   manager:  ['pms_self', 'pms_team_eval', 'engagement_take', 'people_view'],
   hod:      ['pms_self', 'pms_team_eval', 'pms_hod', 'engagement_take', 'people_view'],
-  hr:       ['pms_self', 'pms_admin', 'pms_team_eval', 'pms_hod', 'engagement_admin', 'engagement_take', 'people_admin', 'people_view', 'letters_admin'],
+  // pms_compensation is HR's and admin's only — never manager or hod. A
+  // manager can already see their reports' ratings; they must never see
+  // their pay. Kept as its own grant rather than folded into pms_admin so
+  // that revoking compensation access is one row (see migration 030).
+  hr:       ['pms_self', 'pms_admin', 'pms_team_eval', 'pms_hod', 'engagement_admin', 'engagement_take', 'people_admin', 'people_view', 'letters_admin', 'pms_compensation'],
   admin:    ['*'],
 };
 

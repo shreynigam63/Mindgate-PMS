@@ -66,12 +66,28 @@ async function main() {
   // pms.connect_reminders_log), so overlapping/frequent calls are safe —
   // this interval is deliberately conservative rather than clever.
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-  const { checkAndSendConnectReminders } = require('./modules/performance');
+  const { checkAndSendConnectReminders, runReminders } = require('./modules/performance');
   const runReminderCheck = () => checkAndSendConnectReminders(TENANT_ID)
     .then((n) => n && logger.info('connect reminders sent', { count: n }))
     .catch((e) => logger.warn('connect reminder check failed', { error: e.message }));
   runReminderCheck();
   setInterval(runReminderCheck, ONE_DAY_MS);
+
+  // The calendar reminder sweep (modules/performance/reminders.js): the
+  // quarterly connect nudge, the mid-year and annual chases, and the
+  // post-submission follow-up. Runs on the SAME boot-then-daily shape and
+  // for the same reason — this deploy has no worker service.
+  //
+  // Boot matters more here than for the cadence check above. A free
+  // instance sleeps after fifteen minutes idle, so a reminder scheduled
+  // for 1 September can pass with nothing running; the sweep is a
+  // catch-up, so waking up is what makes the missed morning fire. The
+  // ledger (migration 026) makes running it on every boot harmless.
+  const runCalendarReminders = () => runReminders(TENANT_ID)
+    .then((r) => r.total && logger.info('calendar reminders sent', r))
+    .catch((e) => logger.warn('calendar reminder sweep failed', { error: e.message }));
+  runCalendarReminders();
+  setInterval(runCalendarReminders, ONE_DAY_MS);
 }
 
 main().catch(e => { logger.error('boot failed', { error: e.message }); process.exit(1); });

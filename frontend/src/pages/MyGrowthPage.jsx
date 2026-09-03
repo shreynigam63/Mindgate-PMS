@@ -22,7 +22,12 @@ export default function MyGrowthPage() {
   );
 }
 
-// ---------------- Development Plan (BR-2.1/2.2/2.3) ------------------------
+// ---------------- Target achievements for the year (BR-2.1/2.2/2.3) --------
+// Displayed as "Target achievements for the year". The stored shape stays
+// development_plans / development_goals and every route keeps its path —
+// the annual review, the manager queue, the completion report and the
+// phase-change notification all reference it, and renaming those for a
+// wording change would be breaking for no user-visible gain.
 function DevelopmentPlanCard() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -38,7 +43,7 @@ function DevelopmentPlanCard() {
   return (
     <div className="card p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <p className="font-bold text-sm flex-1">Development Plan</p>
+        <p className="font-bold text-sm flex-1">Target achievements for the year</p>
         <span className={`chip ${STATUS_COLOR[data.plan.status]}`}>{data.plan.status}</span>
       </div>
       {data.plan.status === 'returned' && data.plan.manager_comment && (
@@ -282,6 +287,12 @@ function CareerAiPanel({ onUse }) {
                 <div><p className="text-slate-300 font-semibold">Start this cycle</p>
                   <ul className="list-disc pl-4">{a.first_steps.map((c, n) => <li key={n}>{c}</li>)}</ul></div>
               )}
+              {(a.suggested_milestones || []).length > 0 && (
+                <div><p className="text-slate-300 font-semibold">Milestones to track</p>
+                  <ul className="list-disc pl-4">{a.suggested_milestones.map((m, n) => (
+                    <li key={n}>{m.title}{m.description && <span className="text-slate-400"> — {m.description}</span>}</li>
+                  ))}</ul></div>
+              )}
               <button className="btn-sec !bg-navy-700 !text-white !border-navy-600 !text-[11px] !py-1"
                 onClick={() => onUse(a)}>Use this (then edit)</button>
             </div>
@@ -342,16 +353,40 @@ function CareerPathGap({ d }) {
 function CareerPathCard() {
   const [data, setData] = useState(null);
   const [form, setForm] = useState({ target_role: '', target_timeline: '', plan: '' });
+  const [milestones, setMilestones] = useState([]);
   const [err, setErr] = useState(null);
   const [saved, setSaved] = useState(false);
-  const load = () => api('/people/career/my-path').then(r => { setData(r); setForm({ target_role: r.path?.target_role || '', target_timeline: r.path?.target_timeline || '', plan: r.path?.plan || '' }); }).catch(e => setErr(e.message));
+  const load = () => api('/people/career/my-path').then(r => {
+    setData(r);
+    setForm({ target_role: r.path?.target_role || '', target_timeline: r.path?.target_timeline || '', plan: r.path?.plan || '' });
+    setMilestones((r.milestones || []).map(m => ({ ...m, target_date: m.target_date ? String(m.target_date).slice(0, 10) : '' })));
+  }).catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
 
+  // The path is saved FIRST: milestones hang off it, so on the very first
+  // save there is no row for them to attach to until this lands.
   const save = async () => {
     setErr(null); setSaved(false);
     if (!form.target_role.trim()) { setErr('A target role is required.'); return; }
-    try { await api('/people/career/my-path', { method: 'PUT', body: JSON.stringify(form) }); setSaved(true); load(); }
-    catch (e) { setErr(e.message); }
+    const missingDate = milestones.findIndex(m => m.title.trim() && !m.target_date);
+    if (missingDate >= 0) { setErr(`Milestone ${missingDate + 1} needs a target date.`); return; }
+    try {
+      await api('/people/career/my-path', { method: 'PUT', body: JSON.stringify(form) });
+      await api('/people/career/my-milestones', {
+        method: 'PUT',
+        body: JSON.stringify({ milestones: milestones.filter(m => m.title.trim()) }),
+      });
+      setSaved(true); load();
+    } catch (e) { setErr(e.message); }
+  };
+
+  // Progress is NOT phase-gated — it happens all year, and a gate would
+  // mean marking something done months after you did it.
+  const setProgress = async (id, pct) => {
+    try { const r = await api(`/people/career/my-milestones/${id}/progress`, { method: 'PUT', body: JSON.stringify({ progress_pct: pct }) });
+      setData(d => ({ ...d, progress_pct: r.progress_pct }));
+      setMilestones(ms => ms.map(m => (m.id === id ? { ...m, progress_pct: pct } : m)));
+    } catch (e) { setErr(e.message); }
   };
 
   if (err && !data) return <div className="card p-4"><p className="text-sm text-rose-600">{err}</p></div>;
@@ -370,12 +405,22 @@ function CareerPathCard() {
         {data.cycle_phase && <span className={`chip ${phaseColor(data.cycle_phase)}`}>{phaseLabel(data.cycle_phase)}</span>}
       </div>
       <CareerPathGap d={data.path_diagnostics} />
-      {editable && <CareerAiPanel onUse={(a) => setForm((fm) => ({
-        target_role: a.target_role || fm.target_role,
-        target_timeline: a.typical_time || fm.target_timeline,
-        plan: [a.fit, (a.competencies_to_build || []).length ? `Competencies to build:\n- ${a.competencies_to_build.join('\n- ')}` : null,
-               (a.first_steps || []).length ? `First steps:\n- ${a.first_steps.join('\n- ')}` : null].filter(Boolean).join('\n\n'),
-      }))} />}
+      {editable && <CareerAiPanel onUse={(a) => {
+        setForm((fm) => ({
+          target_role: a.target_role || fm.target_role,
+          target_timeline: a.typical_time || fm.target_timeline,
+          plan: [a.fit, (a.competencies_to_build || []).length ? `Competencies to build:\n- ${a.competencies_to_build.join('\n- ')}` : null,
+                 (a.first_steps || []).length ? `First steps:\n- ${a.first_steps.join('\n- ')}` : null].filter(Boolean).join('\n\n'),
+        }));
+        // Suggested milestones land as editable drafts with no date —
+        // a date is required to save, so the employee has to commit to
+        // one rather than accept whatever the model would have guessed.
+        if ((a.suggested_milestones || []).length) {
+          setMilestones((ms) => [...ms, ...a.suggested_milestones.map((m) => ({
+            title: m.title, description: m.description || '', target_date: '', progress_pct: 0,
+          }))]);
+        }
+      }} />}
       {editable && <p className="text-[11px] text-navy-400">Unsaved until you press <b>Save</b>.</p>}
       <div>
         <label className="lbl">Target role</label>
@@ -396,6 +441,47 @@ function CareerPathCard() {
       <div>
         <label className="lbl">Growth plan</label>
         <textarea className="inp" rows={4} value={form.plan} disabled={!editable} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))} placeholder="How you plan to get there" />
+      </div>
+
+      {/* Milestones are what make this a plan rather than an aspiration:
+          the steps towards the role, each with a date and a progress
+          figure. Progress stays editable outside Growth Planning, because
+          progress happens all year. */}
+      <div className="space-y-2">
+        <div className="flex items-baseline gap-2">
+          <label className="lbl mb-0 flex-1">Milestones towards this role</label>
+          {data.progress_pct != null && <span className="text-[11px] font-semibold text-teal-700">{data.progress_pct}% overall</span>}
+        </div>
+        {!milestones.length && <p className="text-[11px] text-navy-400">No milestones yet — add the steps you'll take, so progress is something you can point at.</p>}
+        {milestones.map((m, i) => (
+          <div key={m.id || `new-${i}`} className="border border-navy-100 rounded-lg p-2 space-y-1">
+            <div className="flex gap-2">
+              <input className="inp flex-1" placeholder="Milestone *" value={m.title || ''} disabled={!editable}
+                onChange={e => setMilestones(ms => ms.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} />
+              <input className="inp w-40" type="date" value={m.target_date || ''} disabled={!editable}
+                onChange={e => setMilestones(ms => ms.map((x, j) => (j === i ? { ...x, target_date: e.target.value } : x)))} />
+              {editable && <button className="text-rose-500" onClick={() => setMilestones(ms => ms.filter((_, j) => j !== i))}><Trash2 size={15} /></button>}
+            </div>
+            <input className="inp text-xs" placeholder="What done looks like" value={m.description || ''} disabled={!editable}
+              onChange={e => setMilestones(ms => ms.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))} />
+            {m.id && (
+              <div className="flex items-center gap-2">
+                <input type="range" min="0" max="100" step="5" value={m.progress_pct ?? 0} className="flex-1"
+                  onChange={e => setMilestones(ms => ms.map((x, j) => (j === i ? { ...x, progress_pct: Number(e.target.value) } : x)))}
+                  onMouseUp={e => setProgress(m.id, Number(e.target.value))}
+                  onTouchEnd={e => setProgress(m.id, Number(e.target.value))} />
+                <span className="text-[11px] w-10 text-right font-medium">{m.progress_pct ?? 0}%</span>
+              </div>
+            )}
+          </div>
+        ))}
+        {editable && (
+          <button className="btn-sec !py-1 !text-[11px]"
+            onClick={() => setMilestones(ms => [...ms, { title: '', description: '', target_date: '', progress_pct: 0 }])}>
+            <Plus size={12} className="inline mr-1" />Add milestone
+          </button>
+        )}
+        {!editable && milestones.length > 0 && <p className="text-[11px] text-navy-400">Milestone text is editable in Growth Planning — progress can be updated any time.</p>}
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {editable ? (
@@ -432,7 +518,7 @@ function TeamDevelopmentPlans() {
 
   return (
     <div className="space-y-2">
-      <p className="font-bold text-sm">Team Development Plans</p>
+      <p className="font-bold text-sm">Team target achievements</p>
       {data.plans.map(p => (
         <div key={p.id} className="card overflow-hidden">
           <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpenId(v => v === p.id ? null : p.id)}>

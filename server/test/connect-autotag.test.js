@@ -57,6 +57,10 @@ before(async () => {
   app.use((req, _res, next) => { req.tenantId = t.id; next(); });
   app.post('/api/v1/auth/dev-login', devLogin);
   app.use('/api/v1/pms', require('../modules/performance').router);
+  // The agentic router too: the tests below exercise /agentic routes, and
+  // without it they hit Express's 404 HTML page and fail on JSON parsing
+  // rather than on anything they were written to check.
+  app.use('/api/v1/agentic', require('../modules/agentic').router);
   server = app.listen(0);
   base = `http://localhost:${server.address().port}/api/v1`;
 });
