@@ -33,12 +33,14 @@ before(async () => {
   await db.query(`INSERT INTO core.local_credentials (tenant_id, email, password_hash) VALUES ($1,'sar-emp@x.com',$2)`, [t.id, await bcrypt.hash('pass', 10)]);
 
   const scale = JSON.stringify([{ value: 6, label: 'A+' }, { value: 5, label: 'A' }, { value: 4, label: 'B+' }, { value: 3, label: 'B' }, { value: 2, label: 'C' }, { value: 1, label: 'D' }]);
-  // A MIDYEAR-type cycle. overall_self_rating is only the employee's to
-  // set — directly or as the per-KRA weighted average — on a non-annual
-  // cycle; on an annual one it belongs exclusively to the 7-parameter
-  // engine, which the last two tests in this file pin separately. These
-  // tests were originally written against 'annual', before that split
-  // existed, and had been asserting behaviour the code deliberately moved.
+  // A MIDYEAR-type cycle to start with; the last three tests flip it to
+  // 'annual' to prove the rules below are the same either way. There was
+  // briefly a split here — on an annual cycle overall_self_rating came
+  // from the employee's own 7-parameter self-scoring instead — which made
+  // the Self-Appraisal page present that figure as the official annual
+  // rating. It never was one (BR-6.2/6.3 gives that exclusively to the
+  // manager's scoring), so the column has a single owner again: the
+  // per-KRA weighted average, on every cycle type.
   const cycle = (await db.query(
     `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase, rating_scale) VALUES ($1,'SAR Cycle','FYSAR','midyear','self_appraisal',$2) RETURNING id`,
     [t.id, scale])).rows[0];
@@ -138,41 +140,47 @@ test('a fractional computed average is accepted even though it is not an exact s
 });
 
 // ---------------------------------------------------------------------------
-// The annual split. Everything above is the NON-annual path; on an annual
-// cycle overall_self_rating is exclusively the weighted score of the 7
-// organisational parameters, so that two computations never fight over one
-// column. These pin that boundary from the other side.
+// The annual cycle behaves EXACTLY as above. These flip cycle_type and pin
+// that, because for a while it did not: overall_self_rating came from the
+// employee's own 7-parameter self-scoring on annual cycles, which is what
+// let the page label that figure the "Overall Annual Rating". The
+// self-scoring is still captured (see self-parameter-scoring.test.js) —
+// it just no longer writes this column, so there is one owner and no
+// cycle-type-dependent surprise.
 // ---------------------------------------------------------------------------
 
-test('on an annual cycle a directly-sent overall_self_rating is REFUSED, not quietly dropped', { skip }, async () => {
-  // It used to answer 200 and discard the value — the caller was told
-  // their rating was saved when it was not. The manager's side of the
-  // same rule already refused with a 409 naming where the number comes
-  // from; this now matches it.
+test('on an annual cycle a directly-sent overall_self_rating is stored, same as any other cycle type', { skip }, async () => {
+  // This briefly answered 409 and pointed the caller at
+  // PUT /my/parameter-scores. The 7-parameter self-score no longer owns
+  // this column, so there is nothing left to refuse.
   await db.query(`UPDATE pms.cycles SET cycle_type='annual' WHERE id=$1`, [cycleId]);
   const { token } = await login('sar-emp@x.com');
 
   const put = await api('/pms/my/self-appraisal', token, { method: 'PUT', body: JSON.stringify({ overall_self_rating: 5 }) });
-  assert.equal(put.status, 409);
-  assert.match(put.body.error, /7 organisational parameters/);
-  assert.match(put.body.error, /parameter-scores/, 'says where the value actually comes from');
+  assert.equal(put.status, 200);
+  assert.equal(Number(put.body.overall_self_rating), 5);
+  const get = await api('/pms/my/self-appraisal', token);
+  assert.equal(Number(get.body.appraisal.overall_self_rating), 5, 'persisted, not just echoed');
 });
 
-test('on an annual cycle a per-KRA average does not overwrite the 7-parameter score', { skip }, async () => {
+test('on an annual cycle the per-KRA average drives overall_self_rating, overwriting whatever was there', { skip }, async () => {
   const { token } = await login('sar-emp2@x.com');
   const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE email='sar-emp2@x.com')`, [cycleId])).rows[0];
   const kras = (await db.query(`SELECT id FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [sheet.id])).rows;
 
-  // A rating already on the row, as the 7-parameter engine would leave it.
+  // A stale value on the row, as the old 7-parameter path would have left
+  // it. The per-KRA average owns the column now, so it must win.
   await db.query(`UPDATE pms.self_appraisals SET overall_self_rating=4.6 WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE email='sar-emp2@x.com')`, [cycleId]);
 
   const put = await api('/pms/my/self-appraisal', token, {
     method: 'PUT',
     body: JSON.stringify({ entries: { [kras[0].id]: { self_rating: 1, narrative: 'x' }, [kras[1].id]: { self_rating: 1, narrative: 'y' } } }),
   });
-  assert.equal(put.status, 200, 'per-KRA entries are still SAVED on an annual cycle — they just do not drive the overall');
+  assert.equal(put.status, 200);
+  // 60/40, both graded 1 → 1.0
+  assert.equal(Number(put.body.overall_self_rating), 1);
   const get = await api('/pms/my/self-appraisal', token);
-  assert.equal(Number(get.body.appraisal.overall_self_rating), 4.6, 'the 7-parameter score survives untouched');
+  assert.equal(Number(get.body.appraisal.overall_self_rating), 1, 'the stale 4.6 is gone, not preserved');
   assert.equal(get.body.appraisal.entries[kras[0].id].self_rating, 1, 'and the entries themselves are stored');
 });
 
@@ -180,7 +188,7 @@ test('a PUT that touches only prose reports the rating actually stored, not null
   const { token } = await login('sar-emp2@x.com');
   const put = await api('/pms/my/self-appraisal', token, { method: 'PUT', body: JSON.stringify({ went_well: 'Kept the pipeline green.' }) });
   assert.equal(put.status, 200);
-  assert.equal(Number(put.body.overall_self_rating), 4.6, 'unchanged means unchanged, not cleared');
+  assert.equal(Number(put.body.overall_self_rating), 1, 'unchanged means unchanged, not cleared');
   const get = await api('/pms/my/self-appraisal', token);
-  assert.equal(Number(get.body.appraisal.overall_self_rating), 4.6);
+  assert.equal(Number(get.body.appraisal.overall_self_rating), 1);
 });

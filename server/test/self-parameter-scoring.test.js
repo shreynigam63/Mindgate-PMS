@@ -88,8 +88,19 @@ test('employee can self-score the 7 parameters, computing their own weighted ave
   assert.equal(Number(put.body.weighted_rating), 4.2);
   assert.equal(put.body.complete, true);
 
+  // Deliberately NOT written into the appraisal's own rating. That column
+  // is the per-KRA weighted average (see self-appraisal-rating.test.js);
+  // this figure is a self-assessment the employee reads back from the GET
+  // below. Writing it there is what made the Self-Appraisal page present
+  // it as the "Overall Annual Rating" — authority it never had, since
+  // BR-6.2/6.3 gives the official annual rating to the MANAGER's scoring
+  // of the same 7 parameters.
   const appraisal = await api('/pms/my/self-appraisal', token);
-  assert.equal(Number(appraisal.body.appraisal.overall_self_rating), 4.2, 'written into overall_self_rating once complete');
+  assert.equal(appraisal.body.appraisal.overall_self_rating, null, 'self-scoring does not write the appraisal rating');
+  assert.equal(appraisal.body.appraisal.status, 'in_progress', 'but scoring alone still counts as progress');
+
+  const back = await api('/pms/my/parameter-scores', token);
+  assert.equal(Number(back.body.weighted_rating), 4.2, 'the self-assessment figure is readable, just not promoted');
 });
 
 // The exact point of migration 021: this must NOT touch the manager's own

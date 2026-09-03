@@ -1425,29 +1425,23 @@ router.put('/my/self-appraisal', async (req, res) => {
     // — an average of discrete grades is legitimately fractional (e.g.
     // 3.7), and that's correct, not an invalid value.
     //
-    // UPDATED: on an ANNUAL cycle, overall_self_rating is now exclusively
-    // driven by the 7-parameter self-scoring (PUT /my/parameter-scores),
-    // same as the manager's overall_rating is exclusively driven by the
-    // manager's 7-parameter scoring — the per-KRA average below is left
-    // for non-annual cycles only, so the two computations never fight
-    // over the same column.
+    // UPDATED: the per-KRA weighted average owns overall_self_rating on
+    // EVERY cycle type, annual included. It was briefly driven instead by
+    // the employee's own 7-parameter self-scoring on annual cycles, which
+    // led the Self-Appraisal page to present that figure as the "Overall
+    // Annual Rating" — authority it never had. The OFFICIAL annual rating
+    // comes exclusively from the MANAGER's 7-parameter scoring
+    // (BR-6.2/6.3); the employee's self-scores live in the same table
+    // under scored_by_role='self' and are a self-assessment layer, read
+    // back from GET /my/parameter-scores for display and nothing more.
+    // With one owner for this column the two computations can no longer
+    // fight over it, and a caller is never told a different number was
+    // stored than the one that was.
     //
-    // REFUSED, NOT IGNORED, on an annual cycle. This used to accept
-    // overall_self_rating, quietly drop it and answer 200 — the caller
-    // was told their rating had been saved when it had not. The manager's
-    // side of the same rule already refuses with a 409 that names where
-    // the number actually comes from; this now matches it, which is both
-    // the house rule against silent failure and the only way a caller can
-    // tell the difference between "stored" and "discarded".
-    if (c.cycle_type === 'annual' && b.overall_self_rating !== undefined) {
-      return res.status(409).json({ error: 'On an annual cycle, overall_self_rating is computed from the 7 organisational parameters — use PUT /pms/my/parameter-scores instead' });
-    }
     // null = leave the stored value untouched (COALESCE below keeps it),
-    // matching the manager side. Reading the current value and writing it
-    // straight back would clobber a 7-parameter score computed between
-    // this read and the update.
+    // matching the manager side.
     let overallRating = null;
-    if (b.entries && c.cycle_type !== 'annual') {
+    if (b.entries) {
       const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
       const kras = sheet ? (await db.query(`SELECT id, weight AS weight_pct FROM pms.kras WHERE sheet_id=$1`, [sheet.id])).rows : [];
       const scores = new Map(kras.map((k) => [k.id, b.entries[k.id] ? b.entries[k.id].self_rating : null]));
@@ -2119,11 +2113,13 @@ router.put('/team/parameter-scores/:employeeId', async (req, res) => {
 // the manager scores against — only the manager could. This is the
 // employee's own mirror of the two routes above, writing to the SAME
 // pms.parameter_scores table (migration 021 added scored_by_role so both
-// coexist per parameter without overwriting each other) but into
-// pms.self_appraisals.overall_self_rating once complete, instead of
-// pms.manager_evaluations.overall_rating — the self-score never becomes
-// the OFFICIAL rating; that stays exclusively the manager's, per
-// BR-6.2/6.3. Annual-cycle only, same restriction as the manager route.
+// coexist per parameter without overwriting each other). Unlike the
+// manager route it writes NO rating column of its own: the self-score is
+// a self-assessment layer, surfaced back to the employee and to nobody
+// else's rating — the OFFICIAL annual rating stays exclusively the
+// manager's 7-parameter scoring, per BR-6.2/6.3, and the employee's own
+// overall_self_rating is the per-KRA weighted average from
+// PUT /my/self-appraisal. Annual-cycle only, as the manager route is.
 router.get('/my/parameter-scores', async (req, res) => {
   try {
     const c = await activeCycle(T(req));
@@ -2168,13 +2164,23 @@ router.put('/my/parameter-scores', async (req, res) => {
     const allScored = (await db.query(`SELECT parameter_id, score FROM pms.parameter_scores WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND scored_by_role='self'`, [T(req), c.id, req.user.id])).rows;
     const scoreMap = Object.fromEntries(allScored.map((s) => [s.parameter_id, Number(s.score)]));
     const weighted = computeWeightedRating(params, scoreMap);
-    if (weighted.complete) {
-      await db.query(
-        `INSERT INTO pms.self_appraisals (tenant_id, cycle_id, employee_id, overall_self_rating, status)
-         VALUES ($1,$2,$3,$4,'in_progress')
-         ON CONFLICT (cycle_id, employee_id) DO UPDATE SET overall_self_rating=$4, status=CASE WHEN pms.self_appraisals.status='not_started' THEN 'in_progress' ELSE pms.self_appraisals.status END, updated_at=now()`,
-        [T(req), c.id, req.user.id, weighted.rating]);
-    }
+    // Deliberately does NOT write pms.self_appraisals.overall_self_rating.
+    // That column is the per-KRA weighted average on every cycle type
+    // (PUT /my/self-appraisal is its only writer); the employee's
+    // 7-parameter self-score is a self-assessment layer, returned here
+    // for display and never promoted into the appraisal's own rating.
+    // Writing it there was what made the Self-Appraisal page label it the
+    // "Overall Annual Rating" — a claim it never had, since the official
+    // annual rating is the MANAGER's 7-parameter scoring (BR-6.2/6.3).
+    // The row is still upserted so that scoring alone counts as progress
+    // and the submit route below has something to submit.
+    await db.query(
+      `INSERT INTO pms.self_appraisals (tenant_id, cycle_id, employee_id, status)
+       VALUES ($1,$2,$3,'in_progress')
+       ON CONFLICT (cycle_id, employee_id) DO UPDATE SET
+         status=CASE WHEN pms.self_appraisals.status='not_started' THEN 'in_progress' ELSE pms.self_appraisals.status END,
+         updated_at=now()`,
+      [T(req), c.id, req.user.id]);
     res.json({ ok: true, weighted_rating: weighted.rating, complete: weighted.complete, missing: weighted.missing });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
