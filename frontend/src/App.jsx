@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Heart, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -25,7 +25,6 @@ import NineBoxPage from './pages/NineBoxPage';
 import MyGrowthPage from './pages/MyGrowthPage';
 import KraOrgOverviewPage from './pages/KraOrgOverviewPage';
 import AnnualReviewPage from './pages/AnnualReviewPage';
-import PulseCheckPage from './pages/PulseCheckPage';
 import MidYearReviewPage from './pages/MidYearReviewPage';
 import ConnectsPage from './pages/ConnectsPage';
 import ClosureLettersPage from './pages/ClosureLettersPage';
@@ -41,7 +40,6 @@ const NAV = [
     { to: '/my/annual-review', label: 'Annual Review', icon: Award },
     { to: '/my/rating', label: 'My Rating', icon: Star },
     { to: '/my/history', label: 'Past Cycles', icon: History },
-    { to: '/my/pulse-check', label: 'Pulse Check', icon: Heart },
   ]},
   { group: 'Team', items: [
     { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard },
@@ -143,7 +141,6 @@ export default function App() {
             <Route path="/my/growth" element={<MyGrowthPage />} />
             <Route path="/my/annual-review" element={<AnnualReviewPage />} />
             <Route path="/my/history" element={<HistoryPage />} />
-            <Route path="/my/pulse-check" element={<PulseCheckPage />} />
             <Route path="/team/overview" element={<TeamOverviewPage />} />
             <Route path="/team/kra-sheets" element={<TeamKraSheetsPage />} />
             <Route path="/team/eval" element={<TeamEvalPage user={user} />} />
