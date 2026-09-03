@@ -325,11 +325,29 @@ router.get('/my/kra-sheet', async (req, res) => {
     res.json({
       cycle: { id: c.id, name: c.name, phase: c.phase }, sheet: s,
       kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
+      known_categories: await knownKraCategories(T(req)),
       midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
                            self_status: midyear.self_status, manager_status: midyear.manager_status } : null,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// The Parameters already in use across this tenant's KRA sheets.
+//
+// Offered as the picker's options so a sheet does not end up with
+// "Project/Process" on one employee and "Project & Process" on the next —
+// a split that only shows up later, as two headings that should have been
+// one. Deliberately NOT a fixed list: these come from the client's own
+// workbooks (Financial, Project / Process, Customer, People) and a new
+// one has to be addable without an HR screen and a migration standing in
+// the way. Tenant-scoped, like everything else here.
+async function knownKraCategories(tenantId) {
+  const rows = (await db.query(
+    `SELECT DISTINCT category FROM pms.kras
+      WHERE tenant_id=$1 AND category IS NOT NULL AND btrim(category) <> ''
+      ORDER BY category`, [tenantId])).rows;
+  return rows.map((r) => r.category);
+}
 
 router.put('/my/kra-sheet/kras', async (req, res) => {
   try {
@@ -341,15 +359,23 @@ router.put('/my/kra-sheet/kras', async (req, res) => {
     const kras = Array.isArray(req.body && req.body.kras) ? req.body.kras : [];
     const client = await db.getClient();
     try {
+      // category (the sheet's "Parameters" column) is carried through the
+      // rewrite. These handlers DELETE every KRA and re-insert, and the
+      // insert used to omit category — so one Save draft silently wiped
+      // every Parameters value the bulk import had stored, on a save that
+      // changed nothing else, because the page never had the field to
+      // send back. Only review-assist read it, and its grouping quietly
+      // degraded to null after the first save.
       await client.query('BEGIN');
       await client.query(`DELETE FROM pms.kras WHERE sheet_id=$1`, [s.id]);
       let i = 0;
       for (const k of kras) {
         if (!k.title || !String(k.title).trim()) continue;
         await client.query(
-          `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, sort_order)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [T(req), s.id, String(k.title).trim(), k.description || null, Number(k.weight) || 0, k.measures || null, (i += 10)]);
+          `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, category, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [T(req), s.id, String(k.title).trim(), k.description || null, Number(k.weight) || 0, k.measures || null,
+           k.category && String(k.category).trim() ? String(k.category).trim() : null, (i += 10)]);
       }
       await client.query(`UPDATE pms.kra_sheets SET status='draft', updated_at=now() WHERE id=$1`, [s.id]);
       await client.query('COMMIT');
@@ -612,6 +638,7 @@ router.get('/hr/kra-sheet/:employeeId', async (req, res) => {
     res.json({
       cycle: { id: c.id, name: c.name, phase: c.phase }, employee: emp, sheet: s,
       kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
+      known_categories: await knownKraCategories(T(req)),
       midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
                            self_status: midyear.self_status, manager_status: midyear.manager_status } : null,
     });
@@ -628,15 +655,23 @@ router.put('/hr/kra-sheet/:employeeId/kras', async (req, res) => {
     const kras = Array.isArray(req.body && req.body.kras) ? req.body.kras : [];
     const client = await db.getClient();
     try {
+      // category (the sheet's "Parameters" column) is carried through the
+      // rewrite. These handlers DELETE every KRA and re-insert, and the
+      // insert used to omit category — so one Save draft silently wiped
+      // every Parameters value the bulk import had stored, on a save that
+      // changed nothing else, because the page never had the field to
+      // send back. Only review-assist read it, and its grouping quietly
+      // degraded to null after the first save.
       await client.query('BEGIN');
       await client.query(`DELETE FROM pms.kras WHERE sheet_id=$1`, [s.id]);
       let i = 0;
       for (const k of kras) {
         if (!k.title || !String(k.title).trim()) continue;
         await client.query(
-          `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, sort_order)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [T(req), s.id, String(k.title).trim(), k.description || null, Number(k.weight) || 0, k.measures || null, (i += 10)]);
+          `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, category, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [T(req), s.id, String(k.title).trim(), k.description || null, Number(k.weight) || 0, k.measures || null,
+           k.category && String(k.category).trim() ? String(k.category).trim() : null, (i += 10)]);
       }
       await client.query(`UPDATE pms.kra_sheets SET status='draft', updated_at=now() WHERE id=$1`, [s.id]);
       await client.query('COMMIT');

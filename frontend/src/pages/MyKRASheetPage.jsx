@@ -5,7 +5,39 @@ import { api, phaseLabel, phaseColor } from '../utils/api';
 // Whitespace counts as empty. An imported cell can carry a stray space or
 // newline, and treating that as content would put the box back on exactly
 // the rows this was meant to clear.
-const hasText = (v) => !!(v && String(v).trim());
+export const hasText = (v) => !!(v && String(v).trim());
+
+// KRAs grouped by the sheet's "Parameters" column (pms.kras.category).
+//
+// Migration 025 records why this is structure rather than decoration: in
+// the source workbooks the column is filled once per group and left blank
+// down the rest of it, so the grouping IS how the sheet reads. Group order
+// is first appearance, not alphabetical, so an imported sheet keeps the
+// order its author chose.
+//
+// Rows carry their original index because every edit goes through set(i)
+// and a KRA is deleted by index — grouping must not renumber anything.
+// A KRA with no parameter goes in a trailing group rather than vanishing.
+export const NO_CATEGORY = '__none__';
+export function groupByCategory(kras) {
+  const order = [];
+  const byCat = new Map();
+  kras.forEach((k, i) => {
+    const cat = hasText(k.category) ? String(k.category).trim() : NO_CATEGORY;
+    if (!byCat.has(cat)) { byCat.set(cat, []); order.push(cat); }
+    byCat.get(cat).push({ k, i });
+  });
+  // The unparameterised group sits last wherever it first appeared —
+  // it is the leftovers, and reading it between two real groups implies
+  // an order the sheet does not have.
+  const cats = order.filter((c) => c !== NO_CATEGORY);
+  if (byCat.has(NO_CATEGORY)) cats.push(NO_CATEGORY);
+  return cats.map((cat) => ({
+    cat,
+    rows: byCat.get(cat),
+    weight: byCat.get(cat).reduce((t, r) => t + (Number(r.k.weight) || 0), 0),
+  }));
+}
 
 export default function MyKRASheetPage() {
   const [data, setData] = useState(null);
@@ -38,13 +70,43 @@ export default function MyKRASheetPage() {
   // at the wrong one.
   const openDesc = (i) => setKras(ks => ks.map((r, j) => j === i ? { ...r, _showDesc: true } : r));
 
+  // The Parameter picker commits ATOMICALLY, and that is the point. A
+  // free-text input would re-group the sheet on every keystroke, so the
+  // row being typed into would jump out from under the cursor. Choosing an
+  // existing value moves the row once, deliberately; naming a new one
+  // stages the text and applies it on Enter or blur.
+  const NEW_CAT = '__new__';
+  const setCategory = (i, value) => setKras(ks => ks.map((r, j) => {
+    if (j !== i) return r;
+    if (value === NEW_CAT) return { ...r, _newCat: true, _newCatText: '' };
+    return { ...r, category: value === NO_CATEGORY ? '' : value, _newCat: false, _newCatText: undefined };
+  }));
+  const stageNewCategory = (i, text) => setKras(ks => ks.map((r, j) => j === i ? { ...r, _newCatText: text } : r));
+  const commitNewCategory = (i) => setKras(ks => ks.map((r, j) => {
+    if (j !== i) return r;
+    const named = hasText(r._newCatText);
+    // An empty name leaves the KRA where it was rather than clearing its
+    // parameter — cancelling out of "+ New" should not be destructive.
+    return { ...r, category: named ? String(r._newCatText).trim() : r.category, _newCat: false, _newCatText: undefined };
+  }));
+
+  // Options offered by every picker: what this tenant already uses (from
+  // GET /my/kra-sheet), plus anything on this sheet that is not saved yet.
+  const categoryOptions = [...new Set([
+    ...(data.known_categories || []),
+    ...kras.map((k) => (hasText(k.category) ? String(k.category).trim() : null)).filter(Boolean),
+  ])].sort((a, b) => a.localeCompare(b));
+  const groups = groupByCategory(kras);
+
   const save = async (thenSubmit) => {
     setBusy(true); setErr(null);
     try {
-      // _showDesc is UI state, not part of a KRA. The server ignores keys
-      // it does not read, but sending it would put a field in the request
-      // that means nothing there — and would end up in the request log.
-      const payload = kras.map(({ _showDesc, ...k }) => k);
+      // Anything underscore-prefixed is UI state, not part of a KRA
+      // (_showDesc, _newCat, _newCatText). Stripped by prefix rather than
+      // by name so the next transient field added here cannot be
+      // forgotten and end up in the request and the request log.
+      const payload = kras.map((k) => Object.fromEntries(
+        Object.entries(k).filter(([key]) => !key.startsWith('_'))));
       await api('/pms/my/kra-sheet/kras', { method: 'PUT', body: JSON.stringify({ kras: payload }) });
       if (thenSubmit) await api('/pms/my/kra-sheet/submit', { method: 'POST' });
       load();
@@ -63,23 +125,56 @@ export default function MyKRASheetPage() {
       {data.sheet.status === 'returned' && data.sheet.manager_comment && (
         <div className="card p-3 border-rose-200 bg-rose-50 text-sm text-rose-700"><b>Returned by your manager:</b> {data.sheet.manager_comment}</div>
       )}
-      {kras.map((k, i) => (
-        <div key={i} className="card p-3 space-y-2">
-          <div className="flex gap-2">
-            <input className="inp font-semibold" placeholder="KRA title *" value={k.title || ''} onChange={set(i, 'title')} disabled={!editable} />
-            <input className="inp w-24 text-right" type="number" placeholder="wt %" value={k.weight ?? ''} onChange={set(i, 'weight')} disabled={!editable} />
-            {editable && <button className="text-rose-500" onClick={() => setKras(ks => ks.filter((_, j) => j !== i))}><Trash2 size={15} /></button>}
+      {groups.map((g) => (
+        <div key={g.cat} className="space-y-2">
+          {/* The Parameter heading, with that group's weight beside it.
+              The subtotal is the reason to group at all beyond looks: a
+              scorecard that is 70% Financial and 5% People is the sort of
+              thing nobody notices in a flat list of eight KRAs. */}
+          <div className="flex items-baseline gap-2 px-1">
+            <p className={`text-xs font-bold uppercase tracking-wide ${g.cat === NO_CATEGORY ? 'text-navy-300' : 'text-navy-500'}`}>
+              {g.cat === NO_CATEGORY ? 'No parameter set' : g.cat}
+            </p>
+            <span className="text-[11px] text-navy-400">{Math.round(g.weight * 100) / 100}%</span>
           </div>
-          {(hasText(k.description) || k._showDesc) && (
-            <textarea className="inp" rows={2} placeholder="Description" value={k.description || ''} onChange={set(i, 'description')} disabled={!editable} />
-          )}
-          {editable && !hasText(k.description) && !k._showDesc && (
-            <button type="button" className="text-[11px] text-navy-400 hover:text-navy-600 self-start" onClick={() => openDesc(i)}>
-              + Add description
-            </button>
-          )}
-          <input className="inp" placeholder="How it will be measured" value={k.measures || ''} onChange={set(i, 'measures')} disabled={!editable} />
-          <MidYearOnKra midyear={k.midyear} />
+          {g.rows.map(({ k, i }) => (
+            <div key={i} className="card p-3 space-y-2">
+              <div className="flex gap-2">
+                <input className="inp font-semibold" placeholder="KRA title *" value={k.title || ''} onChange={set(i, 'title')} disabled={!editable} />
+                <input className="inp w-24 text-right" type="number" placeholder="wt %" value={k.weight ?? ''} onChange={set(i, 'weight')} disabled={!editable} />
+                {editable && <button className="text-rose-500" onClick={() => setKras(ks => ks.filter((_, j) => j !== i))}><Trash2 size={15} /></button>}
+              </div>
+              {/* The picker is a select, not a text box — see setCategory
+                  for why. Options are what this tenant already uses, so a
+                  sheet does not split into "Project/Process" and
+                  "Project & Process" without anyone noticing. */}
+              {editable && !k._newCat && (
+                <select className="inp w-auto text-xs" value={hasText(k.category) ? String(k.category).trim() : NO_CATEGORY}
+                  onChange={(e) => setCategory(i, e.target.value)}>
+                  <option value={NO_CATEGORY}>Parameter — none</option>
+                  {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+                  <option value={NEW_CAT}>+ New parameter…</option>
+                </select>
+              )}
+              {editable && k._newCat && (
+                <input className="inp w-auto text-xs" autoFocus placeholder="New parameter name, then Enter"
+                  value={k._newCatText || ''}
+                  onChange={(e) => stageNewCategory(i, e.target.value)}
+                  onBlur={() => commitNewCategory(i)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(i); } }} />
+              )}
+              {(hasText(k.description) || k._showDesc) && (
+                <textarea className="inp" rows={2} placeholder="Description" value={k.description || ''} onChange={set(i, 'description')} disabled={!editable} />
+              )}
+              {editable && !hasText(k.description) && !k._showDesc && (
+                <button type="button" className="text-[11px] text-navy-400 hover:text-navy-600 self-start" onClick={() => openDesc(i)}>
+                  + Add description
+                </button>
+              )}
+              <input className="inp" placeholder="How it will be measured" value={k.measures || ''} onChange={set(i, 'measures')} disabled={!editable} />
+              <MidYearOnKra midyear={k.midyear} />
+            </div>
+          ))}
         </div>
       ))}
       {editable && (

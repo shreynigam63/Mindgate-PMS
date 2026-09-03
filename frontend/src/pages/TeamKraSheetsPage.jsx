@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Check, Undo2 } from 'lucide-react';
 import { api } from '../utils/api';
-import { MidYearOnKra } from './MyKRASheetPage';
+import { MidYearOnKra, groupByCategory, NO_CATEGORY } from './MyKRASheetPage';
 
 // Fix guide item #5 (BR-1.3): confirmed root cause was that no frontend
 // page anywhere called the existing, working GET /team/kra-sheets and
@@ -98,15 +98,33 @@ function SheetEditor({ sheet, reload }) {
       {detail && (
         <div className="space-y-2">
           {!detail.kras.length && <p className="text-xs text-navy-400">No KRAs added yet.</p>}
-          {detail.kras.map(k => (
-            <div key={k.id} className="bg-navy-50 rounded-lg p-3 text-xs space-y-1">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold flex-1">{k.title}</p>
-                <span className="text-navy-500 font-medium">{k.weight}%</span>
+          {/* Grouped by the sheet's Parameters column, and by the same
+              function the employee's own page uses — a manager reviewing a
+              sheet should see the structure the employee filled in, and
+              two implementations of one grouping would drift apart.
+              Read-only here: the parameter is set on the sheet, not in
+              review. The per-group weight makes an unbalanced scorecard
+              visible at approval time, which is when it can still be
+              sent back. */}
+          {groupByCategory(detail.kras).map(g => (
+            <div key={g.cat} className="space-y-1.5">
+              <div className="flex items-baseline gap-2">
+                <p className={`text-[10px] font-bold uppercase tracking-wide ${g.cat === NO_CATEGORY ? 'text-navy-300' : 'text-navy-500'}`}>
+                  {g.cat === NO_CATEGORY ? 'No parameter set' : g.cat}
+                </p>
+                <span className="text-[10px] text-navy-400">{Math.round(g.weight * 100) / 100}%</span>
               </div>
-              {k.description && <p className="text-navy-600">{k.description}</p>}
-              {k.measures && <p className="text-navy-400"><b>Measures:</b> {k.measures}</p>}
-              <MidYearOnKra midyear={k.midyear} />
+              {g.rows.map(({ k }) => (
+                <div key={k.id} className="bg-navy-50 rounded-lg p-3 text-xs space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold flex-1">{k.title}</p>
+                    <span className="text-navy-500 font-medium">{k.weight}%</span>
+                  </div>
+                  {k.description && <p className="text-navy-600">{k.description}</p>}
+                  {k.measures && <p className="text-navy-400"><b>Measures:</b> {k.measures}</p>}
+                  <MidYearOnKra midyear={k.midyear} />
+                </div>
+              ))}
             </div>
           ))}
           <p className={`text-[11px] font-medium ${detail.weights.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
