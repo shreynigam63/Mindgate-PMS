@@ -76,21 +76,21 @@ export default function AnnualReviewPage() {
         )}
       </Section>
 
-      <Section icon={Star} title="7-Parameter Weighted Rating">
-        <div className="grid sm:grid-cols-2 gap-1.5 text-xs mb-2">
-          {data.parameter_scores.parameters.map(p => (
-            <div key={p.id} className="flex justify-between bg-navy-50 rounded px-2 py-1">
-              <span>{p.name} <span className="text-navy-400">({p.weight_pct}%)</span></span>
-              <span className="font-mono">{data.parameter_scores.scores[p.id] ?? '—'}</span>
-            </div>
-          ))}
-        </div>
-        <p className="text-sm">
-          <span className="font-semibold">Weighted overall: </span>
-          <span className={data.parameter_scores.complete ? 'text-emerald-700 font-bold' : 'text-navy-400'}>{data.parameter_scores.weighted_rating ?? '—'}</span>
-          {!data.parameter_scores.complete && <span className="text-[11px] text-navy-400"> (manager scoring in progress)</span>}
-        </p>
-      </Section>
+      {/* REMOVED — the 7-Parameter Weighted Rating block.
+          It showed the MANAGER's per-parameter scores, live, to the person
+          being scored: GET /my/annual-review has no publish gate, so from
+          manager_eval onwards an employee could watch their own scoring
+          appear, before calibration had a chance to adjust it. Everywhere
+          else the employee waits for publish — My Rating reads
+          employee_performance_history, which only has rows once HR
+          publishes.
+          It was also never asked for. This page exists for the BRD line
+          quoted in buildAnnualReviewSummary — "consolidates KRA outcomes,
+          development plan progress, and career path status" — and the
+          parameters are not among those three; adding them was a judgement
+          call of mine.
+          The manager, HOD and HR still see the same scoring on Team
+          Evaluation, where it is theirs to set. */}
 
       {data.rating_history.length > 0 && (
         <Section icon={Star} title="Rating History">

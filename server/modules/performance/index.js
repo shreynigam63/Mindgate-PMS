@@ -1478,8 +1478,14 @@ router.put('/my/self-appraisal', async (req, res) => {
       const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
       const kras = sheet ? (await db.query(`SELECT id, weight AS weight_pct FROM pms.kras WHERE sheet_id=$1`, [sheet.id])).rows : [];
       const scores = new Map(kras.map((k) => [k.id, b.entries[k.id] ? b.entries[k.id].self_rating : null]));
-      const { rating } = computeWeightedRating(kras, scores);
-      if (rating != null) overallRating = rating;
+      const { rating, missing } = computeWeightedRating(kras, scores);
+      // At least one KRA has to be graded. computeWeightedRating sums the
+      // weighted scores and an ungraded KRA contributes nothing, so with
+      // NOTHING graded it returns 0 — and 0 stored here renders on the
+      // page as "Needs Improvement (0.0)", a rating nobody gave. Saving a
+      // narrative with no grades yet is the ordinary way to hit that.
+      const anyGraded = kras.length > missing.length;
+      if (rating != null && anyGraded) overallRating = rating;
     } else if (b.overall_self_rating != null) {
       const rv = validateRating(b.overall_self_rating, c.rating_scale);
       if (!rv.ok) return res.status(422).json({ error: rv.reason });
@@ -2769,7 +2775,17 @@ router.delete('/increment-simulations/:id/overrides/:employeeId', async (req, re
 // development plan, career path, rating history) — this is deliberately
 // a read-only aggregation over those, not a new source of truth. Shared
 // by both the self view and the manager/HR view below.
-async function buildAnnualReviewSummary(tenantId, employeeId, cycleId) {
+// `includeParameterScores` is false for the employee's own view. The
+// scores are the MANAGER's, and this route has no publish gate — so
+// returning them let the person being scored watch their own scoring
+// appear from manager_eval onwards, before calibration could adjust it.
+// Everywhere else the employee waits for publish (GET /my/rating reads
+// employee_performance_history, which only has rows once HR publishes).
+//
+// Withheld at the API, not just hidden in the page: a field the browser
+// receives is a field anyone can read, and "we do not render it" is not a
+// disclosure boundary.
+async function buildAnnualReviewSummary(tenantId, employeeId, cycleId, { includeParameterScores = true } = {}) {
   const kraSheet = (await db.query(`SELECT * FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
   const kras = kraSheet ? (await db.query(`SELECT id, title, description, weight, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [kraSheet.id])).rows : [];
   const selfAppraisal = (await db.query(`SELECT status, entries, went_well, could_improve FROM pms.self_appraisals WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
@@ -2826,7 +2842,9 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId) {
     } : null,
     development_plan: { plan: devPlan || null, goals: devGoals, avg_progress: devAvgProgress },
     career_path: careerPath || null,
-    parameter_scores: { parameters: params, scores: scoreMap, weighted_rating: weighted.rating, complete: weighted.complete },
+    ...(includeParameterScores
+      ? { parameter_scores: { parameters: params, scores: scoreMap, weighted_rating: weighted.rating, complete: weighted.complete } }
+      : {}),
     manager_evaluation: managerEval || null,
     rating_history: history,
     super50: superFlag ? { flag: superFlag.super50_flag, since: superFlag.super50_since } : null,
@@ -2837,7 +2855,7 @@ router.get('/my/annual-review', async (req, res) => {
   try {
     const c = await activeCycle(T(req), 'annual');
     if (!c) return res.json({ cycle: null });
-    const summary = await buildAnnualReviewSummary(T(req), req.user.id, c.id);
+    const summary = await buildAnnualReviewSummary(T(req), req.user.id, c.id, { includeParameterScores: false });
     res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, ...summary });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

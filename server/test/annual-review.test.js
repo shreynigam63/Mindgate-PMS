@@ -95,8 +95,12 @@ test('annual review summary: consolidates KRA outcomes, dev plan progress, and c
 
   assert.equal(r.body.career_path.target_role, 'Staff Engineer');
 
-  assert.equal(r.body.parameter_scores.parameters.length, 7, 'default 7 parameters present even though none scored yet');
-  assert.equal(r.body.parameter_scores.complete, false);
+  // The employee's own view carries no parameter scores: they are the
+  // MANAGER's, and this route has no publish gate, so returning them let
+  // the person being scored watch their own scoring appear before
+  // calibration. The three things this test's own title names — KRA
+  // outcomes, dev plan progress, career path — are all still here.
+  assert.equal(r.body.parameter_scores, undefined, 'withheld from the person being scored');
 
   assert.deepEqual(r.body.rating_history, [], 'no published history yet for this brand-new employee');
   assert.equal(r.body.super50.flag, false);

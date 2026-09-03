@@ -194,3 +194,35 @@ test('a PUT that touches only prose reports the rating actually stored, not null
   const get = await api('/pms/my/self-appraisal', token);
   assert.equal(Number(get.body.appraisal.overall_self_rating), 1);
 });
+
+// Reported from a screenshot of the Annual Review: every parameter showed
+// an em-dash and the overall showed "0". Same defect class here —
+// computeWeightedRating sums the weighted scores and an ungraded KRA
+// contributes nothing, so NOTHING graded comes back as 0, and a stored 0
+// renders as "Needs Improvement (0.0)": a rating nobody gave. Saving a
+// narrative before grading anything is the ordinary way to hit it.
+test('entries with no grades yet do not store an overall self-rating of 0', { skip }, async () => {
+  const { token } = await login('sar-emp2@x.com');
+  const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE email='sar-emp2@x.com')`, [cycleId])).rows[0];
+  const kras = (await db.query(`SELECT id FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [sheet.id])).rows;
+  await db.query(`UPDATE pms.self_appraisals SET overall_self_rating=NULL WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE email='sar-emp2@x.com')`, [cycleId]);
+
+  // Narratives only — no self_rating on either KRA.
+  const put = await api('/pms/my/self-appraisal', token, {
+    method: 'PUT',
+    body: JSON.stringify({ entries: { [kras[0].id]: { narrative: 'Wrote this before grading anything.' } } }),
+  });
+  assert.equal(put.status, 200);
+  assert.equal(put.body.overall_self_rating, null, 'no grades means no rating, not a zero');
+  const get = await api('/pms/my/self-appraisal', token);
+  assert.equal(get.body.appraisal.overall_self_rating, null);
+  assert.equal(get.body.appraisal.entries[kras[0].id].narrative, 'Wrote this before grading anything.', 'the narrative is still saved');
+
+  // One grade is enough to produce a figure — a partial average is a real
+  // answer and is meant to show, unlike a total absence of grades.
+  const put2 = await api('/pms/my/self-appraisal', token, {
+    method: 'PUT',
+    body: JSON.stringify({ entries: { [kras[0].id]: { self_rating: 5, narrative: 'x' } } }),
+  });
+  assert.equal(Number(put2.body.overall_self_rating), 3, '60% weight at grade 5, the other KRA ungraded');
+});

@@ -169,9 +169,22 @@ test('mid-year is shown next to the final rating, never folded into it', { skip 
   // The official rating comes from the 7 organisational parameters on an
   // annual cycle. Mid-year must not have moved it — if a future change
   // starts blending them, this fails.
-  const token = await login('mkp-emp@x.com');
-  const r = await api('/pms/my/annual-review', token);
+  //
+  // Asked as the MANAGER: the employee's own Annual Review no longer
+  // carries the parameter scores at all (they are the manager's, and that
+  // route has no publish gate — see self-parameter-scoring-removed).
+  const mgrToken = await login('mkp-mgr@x.com');
+  const r = await api(`/pms/team/annual-review/${empId}`, mgrToken);
+  assert.equal(r.status, 200);
   assert.equal(r.body.parameter_scores.weighted_rating, null,
     'no parameters scored, so no rating — a mid-year average must not have leaked in');
   assert.equal(r.body.parameter_scores.complete, false);
+
+  // And the employee still sees their own mid-year figures, which is the
+  // other half of "shown next to, never folded into".
+  const empToken = await login('mkp-emp@x.com');
+  const mine = await api('/pms/my/annual-review', empToken);
+  assert.equal(mine.status, 200);
+  assert.equal(mine.body.parameter_scores, undefined, 'withheld from the person being scored');
+  assert.ok(mine.body.midyear, 'the mid-year summary is still theirs to see');
 });

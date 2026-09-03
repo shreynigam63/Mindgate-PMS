@@ -152,14 +152,29 @@ test('Annual Review summary shows the manager\'s scores specifically, even with 
      VALUES ($1,$2,$3,$4,5,'legacy@x.com','self'), ($1,$2,$3,$5,3,'legacy@x.com','self')`,
     [tenantId, cycleId, empId, paramIds[0], paramIds[1]]);
 
-  const empAuth = await login('sps-emp@x.com');
-  const mine = await api('/pms/my/annual-review', empAuth.token);
-  assert.equal(mine.status, 200);
-  assert.equal(mine.body.parameter_scores.scores[paramIds[0]], 2, 'the manager\'s score (2), not the legacy self-score (5)');
-  assert.equal(mine.body.parameter_scores.scores[paramIds[1]], 2);
-
+  // The manager/HOD-facing view is where these scores live now — see the
+  // test below for why the employee's own view no longer carries them.
   const mgrAuth = await login('sps-mgr@x.com');
   const team = await api(`/pms/team/annual-review/${empId}`, mgrAuth.token);
   assert.equal(team.status, 200);
-  assert.equal(team.body.parameter_scores.scores[paramIds[0]], 2, 'same filtering on the manager/HOD-facing view');
+  assert.equal(team.body.parameter_scores.scores[paramIds[0]], 2, 'the manager\'s score (2), not the legacy self-score (5)');
+  assert.equal(team.body.parameter_scores.scores[paramIds[1]], 2);
+});
+
+// The employee's own Annual Review used to carry the MANAGER's
+// per-parameter scores, and that route has no publish gate — so from
+// manager_eval onwards the person being scored could watch their own
+// scoring appear, before calibration had a chance to adjust it. Everywhere
+// else they wait for publish. Withheld at the API rather than hidden in
+// the page: a field the browser receives is a field anyone can read.
+test('the employee\'s own Annual Review does not carry the manager\'s parameter scores', { skip }, async () => {
+  const empAuth = await login('sps-emp@x.com');
+  const mine = await api('/pms/my/annual-review', empAuth.token);
+  assert.equal(mine.status, 200);
+  assert.equal(mine.body.parameter_scores, undefined, 'not present at all, not merely empty');
+  // The rest of the consolidation — the three things the requirement
+  // actually names — is untouched.
+  assert.ok(mine.body.kra, 'KRA outcomes still returned');
+  assert.ok(mine.body.development_plan, 'development plan progress still returned');
+  assert.ok('career_path' in mine.body, 'career path status still returned');
 });
