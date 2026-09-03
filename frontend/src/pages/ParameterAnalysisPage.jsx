@@ -186,7 +186,13 @@ function AnalysisDetail({ data, onRetract, onRefresh, busy }) {
             {/* The human scores, from the database. Shown next to the AI
                 reading precisely so the two are never confused. */}
             <p className="text-[11px] text-navy-500">
-              Scored by manager: <b>{p.manager_score ?? '—'}</b> · self: <b>{p.self_score ?? '—'}</b>
+              {/* The employee's own self-score against each parameter was
+                  shown here too. Employee self-scoring has been removed
+                  from the Self-Appraisal, so no cycle can have one from
+                  here on and a permanent em-dash would only read as "the
+                  employee scored nothing". The manager's scoring is what
+                  the official annual rating is built from anyway. */}
+              Scored by manager: <b>{p.manager_score ?? '—'}</b>
               <span className="text-navy-400"> (these are the official scores; the analysis below is not a score)</span>
             </p>
             {(p.summary || []).length > 0 && (

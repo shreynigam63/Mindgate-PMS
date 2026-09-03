@@ -251,9 +251,11 @@ test('no rating is minted anywhere in the response', { skip }, async () => {
   const token = await login('pa-hr@x.com');
   const r = await api(`/agentic/parameter-analysis?employee_id=${empId}`, token);
   // Walk the whole payload: nothing that looks like an AI-produced rating
-  // for a parameter or for the person. manager_score/self_score are the
-  // HUMAN scores read from the database and are expected.
-  const HUMAN = new Set(['manager_score', 'self_score']);
+  // for a parameter or for the person. manager_score is the HUMAN score
+  // read from the database and is expected. (self_score was allowed here
+  // too until employee self-scoring was removed — the allowlist is
+  // narrowed with it, so reintroducing any other score-shaped key fails.)
+  const HUMAN = new Set(['manager_score']);
   const offenders = [];
   (function walk(o, path) {
     if (Array.isArray(o)) return o.forEach((v, i) => walk(v, `${path}[${i}]`));

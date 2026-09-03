@@ -1447,16 +1447,23 @@ Respond ONLY with JSON:
 // conversation contained, and seeing them side by side is calibration.
 // Both halves are deterministic — the scores from the database, the
 // weightage from configuration.
+//
+// The employee's own self-score against each parameter was shown here
+// too. Employee self-scoring has been removed from the Self-Appraisal at
+// the client's instruction, so no cycle from here on can have one; the
+// field is gone rather than left to render as a permanent em-dash. Only
+// the manager's scoring is joined now, which is also the only scoring the
+// official annual rating is built from (BR-6.2/6.3).
 async function shapeAnalysis(tenantId, row) {
   const params = (await db.query(
     `SELECT id, name, weight_pct, sort_order FROM pms.review_parameters WHERE tenant_id=$1 AND active=true ORDER BY sort_order`,
     [tenantId])).rows;
   const scored = (await db.query(
-    `SELECT parameter_id, score, scored_by_role FROM pms.parameter_scores
-      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    `SELECT parameter_id, score FROM pms.parameter_scores
+      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND scored_by_role='manager'`,
     [tenantId, row.cycle_id, row.employee_id])).rows;
-  const scoreOf = (pid, role) => {
-    const s = scored.find((x) => x.parameter_id === pid && x.scored_by_role === role);
+  const scoreOf = (pid) => {
+    const s = scored.find((x) => x.parameter_id === pid);
     return s ? Number(s.score) : null;
   };
   const entries = row.entries || {};
@@ -1471,8 +1478,7 @@ async function shapeAnalysis(tenantId, row) {
       parameter: p.name,
       weight_pct: Number(p.weight_pct),
       ...(entries[p.id] || { signal: 'not_discussed', summary: [], evidence: [], alignment: [] }),
-      manager_score: scoreOf(p.id, 'manager'),
-      self_score: scoreOf(p.id, 'self'),
+      manager_score: scoreOf(p.id),
     })),
     overall: row.overall || {},
   };

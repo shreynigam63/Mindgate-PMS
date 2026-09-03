@@ -151,8 +151,10 @@ test('a fractional computed average is accepted even though it is not an exact s
 
 test('on an annual cycle a directly-sent overall_self_rating is stored, same as any other cycle type', { skip }, async () => {
   // This briefly answered 409 and pointed the caller at
-  // PUT /my/parameter-scores. The 7-parameter self-score no longer owns
-  // this column, so there is nothing left to refuse.
+  // PUT /my/parameter-scores — a route that no longer exists, since
+  // employee self-scoring against the 7 parameters has been removed. This
+  // column has one owner on every cycle type, so there is nothing to
+  // refuse.
   await db.query(`UPDATE pms.cycles SET cycle_type='annual' WHERE id=$1`, [cycleId]);
   const { token } = await login('sar-emp@x.com');
 

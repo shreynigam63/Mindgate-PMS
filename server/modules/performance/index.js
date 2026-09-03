@@ -1425,18 +1425,16 @@ router.put('/my/self-appraisal', async (req, res) => {
     // — an average of discrete grades is legitimately fractional (e.g.
     // 3.7), and that's correct, not an invalid value.
     //
-    // UPDATED: the per-KRA weighted average owns overall_self_rating on
-    // EVERY cycle type, annual included. It was briefly driven instead by
-    // the employee's own 7-parameter self-scoring on annual cycles, which
-    // led the Self-Appraisal page to present that figure as the "Overall
-    // Annual Rating" — authority it never had. The OFFICIAL annual rating
-    // comes exclusively from the MANAGER's 7-parameter scoring
-    // (BR-6.2/6.3); the employee's self-scores live in the same table
-    // under scored_by_role='self' and are a self-assessment layer, read
-    // back from GET /my/parameter-scores for display and nothing more.
-    // With one owner for this column the two computations can no longer
-    // fight over it, and a caller is never told a different number was
-    // stored than the one that was.
+    // The per-KRA weighted average owns overall_self_rating on EVERY
+    // cycle type, annual included. It was briefly driven instead by the
+    // employee's own 7-parameter self-scoring on annual cycles, which led
+    // the Self-Appraisal page to present that figure as the "Overall
+    // Annual Rating" — authority it never had. Employee self-scoring
+    // against the 7 parameters has since been removed outright at the
+    // client's instruction (see the note where /my/parameter-scores used
+    // to be), so this is now the only computation of an employee's own
+    // rating, on any cycle type. The OFFICIAL annual rating remains
+    // exclusively the MANAGER's 7-parameter scoring, per BR-6.2/6.3.
     //
     // null = leave the stored value untouched (COALESCE below keeps it),
     // matching the manager side.
@@ -1472,17 +1470,14 @@ router.post('/my/self-appraisal/submit', async (req, res) => {
     const a = (await db.query(`SELECT * FROM pms.self_appraisals WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
     if (!a) return res.status(404).json({ error: 'nothing to submit' });
     if (a.status === 'submitted') return res.status(409).json({ error: 'already submitted' });
-    // Requested: on an annual cycle, the employee must complete their
-    // 7-parameter self-scoring before they can submit — mirrors the
-    // manager side, where overall_rating (from the SAME 7 parameters)
-    // must be complete before the manager's own evaluation submits.
-    if (c.cycle_type === 'annual') {
-      const params = (await db.query(`SELECT id, weight_pct FROM pms.review_parameters WHERE tenant_id=$1 AND active=true`, [T(req)])).rows;
-      const scored = (await db.query(`SELECT parameter_id, score FROM pms.parameter_scores WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND scored_by_role='self'`, [T(req), c.id, req.user.id])).rows;
-      const scoreMap = Object.fromEntries(scored.map((s) => [s.parameter_id, Number(s.score)]));
-      const weighted = computeWeightedRating(params, scoreMap);
-      if (!weighted.complete) return res.status(422).json({ error: `Score all 7 organisational parameters before submitting (${weighted.missing.length} remaining)` });
-    }
+    // There is deliberately no 7-parameter precondition here any more.
+    // An annual submission used to require the employee's own scoring of
+    // the 7 organisational parameters to be complete; that scoring has
+    // been removed from the Self-Appraisal at the client's instruction,
+    // so the gate would be unsatisfiable — nothing in the product can
+    // write those rows. Removing it together with the feature is the
+    // point: a gate whose only key has been taken away is a lockout, not
+    // a safeguard.
     await db.query(`UPDATE pms.self_appraisals SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [a.id]);
     audit(req, 'SELF_APPRAISAL_SUBMITTED', c.id, req.user.id, null);
     // Requested: the manager hears about a submission the moment it
@@ -2049,13 +2044,15 @@ router.get('/team/parameter-scores/:employeeId', async (req, res) => {
     if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: 'Not your report' });
     const params = (await db.query(`SELECT id, name, weight_pct, sort_order FROM pms.review_parameters WHERE tenant_id=$1 AND active=true ORDER BY sort_order`, [T(req)])).rows;
     // scored_by_role='manager' — migration 021 let self and manager scores
-    // coexist per parameter; this view is the manager's own only.
+    // coexist per parameter; this view is the manager's own only. It also
+    // used to return the employee's self-scores alongside them; employee
+    // self-scoring has been removed, so that field would be empty on
+    // every cycle from here on and is gone rather than left to read as
+    // "the employee scored nothing".
     const scored = (await db.query(`SELECT parameter_id, score FROM pms.parameter_scores WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND scored_by_role='manager'`, [T(req), c.id, emp.id])).rows;
-    const selfScored = (await db.query(`SELECT parameter_id, score FROM pms.parameter_scores WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND scored_by_role='self'`, [T(req), c.id, emp.id])).rows;
     const scoreMap = Object.fromEntries(scored.map((s) => [s.parameter_id, Number(s.score)]));
-    const selfScoreMap = Object.fromEntries(selfScored.map((s) => [s.parameter_id, Number(s.score)]));
     const weighted = computeWeightedRating(params, scoreMap);
-    res.json({ employee: { id: emp.id, name: emp.name }, parameters: params, scores: scoreMap, self_scores: selfScoreMap, weighted_rating: weighted.rating, complete: weighted.complete, missing: weighted.missing });
+    res.json({ employee: { id: emp.id, name: emp.name }, parameters: params, scores: scoreMap, weighted_rating: weighted.rating, complete: weighted.complete, missing: weighted.missing });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2108,82 +2105,30 @@ router.put('/team/parameter-scores/:employeeId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Requested with a reference screenshot: an employee's own Self-Appraisal
-// had no way to self-score against the same 7 Organizational Parameters
-// the manager scores against — only the manager could. This is the
-// employee's own mirror of the two routes above, writing to the SAME
-// pms.parameter_scores table (migration 021 added scored_by_role so both
-// coexist per parameter without overwriting each other). Unlike the
-// manager route it writes NO rating column of its own: the self-score is
-// a self-assessment layer, surfaced back to the employee and to nobody
-// else's rating — the OFFICIAL annual rating stays exclusively the
-// manager's 7-parameter scoring, per BR-6.2/6.3, and the employee's own
-// overall_self_rating is the per-KRA weighted average from
-// PUT /my/self-appraisal. Annual-cycle only, as the manager route is.
-router.get('/my/parameter-scores', async (req, res) => {
-  try {
-    const c = await activeCycle(T(req));
-    if (!c) return res.status(409).json({ error: 'No active cycle' });
-    if (c.cycle_type !== 'annual') return res.status(409).json({ error: '7-parameter scoring applies to annual cycles only' });
-    const params = (await db.query(`SELECT id, name, weight_pct, sort_order FROM pms.review_parameters WHERE tenant_id=$1 AND active=true ORDER BY sort_order`, [T(req)])).rows;
-    const scored = (await db.query(`SELECT parameter_id, score FROM pms.parameter_scores WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND scored_by_role='self'`, [T(req), c.id, req.user.id])).rows;
-    const scoreMap = Object.fromEntries(scored.map((s) => [s.parameter_id, Number(s.score)]));
-    const weighted = computeWeightedRating(params, scoreMap);
-    // Phase AND not-yet-submitted, matching what the PUT below actually
-    // enforces (409 'Already submitted — locked'). Same fix as the two
-    // mid-year GETs: the flag must not claim a state the writes refuse.
-    const a = (await db.query(`SELECT status FROM pms.self_appraisals WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
-    const editable = pm.phaseAllows(c.phase, 'self_edit') && !(a && a.status === 'submitted');
-    res.json({ parameters: params, scores: scoreMap, weighted_rating: weighted.rating, complete: weighted.complete, missing: weighted.missing, editable });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.put('/my/parameter-scores', async (req, res) => {
-  try {
-    const c = await activeCycle(T(req));
-    if (!c || !pm.phaseAllows(c.phase, 'self_edit')) return res.status(409).json({ error: `Self-appraisal is not open (phase: ${c ? c.phase : 'none'})` });
-    if (c.cycle_type !== 'annual') return res.status(409).json({ error: '7-parameter scoring applies to annual cycles only' });
-    const a = (await db.query(`SELECT status FROM pms.self_appraisals WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
-    if (a && a.status === 'submitted') return res.status(409).json({ error: 'Already submitted — locked' });
-    const { scores } = req.body || {};
-    if (!scores || typeof scores !== 'object') return res.status(400).json({ error: 'scores object required, e.g. {"<parameter_id>": 4}' });
-    const params = (await db.query(`SELECT id, name, weight_pct FROM pms.review_parameters WHERE tenant_id=$1 AND active=true`, [T(req)])).rows;
-    const validIds = new Set(params.map((p) => p.id));
-    for (const [pid, val] of Object.entries(scores)) {
-      if (!validIds.has(pid)) return res.status(400).json({ error: `unknown parameter_id: ${pid}` });
-      const n = Number(val);
-      if (Number.isNaN(n) || n < 1 || n > 5) return res.status(400).json({ error: `score for ${pid} must be a number between 1 and 5` });
-    }
-    for (const [pid, val] of Object.entries(scores)) {
-      await db.query(
-        `INSERT INTO pms.parameter_scores (tenant_id, cycle_id, employee_id, parameter_id, score, scored_by, scored_by_role)
-         VALUES ($1,$2,$3,$4,$5,$6,'self')
-         ON CONFLICT (cycle_id, employee_id, parameter_id, scored_by_role) DO UPDATE SET score=EXCLUDED.score, scored_by=EXCLUDED.scored_by, updated_at=now()`,
-        [T(req), c.id, req.user.id, pid, Number(val), req.user.email]);
-    }
-    const allScored = (await db.query(`SELECT parameter_id, score FROM pms.parameter_scores WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND scored_by_role='self'`, [T(req), c.id, req.user.id])).rows;
-    const scoreMap = Object.fromEntries(allScored.map((s) => [s.parameter_id, Number(s.score)]));
-    const weighted = computeWeightedRating(params, scoreMap);
-    // Deliberately does NOT write pms.self_appraisals.overall_self_rating.
-    // That column is the per-KRA weighted average on every cycle type
-    // (PUT /my/self-appraisal is its only writer); the employee's
-    // 7-parameter self-score is a self-assessment layer, returned here
-    // for display and never promoted into the appraisal's own rating.
-    // Writing it there was what made the Self-Appraisal page label it the
-    // "Overall Annual Rating" — a claim it never had, since the official
-    // annual rating is the MANAGER's 7-parameter scoring (BR-6.2/6.3).
-    // The row is still upserted so that scoring alone counts as progress
-    // and the submit route below has something to submit.
-    await db.query(
-      `INSERT INTO pms.self_appraisals (tenant_id, cycle_id, employee_id, status)
-       VALUES ($1,$2,$3,'in_progress')
-       ON CONFLICT (cycle_id, employee_id) DO UPDATE SET
-         status=CASE WHEN pms.self_appraisals.status='not_started' THEN 'in_progress' ELSE pms.self_appraisals.status END,
-         updated_at=now()`,
-      [T(req), c.id, req.user.id]);
-    res.json({ ok: true, weighted_rating: weighted.rating, complete: weighted.complete, missing: weighted.missing });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// REMOVED — employee self-scoring against the 7 organisational parameters.
+//
+// GET and PUT /my/parameter-scores used to live here: the employee's own
+// mirror of the two manager routes above, writing pms.parameter_scores
+// under scored_by_role='self'. The client's instruction is that the 7
+// parameters come off the Self-Appraisal entirely, so the routes go with
+// the UI rather than staying behind it — an endpoint the product no longer
+// offers is still an endpoint anyone with a token can call, and rows it
+// wrote would surface in the manager and HR views with no way to enter or
+// review them.
+//
+// What this deliberately does NOT do: it does not touch the 7 parameters
+// anywhere else. The MANAGER still scores them (the two routes above) and
+// that scoring is still the official annual rating, per BR-6.2/6.3; HR
+// still configures them; the HR-only AI analysis of the annual review
+// meeting is still categorised under them. Only the employee's own
+// self-scoring is gone.
+//
+// Existing scored_by_role='self' rows are left in place rather than
+// deleted — they are a record of scoring that really happened, and
+// destroying historical rows is not something to do as a side effect of
+// removing a screen. Nothing reads them now. Migration 021's
+// (cycle_id, employee_id, parameter_id, scored_by_role) key stays as it
+// is: the manager's rows depend on it.
 
 // HOD: department queue + decide.
 router.get('/hod/queue', async (req, res) => {

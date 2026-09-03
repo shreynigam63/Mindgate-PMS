@@ -13,10 +13,12 @@
 // employee's self-scores are a self-assessment layer.
 //
 // So the column now has one writer on every cycle type — the per-KRA
-// weighted average — and PUT /pms/my/parameter-scores writes no rating at
-// all. The self-scores themselves are untouched: still captured, still
-// required before an annual self-appraisal can be submitted, still stored
-// in pms.parameter_scores under scored_by_role='self'.
+// weighted average. (Employee self-scoring against the 7 parameters was
+// removed outright immediately afterwards, at the client's instruction,
+// along with GET/PUT /pms/my/parameter-scores and the annual submit gate
+// that depended on them. Existing scored_by_role='self' rows are left in
+// place; nothing reads them. The MANAGER's scoring of the same 7
+// parameters is untouched and is still the official annual rating.)
 //
 // WHY DATA HAS TO MOVE. Any annual self-appraisal already carrying a
 // parameter-derived number would keep it while now being labelled a

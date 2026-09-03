@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Paperclip, Trash2, Download, Star } from 'lucide-react';
+import { Send, Paperclip, Trash2, Download } from 'lucide-react';
 import { api, phaseLabel, phaseColor, API_BASE } from '../utils/api';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
@@ -34,12 +34,6 @@ export default function SelfAppraisalPage() {
   const [overallRating, setOverallRating] = useState(null);
   const [state, setState] = useState('idle');
   const [err, setErr] = useState(null);
-  // Requested: for an ANNUAL cycle, the employee must complete the same
-  // 7-parameter self-scoring the manager scores against before they can
-  // submit — tracked here so the Submit button reflects it live, not just
-  // discovered as a 422 on click.
-  const [paramsComplete, setParamsComplete] = useState(true);
-  const [paramsMissing, setParamsMissing] = useState(0);
   const timer = useRef(null);
 
   useEffect(() => {
@@ -72,8 +66,7 @@ export default function SelfAppraisalPage() {
   // a single click, not typed text) and the server recomputes the
   // weighted-average overall from every KRA's self_rating right away.
   // Every cycle type, annual included — the per-KRA grades are the only
-  // input to the overall self-rating. The 7-parameter self-scoring below
-  // is a separate self-assessment and does not feed this number.
+  // input to the overall self-rating.
   const setKraRating = (kraId, value) => {
     const next = { ...entries, [kraId]: { ...(entries[kraId] || {}), self_rating: value } };
     setEntries(next); persist({ entries: next });
@@ -87,7 +80,7 @@ export default function SelfAppraisalPage() {
   const a = data.appraisal;
   const isAnnual = data.cycle.cycle_type === 'annual';
   const open = data.cycle.phase === 'self_appraisal' && a.status !== 'submitted';
-  const canSubmit = open && (!isAnnual || paramsComplete);
+  const canSubmit = open;
   const badge = { idle: null, dirty: ['Unsaved…', 'text-navy-400'], saving: ['Saving…', 'text-amber-600'], saved: ['Saved ✓', 'text-emerald-600'], error: ['Save failed', 'text-rose-600'] }[state];
 
   return (
@@ -116,12 +109,8 @@ export default function SelfAppraisalPage() {
         ) : (
           <p className="text-xs text-navy-400">Rate each KRA below to see your overall average here.</p>
         )}
-        {isAnnual && <p className="text-[10px] text-navy-400">Your own assessment. The official annual rating is set by your manager, from the 7 organisational parameters.</p>}
+        {isAnnual && <p className="text-[10px] text-navy-400">Your own assessment. Your manager sets the official annual rating.</p>}
       </div>
-
-      {isAnnual && (
-        <SelfParameterScoring editable={open} scale={data.cycle.rating_scale} onUpdate={(r) => { setParamsComplete(r.complete); setParamsMissing(r.missing.length); }} />
-      )}
 
       {!data.kras.length && <div className="card p-4 text-sm text-amber-700 bg-amber-50 border-amber-200">No approved KRAs found — complete KRA setting first.</div>}
       {data.kras.map(k => (
@@ -132,10 +121,9 @@ export default function SelfAppraisalPage() {
           </div>
           {/* Requested: per-KRA A+-C ratings visible on annual cycles too,
               not just mid-year. These are the sole input to the overall
-              self-rating on every cycle type; the "which rating counts"
-              question the note below answers is now between this figure
-              and the MANAGER's, not between this and the employee's own
-              7-parameter self-assessment. */}
+              self-rating on every cycle type — the only "which rating
+              counts" question left is this figure versus the MANAGER's,
+              which the note below answers. */}
           <div className="flex flex-wrap gap-1.5">
             {(data.cycle.rating_scale || []).map(s => (
               <button key={s.value} type="button" disabled={!open}
@@ -161,81 +149,27 @@ export default function SelfAppraisalPage() {
             try { await api('/pms/my/self-appraisal/submit', { method: 'POST' }); location.reload(); }
             catch (e) { setErr(e.message); }
           }}><Send size={13} className="inline mr-1" />Submit — locks your appraisal</button>
-          {isAnnual && !paramsComplete && (
-            <p className="text-[11px] text-amber-700">Score all 7 organisational parameters above before submitting ({paramsMissing} remaining).</p>
-          )}
         </div>
       )}
     </div>
   );
 }
 
-// Requested with a reference screenshot: the employee's own Self-Appraisal
-// had no way to self-score against the same 7 Organizational Parameters
-// the manager scores against (BR-6.2/6.3) — only the manager could, via
-// TeamEvalPage's ParameterScoring. This is the employee's own mirror of
-// that component, hitting the /my/parameter-scores endpoints.
+// REMOVED — the "7 Organizational Parameters" self-scoring block.
 //
-// It is titled and framed as a SELF-ASSESSMENT, not as the annual rating.
-// This block used to supply the figure shown at the top of the page under
-// the heading "Overall Annual Rating (weighted average of the 7
-// parameters below)", which read as though an employee set their own
-// official rating. They never did: the official annual rating is the
-// manager's scoring of these same 7 parameters, and the employee's
-// overall_self_rating is the per-KRA weighted average. Only the wording
-// and the wiring changed — the self-scores themselves are still captured,
-// still required before submitting on an annual cycle, and still stored
-// under scored_by_role='self'.
-function SelfParameterScoring({ editable, scale, onUpdate }) {
-  const [data, setDataLocal] = useState(null);
-  const [err, setErr] = useState(null);
-  const load = () => api('/pms/my/parameter-scores').then(r => { setDataLocal(r); onUpdate(r); }).catch(e => setErr(e.message));
-  useEffect(() => { load(); }, []);
-
-  const setScore = async (parameterId, value) => {
-    try {
-      const r = await api('/pms/my/parameter-scores', { method: 'PUT', body: JSON.stringify({ scores: { [parameterId]: Number(value) } }) });
-      // The server's recomputed figures, not just the one star that moved
-      // — the heading shows the running weighted self-assessment and the
-      // "N not yet scored" count, both of which went stale here before.
-      setDataLocal(d => d ? { ...d, scores: { ...d.scores, [parameterId]: Number(value) },
-        weighted_rating: r.weighted_rating, complete: r.complete, missing: r.missing } : d);
-      onUpdate(r);
-    } catch (e) { setErr(e.message); }
-  };
-
-  if (err) return <p className="text-xs text-rose-600">{err}</p>;
-  if (!data) return <p className="text-xs text-navy-400">Loading parameters…</p>;
-
-  return (
-    <div className="card p-3 space-y-2">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="lbl mb-0">Your self-assessment against the 7 Organizational Parameters {!data.complete && <span className="text-amber-600 font-normal">— {data.missing.length} not yet scored</span>}</p>
-        {data.weighted_rating != null && (
-          <span className="text-xs text-navy-500">
-            <span className="font-semibold">{OVERALL_DESCRIPTIVE_LABEL[nearestWholeValue(data.weighted_rating, scale)] || data.weighted_rating}</span>
-            <span className="text-navy-400"> ({Number(data.weighted_rating).toFixed(1)})</span>
-          </span>
-        )}
-      </div>
-      <p className="text-[10px] text-navy-400">How you rate yourself against the drivers your manager also scores. Your manager's scores — not these — set your official annual rating.</p>
-      <div className="grid sm:grid-cols-2 gap-2">
-        {data.parameters.map(p => (
-          <div key={p.id} className="bg-navy-50 rounded-lg px-3 py-2 space-y-1">
-            <p className="text-xs font-semibold">{p.name} <span className="text-navy-400 font-normal">({p.weight_pct}% weight)</span></p>
-            <div className="flex gap-0.5">
-              {[1, 2, 3, 4, 5].map(v => (
-                <button key={v} type="button" disabled={!editable} onClick={() => setScore(p.id, v)} className="p-0.5">
-                  <Star size={16} className={v <= (data.scores[p.id] || 0) ? 'fill-amber-400 text-amber-400' : 'text-navy-200'} />
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// SelfParameterScoring used to sit here: the employee's own star pickers
+// for the same 7 parameters their manager scores (BR-6.2/6.3), hitting
+// GET/PUT /pms/my/parameter-scores, which are gone too. The client's
+// instruction is that the 7 parameters come off this page. The submit
+// gate that required all 7 to be scored went with it, on both sides —
+// keeping it would have made an annual self-appraisal unsubmittable.
+//
+// The 7 parameters are untouched everywhere else: the manager still
+// scores them on TeamEvalPage and that scoring is still the official
+// annual rating, HR still configures them on the Cycle Admin page, and
+// the HR-only AI analysis of the annual review meeting is still
+// categorised under them. This page's overall figure is, on every cycle
+// type, the weighted average of the employee's own per-KRA grades.
 
 function EvidenceSection({ editable }) {
   const [files, setFiles] = useState(null);
