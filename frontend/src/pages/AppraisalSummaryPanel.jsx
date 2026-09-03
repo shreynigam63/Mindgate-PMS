@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { api, KraBullets } from '../utils/api';
-import AiDraftPanel from './AiDraftPanel';
+import AiDraftPanel, { SuggestionList } from './AiDraftPanel';
 
 // The AI Appraisal Summary, at whichever of its two stages the caller is.
 //
@@ -16,21 +16,41 @@ const STAGES = {
     blurb: 'Reads the whole year against each KRA: what the evidence shows, where the self and manager readings differ, and where the record is too thin to defend a rating.',
     cta: 'Build the pre-read',
     sections: [['evidence', 'Evidence'], ['divergence', 'Self vs manager'], ['thin_evidence', 'Thin evidence']],
-    extras: [['discussion_points', 'For the calibration conversation'], ['evidence_gaps', 'Missing from the record']],
+    extras: [['evidence_gaps', 'Missing from the record']],
+    // Keepable, and therefore rendered as a tick-list rather than in
+    // `extras` — printing it in both places would be the same sentences
+    // twice, once to read and once to choose.
+    keep: { flat: 'discussion_points', label: 'For the calibration conversation', noun: 'discussion points' },
     accent: 'amber',
   },
   employee: {
     title: 'AI summary of your year',
     blurb: 'What your year contained, KRA by KRA — achievements, what got in the way, and what to build next. Your rating is shown separately; this does not restate it.',
     cta: 'Summarise my year',
-    sections: [['achievements', 'Achievements'], ['challenges', 'What got in the way'], ['build_next', 'Build next']],
+    sections: [['achievements', 'Achievements'], ['challenges', 'What got in the way']],
     extras: [['year_in_review', 'Target achievements and Aspiring Career'], ['record_gaps', 'Where your record was thin']],
+    keep: { perKra: 'build_next', label: 'What to build next', noun: 'suggestions' },
     accent: 'sky',
   },
 };
 
 export default function AppraisalSummaryPanel({ stage, employeeId, onKeep }) {
   const cfg = STAGES[stage];
+  const [sel, setSel] = useState({});
+  const [kept, setKept] = useState(false);
+
+  // The forward-looking bullets, flattened into one tickable list. Only
+  // these are offered: "what you achieved" is a statement about the past
+  // and there is nothing to accept or turn down about it.
+  const keepItems = (d) => {
+    if (!cfg.keep) return [];
+    if (cfg.keep.perKra) {
+      return (d.by_kra || []).flatMap((g, gi) => (g[cfg.keep.perKra] || []).map((t, i) => ({
+        key: `${gi}-${i}`, group: g.kra, title: t, ref: { kra: g.kra },
+      })));
+    }
+    return (d[cfg.keep.flat] || []).map((t, i) => ({ key: `f-${i}`, title: t, ref: {} }));
+  };
 
   return (
     <AiDraftPanel
@@ -41,13 +61,19 @@ export default function AppraisalSummaryPanel({ stage, employeeId, onKeep }) {
       busyLabel="Reading the year…"
       againLabel="Refresh"
       modalTitle={cfg.title}
-      run={() => api('/agentic/appraisal-summary', { method: 'POST', body: JSON.stringify({ stage, employee_id: employeeId }) })}
+      run={async () => {
+        setSel({}); setKept(false);
+        return api('/agentic/appraisal-summary', { method: 'POST', body: JSON.stringify({ stage, employee_id: employeeId }) });
+      }}
       summary={(out) => {
         const n = ((out.draft || {}).by_kra || []).length;
         return `Read ${n} KRA${n === 1 ? '' : 's'} across the year`;
       }}
       footer={onKeep ? (out) => (
-        <KeepBar draft={out.draft} draftId={out.id} employeeId={employeeId} stage={stage} onKeep={onKeep} />
+        <KeepBar items={keepItems(out.draft || {}).filter((it) => sel[it.key])}
+          total={keepItems(out.draft || {}).length} noun={(cfg.keep || {}).noun || 'suggestions'}
+          draftId={out.id} employeeId={employeeId} stage={stage}
+          kept={kept} onKept={() => { setKept(true); setSel({}); onKeep(); }} />
       ) : null}
     >
       {(out) => {
@@ -61,6 +87,15 @@ export default function AppraisalSummaryPanel({ stage, employeeId, onKeep }) {
                 <ul className="list-disc pl-4">{d[key].map((x, i) => <li key={i}>{x}</li>)}</ul>
               </div>
             )))}
+            {/* Ticked, not read: these are the ones that can be put on the
+                record to accept or turn down later. */}
+            {onKeep && cfg.keep && keepItems(d).length > 0 && (
+              <div className="pt-1 border-t border-navy-100">
+                <p className="font-semibold text-navy-500 mb-1">{cfg.keep.label}</p>
+                <SuggestionList items={keepItems(d).map((it) => ({ ...it, added: kept }))}
+                  selected={sel} onToggle={(k) => setSel((p) => ({ ...p, [k]: !p[k] }))} />
+              </div>
+            )}
           </div>
         );
       }}
@@ -69,41 +104,42 @@ export default function AppraisalSummaryPanel({ stage, employeeId, onKeep }) {
 }
 
 // Keeping a point turns it from panel text into a row someone can act on
-// later (see migration 029). Only the forward-looking bullets are offered
-// — "build next" is a recommendation; "what you achieved" is a statement
-// about the past and there is nothing to accept or dismiss about it.
-function KeepBar({ draft, draftId, employeeId, stage, onKeep }) {
-  const [saved, setSaved] = useState(false);
+// later (see migration 029).
+//
+// It used to be all-or-nothing: one button that kept every forward-looking
+// bullet. Keeping eight when two are worth acting on is how a list of
+// recommendations becomes noise nobody reads, so the caller now passes the
+// ones that were actually ticked.
+function KeepBar({ items, total, noun, draftId, employeeId, stage, kept, onKept }) {
   const [err, setErr] = useState(null);
-  const key = stage === 'employee' ? 'build_next' : 'discussion_points';
-
-  const items = stage === 'employee'
-    ? (draft.by_kra || []).flatMap((g) => (g.build_next || []).map((t) => ({ title: t, ref: { kra: g.kra } })))
-    : (draft.discussion_points || []).map((t) => ({ title: t, ref: {} }));
-
-  if (!items.length) return null;
+  if (!total) return null;
 
   const keep = async () => {
     setErr(null);
     try {
       await api('/agentic/recommendations', {
         method: 'POST',
-        body: JSON.stringify({ about_employee_id: employeeId, kind: `appraisal_${stage}`, draft_id: draftId, items }),
+        body: JSON.stringify({
+          about_employee_id: employeeId, kind: `appraisal_${stage}`, draft_id: draftId,
+          items: items.map((it) => ({ title: it.title, ref: it.ref })),
+        }),
       });
-      setSaved(true); if (onKeep) onKeep();
+      onKept();
     } catch (e) { setErr(e.message); }
   };
 
-  // In the popup footer now, so it stays put while the summary scrolls —
-  // this is the one action on the panel and it used to sit at the bottom
-  // of a long block where it was easy to scroll past.
   return (
-    <div>
-      {saved
-        ? <p className="text-emerald-700">Kept {items.length} — they are on the record now, to accept or turn down later.</p>
-        : <button className="btn-pri !text-[11px] !py-1" onClick={keep}>
-            Keep these {items.length} {key === 'build_next' ? 'suggestions' : 'discussion points'}
-          </button>}
+    <div className="flex flex-wrap items-center gap-3">
+      {kept
+        ? <p className="text-emerald-700">Kept — they are on the record now, to accept or turn down later.</p>
+        : (
+          <>
+            <button className="btn-pri !text-[11px] !py-1" disabled={!items.length} onClick={keep}>
+              {items.length ? `Keep ${items.length} selected` : `Keep selected ${noun}`}
+            </button>
+            <span className="text-navy-500">Tick the {noun} worth acting on — {total} suggested.</span>
+          </>
+        )}
       {err && <p className="text-[11px] text-rose-600">{err}</p>}
     </div>
   );

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Sparkles, RefreshCw, X, Maximize2 } from 'lucide-react';
+import { Sparkles, RefreshCw, X, Maximize2, ChevronDown, ChevronUp } from 'lucide-react';
 import { DraftBadge } from '../utils/api';
 
 // Every AI draft in the app, in a popup instead of down the page.
@@ -142,6 +142,81 @@ export function AiModal({ title, onClose, children, footer, wide = false }) {
         <div className="p-5 overflow-y-auto grow text-xs space-y-3">{children}</div>
         {footer && <div className="px-5 py-3 border-t border-navy-100 shrink-0 text-xs">{footer}</div>}
       </div>
+    </div>
+  );
+}
+
+// A list of AI suggestions you PICK FROM, rather than a block you read.
+//
+// Requested after the popup: stacked full cards give every suggestion the
+// same weight whether you want it or not, so adding two out of eight means
+// scrolling past six. The decision here is a selection, not a reading
+// task — so the list is one line per suggestion with the detail one click
+// away, and the adding happens once at the end.
+//
+// Only used where there is something to choose. The read-once drafts (a
+// mid-year narrative, a meeting summary, the calibration brief) keep the
+// plain popup: a checklist with nothing to select is a list with dead
+// checkboxes on it.
+//
+// `items` are { key, group, title, teaser, meta, detail, added }.
+// Selection lives with the caller, because the caller is what acts on it;
+// expansion lives here, because nothing outside cares which rows are open.
+export function SuggestionList({ items, selected, onToggle, single = false, emptyNote = 'Nothing suggested.' }) {
+  const [expanded, setExpanded] = useState({});
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return <p className="text-navy-400">{emptyNote}</p>;
+
+  const allOpen = list.every((i) => expanded[i.key]);
+  const toggleAll = () => setExpanded(allOpen ? {} : Object.fromEntries(list.map((i) => [i.key, true])));
+
+  // Group headings are printed when the group CHANGES, in the order the
+  // items arrive — the model is told to weight its attention by KRA
+  // weight, so that order carries meaning and must not be sorted away.
+  let lastGroup = null;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-end">
+        <button className="text-[11px] font-semibold text-navy-500 hover:text-navy-700" onClick={toggleAll}>
+          {allOpen ? 'Collapse all' : 'Expand all'}
+        </button>
+      </div>
+      {list.map((it) => {
+        const head = it.group && it.group !== lastGroup ? it.group : null;
+        lastGroup = it.group || lastGroup;
+        const open = !!expanded[it.key];
+        const on = !!(selected || {})[it.key];
+        return (
+          <div key={it.key}>
+            {head && <p className="text-teal-700 font-semibold mt-2 mb-1">{head}</p>}
+            <div className="flex items-start gap-2.5 py-1.5 border-b border-navy-50 last:border-0">
+              {/* Already-added rows lose the control rather than keeping a
+                  tickbox that would add a second copy of the same goal. */}
+              {it.added ? (
+                <span className="chip bg-emerald-100 text-emerald-700 mt-0.5 shrink-0">Added ✓</span>
+              ) : (
+                <input type="checkbox" className="mt-1 shrink-0 accent-teal-700 w-3.5 h-3.5"
+                  checked={on} onChange={() => onToggle(it.key)} aria-label={it.title} />
+              )}
+              <button className="flex-1 text-left min-w-0" onClick={() => setExpanded((p) => ({ ...p, [it.key]: !open }))}>
+                <p className="font-semibold">{it.title}</p>
+                {/* The teaser is the reason to open the row, so it is only
+                    shown while the row is closed — repeating it above the
+                    detail would just be the same sentence twice. */}
+                {!open && it.teaser && <p className="text-navy-400 truncate">{it.teaser}</p>}
+              </button>
+              {it.meta && <span className="chip bg-navy-50 text-navy-500 shrink-0 whitespace-nowrap">{it.meta}</span>}
+              <button className="text-navy-300 shrink-0" onClick={() => setExpanded((p) => ({ ...p, [it.key]: !open }))}
+                aria-label={open ? 'Collapse' : 'Expand'}>
+                {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+            </div>
+            {open && <div className="bg-navy-50/70 rounded-lg px-3 py-2 mb-1">{it.detail}</div>}
+          </div>
+        );
+      })}
+      {single && <p className="text-[11px] text-navy-400 pt-1">One can be chosen — picking another replaces it.</p>}
     </div>
   );
 }
