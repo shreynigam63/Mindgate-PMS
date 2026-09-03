@@ -120,8 +120,10 @@ function SheetEditor({ sheet, reload }) {
                     <p className="font-semibold flex-1">{k.title}</p>
                     <span className="text-navy-500 font-medium">{k.weight}%</span>
                   </div>
-                  {k.description && <p className="text-navy-600">{k.description}</p>}
+                  {/* Measures then description, the same order as the
+                      employee's own page and as the template's columns. */}
                   {k.measures && <p className="text-navy-400"><b>Measures:</b> {k.measures}</p>}
+                  {k.description && <p className="text-navy-600">{k.description}</p>}
                   <MidYearOnKra midyear={k.midyear} />
                 </div>
               ))}

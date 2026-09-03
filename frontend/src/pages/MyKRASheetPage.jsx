@@ -144,34 +144,51 @@ export default function MyKRASheetPage() {
                 <input className="inp w-24 text-right" type="number" placeholder="wt %" value={k.weight ?? ''} onChange={set(i, 'weight')} disabled={!editable} />
                 {editable && <button className="text-rose-500" onClick={() => setKras(ks => ks.filter((_, j) => j !== i))}><Trash2 size={15} /></button>}
               </div>
-              {/* The picker is a select, not a text box — see setCategory
-                  for why. Options are what this tenant already uses, so a
-                  sheet does not split into "Project/Process" and
-                  "Project & Process" without anyone noticing. */}
-              {editable && !k._newCat && (
-                <select className="inp w-auto text-xs" value={hasText(k.category) ? String(k.category).trim() : NO_CATEGORY}
-                  onChange={(e) => setCategory(i, e.target.value)}>
-                  <option value={NO_CATEGORY}>Parameter — none</option>
-                  {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-                  <option value={NEW_CAT}>+ New parameter…</option>
-                </select>
+              {/* The two small controls share one line so a KRA does not
+                  grow a row per optional field. !w-auto because .inp is
+                  @apply w-full and a full-width dropdown for four short
+                  words dominates the card. */}
+              {editable && (
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* The picker is a select, not a text box — see
+                      setCategory for why. Options are what this tenant
+                      already uses, so a sheet does not split into
+                      "Project/Process" and "Project & Process" without
+                      anyone noticing. */}
+                  {!k._newCat ? (
+                    <select className="inp !w-auto !py-1.5 text-xs" value={hasText(k.category) ? String(k.category).trim() : NO_CATEGORY}
+                      onChange={(e) => setCategory(i, e.target.value)}>
+                      <option value={NO_CATEGORY}>Parameter — none</option>
+                      {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+                      <option value={NEW_CAT}>+ New parameter…</option>
+                    </select>
+                  ) : (
+                    <input className="inp !w-56 !py-1.5 text-xs" autoFocus placeholder="New parameter name, then Enter"
+                      value={k._newCatText || ''}
+                      onChange={(e) => stageNewCategory(i, e.target.value)}
+                      onBlur={() => commitNewCategory(i)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(i); } }} />
+                  )}
+                  {!hasText(k.description) && !k._showDesc && (
+                    <button type="button" className="text-[11px] text-navy-400 hover:text-navy-600" onClick={() => openDesc(i)}>
+                      + Add description
+                    </button>
+                  )}
+                </div>
               )}
-              {editable && k._newCat && (
-                <input className="inp w-auto text-xs" autoFocus placeholder="New parameter name, then Enter"
-                  value={k._newCatText || ''}
-                  onChange={(e) => stageNewCategory(i, e.target.value)}
-                  onBlur={() => commitNewCategory(i)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(i); } }} />
+              {/* Read-only view still needs to show the parameter, since
+                  the select above is gone once the phase closes. */}
+              {!editable && hasText(k.category) && (
+                <span className="chip bg-navy-50 text-navy-500 self-start">{String(k.category).trim()}</span>
               )}
+              {/* Measures then description, matching the template's own
+                  column order (Parameters, KRA, KPIs, Comments) — the
+                  optional field goes last rather than splitting the two
+                  that are always filled. */}
+              <input className="inp" placeholder="How it will be measured" value={k.measures || ''} onChange={set(i, 'measures')} disabled={!editable} />
               {(hasText(k.description) || k._showDesc) && (
                 <textarea className="inp" rows={2} placeholder="Description" value={k.description || ''} onChange={set(i, 'description')} disabled={!editable} />
               )}
-              {editable && !hasText(k.description) && !k._showDesc && (
-                <button type="button" className="text-[11px] text-navy-400 hover:text-navy-600 self-start" onClick={() => openDesc(i)}>
-                  + Add description
-                </button>
-              )}
-              <input className="inp" placeholder="How it will be measured" value={k.measures || ''} onChange={set(i, 'measures')} disabled={!editable} />
               <MidYearOnKra midyear={k.midyear} />
             </div>
           ))}
