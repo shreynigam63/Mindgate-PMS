@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, Check, Send } from 'lucide-react';
 import { api, phaseLabel, phaseColor } from '../utils/api';
 
+// Whitespace counts as empty. An imported cell can carry a stray space or
+// newline, and treating that as content would put the box back on exactly
+// the rows this was meant to clear.
+const hasText = (v) => !!(v && String(v).trim());
+
 export default function MyKRASheetPage() {
   const [data, setData] = useState(null);
   const [kras, setKras] = useState([]);
@@ -19,11 +24,28 @@ export default function MyKRASheetPage() {
   const locked = data.sheet.status === 'approved' || data.sheet.status === 'submitted';
   const editable = data.cycle.phase === 'kra_open' && !locked;
   const set = (i, k) => (e) => setKras(ks => ks.map((r, j) => j === i ? { ...r, [k]: e.target.value } : r));
+  // Requested: the Description box read as an extra empty box on every
+  // KRA. It is now shown only when that KRA has description text — which,
+  // for an imported sheet, is whatever was in its Comments column.
+  //
+  // Hidden is not removed. The field still imports, still shows on the
+  // manager's Team KRA Sheets view, and still feeds the AI (the
+  // development-plan suggestions and the justification review both read
+  // it), so an employee has to be able to add one; "+ Add description"
+  // below opens the box on demand instead of it sitting there empty. The
+  // flag lives on the row rather than on an index, because removing a KRA
+  // renumbers every row after it and an index-keyed flag would then point
+  // at the wrong one.
+  const openDesc = (i) => setKras(ks => ks.map((r, j) => j === i ? { ...r, _showDesc: true } : r));
 
   const save = async (thenSubmit) => {
     setBusy(true); setErr(null);
     try {
-      await api('/pms/my/kra-sheet/kras', { method: 'PUT', body: JSON.stringify({ kras }) });
+      // _showDesc is UI state, not part of a KRA. The server ignores keys
+      // it does not read, but sending it would put a field in the request
+      // that means nothing there — and would end up in the request log.
+      const payload = kras.map(({ _showDesc, ...k }) => k);
+      await api('/pms/my/kra-sheet/kras', { method: 'PUT', body: JSON.stringify({ kras: payload }) });
       if (thenSubmit) await api('/pms/my/kra-sheet/submit', { method: 'POST' });
       load();
     } catch (e) { setErr(e.message); }
@@ -48,7 +70,14 @@ export default function MyKRASheetPage() {
             <input className="inp w-24 text-right" type="number" placeholder="wt %" value={k.weight ?? ''} onChange={set(i, 'weight')} disabled={!editable} />
             {editable && <button className="text-rose-500" onClick={() => setKras(ks => ks.filter((_, j) => j !== i))}><Trash2 size={15} /></button>}
           </div>
-          <textarea className="inp" rows={2} placeholder="Description" value={k.description || ''} onChange={set(i, 'description')} disabled={!editable} />
+          {(hasText(k.description) || k._showDesc) && (
+            <textarea className="inp" rows={2} placeholder="Description" value={k.description || ''} onChange={set(i, 'description')} disabled={!editable} />
+          )}
+          {editable && !hasText(k.description) && !k._showDesc && (
+            <button type="button" className="text-[11px] text-navy-400 hover:text-navy-600 self-start" onClick={() => openDesc(i)}>
+              + Add description
+            </button>
+          )}
           <input className="inp" placeholder="How it will be measured" value={k.measures || ''} onChange={set(i, 'measures')} disabled={!editable} />
           <MidYearOnKra midyear={k.midyear} />
         </div>
