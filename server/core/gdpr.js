@@ -22,7 +22,18 @@ const { authenticate } = require('./auth');
 const { guardUuidParams } = require('./http');
 const { apiPermissionParity, hasPermission } = require('./permissions');
 
-async function buildExport(tenantId, employeeId) {
+// includeRestricted: HR-only material that is deliberately not shown to
+// the employee in the product — today, the AI analysis of their annual
+// review meeting (migration 031).
+//
+// "NOT VISIBLE IN THE APP" AND "NOT DISCLOSABLE" ARE DIFFERENT THINGS, and
+// only the first was asked for. So the employee's own self-serve export
+// leaves it out, matching the product decision, while HR's export of that
+// employee includes it — which is what lets a formal subject access
+// request be answered completely, by a person who knows what they are
+// releasing, rather than either leaking automatically or being quietly
+// impossible to fulfil.
+async function buildExport(tenantId, employeeId, { includeRestricted = false } = {}) {
   const profile = (await db.query(
     `SELECT id, emp_code, name, email, department, designation, role_band, manager_id, date_of_joining, status,
             last_appraisal_rating, last_appraisal_at, potential_rating, nine_box_cell, super50_flag, super50_since
@@ -77,7 +88,20 @@ async function buildExport(tenantId, employeeId) {
     midyear_pulse_checks: pulseChecks.rows,
     review_meetings: meetings.rows,
     ai_recommendations: aiRecs.rows,
+    ...(includeRestricted ? { hr_only: await restrictedSections(tenantId, employeeId) } : {}),
   };
+}
+
+// Nested under hr_only rather than mixed in at the top level, so anyone
+// looking at an export file can see at a glance which part of it is
+// material the employee has never been shown in the product.
+async function restrictedSections(tenantId, employeeId) {
+  const analyses = await db.query(
+    `SELECT a.cycle_id, c.name AS cycle_name, a.entries, a.overall, a.analysed_by, a.created_at, a.updated_at
+       FROM pms.parameter_ai_analyses a JOIN pms.cycles c ON c.id = a.cycle_id
+      WHERE a.tenant_id=$1 AND a.employee_id=$2 ORDER BY a.updated_at DESC`,
+    [tenantId, employeeId]);
+  return { annual_review_parameter_ai_analysis: analyses.rows };
 }
 
 const router = express.Router();
@@ -97,7 +121,7 @@ router.get('/export', async (req, res) => {
 router.get('/export/:employeeId', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
-    const data = await buildExport(req.user.tenant_id, req.params.employeeId);
+    const data = await buildExport(req.user.tenant_id, req.params.employeeId, { includeRestricted: true });
     if (!data) return res.status(404).json({ error: 'employee not found' });
     res.setHeader('Content-Disposition', `attachment; filename="data-export-${req.params.employeeId}.json"`);
     res.json(data);

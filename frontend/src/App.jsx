@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Heart, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Heart, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -30,6 +30,7 @@ import MidYearReviewPage from './pages/MidYearReviewPage';
 import ConnectsPage from './pages/ConnectsPage';
 import ClosureLettersPage from './pages/ClosureLettersPage';
 import IncrementSimulationPage from './pages/IncrementSimulationPage';
+import ParameterAnalysisPage from './pages/ParameterAnalysisPage';
 
 const NAV = [
   { group: 'My Performance', items: [
@@ -63,6 +64,9 @@ const NAV = [
     // Salary sits behind its own permission, so this link is HR/admin only
     // — a manager must never see it, let alone open it.
     { to: '/admin/increments', label: 'Increment Simulation', icon: Calculator, roles: ['admin', 'hr'] },
+    // A confidential assessment the employee and their manager never see —
+    // HR and admin only, both in the nav and on the server.
+    { to: '/admin/parameter-analysis', label: 'Review Analysis (HR)', icon: ShieldCheck, roles: ['admin', 'hr'] },
     { to: '/admin/watchlist', label: 'Super 50', icon: Award },
   ]},
   { group: 'Engagement & People', items: [
@@ -132,6 +136,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/my/kras" replace />} />
             <Route path="/my/kras" element={<MyKRASheetPage />} />
             <Route path="/admin/increments" element={<IncrementSimulationPage />} />
+            <Route path="/admin/parameter-analysis" element={<ParameterAnalysisPage />} />
             <Route path="/my/self-appraisal" element={<SelfAppraisalPage />} />
             <Route path="/my/rating" element={<MyRatingPage />} />
             <Route path="/my/midyear" element={<MidYearReviewPage />} />

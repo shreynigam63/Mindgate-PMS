@@ -38,19 +38,32 @@ const fail = (res, e) => res.status(e.status || 500).json({ error: e.message });
 // EXACT TITLES matter beyond tidiness: grouping is only useful if the
 // group names match the KRAs the employee actually has, and a paraphrased
 // title silently detaches a bullet from the KRA it is about.
-const KRA_BULLET_RULES = `FORMAT — a hard requirement, not a preference:
+// The grouping unit differs by feature — most drafts group by KRA, the
+// annual-review parameter analysis groups by parameter — so it is an
+// argument to the rules rather than string surgery on them. It was the
+// latter briefly: a string replace that stops matching when someone
+// reflows a prompt fails SILENTLY, leaving the model told to group by the
+// wrong thing with nothing anywhere to show it went wrong.
+function bulletRules({ unit = 'KRA', unitWord = 'title', crossCutting = true } = {}) {
+  return `FORMAT — a hard requirement, not a preference:
 - Write BULLETS, never paragraphs. One idea per bullet.
 - Each bullet is a single sentence of at most 18 words. Do not start it
   with a dash, a number or a bullet character — the UI adds those.
-- Group every bullet under the KRA it concerns, naming that KRA by its
-  EXACT title as given in the input. Never paraphrase a title, never
-  invent a KRA, never merge two.
+- Group every bullet under the ${unit} it concerns, naming that ${unit} by its
+  EXACT ${unitWord} as given in the input. Never paraphrase a ${unitWord}, never
+  invent a ${unit}, never merge two.
 - At most 3 bullets per list. If you have nothing the input supports for
-  a list, return it empty rather than padding it.
-- Anything that genuinely spans KRAs goes in the cross-cutting section,
-  not repeated under each KRA.
+  a list, return it empty rather than padding it.${crossCutting ? `
+- Anything that genuinely spans ${unit}s goes in the cross-cutting section,
+  not repeated under each ${unit}.` : ''}
 - Plain professional English: no "leveraged", "spearheaded" or "synergy",
   no praise the input does not support, no filler adjectives.`;
+}
+
+// The default, used by every KRA-grouped draft. Kept as a constant because
+// most callers want exactly this, and `${KRA_BULLET_RULES}` at a call site
+// reads better than `${bulletRules()}`.
+const KRA_BULLET_RULES = bulletRules();
 
 // The bullets, rendered as the plain text that goes into a form field.
 //
@@ -1246,6 +1259,277 @@ router.post('/appraisal-summary', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// 17) 7-parameter analysis of the annual review meeting — HR ADMIN ONLY.
+//
+// THE FEATURE, as described: the employee, their manager and HR hold the
+// annual review conversation on a call. AI reads the transcript against
+// the seven organisational parameters and reports, for each one, what the
+// conversation actually showed — alongside that parameter's configured
+// weightage. Visible to the HR admin, and strictly not to the employee or
+// their manager.
+//
+// FOUR THINGS THIS DELIBERATELY DOES NOT DO, each because of what the
+// feature is: a hidden assessment of a named person.
+//
+// 1. IT MINTS NO SCORE. The official 7-parameter rating is scored by
+//    humans (pms.parameter_scores) and computed by
+//    computeWeightedRating(). A numeric AI score for the same parameters
+//    would be a second rating, derived from a recording, that the person
+//    it describes cannot see or contest — and HR would inevitably weigh
+//    "the AI said 3" against a manager's 5. The model gives a QUALITATIVE
+//    SIGNAL (strong / mixed / concern / not_discussed) and prose. That is
+//    the calibration value without the shadow rating. It is also the house
+//    rule: deterministic numbers, AI narrates — and core/ai.js's
+//    stripRatingSuggestions() would delete a key called `score` anyway.
+//
+// 2. IT DOES NOT RUN WITHOUT CONSENT. BRD §6 requires explicit employee
+//    consent before any meeting recording or transcription feeds an AI
+//    feature. Consent is re-checked here at USE, not assumed from the
+//    transcript existing — someone who has revoked it has withdrawn
+//    permission for exactly this.
+//
+// 3. EVERY READ IS AUDITED, not just every write. A confidential
+//    assessment somebody can open without trace is the kind of thing that
+//    is impossible to answer questions about afterwards. Reads are cheap;
+//    the record is the point.
+//
+// 4. IT IS NOT IN THE EMPLOYEE'S OWN DATA EXPORT, but it IS in the one HR
+//    pulls for them. "Not visible in the product" and "not disclosable"
+//    are different things, and only the first was asked for. See
+//    core/gdpr.js.
+//
+// The weightage shown against each parameter is the CONFIGURED number from
+// pms.review_parameters, never something the model produced.
+const PARAM_SIGNALS = ['strong', 'mixed', 'concern', 'not_discussed'];
+
+async function requireHrAdmin(req, res) {
+  if (await hasPermission(req.user, 'pms_admin')) return true;
+  // The message says who this is for rather than only that they are
+  // refused — a manager hitting this should understand it is not an
+  // oversight they should ask to have fixed.
+  res.status(403).json({ error: "Requires 'pms_admin' — the parameter analysis is visible to HR only, by design" });
+  return false;
+}
+
+const auditAgentic = (req, action, details) =>
+  db.query(`INSERT INTO pms.audit_log (tenant_id, actor_email, action, cycle_id, employee_id, details)
+            VALUES ($1,$2,$3,$4,$5,$6)`,
+    [T(req), req.user.email, action, details.cycle_id || null, details.employee_id || null, JSON.stringify(details)])
+    .catch((e) => logger.warn('agentic audit failed', { error: e.message }));
+
+// POST /agentic/parameter-analysis { meeting_id }
+router.post('/parameter-analysis', async (req, res) => {
+  try {
+    if (!(await requireHrAdmin(req, res))) return;
+    const { meeting_id } = req.body || {};
+    if (!meeting_id) return res.status(400).json({ error: 'meeting_id required' });
+
+    const m = (await db.query(
+      `SELECT m.*, e.name AS employee_name, e.department, e.designation
+         FROM pms.review_meetings m
+         JOIN core.employees e ON e.id = m.employee_id AND e.tenant_id = m.tenant_id
+        WHERE m.id=$1 AND m.tenant_id=$2`, [meeting_id, T(req)])).rows[0];
+    if (!m) return res.status(404).json({ error: 'meeting not found' });
+    if (m.context !== 'annual') {
+      return res.status(409).json({ error: `This analysis is for the annual review meeting — that meeting is recorded as "${m.context}"` });
+    }
+
+    const t = (await db.query(`SELECT content, captured_at FROM pms.meeting_transcripts WHERE meeting_id=$1`, [m.id])).rows[0];
+    if (!t) return res.status(409).json({ error: 'No transcript is stored for this meeting yet — there is nothing to analyse.' });
+    await requireConsent(T(req), m.employee_id);
+
+    const c = (await db.query(`SELECT * FROM pms.cycles WHERE id=$1 AND tenant_id=$2`, [m.cycle_id, T(req)])).rows[0]
+      || (await db.query(`SELECT * FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled') ORDER BY created_at DESC LIMIT 1`, [T(req)])).rows[0];
+    if (!c) return res.status(409).json({ error: 'No cycle to attach this analysis to' });
+
+    const params = (await db.query(
+      `SELECT id, name, weight_pct FROM pms.review_parameters WHERE tenant_id=$1 AND active=true ORDER BY sort_order`,
+      [T(req)])).rows;
+    if (!params.length) return res.status(409).json({ error: 'No organisational parameters are configured for this tenant' });
+
+    const out = await ai.narrate({
+      tenantId: T(req), kind: 'parameter_analysis', ref: { cycle_id: c.id, employee_id: m.employee_id, meeting_id: m.id },
+      requestedBy: req.user.email, maxTokens: 2600,
+      input: {
+        employee: { name: m.employee_name, department: m.department, designation: m.designation },
+        cycle: c.name,
+        meeting: { held: m.scheduled_at, transcript_captured: t.captured_at },
+        // Names and weightages both come from the tenant's configuration.
+        // The model is told the weightage so it can judge how much a
+        // parameter's evidence matters to report on — never so it can
+        // compute anything with it.
+        parameters: params.map((p) => ({ name: p.name, weight_pct: Number(p.weight_pct) })),
+        transcript: t.content,
+      },
+      system: `You read the transcript of an annual performance review meeting between an
+employee, their manager and HR, and report what the conversation showed against each
+of the organisation's review parameters. The reader is HR.
+
+WORK ONLY FROM THE TRANSCRIPT. It is a record of what people said. Report what was
+said, not what you would conclude about the person. Where the employee and the
+manager characterised something differently, say so and give both — that difference
+is often the most useful thing in the meeting.
+
+FOR EACH PARAMETER, exactly as named in the input:
+- signal: one of "strong", "mixed", "concern", or "not_discussed". Use
+  "not_discussed" whenever the conversation did not genuinely cover that
+  parameter. A meeting that never touched a parameter is a fact worth
+  reporting; inventing a reading of it is not.
+- summary: what the conversation showed about it.
+- evidence: short paraphrases or brief quoted fragments from the meeting that
+  support what you said. Every point in summary must be traceable to one of
+  these. No evidence means the signal is "not_discussed".
+- alignment: only where the conversation actually discussed how the person
+  works with company policy, process or values. Otherwise an empty list.
+
+YOU NEVER PRODUCE A RATING, a score, a grade, a band or a number of any kind for a
+parameter or for the person overall, and you never say what rating the evidence
+would support. The organisation's rating is set by people, from their own scoring.
+You are describing a conversation.
+
+Do not speculate about anyone's motives, health, personal circumstances, or
+anything protected. If the meeting strayed into those, leave it out entirely
+rather than summarising it.
+
+${bulletRules({ unit: 'parameter', unitWord: 'name', crossCutting: false })}
+
+Respond ONLY with JSON:
+{"by_parameter":[{"parameter":"exact parameter name","signal":"strong|mixed|concern|not_discussed","summary":["..."],"evidence":["..."],"alignment":["..."]}],
+ "went_well":["what the meeting identified as going well"],
+ "went_wrong":["what the meeting identified as not going well"],
+ "improvement_areas":["what the meeting agreed needs to improve"],
+ "achievements":["specific achievements named in the meeting"],
+ "meeting_gaps":["parameters or topics the conversation never reached"]}`,
+    });
+
+    const draft = out.draft || {};
+    // Stitched to the CONFIGURED parameters, not to whatever the model
+    // named. A parameter the model skipped, or renamed, comes back as
+    // not_discussed against the real row rather than silently vanishing
+    // from a report someone is about to rely on.
+    const byName = new Map((draft.by_parameter || []).map((p) => [String(p.parameter || '').trim().toLowerCase(), p]));
+    const entries = {};
+    for (const p of params) {
+      const got = byName.get(p.name.trim().toLowerCase());
+      const signal = got && PARAM_SIGNALS.includes(got.signal) ? got.signal : 'not_discussed';
+      entries[p.id] = {
+        parameter: p.name,
+        weight_pct: Number(p.weight_pct),
+        signal,
+        summary: Array.isArray(got && got.summary) ? got.summary : [],
+        evidence: Array.isArray(got && got.evidence) ? got.evidence : [],
+        alignment: Array.isArray(got && got.alignment) ? got.alignment : [],
+      };
+    }
+    const overall = {
+      went_well: draft.went_well || [], went_wrong: draft.went_wrong || [],
+      improvement_areas: draft.improvement_areas || [], achievements: draft.achievements || [],
+      meeting_gaps: draft.meeting_gaps || [],
+    };
+
+    const saved = (await db.query(
+      `INSERT INTO pms.parameter_ai_analyses (tenant_id, cycle_id, employee_id, meeting_id, draft_id, entries, overall, analysed_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (tenant_id, cycle_id, employee_id) DO UPDATE SET
+         meeting_id=EXCLUDED.meeting_id, draft_id=EXCLUDED.draft_id, entries=EXCLUDED.entries,
+         overall=EXCLUDED.overall, analysed_by=EXCLUDED.analysed_by, updated_at=now()
+       RETURNING *`,
+      [T(req), c.id, m.employee_id, m.id, out.id, JSON.stringify(entries), JSON.stringify(overall), req.user.email])).rows[0];
+
+    auditAgentic(req, 'PARAMETER_ANALYSIS_RUN', { cycle_id: c.id, employee_id: m.employee_id, meeting_id: m.id });
+    res.json({ ok: true, ...(await shapeAnalysis(T(req), saved)) });
+  } catch (e) { fail(res, e); }
+});
+
+// The stored analysis, joined to the manager's ACTUAL scores for the same
+// parameters. That comparison is the whole reason HR wants this: the
+// scores are what the rating is built from, the analysis is what the
+// conversation contained, and seeing them side by side is calibration.
+// Both halves are deterministic — the scores from the database, the
+// weightage from configuration.
+async function shapeAnalysis(tenantId, row) {
+  const params = (await db.query(
+    `SELECT id, name, weight_pct, sort_order FROM pms.review_parameters WHERE tenant_id=$1 AND active=true ORDER BY sort_order`,
+    [tenantId])).rows;
+  const scored = (await db.query(
+    `SELECT parameter_id, score, scored_by_role FROM pms.parameter_scores
+      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [tenantId, row.cycle_id, row.employee_id])).rows;
+  const scoreOf = (pid, role) => {
+    const s = scored.find((x) => x.parameter_id === pid && x.scored_by_role === role);
+    return s ? Number(s.score) : null;
+  };
+  const entries = row.entries || {};
+  return {
+    analysis: {
+      id: row.id, cycle_id: row.cycle_id, employee_id: row.employee_id, meeting_id: row.meeting_id,
+      analysed_by: row.analysed_by, created_at: row.created_at, updated_at: row.updated_at,
+      restricted_to: row.restricted_to,
+    },
+    by_parameter: params.map((p) => ({
+      parameter_id: p.id,
+      parameter: p.name,
+      weight_pct: Number(p.weight_pct),
+      ...(entries[p.id] || { signal: 'not_discussed', summary: [], evidence: [], alignment: [] }),
+      manager_score: scoreOf(p.id, 'manager'),
+      self_score: scoreOf(p.id, 'self'),
+    })),
+    overall: row.overall || {},
+  };
+}
+
+// GET /agentic/parameter-analysis?employee_id=&cycle_id=
+router.get('/parameter-analysis', async (req, res) => {
+  try {
+    if (!(await requireHrAdmin(req, res))) return;
+    const { employee_id, cycle_id } = req.query;
+    if (!employee_id) return res.status(400).json({ error: 'employee_id required' });
+    const params = [T(req), employee_id];
+    let where = 'tenant_id=$1 AND employee_id=$2';
+    if (cycle_id) { params.push(cycle_id); where += ` AND cycle_id=$${params.length}`; }
+    const row = (await db.query(
+      `SELECT * FROM pms.parameter_ai_analyses WHERE ${where} ORDER BY updated_at DESC LIMIT 1`, params)).rows[0];
+    if (!row) return res.status(404).json({ error: 'no analysis on record for this employee' });
+    // Audited on READ. See the block comment above: a confidential
+    // assessment anyone can open without trace cannot be answered for
+    // later.
+    auditAgentic(req, 'PARAMETER_ANALYSIS_VIEWED', { cycle_id: row.cycle_id, employee_id: row.employee_id });
+    res.json({ ok: true, ...(await shapeAnalysis(T(req), row)) });
+  } catch (e) { fail(res, e); }
+});
+
+// Which employees have one, for the HR list. Names and dates only — no
+// content, so the index itself discloses nothing about anybody.
+router.get('/parameter-analysis/index', async (req, res) => {
+  try {
+    if (!(await requireHrAdmin(req, res))) return;
+    const r = await db.query(
+      `SELECT a.employee_id, e.name, e.department, a.cycle_id, c.name AS cycle_name,
+              a.analysed_by, a.updated_at
+         FROM pms.parameter_ai_analyses a
+         JOIN core.employees e ON e.id=a.employee_id AND e.tenant_id=a.tenant_id
+         JOIN pms.cycles c ON c.id=a.cycle_id
+        WHERE a.tenant_id=$1 ORDER BY a.updated_at DESC LIMIT 200`, [T(req)]);
+    res.json({ analyses: r.rows });
+  } catch (e) { fail(res, e); }
+});
+
+// Retract one. HR can delete an analysis they judge wrong or unfair rather
+// than being stuck with it — a hidden assessment that cannot be withdrawn
+// is worse than one that can.
+router.delete('/parameter-analysis/:id', async (req, res) => {
+  try {
+    if (!(await requireHrAdmin(req, res))) return;
+    const r = await db.query(
+      `DELETE FROM pms.parameter_ai_analyses WHERE id=$1 AND tenant_id=$2 RETURNING cycle_id, employee_id`,
+      [req.params.id, T(req)]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'analysis not found' });
+    auditAgentic(req, 'PARAMETER_ANALYSIS_DELETED', { cycle_id: r.rows[0].cycle_id, employee_id: r.rows[0].employee_id });
+    res.json({ ok: true });
+  } catch (e) { fail(res, e); }
+});
+
+// ---------------------------------------------------------------------------
 // AI recommendations that stick (migration 029)
 // ---------------------------------------------------------------------------
 // Everything above produces text that appears in a panel and disappears.
@@ -1331,4 +1615,4 @@ router.put('/recommendations/:id', async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
-module.exports = { router, renderKraBullets, KRA_BULLET_RULES };
+module.exports = { router, renderKraBullets, KRA_BULLET_RULES, bulletRules };
