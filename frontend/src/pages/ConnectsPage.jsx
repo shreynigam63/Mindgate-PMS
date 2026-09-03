@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Plus, CheckCircle2, Clock, Sparkles } from 'lucide-react';
-import { api } from '../utils/api';
+import { api, Bullets } from '../utils/api';
 import MeetingPanel from './MeetingPanel';
 
 export default function ConnectsPage() {
@@ -308,7 +308,11 @@ function ConnectRow({ cn, me, reload }) {
         )}
         {editingKras && (
           <div className="space-y-1.5">
-            {tagReasoning && <p className="text-[11px] text-violet-600 italic">"{tagReasoning}"</p>}
+            {/* One short bullet per suggested KRA now, naming it, instead
+                of a single sentence covering all of them. An array printed
+                as {tagReasoning} would have run the bullets together with
+                no separators, which is why this goes through Bullets(). */}
+            <div className="text-[11px] text-violet-600 italic"><Bullets items={tagReasoning} /></div>
             {!kraOptions && <p className="text-xs text-navy-400">Loading KRAs…</p>}
             {kraOptions && !kraOptions.length && <p className="text-xs text-navy-400">This employee has no KRAs this cycle.</p>}
             <div className="flex flex-wrap gap-1.5">
@@ -347,6 +351,20 @@ const INSIGHT_STATUS_COLOR = {
   Concerned: 'bg-amber-100 text-amber-700',
   'At Risk': 'bg-rose-100 text-rose-700',
 };
+// Themes grouped by related_kra, in the order the model returned them —
+// it is told to derive themes from the connects in the input, so that
+// order reflects the notes rather than anything worth re-sorting.
+function groupThemes(themes) {
+  const order = [];
+  const byKra = new Map();
+  for (const t of (Array.isArray(themes) ? themes : [])) {
+    const kra = (t.related_kra || '').trim() || 'Not linked to a KRA';
+    if (!byKra.has(kra)) { byKra.set(kra, []); order.push(kra); }
+    byKra.get(kra).push(t);
+  }
+  return order.map((kra) => [kra, byKra.get(kra)]);
+}
+
 function AiInsightsPanel({ insight, onRefresh, busy }) {
   return (
     <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-4 text-xs space-y-3">
@@ -362,19 +380,25 @@ function AiInsightsPanel({ insight, onRefresh, busy }) {
       <div className="grid sm:grid-cols-2 gap-4">
         <div>
           <p className="font-bold text-indigo-700 text-[11px] uppercase tracking-wide mb-1">Themes</p>
-          <div className="space-y-1">
-            {(insight.themes || []).map((t, i) => (
-              <p key={i}>• <b>{t.name}</b>{t.summary ? `: ${t.summary}` : ''}{t.related_kra && <span className="text-amber-600"> (linked: {t.related_kra})</span>}</p>
-            ))}
-            {!(insight.themes || []).length && <p className="text-navy-400">No recurring themes yet.</p>}
-          </div>
+          {/* Grouped under the KRA each theme is linked to, so this reads
+              the same way as every other bulleted draft. related_kra is
+              the model's own tag; themes it could not tie to a KRA sit
+              under "Not linked to a KRA" rather than being hidden. Real
+              list markup instead of a "• " prefix inside a paragraph. */}
+          {groupThemes(insight.themes).map(([kra, themes]) => (
+            <div key={kra} className="mb-1.5">
+              <p className="text-amber-600">{kra}</p>
+              <ul className="list-disc pl-4">
+                {themes.map((t, i) => <li key={i}><b>{t.name}</b>{t.summary ? `: ${t.summary}` : ''}</li>)}
+              </ul>
+            </div>
+          ))}
+          {!(insight.themes || []).length && <p className="text-navy-400">No recurring themes yet.</p>}
         </div>
         <div>
           <p className="font-bold text-indigo-700 text-[11px] uppercase tracking-wide mb-1">Suggested Follow-ups</p>
-          <div className="space-y-1">
-            {(insight.suggested_followups || []).map((f, i) => <p key={i}>→ {f}</p>)}
-            {!(insight.suggested_followups || []).length && <p className="text-navy-400">Nothing specific suggested yet.</p>}
-          </div>
+          <Bullets items={insight.suggested_followups} />
+          {!(insight.suggested_followups || []).length && <p className="text-navy-400">Nothing specific suggested yet.</p>}
         </div>
       </div>
     </div>

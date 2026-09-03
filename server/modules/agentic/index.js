@@ -44,14 +44,21 @@ const fail = (res, e) => res.status(e.status || 500).json({ error: e.message });
 // latter briefly: a string replace that stops matching when someone
 // reflows a prompt fails SILENTLY, leaving the model told to group by the
 // wrong thing with nothing anywhere to show it went wrong.
-function bulletRules({ unit = 'KRA', unitWord = 'title', crossCutting = true } = {}) {
+// `grouped` is false for the drafts that are ALREADY about one thing — a
+// single KRA's justification, one connect's notes split into three fixed
+// categories. Telling those to "group every bullet under the KRA it
+// concerns" invites the model to invent a grouping the schema has no room
+// for, and the caller then has bullets nested where it expects a flat
+// list. Same reasoning as `unit` being an argument: the shape of the
+// output decides which rules apply, so each one is asked for explicitly.
+function bulletRules({ unit = 'KRA', unitWord = 'title', crossCutting = true, grouped = true } = {}) {
   return `FORMAT — a hard requirement, not a preference:
 - Write BULLETS, never paragraphs. One idea per bullet.
 - Each bullet is a single sentence of at most 18 words. Do not start it
-  with a dash, a number or a bullet character — the UI adds those.
+  with a dash, a number or a bullet character — the UI adds those.${grouped ? `
 - Group every bullet under the ${unit} it concerns, naming that ${unit} by its
   EXACT ${unitWord} as given in the input. Never paraphrase a ${unitWord}, never
-  invent a ${unit}, never merge two.
+  invent a ${unit}, never merge two.` : ''}
 - At most 3 bullets per list. If you have nothing the input supports for
   a list, return it empty rather than padding it.${crossCutting ? `
 - Anything that genuinely spans ${unit}s goes in the cross-cutting section,
@@ -516,9 +523,14 @@ three categories: what the employee achieved or did well (Achievements), anythin
 stuck or needing help (Blockers), and coaching or direction the manager gave
 (Feedback). Ground every sentence in the input; invent nothing not implied by the
 notes. If the notes don't clearly cover one of the three categories, return an
-empty string for it rather than guessing or padding.
+empty list for it rather than guessing or padding.
+
+${bulletRules({ grouped: false })}
+
+The three categories ARE the grouping here, which is why no other one is
+asked for. Each is a BULLET LIST of at most 3 short bullets.
 Respond ONLY with JSON:
-{"achievements":"...","blockers":"...","feedback":"..."}`,
+{"achievements":["short bullets"],"blockers":["short bullets"],"feedback":["short bullets"]}`,
     });
     res.json({ ok: true, draft: out });
   } catch (e) { fail(res, e); }
@@ -566,7 +578,12 @@ logged 1-on-1 connect (topic, discussion, achievements, blockers, feedback). Dec
 listed KRAs (by id) this connect is actually about — usually 0-3 of them. Only include a KRA
 whose title is genuinely reflected in the connect's content; do not include one just because it
 exists. If none of the KRAs are clearly relevant, return an empty list rather than guessing.
-Respond ONLY with JSON: {"suggested_kra_ids":["..."],"reasoning":"one sentence"}`,
+${bulletRules({ crossCutting: false })}
+
+"reasoning" is a BULLET LIST: one short bullet per KRA you suggested,
+naming that KRA by its exact title, saying what in the connect ties it
+there. No bullet for a KRA you did not suggest.
+Respond ONLY with JSON: {"suggested_kra_ids":["..."],"reasoning":["one short bullet per suggested KRA, naming it by exact title"]}`,
     });
     // Same bug as connect-insights above: the AI's actual output is at
     // out.draft.suggested_kra_ids, not out.suggested_kra_ids — reading it
@@ -640,8 +657,16 @@ You never suggest, imply or hint at a rating or score of any kind — this
 is planning, not assessment. Ground every sentence in the input; invent no
 KRAs, courses, certifications or internal programme names. Prefer goals
 the employee can act on without budget approval.
+
+${bulletRules({ crossCutting: false })}
+
+The grouping above is "serves_kra": every goal names the one KRA it serves
+by that KRA's exact title, and the employee reads the goals KRA by KRA.
+"why" and "how_to_measure" are BULLET LISTS, not sentences of prose —
+at most 3 short bullets each, and an empty list where the KRA gives you
+nothing to say rather than a padded one.
 Respond ONLY with JSON:
-{"suggested_goals":[{"title":"short, action-shaped","serves_kra":"exact KRA title","why":"1-2 sentences","how_to_measure":"observable evidence of progress","suggested_timeline":"e.g. by end of Q3"}],
+{"suggested_goals":[{"title":"short, action-shaped, at most 10 words","serves_kra":"exact KRA title","why":["short bullets — the capability this builds and why this KRA needs it"],"how_to_measure":["short bullets — observable evidence of progress"],"suggested_timeline":"e.g. by end of Q3"}],
  "already_covered":["existing goals that adequately cover a KRA"],
  "uncovered_kras":["KRA titles with no development goal against them"],
  "gaps":["anything the input lacked that you would have wanted"]}`,
@@ -825,11 +850,21 @@ EVIDENCE is missing, not what the rating should be. Judgement of the
 rating belongs to the people in the review.
 Be direct and useful. A vague justification helps nobody, so say so
 plainly, then show what a stronger version would contain.
+
+${bulletRules({ grouped: false })}
+
+This review is about ONE KRA, which is why there is no grouping: the
+bullets are already all about that KRA. "evidence_strength" is a BULLET
+LIST, not prose.
+"stronger_example" is the ONE exception to the bullet rule and stays
+continuous prose — it is a model of the paragraph the employee should
+write in their own justification box, so bulleting it would demonstrate
+the wrong thing.
 Respond ONLY with JSON:
 {"assessment":"one of: evidence-based | partially substantiated | vague",
- "evidence_strength":"1-2 sentences on what the justification does and does not establish",
+ "evidence_strength":["short bullets — what the justification does and does not establish"],
  "missing_evidence":["specific things that would substantiate it, tied to the KRA's measures"],
- "stronger_example":"a short rewrite showing the shape of a well-evidenced justification, using ONLY facts already present in the input; where a fact is needed but absent, mark it like [add the actual figure]"}`,
+ "stronger_example":"PROSE, not bullets: a short rewrite showing the shape of a well-evidenced justification, using ONLY facts already present in the input; where a fact is needed but absent, mark it like [add the actual figure]"}`,
     });
     res.json({ ok: true, ...out, note: 'Feedback on the write-up only — the rating is yours to decide.' });
   } catch (e) { fail(res, e); }

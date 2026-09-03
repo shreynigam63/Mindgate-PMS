@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Send, CheckCircle2, Clock, ChevronDown, ChevronRight } from 'lucide-react';
-import { api, phaseLabel, phaseColor, DraftBadge, KraBullets } from '../utils/api';
+import { api, phaseLabel, phaseColor, DraftBadge, KraBullets, Bullets } from '../utils/api';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
 
@@ -146,7 +146,11 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
                     <DraftBadge />
                     {(r.draft || {}).assessment && <span className={`chip ${TONE[(r.draft.assessment || '').toLowerCase()] || 'bg-navy-100 text-navy-700'}`}>{r.draft.assessment}</span>}
                   </div>
-                  {(r.draft || {}).evidence_strength && <p>{r.draft.evidence_strength}</p>}
+                  {/* Bullets now, not a paragraph. stronger_example below
+                      stays prose deliberately — it models the paragraph the
+                      employee should write in their own justification box,
+                      so bulleting it would demonstrate the wrong thing. */}
+                  <Bullets items={(r.draft || {}).evidence_strength} />
                   {((r.draft || {}).missing_evidence || []).length > 0 && (
                     <div><p className="text-amber-300 font-semibold">Missing evidence</p>
                       <ul className="list-disc pl-4">{r.draft.missing_evidence.map((m, n) => <li key={n}>{m}</li>)}</ul></div>

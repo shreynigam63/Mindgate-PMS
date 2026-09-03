@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Plus, Trash2, Send, CheckCircle2, RotateCcw, Sparkles } from 'lucide-react';
-import { api, phaseLabel, phaseColor, DraftBadge } from '../utils/api';
+import { api, phaseLabel, phaseColor, DraftBadge, Bullets } from '../utils/api';
 
 const STATUS_COLOR = {
   draft: 'bg-slate-100 text-navy-600',
@@ -60,6 +60,25 @@ function DevelopmentPlanCard() {
   );
 }
 
+// Is there anything to show? A field the model was told to leave empty
+// rather than pad legitimately comes back as [] — and `[].length && …`
+// would render a bare "0" in JSX, so the check is explicit.
+const hasAny = (v) => (Array.isArray(v) ? v.filter(Boolean).length > 0 : !!(v && String(v).trim()));
+
+// Suggested goals, grouped by the KRA each one serves, preserving the
+// order the model returned (it is told to weight its attention by KRA
+// weight, so that order carries meaning and must not be sorted away).
+function groupBySrvKra(goals) {
+  const out = [];
+  const byKra = new Map();
+  for (const g of (Array.isArray(goals) ? goals : [])) {
+    const kra = (g.serves_kra || '').trim() || 'Not tied to a KRA';
+    if (!byKra.has(kra)) { byKra.set(kra, []); out.push(kra); }
+    byKra.get(kra).push(g);
+  }
+  return out.map((kra) => [kra, byKra.get(kra)]);
+}
+
 // AI development-plan suggestions, drawn from the employee's own approved
 // KRAs. Lives inside GoalList because that is where setGoals is — a
 // suggestion is only useful if it can be dropped straight into the editor,
@@ -93,15 +112,31 @@ function DevPlanAiPanel({ onAdd }) {
       {d && (
         <div className="bg-navy-800 text-slate-100 rounded-lg p-3 text-[11px] space-y-3">
           <DraftBadge />
-          {(d.suggested_goals || []).map((g, i) => (
-            <div key={i} className="border border-navy-600 rounded-lg p-2.5 space-y-1">
-              <p className="font-semibold text-sm">{g.title}</p>
-              {g.serves_kra && <p className="text-teal-300">Serves KRA: {g.serves_kra}</p>}
-              {g.why && <p>{g.why}</p>}
-              {g.how_to_measure && <p className="text-slate-300">Evidence of progress: {g.how_to_measure}</p>}
-              {g.suggested_timeline && <p className="text-slate-400">Suggested timeline: {g.suggested_timeline}</p>}
-              <button className="btn-sec !bg-navy-700 !text-white !border-navy-600 !text-[11px] !py-1"
-                onClick={() => onAdd(g)}>Add as goal (then edit)</button>
+          {/* Grouped by the KRA each goal serves, rather than one flat list
+              of cards each repeating "Serves KRA: …". The model already
+              tags every goal with serves_kra by exact title, so the
+              grouping is its own answer read back — not a guess made here.
+              Goals whose serves_kra is missing or does not match anything
+              fall under "Not tied to a KRA", where they are visible and
+              obviously odd, instead of being dropped. */}
+          {groupBySrvKra(d.suggested_goals).map(([kra, goals]) => (
+            <div key={kra} className="space-y-1.5">
+              <p className="text-teal-300 font-semibold">{kra}</p>
+              {goals.map((g, i) => (
+                <div key={i} className="border border-navy-600 rounded-lg p-2.5 space-y-1">
+                  <p className="font-semibold text-sm">{g.title}</p>
+                  <Bullets items={g.why} />
+                  {hasAny(g.how_to_measure) && (
+                    <div className="text-slate-300">
+                      <p className="opacity-80">Evidence of progress</p>
+                      <Bullets items={g.how_to_measure} />
+                    </div>
+                  )}
+                  {g.suggested_timeline && <p className="text-slate-400">Suggested timeline: {g.suggested_timeline}</p>}
+                  <button className="btn-sec !bg-navy-700 !text-white !border-navy-600 !text-[11px] !py-1"
+                    onClick={() => onAdd(g)}>Add as goal (then edit)</button>
+                </div>
+              ))}
             </div>
           ))}
           {(d.uncovered_kras || []).length > 0 && <p className="text-amber-300">KRAs with no development goal yet: {d.uncovered_kras.join(' · ')}</p>}
@@ -172,11 +207,21 @@ function GoalList({ goals: initial, editable, onSaved }) {
   // vague wording into a hard deadline would invent precision the model
   // never gave and silently commit the employee to a date nobody picked.
   // The date field is left empty and required, so it is a conscious choice.
+  // why/how_to_measure are bullet ARRAYS now. This is the path that
+  // matters most: the goal's description is written to
+  // pms.development_goals, so an array interpolated into a template string
+  // would land in the database as comma-run-on text (or "[object Object]"
+  // for anything nested). Bullets are flattened to "• " lines, which is
+  // what the textarea below shows and what a reader expects. A plain
+  // string still works — see Bullets() for why that case is kept alive.
+  const asLines = (v, prefix = '• ') => (Array.isArray(v)
+    ? v.filter(Boolean).map((x) => `${prefix}${String(x).trim()}`).join('\n')
+    : (v ? String(v).trim() : ''));
   const addSuggested = (g) => setGoals((gs) => [...gs, {
     title: g.title || '',
     description: [
-      g.why,
-      g.how_to_measure ? `Evidence of progress: ${g.how_to_measure}` : null,
+      asLines(g.why),
+      hasAny(g.how_to_measure) ? `Evidence of progress:\n${asLines(g.how_to_measure)}` : null,
       g.suggested_timeline ? `Suggested timeline: ${g.suggested_timeline} — set a target date above.` : null,
     ].filter(Boolean).join('\n\n'),
     target_date: '', progress_pct: 0,

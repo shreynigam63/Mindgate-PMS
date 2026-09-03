@@ -34,6 +34,27 @@ export function DraftBadge() {
   return <span className="chip bg-amber-100 text-amber-700">AI DRAFT — edit before use</span>;
 }
 
+// A bullet list that tolerates a string.
+//
+// The prompts ask for arrays and the schemas say so, but a model is not a
+// parser: an occasional plain sentence comes back where a list was asked
+// for, and drafts logged before a field was converted to an array are
+// still strings. Rendering {someString} where an array was expected prints
+// the characters run together with no separators — which is exactly how a
+// bulleted panel silently turns back into a wall of text. So one place
+// normalises it: an array stays an array, a multi-line string splits on
+// its lines (dropping any bullet glyph the model added despite being told
+// not to), and a single sentence becomes one bullet, which is honest.
+export function Bullets({ items, className = 'list-disc pl-4' }) {
+  const list = Array.isArray(items)
+    ? items.filter(Boolean).map((x) => String(x).trim())
+    : typeof items === 'string'
+      ? items.split(/\r?\n+/).map((l) => l.replace(/^\s*[-*\u2022]\s*/, '').trim()).filter(Boolean)
+      : [];
+  if (!list.length) return null;
+  return <ul className={className}>{list.map((p, i) => <li key={i}>{p}</li>)}</ul>;
+}
+
 // AI drafts are returned as short bullets grouped by KRA, and every screen
 // that shows one renders them the same way — a KRA heading, then its
 // bullets, with anything spanning KRAs under "Across KRAs" at the end.
