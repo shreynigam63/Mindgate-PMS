@@ -268,9 +268,43 @@ Certbot edits the installed nginx site in place and installs a renewal
 timer. Nothing in the app needs to change: the bundle calls a relative
 `/api/v1`, so it follows the scheme it was loaded over.
 
-**An ALB or CloudFront in front** — the usual answer when the instance is
-private. Terminate TLS there, forward to port 80. The `X-Forwarded-Proto`
-header is already set by the nginx config.
+**An ALB in front** — the usual answer, and the only one available when
+the instance is in a private subnet (no public IP, outbound through a
+NAT gateway). The ALB lives in the VPC's public subnets and reaches the
+instance privately:
+
+```
+internet ──▶ ALB :443 (ACM cert)  ──▶  instance :80  ──▶ nginx ──▶ API
+             ALB :80 → 301 to 443
+```
+
+The pieces, in the order they have to exist:
+
+1. **A security group for the ALB** allowing 443 (and 80, purely to
+   redirect) from wherever your users are.
+2. **An inbound rule on the *instance's* security group** whose source is
+   the **ALB's security group**, not a CIDR. Nothing else in the VPC
+   gains access, and the rule stays correct when the ALB's addresses
+   change.
+3. **A target group** pointed at the instance on port 80, with the health
+   check on **`/healthz`**. Use that path and not `/api/v1/health`: both
+   nginx configs answer `/healthz` from nginx itself, so a health check
+   every 15 seconds does not wake the API or touch the database, and the
+   check still fails if nginx is down — which is what "can this target
+   serve traffic" actually means.
+4. **An HTTPS listener** with an ACM certificate, and an HTTP listener
+   whose only action is a 301 to HTTPS. This app is an HR system and its
+   session token travels in the `Authorization` header, so there is no
+   case for serving it over cleartext.
+5. **A Route 53 alias record** for the hostname.
+
+Nothing in the app changes. The bundle calls a relative `/api/v1`, so it
+follows whatever scheme it was loaded over, and nginx already sets
+`X-Forwarded-Proto`.
+
+Running **both** paths behind one ALB — to compare them — needs only a
+second target group on port 8081 and a host-header rule on the same
+HTTPS listener. A wildcard certificate covers both names.
 
 ---
 
