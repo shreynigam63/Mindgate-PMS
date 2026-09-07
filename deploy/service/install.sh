@@ -179,16 +179,28 @@ fi
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER" \
   || useradd --system --create-home --shell /sbin/nologin "$APP_USER"
 
-say "Installing the application to ${APP_DIR}"
-mkdir -p "$APP_DIR"
-# --delete keeps the target an exact copy of the checkout so a file
-# removed upstream does not linger and get served or required. The
-# excludes stop us copying a build machine's node_modules over the
-# target's, which is how you get a native module built for the wrong
-# libc silently in place.
-rsync -a --delete \
-  --exclude '.git' --exclude 'node_modules' --exclude 'frontend/dist' \
-  "${SRC_DIR}/" "${APP_DIR}/"
+if [ "$SRC_DIR" = "$APP_DIR" ]; then
+  say "Already installed in place at ${APP_DIR} — skipping the copy"
+else
+  say "Installing the application to ${APP_DIR}"
+  mkdir -p "$APP_DIR"
+  # --delete keeps the target an exact copy of the checkout, so a file
+  # removed upstream does not linger and get served or required.
+  #
+  # .git IS COPIED, deliberately. It is what makes update.sh work: that
+  # script pulls and rebuilds in place, and without the repository
+  # metadata it can only refuse and tell you to go back to the original
+  # checkout. An earlier version of this line excluded .git and quietly
+  # produced installations that had no upgrade path.
+  #
+  # node_modules and dist are excluded because they are build OUTPUT.
+  # Copying a build machine's node_modules is how a native module
+  # compiled against the wrong libc ends up in place, failing at require
+  # time with an error that points at the module rather than the copy.
+  rsync -a --delete \
+    --exclude 'node_modules' --exclude 'frontend/dist' \
+    "${SRC_DIR}/" "${APP_DIR}/"
+fi
 
 say "Installing server dependencies"
 # `npm ci` not `npm install`: it installs exactly the committed lockfile,
