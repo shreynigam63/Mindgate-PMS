@@ -317,6 +317,13 @@ DATABASE_URL="postgres://user:pass@localhost:5432/apms_test" npm test
 Tests skip cleanly without `DATABASE_URL`, so `npm test` alone passes
 without proving anything — set the variable.
 
+The suite runs one file at a time (`--test-concurrency=1` in the `test`
+script). That is not a performance choice: every test file shares the one
+database in `DATABASE_URL`, so running them in parallel — Node's default
+— makes them tread on each other's rows and fail differently on each
+run. Two runs of the same unmodified code produced 27 and 29 failures
+with different test names; serially the same code is 376/376.
+
 > The old `deploy/docker-compose.yml` never worked: it declared
 > `build: ../server` when no `Dockerfile` existed. It has been replaced by
 > a real stack at `deploy/docker/`, and there is now a full EC2 runbook —

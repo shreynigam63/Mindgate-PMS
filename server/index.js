@@ -56,7 +56,20 @@ async function main() {
   app.use('/api/v1/agentic', require('./modules/agentic').router);
 
   const port = process.env.PORT || 8080;
-  app.listen(port, () => logger.info('agentic-pms up', { port, tenant: slug }));
+  // Which interface to accept connections on. Defaults to every one,
+  // because that is what Render and Docker both require — the platform's
+  // router and the web container reach this process across a network
+  // boundary, and a loopback-only bind is invisible to them.
+  //
+  // On a single EC2 box the opposite is true: nginx proxies from the same
+  // machine, so BIND_HOST=127.0.0.1 (set by deploy/service/install.sh)
+  // makes the API unreachable from anywhere else regardless of what the
+  // security group says. Found by checking `ss -ltnp` on a real install
+  // and seeing *:8080 rather than 127.0.0.1:8080 — nothing was exposed,
+  // because the group did not allow 8080, but the only thing standing
+  // between the API and the VPC was a firewall rule.
+  const host = process.env.BIND_HOST || '0.0.0.0';
+  app.listen(port, host, () => logger.info('agentic-pms up', { port, host, tenant: slug }));
 
   // BR-4.4: Quarterly Connect reminders. No separate worker/cron service
   // in this deploy (render.yaml defines only api + frontend), so

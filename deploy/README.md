@@ -84,6 +84,14 @@ Both paths keep Postgres bound to loopback or to the Docker network, so
 5432 is unreachable from outside regardless — but leave it out of the
 security group anyway.
 
+The same goes for the API's own port. On the systemd path `install.sh`
+sets `BIND_HOST=127.0.0.1`, so the Node process accepts connections only
+from nginx on the same machine; on the Docker path the API publishes no
+port at all. Either way port 8080 is not reachable from the network even
+if something opens it in the security group — which matters, because
+reaching the API directly would bypass nginx's body-size limit and its
+access log.
+
 ---
 
 ## Path A — systemd service

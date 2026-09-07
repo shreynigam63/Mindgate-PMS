@@ -287,6 +287,13 @@ ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 AI_MODEL=${AI_MODEL:-claude-opus-5}
 
 PORT=8080
+
+# Accept connections on loopback ONLY. nginx proxies from this same
+# machine, so nothing else needs to reach the API — and binding it here
+# means a security-group mistake cannot expose it directly, bypassing
+# nginx's body-size limit and access log. Remove this line only if you
+# move nginx off the box.
+BIND_HOST=127.0.0.1
 ENVEOF
 fi
 # 0640 root:apms — the service can read it, no other account on the box can.
