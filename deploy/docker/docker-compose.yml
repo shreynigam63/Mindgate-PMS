@@ -1,0 +1,101 @@
+# Agentic PMS — single-EC2 Docker deployment.
+#
+#   web (nginx :80)  ──/api──▶  api (node :8080)  ──▶  db (postgres :5432)
+#         │
+#         └── serves the built React bundle
+#
+# Everything is on one Docker network and only `web` publishes a port, so
+# the API and the database are unreachable from outside the box no matter
+# how the security group is configured. That is deliberate: it means a
+# mistake in the security group cannot expose Postgres to the internet.
+#
+# Run from this directory:
+#   cp .env.example .env && edit it, then
+#   docker compose up -d --build
+#
+# The old deploy/docker-compose.yml this replaces never worked: it
+# declared `build: ../server` when no Dockerfile existed anywhere in the
+# repo, so `docker compose up` failed on the first line it tried to build.
+
+name: agentic-pms
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-apms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-apms}
+      # Without this, initdb picks trust auth for host connections inside
+      # the container network — which would let anything on the compose
+      # network connect as superuser with no password.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Where backup.sh drops dumps, so they land on the host filesystem
+      # (and therefore in an EBS snapshot) rather than inside the container.
+      - ./backups:/backups
+    healthcheck:
+      # The api container waits on this. Without it, api starts first,
+      # burns its retry budget in core/db.js against a database still
+      # running initdb, and the first `up` looks like a failure.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-apms} -d ${POSTGRES_DB:-apms}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    # Uncomment ONLY to run psql from the host (e.g. for a manual restore).
+    # 127.0.0.1 keeps it off every network interface but loopback.
+    # ports: ["127.0.0.1:5432:5432"]
+
+  api:
+    build:
+      context: ../../server
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-apms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-apms}
+      # REQUIRED and easy to miss. core/db.js defaults to SSL when this is
+      # anything other than the exact string "false", so leaving it out
+      # makes the pool try TLS against a Postgres that never offered it and
+      # the boot dies on a connection error that reads like a bad password.
+      # Traffic to the database never leaves the Docker network here, so
+      # there is nothing for TLS to protect.
+      DATABASE_SSL: "false"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      # Names the tenant. index.js creates core.tenants from it on the
+      # first boot of an empty database and every row is stamped with the
+      # resulting id, so changing it later does not rename anything — it
+      # silently resolves to a DIFFERENT tenant and the app comes up empty
+      # with the real data still there under the old slug. Set once.
+      TENANT_SLUG: ${TENANT_SLUG:?set TENANT_SLUG in .env}
+      # The only working login path in this build (see deploy/README.md).
+      AUTH_DEV: ${AUTH_DEV:-true}
+      # Optional. Absent, every agentic endpoint returns a clean 503 and
+      # the rest of the app is unaffected.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-opus-5}
+      TZ: ${TZ:-Asia/Kolkata}
+    # No `ports:` on purpose — the API is reached only through web's proxy.
+
+  web:
+    build:
+      context: ../../frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+
+volumes:
+  # ALL customer data lives here: employees, cycles, ratings, and the
+  # evidence and closure-letter file bytes (migration 013 stores those in
+  # Postgres, not on disk). `docker compose down -v` deletes it. Back it
+  # up with deploy/docker/backup.sh, not just EBS snapshots.
+  pgdata:

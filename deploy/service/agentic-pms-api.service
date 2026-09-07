@@ -1,0 +1,62 @@
+[Unit]
+Description=Agentic PMS API
+Documentation=file:/opt/agentic-pms/deploy/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+# Burst limits live in [Unit], not [Service] — systemd v229+ ignores
+# them with an "Unknown key name" warning if they are put under
+# [Service], which silently gives you an unlimited restart loop.
+StartLimitBurst=5
+StartLimitIntervalSec=120
+# Deliberately Wants= and not Requires=: if Postgres is restarted for
+# maintenance we want this process to stay up and reconnect (core/db.js
+# retries on boot and the pg pool reconnects after), not to be stopped as
+# a dependency casualty and need a human to start it again.
+
+[Service]
+Type=simple
+User=apms
+Group=apms
+WorkingDirectory=/opt/agentic-pms/server
+EnvironmentFile=/etc/agentic-pms/api.env
+ExecStart=/usr/bin/node index.js
+
+# The app fails the boot loudly on a bad migration or missing env var (by
+# design — a schema the code expects but does not have is a broken deploy,
+# not a degraded state). Restart=always would turn that into a silent
+# crash-loop. on-failure with a burst limit means a genuine crash recovers,
+# but a deploy that is simply broken STOPS and shows up as `failed` in
+# systemctl instead of hiding in the logs.
+Restart=on-failure
+RestartSec=5
+
+# SIGTERM to node, 20s to finish in-flight requests before SIGKILL. The
+# migration runner is the reason for the grace period.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agentic-pms-api
+
+# --- Hardening -------------------------------------------------------------
+# This process needs: a TCP socket, a Postgres connection, and outbound
+# HTTPS to Anthropic if AI is on. It writes NOTHING to disk — evidence
+# files and closure letters are stored as bytes in Postgres (migration
+# 013), not on the filesystem — so almost everything can be taken away.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

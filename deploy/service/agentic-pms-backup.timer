@@ -1,0 +1,16 @@
+[Unit]
+Description=Nightly Agentic PMS database backup
+Documentation=file:/opt/agentic-pms/deploy/README.md
+
+[Timer]
+# 02:15 local time. RandomizedDelaySec spreads the load if several
+# customer instances share a host or a snapshot window.
+OnCalendar=*-*-* 02:15:00
+RandomizedDelaySec=15m
+# Runs the backup on the next boot if the box was off when it was due —
+# the difference between "we take nightly backups" and "we take nightly
+# backups on the nights the instance happened to be running".
+Persistent=true
+
+[Install]
+WantedBy=timers.target

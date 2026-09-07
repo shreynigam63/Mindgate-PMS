@@ -9,6 +9,12 @@ codebase assumed.
 
 **Time:** about 30 minutes, most of it waiting for builds.
 
+> **Deploying to EC2 instead of Render?** Use
+> [`deploy/README.md`](deploy/README.md) — a single instance with
+> PostgreSQL on the same box, runnable either as a systemd service or
+> under Docker. Sections 4 (first-run setup) and 7 (AI features) of this
+> document still apply unchanged; the rest is Render-specific.
+
 ---
 
 ## 1. What you are deploying
@@ -311,9 +317,10 @@ DATABASE_URL="postgres://user:pass@localhost:5432/apms_test" npm test
 Tests skip cleanly without `DATABASE_URL`, so `npm test` alone passes
 without proving anything — set the variable.
 
-> `deploy/docker-compose.yml` exists but **does not work**: it declares
-> `build: ../server` and there is no `Dockerfile` in `server/`. Use the
-> steps above instead.
+> The old `deploy/docker-compose.yml` never worked: it declared
+> `build: ../server` when no `Dockerfile` existed. It has been replaced by
+> a real stack at `deploy/docker/`, and there is now a full EC2 runbook —
+> both the systemd and the Docker path — in [`deploy/README.md`](deploy/README.md).
 
 ---
 
