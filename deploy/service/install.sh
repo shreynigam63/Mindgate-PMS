@@ -84,11 +84,19 @@ if [ "$PKG" = apt ]; then
   $APT update -qq
   $APT install -y -qq curl ca-certificates gnupg rsync nginx openssl
 
-  if ! node --version 2>/dev/null | grep -q '^v22\.'; then
-    say "Installing Node.js 22 from NodeSource"
-    curl -fsSL "https://deb.nodesource.com/setup_22.x" | bash - >/dev/null
-    $APT install -y -qq nodejs
-  fi
+  # Captured into a variable rather than piped into `grep -q`: grep -q
+  # exits on the first match and closes the pipe, so `node` can take a
+  # SIGPIPE and the pipeline reports 141 under pipefail — the same trap
+  # that aborted the password generator below on a real run. Harmless
+  # here (it would only trigger a needless reinstall) but not worth
+  # keeping.
+  NODE_V="$(node --version 2>/dev/null || true)"
+  case "$NODE_V" in
+    v22.*) : ;;
+    *) say "Installing Node.js 22 from NodeSource"
+       curl -fsSL "https://deb.nodesource.com/setup_22.x" | bash - >/dev/null
+       $APT install -y -qq nodejs ;;
+  esac
 
   if ! command -v psql >/dev/null 2>&1; then
     say "Installing PostgreSQL ${PG_MAJOR} from PGDG"
@@ -108,11 +116,13 @@ if [ "$PKG" = apt ]; then
 else
   dnf install -y -q rsync nginx openssl >/dev/null
 
-  if ! node --version 2>/dev/null | grep -q '^v22\.'; then
-    say "Installing Node.js 22 from NodeSource"
-    curl -fsSL "https://rpm.nodesource.com/setup_22.x" | bash - >/dev/null
-    dnf install -y -q nodejs >/dev/null
-  fi
+  NODE_V="$(node --version 2>/dev/null || true)"
+  case "$NODE_V" in
+    v22.*) : ;;
+    *) say "Installing Node.js 22 from NodeSource"
+       curl -fsSL "https://rpm.nodesource.com/setup_22.x" | bash - >/dev/null
+       dnf install -y -q nodejs >/dev/null ;;
+  esac
 
   if ! command -v psql >/dev/null 2>&1; then
     say "Installing PostgreSQL ${PG_MAJOR}"
@@ -154,10 +164,17 @@ if [ -f "$ENV_FILE" ]; then
   [ -n "$DB_PASS" ] && say "Reusing the database password already in ${ENV_FILE}"
 fi
 if [ -z "$DB_PASS" ]; then
-  # Alphanumeric only, on purpose: this value is embedded in a URL, and a
-  # generated '/' or '@' silently truncates DATABASE_URL into something
-  # that fails with a confusing "role does not exist".
-  DB_PASS="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+  # Hex, on purpose, and via openssl rather than a pipeline.
+  #
+  # Alphanumeric matters because this value is embedded in a URL: a
+  # generated '/' or '@' truncates DATABASE_URL into something that fails
+  # with a confusing "role does not exist".
+  #
+  # openssl matters because the obvious `tr -dc ... </dev/urandom | head
+  # -c 32` is a trap under `set -o pipefail`: head closes the pipe after
+  # 32 bytes, tr dies of SIGPIPE, the pipeline reports 141, and the whole
+  # installer aborts on its own password generator. Found on a real run.
+  DB_PASS="$(openssl rand -hex 24)"
 fi
 
 if [ "$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")" = "1" ]; then
