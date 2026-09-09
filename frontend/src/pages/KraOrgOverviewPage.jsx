@@ -1,6 +1,7 @@
 import { useEffect, useState, Fragment } from 'react';
 import { Search, UserCog, Plus, Trash2, Send, RotateCcw } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
+import KraLibraryPicker from './KraLibraryPicker';
 
 const STATUS_COLOR = {
   not_started: 'bg-navy-50 text-navy-500',
@@ -187,6 +188,10 @@ function OnBehalfEditor({ employeeId, onDone }) {
   const update = (i, field, value) => setKras(ks => ks.map((k, j) => j === i ? { ...k, [field]: value } : k));
   const remove = (i) => setKras(ks => ks.filter((_, j) => j !== i));
   const add = () => setKras(ks => [...ks, { title: '', weight: 0 }]);
+  // Same copy-onto-the-sheet behaviour as the employee's own page.
+  // The shelf is the EMPLOYEE's, not HR's — /team/kra-library takes the
+  // employee id for exactly that reason.
+  const addFromLibrary = (rows) => setKras(ks => [...ks, ...rows]);
   const total = kras.reduce((s, k) => s + (Number(k.weight) || 0), 0);
 
   const save = async () => {
@@ -219,6 +224,7 @@ function OnBehalfEditor({ employeeId, onDone }) {
 
   return (
     <div className="bg-navy-50 rounded-lg p-3 space-y-2">
+      <KraLibraryPicker source={`/pms/team/kra-library/${employeeId}`} onAdd={addFromLibrary} />
       {blankCount > 0 && (
         <p className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
           {blankCount} KRA{blankCount === 1 ? '' : 's'} {blankCount === 1 ? 'has' : 'have'} no title set — highlighted below.

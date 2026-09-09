@@ -116,7 +116,7 @@ export default function AiDraftPanel({
 // second look for the same thing — with the body made independently
 // scrollable, since an AI answer has no length limit and these are the
 // panels that got too tall in the first place.
-export function AiModal({ title, onClose, children, footer, wide = false }) {
+export function AiModal({ title, onClose, children, footer, wide = false, badge = true }) {
   // Escape closes, and the page behind does not scroll while it is open —
   // without the lock, scrolling inside the popup runs on to the page
   // underneath once the body hits its end.
@@ -135,7 +135,10 @@ export function AiModal({ title, onClose, children, footer, wide = false }) {
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-navy-100 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <p className="text-base font-bold truncate">{title}</p>
-            <DraftBadge />
+            {/* Off for callers that are not AI output. The KRA library is
+                HR's own published content, and badging it "AI draft" would
+                be a straightforward lie about where it came from. */}
+            {badge && <DraftBadge />}
           </div>
           <button className="text-navy-400 hover:text-navy-600 shrink-0" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>

@@ -778,8 +778,25 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
 // The older flat header (employee_email, kra_title, weight, description,
 // measures) still works: both spellings map to the same canonical field
 // below, so files built against the previous CSV template keep importing.
-const KRA_BULK_REQUIRED = ['employee_email', 'kra_title', 'weight'];
+// What a row must carry to be importable. The key column varies by
+// importer (see KRA_KEY_FIELDS); a KRA title and a weight do not.
+const kraBulkRequired = (keyField) => [keyField, 'kra_title', 'weight'];
 const KRA_BULK_KNOWN = ['employee_email', 'category', 'kra_title', 'measures', 'weight', 'description'];
+
+// The KRA parser is shared by two importers that differ in exactly one
+// column: which key each row is filed under.
+//
+//   employee_email -> assign these KRAs to this person's sheet
+//   designation    -> put these KRAs on the shelf for this role (033)
+//
+// Everything else about these files is identical — the same merged
+// weights, the same forward-filled Parameters column, the same two-row
+// stacked headers, the same trailing "100" total. Reproducing that
+// parsing a second time for the library would have meant maintaining two
+// copies of the hardest code in this file and watching them drift, so the
+// key column is a parameter instead. Defaults to employee_email, which
+// keeps every existing caller and test unchanged.
+const KRA_KEY_FIELDS = ['employee_email', 'designation'];
 
 // Header text -> canonical field. Keys are already normalised by
 // normKraHeader(), so "KRA \n(S.M.A.R.T GOALS)" arrives here as "kra".
@@ -792,10 +809,20 @@ const KRA_BULK_KNOWN = ['employee_email', 'category', 'kra_title', 'measures', '
 // missing.
 const KRA_HEADER_ALIASES = {
   employee_email: 'employee_email', email: 'employee_email', emp_email: 'employee_email',
+  // Deliberately NOT a bare "title" alias: in a KRA sheet that word means
+  // the KRA's own title far more often than the person's job title, and
+  // mapping it here would silently file every KRA under a designation
+  // named after itself.
+  designation: 'designation', job_title: 'designation', role: 'designation',
   parameters: 'category', parameter: 'category', category: 'category',
   kra: 'kra_title', kra_title: 'kra_title', kras: 'kra_title', key_result_area: 'kra_title', goal: 'kra_title',
   kpis: 'measures', kpi: 'measures', measures: 'measures', measure: 'measures',
   weightage: 'weight', weigthtage: 'weight', weight: 'weight', weight_pct: 'weight', weightage_pct: 'weight',
+  // The library template heads this column "Suggested Weightage", because
+  // on a shelf the number IS only a suggestion. Without these two the
+  // header scan finds no weight column, decides the file has no KRA table
+  // at all, and rejects our own template — caught by the tests.
+  suggested_weightage: 'weight', suggested_weight: 'weight', suggested_weightage_pct: 'weight',
   comments: 'description', comment: 'description', description: 'description', remarks: 'description',
 };
 
@@ -893,7 +920,11 @@ function splitShare(raw, n, k) {
 //      together worth 15.
 //
 // Reading either literally is what makes a 100-point sheet total 305.
-function parseKraSheet(sheetName, rows, rowNumbers, merged) {
+function parseKraSheet(sheetName, rows, rowNumbers, merged, keyField = 'employee_email') {
+  // A mistyped key field would otherwise surface as "missing required
+  // column: employe_email" against a perfectly valid file — a confidently
+  // wrong answer pointing at the user's spreadsheet instead of our bug.
+  if (!KRA_KEY_FIELDS.includes(keyField)) throw new Error(`unknown KRA key field: ${keyField}`);
   const headerRow = findKraHeaderRow(rows);
   if (headerRow < 0) return null;
   const dataStart = findKraDataStart(rows, headerRow);
@@ -916,6 +947,17 @@ function parseKraSheet(sheetName, rows, rowNumbers, merged) {
   // carried the same way for the same reason (shape 3 below).
   let carriedCategory = null;
   let carriedTitle = null;
+  // The DESIGNATION is forward-filled the same way Parameters is: written
+  // once at the top of a role's block and left blank down the rest of it.
+  // The library template's own banner tells HR they may do that, so the
+  // parser has to honour it or the template is lying.
+  //
+  // employee_email is deliberately NOT carried. A blank designation in a
+  // role sheet reads as "still the same role"; a blank email reads as a
+  // mistake, and silently attributing a KRA to whoever appeared above it
+  // would put someone else's objective on a person's appraisal.
+  const carryKey = keyField === 'designation';
+  let carriedKey = null;
   let block = null;   // the weight cell currently in force (shape 2 above)
   let current = null; // the KRA currently being built (shape 1 above)
   let pastTotal = false; // the "100" row marks the end of the KRA table
@@ -928,6 +970,9 @@ function parseKraSheet(sheetName, rows, rowNumbers, merged) {
 
     const cat = get('category');
     if (cat) carriedCategory = cat;
+
+    const keyCell = get(keyField).trim();
+    if (keyCell) carriedKey = keyCell;
 
     const title = get('kra_title');
     if (title) carriedTitle = title;
@@ -989,7 +1034,13 @@ function parseKraSheet(sheetName, rows, rowNumbers, merged) {
     current = {
       sheet: sheetName,
       line, // the row HR sees on screen, so an error points at it
+      // The key column is whichever one this importer files rows under.
+      // Lower-cased for both: an email is case-insensitive, and a
+      // designation typed "Senior Software engineer" must land on the
+      // same shelf as "Senior Software Engineer".
+      key: ((carryKey ? (keyCell || carriedKey) : keyCell) || '').toLowerCase(),
       employee_email: get('employee_email').toLowerCase(),
+      designation: carryKey ? (keyCell || carriedKey || '') : get('designation').trim(),
       category: carriedCategory,
       // Blank title + its own weight: shape 3. The title carries down from
       // the row above, the same way the category does.
@@ -1020,14 +1071,19 @@ function parseKraSheet(sheetName, rows, rowNumbers, merged) {
     if (n > 1 && !shared.includes(b)) shared.push(b);
   }
 
-  const missing = KRA_BULK_REQUIRED.filter((c) => idx[c] == null);
+  const missing = kraBulkRequired(keyField).filter((c) => idx[c] == null);
   return { headerRowNumber: rowNumberAt(headerRow), missing, unknown, records, notes, shared };
 }
 
 // sheets: [{ name, rows }] — one entry for a CSV, one per worksheet for an
 // .xlsx. Multi-sheet is the normal case here, not an edge case: the
 // workbooks in use carry a dozen role tabs each.
-function validateKraBulkRows(sheets, knownEmails, empByEmail) {
+function validateKraBulkRows(sheets, knownKeys, empByEmail, opts = {}) {
+  // keyField selects which importer this is. Defaulting to employee_email
+  // keeps the original three-argument signature — and every existing
+  // caller and test — working exactly as before.
+  const keyField = opts.keyField || 'employee_email';
+  const byDesignation = keyField === 'designation';
   if (!Array.isArray(sheets)) sheets = [];
   // Back-compat: a bare array of rows (the old single-sheet signature, and
   // what parseCsv returns) is one unnamed sheet.
@@ -1039,7 +1095,7 @@ function validateKraBulkRows(sheets, knownEmails, empByEmail) {
   const skippedSheets = []; const missingBySheet = [];
 
   for (const sheet of nonEmpty) {
-    const parsed = parseKraSheet(sheet.name, sheet.rows, sheet.rowNumbers, sheet.merged);
+    const parsed = parseKraSheet(sheet.name, sheet.rows, sheet.rowNumbers, sheet.merged, keyField);
     if (!parsed) { skippedSheets.push(sheet.name || 'file'); continue; }
     if (parsed.missing.length) { missingBySheet.push({ sheet: sheet.name, missing: parsed.missing }); continue; }
     if (parsed.unknown.length) {
@@ -1090,8 +1146,21 @@ function validateKraBulkRows(sheets, knownEmails, empByEmail) {
 
   for (const rec of out) {
     const at = { sheet: rec.sheet, line: rec.line };
-    if (!rec.employee_email) errors.push({ ...at, error: 'employee_email is empty' });
-    else if (!knownEmails.has(rec.employee_email)) errors.push({ ...at, error: `employee_email "${rec.employee_email}" not found among active employees` });
+    if (!rec.key) {
+      errors.push({ ...at, error: `${keyField} is empty` });
+    } else if (byDesignation) {
+      // A designation nobody currently holds is a WARNING, not an error.
+      // HR legitimately builds a shelf ahead of a hire, or for a title
+      // that is being introduced — refusing the upload would make the
+      // product argue with a plan it cannot see. But it is said out loud,
+      // because the far more common cause is a typo, and a shelf nobody
+      // can see is indistinguishable from a shelf that failed to upload.
+      if (knownKeys && knownKeys.size && !knownKeys.has(rec.key)) {
+        warnings.push({ ...at, warning: `no active employee currently holds the designation "${rec.designation}" — this shelf will be uploaded but nobody will see it yet` });
+      }
+    } else if (!knownKeys.has(rec.key)) {
+      errors.push({ ...at, error: `employee_email "${rec.employee_email}" not found among active employees` });
+    }
     if (!rec.kra_title) errors.push({ ...at, error: 'KRA title is empty' });
     if (!Number.isFinite(rec.weight) || rec.weight <= 0) errors.push({ ...at, error: `weightage must be a positive number (got "${rec.weight_raw}")` });
     // Found live: a bulk upload where the source file's kra_title column
@@ -1100,7 +1169,7 @@ function validateKraBulkRows(sheets, knownEmails, empByEmail) {
     // own code adds, confirmed by reading the parsing code, which passes
     // kra_title through verbatim. Warn (not reject) so it's caught at the
     // dry-run/Validate step, before it's committed, rather than after.
-    const emp = empByEmail && empByEmail.get(rec.employee_email);
+    const emp = !byDesignation && empByEmail && empByEmail.get(rec.employee_email);
     if (emp && rec.kra_title) {
       const titleLower = rec.kra_title.toLowerCase();
       if (emp.name && titleLower.includes(emp.name.toLowerCase())) {
@@ -1119,9 +1188,9 @@ function validateKraBulkRows(sheets, knownEmails, empByEmail) {
   // an "L1 Monitoring" block), and 100 is the total for the person.
   const byEmployee = new Map();
   for (const r of out) {
-    if (!r.employee_email) continue;
-    if (!byEmployee.has(r.employee_email)) byEmployee.set(r.employee_email, []);
-    byEmployee.get(r.employee_email).push(r);
+    if (!r.key) continue;
+    if (!byEmployee.has(r.key)) byEmployee.set(r.key, []);
+    byEmployee.get(r.key).push(r);
   }
   for (const [email, kras] of byEmployee) {
     // Two KRAs under one title happen when the sheet leaves the title
@@ -1140,13 +1209,36 @@ function validateKraBulkRows(sheets, knownEmails, empByEmail) {
       } else seenTitles.set(key, k.line);
     }
     const check = pm.weightsValid(kras);
-    if (!check.ok) errors.push({ sheet: kras[0].sheet, line: kras[0].line, error: `${email}: KRA weights must total 100 (currently ${check.total})` });
+    // THE 100 RULE APPLIES TO A PERSON, NOT TO A SHELF.
+    //
+    // For an assignment upload these rows ARE somebody's scorecard, so
+    // the same rule PUT /my/kra-sheet/kras enforces at submit time is
+    // enforced here, up front, and a bad file fails as a whole.
+    //
+    // For a library it would be actively wrong. A designation offering
+    // seven KRAs worth 105 between them is the point of a library: it is
+    // a menu, and the employee picks a hundred points' worth from it.
+    // Requiring 105 to be 100 would force HR to publish exactly the
+    // scorecard everyone must have, which is the assignment importer they
+    // already have. So the total is reported and never rejected.
+    if (byDesignation) {
+      if (check.total !== 100) {
+        warnings.push({ sheet: kras[0].sheet, line: kras[0].line,
+          warning: `"${kras[0].designation}" offers ${kras.length} KRAs totalling ${check.total}% — employees pick from this, so it does not need to total 100` });
+      }
+    } else if (!check.ok) {
+      errors.push({ sheet: kras[0].sheet, line: kras[0].line, error: `${email}: KRA weights must total 100 (currently ${check.total})` });
+    }
   }
 
   return {
     ok: errors.length === 0, fatal: null, rows: out, errors, warnings,
     summary: {
       total_rows: out.length, employees: byEmployee.size,
+      // Same map, named for what it holds in this mode, so a caller and a
+      // log line do not have to know which importer produced the report.
+      designations: byDesignation ? byEmployee.size : 0,
+      key_field: keyField,
       sheets_read: nonEmpty.length - skippedSheets.length - missingBySheet.length,
       sheets_skipped: skippedSheets.length,
       errors: errors.length, warnings: warnings.length,
@@ -1232,6 +1324,286 @@ router.post('/hr/kra-sheet/bulk-upload', (req, res, next) => kraUpload.single('f
     audit(req, 'KRA_BULK_UPLOAD', c.id, null, report.summary);
     res.json({ ok: true, committed: true, employees_loaded: byEmployee.size - skipped.length, skipped, warnings: report.warnings, summary: report.summary });
   } catch (e) { logger.error('kra bulk upload', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+
+// ============================================================================
+// KRA LIBRARY — a shelf of suggested KRAs per designation (migration 033)
+// ============================================================================
+//
+// The importer above assigns KRAs to a named person. This publishes them
+// for a ROLE, and the employee picks. See 033-kra-library.js for why the
+// two coexist and why a shelf is not expected to total 100.
+//
+// The file format is the same one HR already fills in, with Designation
+// where employee_email sits — which is the whole reason the parser above
+// takes a key field rather than having been copied.
+
+const KRA_LIBRARY_BANNER = 'One row per KRA. Fill Designation for every row (or write it once per block and leave the rows below blank). Parameters may be written once per group. Suggested Weightage guides the employee — a shelf does NOT need to total 100, since employees pick from it. Delete the sample rows before uploading.';
+const KRA_LIBRARY_HEADERS = [
+  'Designation', 'Parameters', 'KRA \n(S.M.A.R.T GOALS)',
+  'KPIs \n(Measuring Metrics & Data Source)', 'Suggested Weightage', 'Comments',
+];
+const KRA_LIBRARY_SAMPLE = [
+  ['Senior Software Engineer', 'Financial', 'Delivery within allocated project budget', 'Variance against approved budget, per release', 20, 'Delete this sample row'],
+  ['Senior Software Engineer', 'Customer', 'On-time milestone delivery', '100% of milestones met per project plan', 25, 'Delete this sample row'],
+  ['Senior Software Engineer', 'People', 'Mentoring and knowledge sharing', 'Two sessions per quarter, logged', 15, 'Delete this sample row'],
+];
+
+// Registered before any /hr/kra-library/:param route for the same reason
+// the bulk-upload template is: Express matches in order and a param route
+// would swallow the literal filename and try to use it as a designation.
+router.get('/hr/kra-library/template.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('KRA Library');
+    ws.addRow([KRA_LIBRARY_BANNER]);
+    ws.mergeCells(1, 1, 1, KRA_LIBRARY_HEADERS.length);
+    ws.getRow(1).font = { italic: true };
+    const header = ws.addRow(KRA_LIBRARY_HEADERS);
+    header.font = { bold: true };
+    header.alignment = { wrapText: true, vertical: 'middle' };
+    for (const row of KRA_LIBRARY_SAMPLE) ws.addRow(row);
+    ws.columns.forEach((col, i) => { col.width = [30, 18, 38, 46, 18, 30][i] || 20; });
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="kra_library_template.xlsx"');
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('kra library template xlsx', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
+});
+
+router.get('/hr/kra-library/template.csv', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const cell = (v) => {
+      const t = String(v).replace(/\s*\n\s*/g, ' ');
+      return /[",]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const csv = [KRA_LIBRARY_HEADERS, ...KRA_LIBRARY_SAMPLE].map((r) => r.map(cell).join(',')).join('\n') + '\n';
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="kra_library_template.csv"');
+    res.send(csv);
+  } catch (e) { logger.error('kra library template csv', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
+});
+
+// What is on the shelves, grouped by designation, with a count of the
+// active employees each shelf would actually reach — because "12 KRAs
+// published" and "12 KRAs published that nobody holds the title for" look
+// identical otherwise.
+router.get('/hr/kra-library', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const rows = (await db.query(
+      `SELECT l.designation, count(*)::int AS kras, sum(coalesce(l.suggested_weight,0))::float AS total_weight,
+              max(l.uploaded_at) AS uploaded_at, max(l.uploaded_by) AS uploaded_by,
+              (SELECT count(*)::int FROM core.employees e
+                WHERE e.tenant_id = l.tenant_id AND e.status='active'
+                  AND lower(btrim(e.designation)) = lower(btrim(l.designation))) AS employees
+         FROM pms.kra_library l
+        WHERE l.tenant_id = $1
+        GROUP BY l.tenant_id, l.designation
+        ORDER BY l.designation`, [T(req)])).rows;
+    // Designations that people hold but no shelf covers. This is the
+    // actionable half of the screen: it is the to-do list.
+    const uncovered = (await db.query(
+      `SELECT e.designation, count(*)::int AS employees
+         FROM core.employees e
+        WHERE e.tenant_id=$1 AND e.status='active'
+          AND coalesce(btrim(e.designation),'') <> ''
+          AND NOT EXISTS (SELECT 1 FROM pms.kra_library l
+                           WHERE l.tenant_id = e.tenant_id
+                             AND lower(btrim(l.designation)) = lower(btrim(e.designation)))
+        GROUP BY e.designation ORDER BY 2 DESC, 1`, [T(req)])).rows;
+    res.json({ shelves: rows, uncovered });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/hr/kra-library/:designation', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const rows = (await db.query(
+      `SELECT * FROM pms.kra_library
+        WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
+        ORDER BY sort_order, id`, [T(req), req.params.designation])).rows;
+    res.json({ designation: req.params.designation, entries: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Clearing a shelf needs its own route: an upload only replaces the
+// designations PRESENT in the file, so there is otherwise no way to
+// retire a role's shelf short of editing the database.
+router.delete('/hr/kra-library/:designation', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const r = await db.query(
+      `DELETE FROM pms.kra_library WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))`,
+      [T(req), req.params.designation]);
+    if (!r.rowCount) return res.status(404).json({ error: `no library entries for designation "${req.params.designation}"` });
+    audit(req, 'KRA_LIBRARY_CLEARED', null, null, { designation: req.params.designation, removed: r.rowCount });
+    res.json({ ok: true, removed: r.rowCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /pms/hr/kra-library/upload (multipart file) — dry run by default,
+// ?commit=1 to publish. Same two-step shape as the assignment importer,
+// for the same reason: HR sees what the file will do before it does it.
+//
+// NOT gated on a cycle phase, unlike the assignment importer. A library
+// is reference data about roles, so HR can build it before a cycle opens
+// — which is exactly when they would want to.
+router.post('/hr/kra-library/upload', (req, res, next) => kraUpload.single('file')(req, res, (err) => {
+  if (err) return res.status(400).json({ error: err.message });
+  next();
+}), async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    if (!req.file) return res.status(400).json({ error: 'file required (multipart field "file")' });
+
+    const format = detectFormat(req.file);
+    if (format === 'xls-legacy') {
+      return res.status(400).json({ error: 'Legacy .xls files are not supported — please re-save the file as .xlsx (File > Save As > Excel Workbook) and upload again.' });
+    }
+
+    // Designations actually held, so a typo can be warned about. Not a
+    // gate: see validateKraBulkRows for why an unheld designation is a
+    // warning and not an error.
+    const known = new Set((await db.query(
+      `SELECT DISTINCT lower(btrim(designation)) AS d FROM core.employees
+        WHERE tenant_id=$1 AND status='active' AND coalesce(btrim(designation),'') <> ''`,
+      [T(req)])).rows.map((r) => r.d));
+
+    const sheets = format === 'xlsx'
+      ? await parseExcelSheets(req.file.buffer)
+      : [{ name: null, rows: parseCsv(req.file.buffer.toString('utf8')) }];
+    const report = validateKraBulkRows(sheets, known, null, { keyField: 'designation' });
+    if (report.fatal) return res.status(400).json({ error: report.fatal });
+    if (!report.ok) return res.status(422).json({ ok: false, committed: false, ...report });
+    if (req.query.commit !== '1') {
+      return res.json({ ok: true, committed: false, note: 'Dry run — pass ?commit=1 to publish.', ...report });
+    }
+
+    // Grouped on the normalised key, but the ORIGINAL spelling is what
+    // gets stored and shown — HR wrote "Senior Software Engineer" and
+    // should see that back, not a lower-cased version of it.
+    const byDesignation = new Map();
+    for (const r of report.rows) {
+      if (!byDesignation.has(r.key)) byDesignation.set(r.key, { label: r.designation, rows: [] });
+      byDesignation.get(r.key).rows.push(r);
+    }
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      for (const [key, { label, rows }] of byDesignation) {
+        // Replace this designation's shelf entirely and leave every other
+        // designation alone — so Engineering can be corrected without
+        // touching Sales, and a KRA dropped from the file is genuinely
+        // gone rather than lingering alongside its replacement.
+        await client.query(
+          `DELETE FROM pms.kra_library WHERE tenant_id=$1 AND lower(btrim(designation))=$2`, [T(req), key]);
+        let i = 0;
+        for (const k of rows) {
+          await client.query(
+            `INSERT INTO pms.kra_library
+               (tenant_id, designation, category, title, measures, description, suggested_weight, sort_order, uploaded_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [T(req), label, k.category || null, k.kra_title, k.measures, k.description,
+             Number.isFinite(k.weight) ? k.weight : null, (i += 10), req.user.email]);
+        }
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+
+    audit(req, 'KRA_LIBRARY_PUBLISHED', null, null, {
+      designations: [...byDesignation.values()].map((v) => v.label), ...report.summary,
+    });
+    res.json({
+      ok: true, committed: true,
+      designations_loaded: byDesignation.size,
+      warnings: report.warnings, summary: report.summary,
+    });
+  } catch (e) { logger.error('kra library upload', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// The shelf as one employee sees it: their designation's entries, each
+// marked with whether it is already on their sheet.
+//
+// "Already there" is matched on the TITLE, case- and space-insensitively,
+// because a library entry that has been added is a copy — there is no
+// foreign key back, deliberately (033), so the title is the only honest
+// way to recognise it. That means an employee who renames an added KRA
+// will be offered the original again; correct, since after a rename it is
+// no longer the same KRA, and offering it back is less wrong than hiding
+// a KRA they might want.
+async function kraLibraryFor(tenantId, employee, sheetId) {
+  const designation = (employee && employee.designation || '').trim();
+  if (!designation) {
+    return { designation: null, entries: [], reason: 'no_designation' };
+  }
+  const entries = (await db.query(
+    `SELECT id, designation, category, title, measures, description, suggested_weight
+       FROM pms.kra_library
+      WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
+      ORDER BY sort_order, id`, [tenantId, designation])).rows;
+  if (!entries.length) return { designation, entries: [], reason: 'no_library' };
+
+  const existing = new Set((sheetId
+    ? (await db.query(`SELECT title FROM pms.kras WHERE sheet_id=$1`, [sheetId])).rows
+    : []).map((r) => String(r.title || '').trim().toLowerCase()));
+
+  return {
+    designation,
+    reason: null,
+    entries: entries.map((e) => ({
+      ...e,
+      suggested_weight: e.suggested_weight == null ? null : Number(e.suggested_weight),
+      already_added: existing.has(String(e.title || '').trim().toLowerCase()),
+    })),
+  };
+}
+
+// GET /pms/my/kra-library — the caller's own shelf.
+router.get('/my/kra-library', async (req, res) => {
+  try {
+    const emp = (await db.query(
+      `SELECT id, designation FROM core.employees WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`,
+      [T(req), req.user.email])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'no employee record' });
+    const c = await activeCycle(T(req));
+    const s = c ? (await db.query(
+      `SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, emp.id])).rows[0] : null;
+    res.json(await kraLibraryFor(T(req), emp, s && s.id));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /pms/team/kra-library/:employeeId — the same shelf, for a manager or
+// HR filling a sheet on someone's behalf.
+//
+// Keyed on the EMPLOYEE's designation, not the caller's. A manager
+// opening their report's sheet must see the report's shelf; showing the
+// manager's own would offer a Delivery Manager's KRAs to an engineer,
+// which looks like a working feature and is silently wrong.
+router.get('/team/kra-library/:employeeId', async (req, res) => {
+  try {
+    const emp = (await db.query(
+      `SELECT id, manager_id, designation FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.params.employeeId, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee not found' });
+
+    const me = (await db.query(
+      `SELECT id FROM core.employees WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`,
+      [T(req), req.user.email])).rows[0];
+    const isManager = me && emp.manager_id === me.id;
+    if (!isManager && !(await hasPermission(req.user, 'pms_admin'))) {
+      return res.status(403).json({ error: 'not your report', needs: 'pms_admin' });
+    }
+
+    const c = await activeCycle(T(req));
+    const s = c ? (await db.query(
+      `SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, emp.id])).rows[0] : null;
+    res.json(await kraLibraryFor(T(req), emp, s && s.id));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------------- Development Plan (Org IDP) — BR-2.1/2.2/2.3 --------------

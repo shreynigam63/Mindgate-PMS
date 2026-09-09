@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -24,6 +24,7 @@ import NotificationBell from './pages/NotificationBell';
 import NineBoxPage from './pages/NineBoxPage';
 import MyGrowthPage from './pages/MyGrowthPage';
 import KraOrgOverviewPage from './pages/KraOrgOverviewPage';
+import KraLibraryPage from './pages/KraLibraryPage';
 import AnnualReviewPage from './pages/AnnualReviewPage';
 import MidYearReviewPage from './pages/MidYearReviewPage';
 import ConnectsPage from './pages/ConnectsPage';
@@ -55,6 +56,10 @@ const NAV = [
     { to: '/admin/department-heads', label: 'Department Heads', icon: UserCog, roles: ['admin', 'hr'] },
     { to: '/admin/career-transitions', label: 'Career Pathing Matrix', icon: GitBranch, roles: ['admin', 'hr'] },
     { to: '/admin/kra-overview', label: 'KRA Overview', icon: ClipboardList },
+    // Next to KRA Overview because the two are easily confused and the
+    // difference matters: Overview assigns KRAs to named people, this
+    // publishes a shelf per job title that employees pick from.
+    { to: '/admin/kra-library', label: 'KRA Library', icon: Library, roles: ['admin', 'hr'] },
     { to: '/admin/completion-report', label: 'PMS Completion Report', icon: FileText, roles: ['admin', 'hr'] },
     { to: '/admin/calibration', label: 'Calibration', icon: Sparkles },
     { to: '/admin/nine-box', label: '9-Box Grid', icon: Grid3x3 },
@@ -154,6 +159,7 @@ export default function App() {
             <Route path="/admin/career-transitions" element={<RequireRole user={user} roles={['admin', 'hr']}><CareerTransitionsPage /></RequireRole>} />
             <Route path="/admin/department-heads" element={<RequireRole user={user} roles={['admin', 'hr']}><DepartmentHeadsPage /></RequireRole>} />
             <Route path="/admin/kra-overview" element={<KraOrgOverviewPage />} />
+            <Route path="/admin/kra-library" element={<RequireRole user={user} roles={['admin', 'hr']}><KraLibraryPage /></RequireRole>} />
             <Route path="/admin/closure-letters" element={<ClosureLettersPage />} />
             <Route path="/admin/watchlist" element={<WatchlistPage />} />
             <Route path="/admin/nine-box" element={<NineBoxPage />} />

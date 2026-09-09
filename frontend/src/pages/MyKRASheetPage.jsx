@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Trash2, Check, Send } from 'lucide-react';
 import { api, phaseLabel, phaseColor } from '../utils/api';
+import KraLibraryPicker from './KraLibraryPicker';
 
 // Whitespace counts as empty. An imported cell can carry a stray space or
 // newline, and treating that as content would put the box back on exactly
@@ -56,6 +57,14 @@ export default function MyKRASheetPage() {
   const locked = data.sheet.status === 'approved' || data.sheet.status === 'submitted';
   const editable = data.cycle.phase === 'kra_open' && !locked;
   const set = (i, k) => (e) => setKras(ks => ks.map((r, j) => j === i ? { ...r, [k]: e.target.value } : r));
+
+  // KRAs picked from the role library land as ordinary unsaved rows —
+  // same shape as "+ Add KRA" produces, just with the fields filled in.
+  // They are a COPY from that moment on: editable, deletable, and
+  // untouched if HR later revises the library. Appended rather than
+  // inserted into their parameter group, because grouping is computed
+  // from the rows on every render and the sheet regroups itself.
+  const addFromLibrary = (rows) => setKras((ks) => [...ks, ...rows]);
   // Requested: the Description box read as an extra empty box on every
   // KRA. It is now shown only when that KRA has description text — which,
   // for an imported sheet, is whatever was in its Comments column.
@@ -125,6 +134,10 @@ export default function MyKRASheetPage() {
       {data.sheet.status === 'returned' && data.sheet.manager_comment && (
         <div className="card p-3 border-rose-200 bg-rose-50 text-sm text-rose-700"><b>Returned by your manager:</b> {data.sheet.manager_comment}</div>
       )}
+      {/* Only while KRAs are editable. Offering a shelf to someone who
+          cannot add anything from it is a dead control, and after the
+          phase closes the sheet is a record rather than a form. */}
+      {editable && <KraLibraryPicker source="/pms/my/kra-library" onAdd={addFromLibrary} />}
       {groups.map((g) => (
         <div key={g.cat} className="space-y-2">
           {/* The Parameter heading, with that group's weight beside it.
