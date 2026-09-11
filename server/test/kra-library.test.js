@@ -193,3 +193,60 @@ test('an unknown key field is rejected loudly rather than reported as a missing 
   assert.throws(() => validateKraBulkRows(sheets, known, null, { keyField: 'designatoin' }),
     /unknown KRA key field/);
 });
+
+test('"Designations" in the plural is accepted — one letter must not reject a perfect file', async () => {
+  // The client edited our own library template, naturally wrote the column
+  // heading as a plural because it heads a list of them, and got back
+  // "missing required column(s): designation" against a file with 2,145
+  // valid KRAs in it.
+  const buf = await bufOf((wb) => {
+    const ws = wb.addWorksheet('KRA Library');
+    ws.addRow([BANNER, BANNER, BANNER, BANNER, BANNER]);
+    ws.addRow(['Designations', 'Parameters', 'KRA \n(S.M.A.R.T GOALS)', 'KPIs', 'Weightage']);
+    ws.addRow([SSE, 'Financial', 'Budget adherence', 'Variance', 20]);
+  });
+  const r = validateKraBulkRows(await parseExcelSheets(buf), known, null, LIB);
+  assert.equal(r.ok, true, JSON.stringify(r.errors || r.fatal));
+  assert.equal(r.rows[0].designation, SSE);
+});
+
+test('a designation-keyed file on the EMPLOYEE-keyed screen is told which screen it belongs on', async () => {
+  // The wrong-screen case, which is what actually happened: a good file in
+  // the wrong place. "missing required column(s): employee_email" is true
+  // and useless — it sends HR hunting for a column the file was never
+  // supposed to have.
+  const buf = await bufOf((wb) => librarySheet(wb, 'KRA Library', [
+    [SSE, 'Financial', 'Budget adherence', 'Variance', 20, ''],
+  ]));
+  const r = validateKraBulkRows(await parseExcelSheets(buf), new Set(['a@example.com']), new Map());
+  assert.equal(r.ok, false);
+  assert.equal(r.wrong_screen, 'designation');
+  assert.match(r.fatal, /keyed on Designation, but this screen expects Employee Email/);
+  assert.match(r.fatal, /KRA Library/);
+});
+
+test('and the reverse: an employee-keyed file on the LIBRARY screen is pointed at KRA Overview', async () => {
+  const buf = await bufOf((wb) => {
+    const ws = wb.addWorksheet('by email');
+    ws.addRow(['employee_email', 'Parameters', 'KRA \n(S.M.A.R.T GOALS)', 'KPIs', 'Weightage']);
+    ws.addRow(['a@example.com', 'Financial', 'Budget adherence', 'Variance', 100]);
+  });
+  const r = validateKraBulkRows(await parseExcelSheets(buf), known, null, LIB);
+  assert.equal(r.ok, false);
+  assert.equal(r.wrong_screen, 'employee_email');
+  assert.match(r.fatal, /KRA Overview/);
+});
+
+test('a file missing BOTH key columns still gets the plain missing-column message', async () => {
+  // The wrong-screen hint must not swallow the ordinary case of a genuinely
+  // malformed file — there is no other screen to send that one to.
+  const buf = await bufOf((wb) => {
+    const ws = wb.addWorksheet('no key');
+    ws.addRow(['Parameters', 'KRA \n(S.M.A.R.T GOALS)', 'KPIs', 'Weightage']);
+    ws.addRow(['Financial', 'Budget adherence', 'Variance', 20]);
+  });
+  const r = validateKraBulkRows(await parseExcelSheets(buf), known, null, LIB);
+  assert.equal(r.ok, false);
+  assert.equal(r.wrong_screen, undefined);
+  assert.match(r.fatal, /missing required column\(s\): designation/);
+});

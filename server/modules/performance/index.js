@@ -813,7 +813,15 @@ const KRA_HEADER_ALIASES = {
   // the KRA's own title far more often than the person's job title, and
   // mapping it here would silently file every KRA under a designation
   // named after itself.
-  designation: 'designation', job_title: 'designation', role: 'designation',
+  // Plurals are accepted alongside the singular because the column heads
+  // a LIST of designations, so whoever edits the sheet naturally writes
+  // it that way — the client's own copy of our library template came
+  // back with "Designations" and was rejected with "missing required
+  // column(s): designation" against a file that was otherwise perfect:
+  // 2,145 KRAs across 265 designations, no other error. One letter.
+  designation: 'designation', designations: 'designation',
+  job_title: 'designation', job_titles: 'designation',
+  role: 'designation', roles: 'designation',
   parameters: 'category', parameter: 'category', category: 'category',
   kra: 'kra_title', kra_title: 'kra_title', kras: 'kra_title', key_result_area: 'kra_title', goal: 'kra_title',
   kpis: 'measures', kpi: 'measures', measures: 'measures', measure: 'measures',
@@ -1072,7 +1080,11 @@ function parseKraSheet(sheetName, rows, rowNumbers, merged, keyField = 'employee
   }
 
   const missing = kraBulkRequired(keyField).filter((c) => idx[c] == null);
-  return { headerRowNumber: rowNumberAt(headerRow), missing, unknown, records, notes, shared };
+  // Which of the two key columns this sheet actually carries, whichever
+  // one this importer was asked for. Lets the caller tell "you are on the
+  // wrong screen" apart from "this file is broken" — see the fatal below.
+  const keyColumnsPresent = KRA_KEY_FIELDS.filter((k) => idx[k] != null);
+  return { headerRowNumber: rowNumberAt(headerRow), missing, unknown, records, notes, shared, keyColumnsPresent };
 }
 
 // sheets: [{ name, rows }] — one entry for a CSV, one per worksheet for an
@@ -1097,7 +1109,7 @@ function validateKraBulkRows(sheets, knownKeys, empByEmail, opts = {}) {
   for (const sheet of nonEmpty) {
     const parsed = parseKraSheet(sheet.name, sheet.rows, sheet.rowNumbers, sheet.merged, keyField);
     if (!parsed) { skippedSheets.push(sheet.name || 'file'); continue; }
-    if (parsed.missing.length) { missingBySheet.push({ sheet: sheet.name, missing: parsed.missing }); continue; }
+    if (parsed.missing.length) { missingBySheet.push({ sheet: sheet.name, missing: parsed.missing, has: parsed.keyColumnsPresent }); continue; }
     if (parsed.unknown.length) {
       warnings.push({ sheet: sheet.name, line: parsed.headerRowNumber, warning: `ignored column(s) with no place in a KRA: ${parsed.unknown.join(', ')}` });
     }
@@ -1132,6 +1144,22 @@ function validateKraBulkRows(sheets, knownKeys, empByEmail, opts = {}) {
   if (!out.length && missingBySheet.length) {
     const first = missingBySheet[0];
     const where = first.sheet ? `sheet "${first.sheet}": ` : '';
+    // THE WRONG-SCREEN CASE. A designation-keyed library file uploaded on
+    // the employee-keyed screen (or the reverse) is a perfectly good file
+    // in the wrong place, and "missing required column(s): employee_email"
+    // is true but sends HR hunting for a column they were never supposed
+    // to have. It happened to the client with their own copy of our own
+    // library template. If the sheet carries the OTHER key column, say
+    // which screen this file belongs on instead.
+    const other = (first.has || []).find((k) => k !== keyField);
+    if (other) {
+      const goTo = other === 'designation'
+        ? 'This is a designation-keyed file — upload it on HR Admin → KRA Library, which publishes a shelf of suggested KRAs per job title.'
+        : 'This is an employee-keyed file — upload it on HR Admin → KRA Overview, which assigns KRAs to named people.';
+      return { ok: false, rows: [], errors: [], warnings: [],
+        fatal: `${where}this file is keyed on ${other === 'designation' ? 'Designation' : 'Employee Email'}, but this screen expects ${keyField === 'designation' ? 'Designation' : 'Employee Email'}. ${goTo}`,
+        wrong_screen: other };
+    }
     return { ok: false, fatal: `${where}missing required column(s): ${first.missing.join(', ')}`, rows: [], errors: [], warnings: [] };
   }
   if (!out.length) {
