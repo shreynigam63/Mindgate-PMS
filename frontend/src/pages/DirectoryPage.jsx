@@ -111,17 +111,66 @@ export default function DirectoryPage() {
       <div className="card p-4 space-y-2">
         <p className="lbl">Bulk import — CSV or Excel (.xlsx), synced from your HRMS, dry run first</p>
         <div className="flex flex-wrap items-center gap-2">
-          <a className="btn-sec" href={`${API_BASE}/employees/import-template.csv?token=${localStorage.getItem('apms_token')}`}>Download template</a>
+          <a className="btn-sec" href={`${API_BASE}/employees/import-template.xlsx?token=${localStorage.getItem('apms_token')}`}>Download template (.xlsx)</a>
+          <a className="btn-sec" href={`${API_BASE}/employees/import-template.csv?token=${localStorage.getItem('apms_token')}`}>.csv</a>
           <input type="file" accept=".csv,.xlsx,.xls" onChange={e => { setFile(e.target.files[0]); setReport(null); }} className="text-xs" />
           <button className="btn-sec" disabled={!file} onClick={() => send(false)}>Validate</button>
           <button className="btn-pri" disabled={!file || !(report && report.ok && !report.committed)} onClick={() => send(true)}>Commit load</button>
         </div>
-        <p className="text-[11px] text-navy-400">Legacy .xls files aren't supported — save as .xlsx first (File → Save As → Excel Workbook). The template includes one example row — delete it before uploading your real data.</p>
+        <p className="text-[11px] text-navy-400">
+          <b>Your HRMS export can be uploaded as it comes</b> — its own column names (Employee Code, Full Name,
+          Office Email, Reporting Manager, HOD) are recognised, and columns the PMS doesn't use are ignored.
+          Reporting Manager and HOD are matched on the full name as spelt in this same file.
+          Legacy .xls isn't supported — save as .xlsx first (File → Save As → Excel Workbook).
+          The template includes one example row — delete it before uploading your real data.
+        </p>
         {err && <p className="text-xs text-rose-600">{err}</p>}
         {report && (
           <div className="text-xs space-y-1">
             <p className="font-semibold">{report.committed ? 'LOADED' : report.ok ? 'VALID — commit to load' : 'REJECTED'}
               {report.summary && ` · ${report.summary.total} rows · ${report.summary.errors} errors · ${report.summary.warnings} warnings`}</p>
+            {/* The headline facts, above the per-row detail. On a real HRMS
+                export the detail runs to a hundred lines, and "1,336 managers
+                matched, 33 people have no email" is what HR actually needs to
+                read before deciding whether to commit. */}
+            {report.summary && (
+              <div className="flex flex-wrap gap-1.5 pb-1">
+                {report.summary.managers_resolved_by_name > 0 && (
+                  <span className="chip bg-navy-50 text-navy-600">{report.summary.managers_resolved_by_name} reporting lines matched by name</span>)}
+                {report.summary.department_heads > 0 && (
+                  <span className="chip bg-leaf-50 text-leaf-600">{report.summary.department_heads} department head{report.summary.department_heads === 1 ? '' : 's'} set from the HOD column</span>)}
+                {report.summary.department_heads_need_a_choice > 0 && (
+                  <span className="chip bg-amber-100 text-amber-700">{report.summary.department_heads_need_a_choice} department{report.summary.department_heads_need_a_choice === 1 ? '' : 's'} need a head chosen</span>)}
+                {report.summary.placeholder_emails > 0 && (
+                  <span className="chip bg-amber-100 text-amber-700">{report.summary.placeholder_emails} with no email — cannot sign in</span>)}
+              </div>
+            )}
+            {!!(report.department_heads_need_a_choice || []).length && (
+              <details className="text-[11px]">
+                <summary className="cursor-pointer text-amber-700 font-semibold">
+                  Departments whose rows name more than one HOD — pick the head on Department Heads
+                </summary>
+                <div className="pt-1 space-y-0.5">
+                  {report.department_heads_need_a_choice.map((d) => (
+                    <p key={d.department} className="text-navy-500">
+                      <b>{d.department}</b>: {d.candidates.map((c) => `${c.name} (${c.employees})`).join(', ')}
+                    </p>
+                  ))}
+                </div>
+              </details>
+            )}
+            {!!(report.placeholder_emails || []).length && (
+              <details className="text-[11px]">
+                <summary className="cursor-pointer text-amber-700 font-semibold">
+                  {report.placeholder_emails.length} employees have no email on record — give them one in the HRMS
+                </summary>
+                <div className="pt-1 space-y-0.5">
+                  {report.placeholder_emails.map((p) => (
+                    <p key={p.email} className="text-navy-500">line {p.line}: <b>{p.name}</b> ({p.emp_code || 'no code'})</p>
+                  ))}
+                </div>
+              </details>
+            )}
             {(report.errors || []).map((e, i) => <p key={i} className="text-rose-600">line {e.line}: {e.error}</p>)}
             {(report.warnings || []).map((w, i) => <p key={i} className="text-amber-700">line {w.line}: {w.warning}</p>)}
           </div>
@@ -191,7 +240,12 @@ export default function DirectoryPage() {
                   <Fragment key={r.id}>
                     <tr>
                       <td className="px-3 py-2 font-mono text-navy-500">{r.emp_code || '—'}</td>
-                      <td className="px-3 py-2 font-semibold">{r.name}</td><td className="px-3 py-2">{r.email}</td>
+                      <td className="px-3 py-2 font-semibold">{r.name}</td>
+                      <td className="px-3 py-2">
+                        {r.email_is_placeholder
+                          ? <span className="chip bg-amber-100 text-amber-700" title={`Placeholder: ${r.email}`}>no email on record</span>
+                          : r.email}
+                      </td>
                       <td className="px-3 py-2">{r.department || '—'}</td>
                       <td className="px-3 py-2">{r.manager_email || '—'}</td><td className="px-3 py-2">{r.status}</td>
                       <td className="px-3 py-2 whitespace-nowrap">

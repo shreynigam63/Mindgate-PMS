@@ -30,13 +30,33 @@ test('clean file passes with manager links resolved', () => {
   assert.equal(r.rows[2].date_of_joining, '2023-01-09');
 });
 
-test('duplicate email is an error naming both lines', () => {
+// CHANGED BEHAVIOUR. A duplicate used to reject the whole file. The
+// client's 1,397-row HRMS export contains exactly one shared address (two
+// Linux Administrators), and refusing 1,397 people over it helped nobody.
+// The first row keeps the address, the second is given a placeholder it
+// cannot sign in with, and both lines are named. The file still loads and
+// the problem is still impossible to miss.
+test('duplicate email: the first keeps it, the second is given a placeholder, both lines named', () => {
   const csv = [HEADER,
     'E1,A,a@x.com,D,,,,,active',
     'E2,B,a@x.com,D,,,,,active'].join('\n');
   const r = validateEmployeeCsv(csv);
+  assert.equal(r.ok, true);
+  assert.equal(r.rows[0].email, 'a@x.com');
+  assert.equal(r.rows[1].email, 'e2@no-email.invalid');
+  assert.equal(r.rows[1].email_is_placeholder, true);
+  assert.match(r.warnings.find(w => /already used/.test(w.warning)).warning,
+    /email "a@x.com" is already used at line 2/);
+});
+
+// ...but only because there was an employee code to build an identity
+// from. With nothing to fall back on it is still a hard error, because two
+// people genuinely cannot share one sign-in.
+test('duplicate email with no employee code is still an error', () => {
+  const csv = ['name,email', 'A,a@x.com', 'B,a@x.com'].join('\n');
+  const r = validateEmployeeCsv(csv);
   assert.equal(r.ok, false);
-  assert.match(r.errors[0].error, /duplicate email "a@x.com" \(first at line 2\)/);
+  assert.match(r.errors[0].error, /duplicate email "a@x.com" \(first at line 2\) and no employee code/);
 });
 
 test('manager not in file is an error', () => {
@@ -116,15 +136,17 @@ test('xlsx: clean workbook passes with manager links resolved, same as CSV', asy
   assert.equal(r.rows[1].date_of_joining, '2021-06-15');
 });
 
-test('xlsx: duplicate email is an error, identical message to the CSV path', async () => {
+test('xlsx: duplicate email behaves identically to the CSV path', async () => {
   const header = ['emp_code','name','email','department'];
   const buf = await buildXlsx(header, [
     ['E1','A','a@x.com','D'],
     ['E2','B','a@x.com','D'],
   ]);
   const r = await validateEmployeeXlsx(buf);
-  assert.equal(r.ok, false);
-  assert.match(r.errors[0].error, /duplicate email "a@x.com" \(first at line 2\)/);
+  assert.equal(r.ok, true);
+  assert.equal(r.rows[1].email, 'e2@no-email.invalid');
+  assert.match(r.warnings.find(w => /already used/.test(w.warning)).warning,
+    /email "a@x.com" is already used at line 2/);
 });
 
 test('xlsx: manager chain cycle is detected, same as the CSV path', async () => {

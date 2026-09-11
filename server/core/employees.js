@@ -13,7 +13,15 @@
 //
 // Columns (header row, case-insensitive, order-free):
 //   emp_code, name, email, department, designation, role_band,
-//   manager_email, date_of_joining (flexible formats), status
+//   manager_email, manager_name, hod_name,
+//   date_of_joining (flexible formats), status
+//
+// An HRMS export can be uploaded exactly as it comes out of the HRMS:
+// HEADER_ALIASES maps the names those reports actually use ("Full Name",
+// "Office Email", "Reporting Manager", "HOD") onto the ones above, and
+// IGNORED_COLUMNS swallows the ones the PMS has no use for. The client's
+// 1,397-row report was previously refused at the header check before a
+// single row was read, with nothing wrong in the data at all.
 //
 // validateEmployeeRows() is a PURE function — no db — so it is unit-tested
 // directly and reused by the standalone tool in /tools.
@@ -72,7 +80,61 @@ function flexDate(v) {
 
 // ---------- Validation (pure) ----------------------------------------------
 const REQUIRED = ['name', 'email'];
-const KNOWN = ['emp_code','name','email','department','designation','role_band','manager_email','date_of_joining','status'];
+const KNOWN = ['emp_code','name','email','department','designation','role_band',
+  'manager_email','manager_name','hod_name','date_of_joining','status'];
+
+// The header spellings an HRMS export actually uses, mapped onto the names
+// above. The client's report calls them "Full Name" and "Office Email"; the
+// importer called them name and email, and the whole 1,397-row file was
+// rejected at the header check with "Missing required column(s): name,
+// email" before a single row was read. Nothing was wrong with the data.
+//
+// Aliases rather than a rename, so every file that already works keeps
+// working — this only widens what is recognised.
+const HEADER_ALIASES = {
+  employee_code: 'emp_code', employee_id: 'emp_code', emp_id: 'emp_code', empcode: 'emp_code', code: 'emp_code',
+  full_name: 'name', employee_name: 'name', emp_name: 'name',
+  office_email: 'email', official_email: 'email', work_email: 'email', email_id: 'email', email_address: 'email',
+  job_title: 'designation',
+  band: 'role_band', grade: 'role_band',
+  reporting_manager: 'manager_name', reporting_manager_name: 'manager_name', manager: 'manager_name',
+  managers_email: 'manager_email', manager_email_id: 'manager_email', reporting_manager_email: 'manager_email',
+  hod: 'hod_name', head_of_department: 'hod_name', department_head: 'hod_name',
+  doj: 'date_of_joining', joining_date: 'date_of_joining', date_of_join: 'date_of_joining',
+};
+
+// Columns the HRMS export carries that the PMS has no use for. Listed so
+// they are ignored SILENTLY rather than reported as "unknown column" — an
+// export with a dozen irrelevant columns would otherwise bury the warnings
+// that matter under noise about ones nobody needs to act on.
+//
+// Date of Birth, Gender and Salutation are in here deliberately: the
+// product has no feature that reads them, and the less personal data the
+// appraisal system holds, the better.
+const IGNORED_COLUMNS = new Set([
+  'company', 'salutation', 'date_of_birth', 'dob', 'gender', 'marital_status',
+  'branch', 'branchcode', 'branch_code', 'sub_department', 'site_location', 'location',
+  'business_hr', 'qualification', 'currentexperiance', 'current_experience', 'experience',
+  'resignation_date', 'last_working_date',
+]);
+
+// An address for someone the HRMS has no email for. .invalid is reserved by
+// RFC 2606 precisely so it can never resolve or accept mail, which is the
+// point: these people exist in the org chart and can be rated by their
+// manager, but the address is visibly not a real one and nothing will ever
+// be delivered to it. They cannot sign in until HR adds a real address.
+const NO_EMAIL_DOMAIN = 'no-email.invalid';
+const isPlaceholderEmail = (e) => !!e && String(e).toLowerCase().endsWith('@' + NO_EMAIL_DOMAIN);
+function placeholderEmail(empCode) {
+  const slug = String(empCode || '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug ? `${slug}@${NO_EMAIL_DOMAIN}` : null;
+}
+
+// Names are matched on shape, not byte-for-byte: an HRMS writes "Priya
+// Menon" in one column and "Priya  Menon" in another often enough that
+// exact comparison would drop reporting lines for no reason a human would
+// accept.
+const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 // ---------- Excel (.xlsx/.xls) parsing — same array-of-rows shape as parseCsv
 // so both formats feed the one validator below. Dates come back as either a
@@ -142,40 +204,177 @@ async function parseExcelSheets(buffer) {
 
 function validateEmployeeRows(rows) {
   if (!rows.length) return { ok: false, fatal: 'Empty file', rows: [], errors: [], warnings: [] };
-  const header = rows[0].map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
+  // Header normalisation, then aliasing: "Office Email" -> office_email ->
+  // email. Done in one place so every downstream lookup uses the canonical
+  // name and knows nothing about what the HRMS happened to call it.
+  const header = rows[0].map((h) => {
+    const norm = String(h).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    return HEADER_ALIASES[norm] || norm;
+  });
   const missing = REQUIRED.filter(c => !header.includes(c));
   if (missing.length) return { ok: false, fatal: `Missing required column(s): ${missing.join(', ')}`, rows: [], errors: [], warnings: [] };
-  const unknown = header.filter(h => !KNOWN.includes(h));
+  const unknown = header.filter(h => h && !KNOWN.includes(h) && !IGNORED_COLUMNS.has(h));
 
   const idx = Object.fromEntries(header.map((h, i) => [h, i]));
   const out = []; const errors = []; const warnings = [];
   const seenEmails = new Map();
+  const leaverCol = idx['resignation_date'] != null ? 'resignation_date'
+    : (idx['last_working_date'] != null ? 'last_working_date' : null);
 
   rows.slice(1).forEach((r, n) => {
     const line = n + 2; // 1-based + header
-    const get = (c) => (idx[c] != null ? (r[idx[c]] || '').trim() : '');
+    const get = (c) => (idx[c] != null ? String(r[idx[c]] ?? '').trim() : '');
+    // All whitespace stripped, not just the ends: the client's export
+    // carries addresses written "amit.nandi @mindgate.in". No valid
+    // unquoted address contains a space, so removing them can only ever
+    // repair the value — and it is reported, so the HRMS gets fixed too.
+    const emailRaw = get('email');
+    const emailClean = emailRaw.replace(/\s+/g, '').toLowerCase();
     const rec = {
       line,
       emp_code: get('emp_code') || null,
       name: get('name'),
-      email: get('email').toLowerCase(),
+      email: emailClean,
+      email_is_placeholder: false,
       department: get('department') || null,
       designation: get('designation') || null,
       role_band: get('role_band') || null,
-      manager_email: (get('manager_email') || '').toLowerCase() || null,
+      manager_email: get('manager_email').replace(/\s+/g, '').toLowerCase() || null,
+      manager_name: get('manager_name') || null,
+      hod_name: get('hod_name') || null,
       date_of_joining_raw: get('date_of_joining') || null,
       date_of_joining: flexDate(get('date_of_joining')),
       status: (get('status') || 'active').toLowerCase(),
     };
     if (!rec.name) errors.push({ line, error: 'name is empty' });
-    if (!rec.email) errors.push({ line, error: 'email is empty' });
-    else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(rec.email)) errors.push({ line, error: `invalid email "${rec.email}"` });
-    else if (seenEmails.has(rec.email)) errors.push({ line, error: `duplicate email "${rec.email}" (first at line ${seenEmails.get(rec.email)})` });
-    else seenEmails.set(rec.email, line);
+    if (emailRaw && emailClean !== emailRaw.toLowerCase()) {
+      warnings.push({ line, warning: `email "${emailRaw}" contains spaces — read as "${emailClean}"; fix it in the HRMS` });
+    }
+
+    // No address, or one already claimed by an earlier row. Neither can be
+    // stored as-is: the address is the sign-in identity and is unique per
+    // person. A placeholder keeps them in the org chart — their manager can
+    // still rate them, they still appear in every report — and the address
+    // itself says plainly that it is not real.
+    const clash = rec.email && seenEmails.has(rec.email) ? seenEmails.get(rec.email) : null;
+    if (!rec.email || clash) {
+      const ph = placeholderEmail(rec.emp_code);
+      if (!ph) {
+        errors.push({ line, error: clash
+          ? `duplicate email "${rec.email}" (first at line ${clash}) and no employee code to derive a placeholder from`
+          : 'email is empty and there is no employee code to derive a placeholder from' });
+      } else if (seenEmails.has(ph)) {
+        errors.push({ line, error: `employee code "${rec.emp_code}" is already used at line ${seenEmails.get(ph)}` });
+      } else {
+        warnings.push({ line, warning: clash
+          ? `email "${rec.email}" is already used at line ${clash} — this row was given the placeholder address "${ph}" and cannot sign in until HR gives them their own`
+          : `no email on record — given the placeholder address "${ph}"; this employee cannot sign in until HR adds a real one` });
+        rec.email = ph;
+        rec.email_is_placeholder = true;
+        seenEmails.set(ph, line);
+      }
+    } else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(rec.email)) {
+      errors.push({ line, error: `invalid email "${rec.email}"` });
+    } else {
+      seenEmails.set(rec.email, line);
+    }
+
     if (rec.date_of_joining_raw && !rec.date_of_joining) warnings.push({ line, warning: `unparseable date_of_joining "${rec.date_of_joining_raw}" — will be stored empty` });
     if (!['active', 'inactive'].includes(rec.status)) { warnings.push({ line, warning: `status "${rec.status}" not active|inactive — treated as active` }); rec.status = 'active'; }
+    // A leaving date with no status column says the HRMS knows this person
+    // has gone and the file does not. Importing them as active would put a
+    // leaver into the next appraisal cycle, so it is said out loud rather
+    // than guessed at — the file's own status column still decides.
+    if (leaverCol && get(leaverCol) && rec.status === 'active' && idx['status'] == null) {
+      warnings.push({ line, warning: `${leaverCol.replace(/_/g, ' ')} is set ("${get(leaverCol)}") but there is no status column — imported as active` });
+    }
     out.push(rec);
   });
+
+  // Reporting Manager as a NAME. The client's export names the manager
+  // rather than addressing them, which is how an HRMS presents an org
+  // chart to a human. Resolved against the Full Name column of this same
+  // file, so the file stays self-contained.
+  //
+  // An unresolved name is a WARNING, not an error, where an unresolved
+  // manager_email stays an error: an address is an exact identifier and a
+  // miss means the file contradicts itself, whereas a name is a soft key
+  // and a miss usually means the manager simply is not in this extract
+  // (they left, or sit outside the exported population). Refusing 1,397
+  // rows over 41 such names would help nobody.
+  const byName = new Map();
+  for (const r of out) {
+    const k = normName(r.name);
+    if (!k) continue;
+    if (!byName.has(k)) byName.set(k, []);
+    byName.get(k).push(r);
+  }
+  let resolvedByName = 0;
+  for (const r of out) {
+    if (!r.manager_name || r.manager_email) continue;
+    const hits = byName.get(normName(r.manager_name)) || [];
+    if (!hits.length) {
+      warnings.push({ line: r.line, warning: `reporting manager "${r.manager_name}" is not in this file — no reporting line set` });
+    } else if (hits.length > 1) {
+      errors.push({ line: r.line, error: `reporting manager "${r.manager_name}" is ambiguous — ${hits.length} employees share that name; use a manager_email column for this row` });
+    } else if (hits[0] === r) {
+      // The HRMS points 4 people at themselves. Wrong, but the only sane
+      // reading is "no manager", and the org-chart-wide "N employees have
+      // no manager" warning below already makes that visible. Refusing the
+      // whole file over it would be the importer being difficult rather
+      // than careful. A manager_email that self-references stays an error:
+      // there the file states an identity and contradicts itself.
+      warnings.push({ line: r.line, warning: `reporting manager "${r.manager_name}" is this employee — no reporting line set` });
+    } else {
+      r.manager_email = hits[0].email;
+      resolvedByName++;
+    }
+  }
+
+  // HOD -> department heads. The column names the person who heads the
+  // employee's department, which is exactly what fills the Delivery Head
+  // Review queue — a step HR would otherwise set up by hand, per
+  // department, after every import.
+  const headVotes = new Map(); // department -> Map(normalised name -> {name, count})
+  for (const r of out) {
+    if (!r.hod_name || !r.department) continue;
+    if (!headVotes.has(r.department)) headVotes.set(r.department, new Map());
+    const m = headVotes.get(r.department);
+    const k = normName(r.hod_name);
+    if (!m.has(k)) m.set(k, { name: r.hod_name, count: 0 });
+    m.get(k).count++;
+  }
+  // UNANIMOUS OR NOTHING. The first cut of this took the most common HOD
+  // per department, which looked reasonable and was wrong: in the client's
+  // own data "Development" is 226 people naming 23 different HODs, because
+  // their Department is a coarse grouping and the HOD column records each
+  // person's actual head within it. Taking the modal name would have put
+  // 226 people into one person's Delivery Head Review queue and called it
+  // configuration.
+  //
+  // So a head is set automatically only where every employee in the
+  // department names the same one. Everywhere else the disagreement is
+  // reported and HR chooses on the Department Heads screen — which is a
+  // decision about who reviews whom, and not one to infer from a tally.
+  const departmentHeads = [];
+  const headsNeedingAChoice = [];
+  for (const [department, votes] of headVotes) {
+    const ranked = [...votes.values()].sort((a, b) => b.count - a.count);
+    if (ranked.length > 1) {
+      headsNeedingAChoice.push({ department, candidates: ranked.map((v) => ({ name: v.name, employees: v.count })) });
+      warnings.push({ line: 0, warning: `department "${department}" names ${ranked.length} different HODs — no department head set automatically; choose one on the Department Heads screen` });
+      continue;
+    }
+    const only = ranked[0];
+    const hits = byName.get(normName(only.name)) || [];
+    if (!hits.length) {
+      warnings.push({ line: 0, warning: `HOD "${only.name}" for department "${department}" is not in this file — no department head set` });
+    } else if (hits.length > 1) {
+      warnings.push({ line: 0, warning: `HOD "${only.name}" for department "${department}" is ambiguous — ${hits.length} employees share that name; no department head set` });
+    } else {
+      departmentHeads.push({ department, name: hits[0].name, email: hits[0].email, employees: only.count });
+    }
+  }
 
   // Manager references + chain cycles (the routing prerequisite).
   const byEmail = new Map(out.map(r => [r.email, r]));
@@ -207,8 +406,23 @@ function validateEmployeeRows(rows) {
   if (noManager > 1) warnings.push({ line: 0, warning: `${noManager} employees have no manager (expected ~1 top of org) — verify` });
   if (unknown.length) warnings.push({ line: 1, warning: `ignored unknown column(s): ${unknown.join(', ')}` });
 
+  const placeholders = out.filter((r) => r.email_is_placeholder);
   return { ok: errors.length === 0, fatal: null, rows: out, errors, warnings,
-    summary: { total: out.length, errors: errors.length, warnings: warnings.length, departments: new Set(out.map(r => r.department).filter(Boolean)).size } };
+    department_heads: departmentHeads,
+    // Departments whose HOD column disagrees with itself. Reported rather
+    // than resolved, because picking between them is HR's call.
+    department_heads_need_a_choice: headsNeedingAChoice,
+    // Everyone who will be loaded without a working address, named, so the
+    // dry run answers "who can't sign in" without reading 1,400 warnings.
+    placeholder_emails: placeholders.map((r) => ({ line: r.line, emp_code: r.emp_code, name: r.name, email: r.email })),
+    summary: {
+      total: out.length, errors: errors.length, warnings: warnings.length,
+      departments: new Set(out.map(r => r.department).filter(Boolean)).size,
+      managers_resolved_by_name: resolvedByName,
+      department_heads: departmentHeads.length,
+      department_heads_need_a_choice: headsNeedingAChoice.length,
+      placeholder_emails: placeholders.length,
+    } };
 }
 
 // Format-specific entry points — both funnel into validateEmployeeRows so
@@ -276,7 +490,8 @@ async function pendingManagerRoleGrants(tenantId, rows) {
   return candidates.filter((e) => !existing.includes(e));
 }
 
-async function loadEmployees(tenantId, rows) {
+async function loadEmployees(tenantId, rows, opts = {}) {
+  const departmentHeads = Array.isArray(opts.departmentHeads) ? opts.departmentHeads : [];
   const client = await db.getClient();
   try {
     await client.query('BEGIN');
@@ -337,15 +552,46 @@ async function loadEmployees(tenantId, rows) {
     // DOWNGRADE an HR or admin who also happens to manage people, quietly
     // stripping permissions on a routine sync. Upgrades only, and only
     // into the gap.
+    const heads = new Set(departmentHeads.map((h) => String(h.email).toLowerCase()));
     const grants = [];
     for (const email of managersInFile(rows)) {
+      if (heads.has(email)) continue; // granted below, at the higher level
       const r = await client.query(
         `INSERT INTO core.user_roles (tenant_id, email, role) VALUES ($1,$2,'manager')
          ON CONFLICT DO NOTHING RETURNING email`, [tenantId, email]);
       if (r.rowCount) grants.push(email);
     }
+
+    // Department heads, from the file's HOD column. This is what fills the
+    // Delivery Head Review queue, and setting it by hand after every import
+    // is a step HR should not have to remember.
+    const headGrants = [];
+    const headsSet = [];
+    for (const h of departmentHeads) {
+      const emp = (await client.query(
+        `SELECT id FROM core.employees WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`,
+        [tenantId, h.email])).rows[0];
+      if (!emp) continue; // the validator resolved them from this same file, so this is belt and braces
+      await client.query(
+        `INSERT INTO core.department_heads (tenant_id, department, employee_id) VALUES ($1,$2,$3)
+         ON CONFLICT (tenant_id, department) DO UPDATE SET employee_id=EXCLUDED.employee_id`,
+        [tenantId, h.department, emp.id]);
+      headsSet.push({ department: h.department, name: h.name, email: h.email });
+      // The hod bundle is the manager bundle plus pms_hod, so moving a
+      // manager up to hod only ever adds permissions. hr and admin are left
+      // alone — for them it WOULD be a downgrade, which is exactly the trap
+      // the manager grant's ON CONFLICT DO NOTHING exists to avoid.
+      const g = await client.query(
+        `INSERT INTO core.user_roles (tenant_id, email, role) VALUES ($1,$2,'hod')
+         ON CONFLICT (tenant_id, email) DO UPDATE SET role='hod'
+           WHERE core.user_roles.role IN ('employee','manager')
+         RETURNING email`, [tenantId, h.email]);
+      if (g.rowCount) headGrants.push(h.email);
+    }
+
     await client.query('COMMIT');
-    return { loaded: rows.length, manager_roles_granted: grants };
+    return { loaded: rows.length, manager_roles_granted: grants,
+             department_heads_set: headsSet, hod_roles_granted: headGrants };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     throw e;
@@ -368,20 +614,76 @@ router.use(authenticate, apiPermissionParity);
 // handler can pass one into a query (see core/http.js).
 guardUuidParams(router);
 
-// GET /employees/import-template.csv — download link for the bulk import
-// form. Found missing during QA (no way to see the expected columns
-// without guessing). Header row matches KNOWN exactly so this can never
-// drift out of sync with what the importer actually accepts, plus one
-// clearly-labelled example row to show the expected shape — remove it
-// before uploading real data.
+// The template HR downloads. Its headers are now the ones the HRMS export
+// already produces — "Employee Code", "Full Name", "Office Email",
+// "Reporting Manager", "HOD" — rather than the importer's internal names,
+// so the ordinary case is: run the HRMS report, upload it, done. Every
+// older spelling still imports (HEADER_ALIASES), this only changes what we
+// HAND OUT.
+//
+// Each entry is [header, example, note]. The note goes in a second sheet
+// on the .xlsx, where it can be read, rather than into the header row,
+// where it would have to be deleted before upload.
+const TEMPLATE_COLUMNS = [
+  ['Employee Code',     'MGS1001',                  'Required if anyone has no email — the placeholder address is built from it. Must be unique.'],
+  ['Full Name',         'Jane Sample',              'Required. Also how the Reporting Manager and HOD columns are matched, so spell it the same way in all three.'],
+  ['Office Email',      'jane.sample@example.com',  'The sign-in address; must be unique. Leave blank only if you have no address — that person gets a placeholder and cannot sign in.'],
+  ['Department',        'Engineering',              'Groups the employee for reports and for the Delivery Head review queue.'],
+  ['Designation',       'Senior Software Engineer', 'Decides which KRA library shelf this employee is offered. Spell it as it appears in the KRA library.'],
+  ['Reporting Manager', 'Priya Menon',              'The manager\u2019s FULL NAME as written in this same file. Leave blank for the top of the organisation.'],
+  ['HOD',               'Rajesh Kulkarni',          'Head of this employee\u2019s department, by full name. Where every row in a department agrees, the department head is set automatically.'],
+  ['Date of Joining',   '15/01/2024',               'dd/mm/yyyy, or yyyy-mm-dd, or a real Excel date.'],
+  ['Status',            'active',                   'active or inactive. Defaults to active if the column is absent.'],
+];
+
 router.get('/import-template.csv', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
-    const example = ['E1001', 'Jane Sample', 'jane.sample@example.com', 'Engineering', 'Software Engineer', 'G5', '', '2024-01-15', 'active'];
-    const csv = [KNOWN.join(','), example.join(',')].join('\n') + '\n';
+    const q = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const csv = [
+      TEMPLATE_COLUMNS.map((c) => q(c[0])).join(','),
+      TEMPLATE_COLUMNS.map((c) => q(c[1])).join(','),
+    ].join('\n') + '\n';
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="employee_import_template.csv"');
     res.send(csv);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// The same template as a workbook, because the HRMS export is a workbook
+// and HR should not have to convert formats to compare the two. Sheet 1 is
+// the sheet to fill in; sheet 2 explains every column, so the instructions
+// are not sitting in a row that has to be deleted before upload.
+router.get('/import-template.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Employees');
+    ws.addRow(TEMPLATE_COLUMNS.map((c) => c[0]));
+    ws.addRow(TEMPLATE_COLUMNS.map((c) => c[1]));
+    ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3B6F' } };
+    ws.getRow(1).height = 22;
+    ws.getRow(2).font = { italic: true, color: { argb: 'FF8894A8' } };
+    TEMPLATE_COLUMNS.forEach((c, i) => { ws.getColumn(i + 1).width = Math.max(16, Math.min(30, c[0].length + 8)); });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+    const help = wb.addWorksheet('How to fill this in');
+    help.addRow(['Column', 'Example', 'What it is for']);
+    for (const c of TEMPLATE_COLUMNS) help.addRow(c);
+    help.addRow([]);
+    help.addRow(['Row 2 of the Employees sheet is an example — delete it before uploading.']);
+    help.addRow(['Your HRMS export can be uploaded as it comes: its own column names are recognised.']);
+    help.addRow(['Columns the PMS does not use (Date of Birth, Gender, Salutation, Branch, Qualification) are ignored.']);
+    help.addRow(['Upload validates first and shows you every problem row. Nothing is saved until you commit.']);
+    help.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    help.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3B6F' } };
+    help.getColumn(1).width = 20; help.getColumn(2).width = 26; help.getColumn(3).width = 96;
+    help.getColumn(3).alignment = { wrapText: true, vertical: 'top' };
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="employee_import_template.xlsx"');
+    res.send(Buffer.from(await wb.xlsx.writeBuffer()));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -404,7 +706,11 @@ router.get('/', async (req, res) => {
          LEFT JOIN core.local_credentials lc ON lc.tenant_id = e.tenant_id AND LOWER(lc.email) = LOWER(e.email)
          LEFT JOIN core.user_roles ur ON ur.tenant_id = e.tenant_id AND LOWER(ur.email) = LOWER(e.email)
         WHERE e.tenant_id = $1 ORDER BY e.name`, [req.user.tenant_id]);
-    res.json({ employees: r.rows });
+    // Computed here rather than stored: "has no real address" is a
+    // transient state that ends the moment HR adds one, and the address
+    // itself already says so. One constant decides it, server-side, so the
+    // page never has to know the magic domain.
+    res.json({ employees: r.rows.map((e) => ({ ...e, email_is_placeholder: isPlaceholderEmail(e.email) })) });
   } catch (e) { logger.error('employees list', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
@@ -699,15 +1005,18 @@ router.post('/import', (req, res, next) => upload.single('file')(req, res, (err)
       // Show the role grants the commit WOULD make. HR should see who is
       // about to gain approval rights before it happens, not discover it
       // afterwards — same reasoning as reporting per-row errors here.
-      const willGrant = await pendingManagerRoleGrants(req.user.tenant_id, report.rows);
+      const heads = new Set((report.department_heads || []).map((h) => h.email.toLowerCase()));
+      const willGrant = (await pendingManagerRoleGrants(req.user.tenant_id, report.rows))
+        .filter((e) => !heads.has(e));
       return res.json({ ok: true, committed: false, note: 'Dry run — pass ?commit=1 to load.',
-        manager_roles_to_grant: willGrant, ...report });
+        manager_roles_to_grant: willGrant, hod_roles_to_grant: [...heads], ...report });
     }
-    const loaded = await loadEmployees(req.user.tenant_id, report.rows);
+    const loaded = await loadEmployees(req.user.tenant_id, report.rows, { departmentHeads: report.department_heads });
     await db.query(`INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details)
                     VALUES ($1,$2,'EMPLOYEE_CSV_IMPORT','employees',$3)`,
       [req.user.tenant_id, req.user.email,
-       JSON.stringify({ ...report.summary, manager_roles_granted: loaded.manager_roles_granted })]);
+       JSON.stringify({ ...report.summary, manager_roles_granted: loaded.manager_roles_granted,
+                        hod_roles_granted: loaded.hod_roles_granted })]);
     // Granting approval rights is a permission change, so it is audited in
     // its own right rather than only as a line inside the import summary —
     // "why can this person approve" needs a queryable answer.
@@ -717,8 +1026,23 @@ router.post('/import', (req, res, next) => upload.single('file')(req, res, (err)
         [req.user.tenant_id, req.user.email, email,
          JSON.stringify({ role: 'manager', reason: 'manages someone in the imported file; had no explicit role' })]);
     }
-    res.json({ ok: true, committed: true, ...loaded, warnings: report.warnings, summary: report.summary });
+    for (const email of loaded.hod_roles_granted || []) {
+      await db.query(`INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+                      VALUES ($1,$2,'ROLE_GRANTED','user_roles',$3,$4)`,
+        [req.user.tenant_id, req.user.email, email,
+         JSON.stringify({ role: 'hod', reason: 'named as the HOD of a department in the imported file' })]);
+    }
+    for (const h of loaded.department_heads_set || []) {
+      await db.query(`INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details)
+                      VALUES ($1,$2,'DEPARTMENT_HEAD_SET','department_heads',$3)`,
+        [req.user.tenant_id, req.user.email,
+         JSON.stringify({ department: h.department, head: h.email, source: 'HOD column of the imported file' })]);
+    }
+    res.json({ ok: true, committed: true, ...loaded,
+      warnings: report.warnings, summary: report.summary,
+      placeholder_emails: report.placeholder_emails,
+      department_heads_need_a_choice: report.department_heads_need_a_choice });
   } catch (e) { logger.error('employee import', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
-module.exports = { router, validateEmployeeCsv, validateEmployeeXlsx, validateEmployeeRows, flexDate, parseCsv, parseExcelBuffer, parseExcelSheets, detectFormat, loadEmployees };
+module.exports = { router, validateEmployeeCsv, validateEmployeeXlsx, validateEmployeeRows, flexDate, parseCsv, parseExcelBuffer, parseExcelSheets, detectFormat, loadEmployees, HEADER_ALIASES, NO_EMAIL_DOMAIN, isPlaceholderEmail, TEMPLATE_COLUMNS };
