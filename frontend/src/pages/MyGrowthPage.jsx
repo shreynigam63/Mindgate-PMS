@@ -574,9 +574,14 @@ function CareerPathCard() {
         {milestones.map((m, i) => (
           <div key={m.id || `new-${i}`} className="border border-navy-100 rounded-lg p-2 space-y-1">
             <div className="flex gap-2">
-              <input className="inp flex-1" placeholder="Milestone *" value={m.title || ''} disabled={!editable}
+              {/* min-w and an explicit flex-basis on the date, because .inp
+                  carries w-full and is declared after Tailwind's utilities
+                  layer — so a bare w-40 loses to it and the date input grows
+                  until the flex-1 title collapses to nothing. Same fix the
+                  increment-matrix rows already use. */}
+              <input className="inp flex-1 min-w-[180px]" placeholder="Milestone *" value={m.title || ''} disabled={!editable}
                 onChange={e => setMilestones(ms => ms.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} />
-              <input className="inp w-40" type="date" value={m.target_date || ''} disabled={!editable}
+              <input className="inp basis-40 grow-0 shrink-0" type="date" value={m.target_date || ''} disabled={!editable}
                 onChange={e => setMilestones(ms => ms.map((x, j) => (j === i ? { ...x, target_date: e.target.value } : x)))} />
               {editable && <button className="text-rose-500" onClick={() => setMilestones(ms => ms.filter((_, j) => j !== i))}><Trash2 size={15} /></button>}
             </div>
