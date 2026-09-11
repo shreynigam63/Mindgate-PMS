@@ -976,11 +976,27 @@ function parseKraSheet(sheetName, rows, rowNumbers, merged, keyField = 'employee
     const get = (field) => (idx[field] != null ? String(r[idx[field]] ?? '').trim() : '');
     const isCont = (field) => !!(merged && merged[i] && idx[field] != null && merged[i][idx[field]]);
 
-    const cat = get('category');
-    if (cat) carriedCategory = cat;
-
+    // The key first, because a change of key ENDS the previous block and so
+    // must end everything carried inside it.
     const keyCell = get(keyField).trim();
+    const keyChanged = !!keyCell && keyCell !== carriedKey;
     if (keyCell) carriedKey = keyCell;
+
+    const cat = get('category');
+    // FOUND IN THE CLIENT'S OWN FILE. Parameters was carried down across a
+    // designation boundary, so 14 designations whose source workbooks had no
+    // Parameters column at all inherited the LAST parameter of whichever role
+    // happened to sit above them in the sheet — 235 KRAs filed under "People"
+    // or "People & Mentorship" because that is how the previous block ended.
+    // Nothing in the file said so and nothing in the report warned; the KRAs
+    // simply arrived grouped under a heading nobody chose.
+    //
+    // A carried value belongs to the block it was written in. When the block
+    // ends, so does the carry — the cell is genuinely empty, and empty is a
+    // legitimate answer here (category is nullable, and the picker groups
+    // those under "No parameter").
+    if (keyChanged) carriedCategory = null;
+    if (cat) carriedCategory = cat;
 
     const title = get('kra_title');
     if (title) carriedTitle = title;

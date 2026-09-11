@@ -250,3 +250,62 @@ test('a file missing BOTH key columns still gets the plain missing-column messag
   assert.equal(r.wrong_screen, undefined);
   assert.match(r.fatal, /missing required column\(s\): designation/);
 });
+
+test('THE PARAMETER CARRY STOPS AT A DESIGNATION BOUNDARY — it must not leak into the next role', async () => {
+  // Found in the client's own 2,145-row library. 14 designations came from
+  // source workbooks with no Parameters column at all, so every one of their
+  // KRAs inherited the LAST parameter of whichever role happened to sit above
+  // them in the sheet — 235 KRAs silently filed under "People" because that
+  // is how the previous block ended. No error, no warning; the KRAs just
+  // arrived grouped under a heading nobody had chosen.
+  const buf = await bufOf((wb) => librarySheet(wb, 'two roles', [
+    ['Delivery Manager', 'Financial', 'Budget adherence', 'Variance', 20, ''],
+    ['', 'People', 'Mentoring', 'Two sessions a quarter', 30, ''],
+    // A new designation whose own Parameters cell is empty. The row above
+    // says "People"; that belongs to the Delivery Manager block and must
+    // stop there.
+    ['Business Head', '', 'Project profitability', 'Margin vs plan', 50, ''],
+    ['', '', 'Security compliance', 'Zero open criticals', 50, ''],
+  ]));
+  const r = validateKraBulkRows(await parseExcelSheets(buf), known, null, LIB);
+  assert.equal(r.ok, true, JSON.stringify(r.errors || r.fatal));
+
+  const dm = r.rows.filter((x) => x.designation === 'Delivery Manager');
+  const bh = r.rows.filter((x) => x.designation === 'Business Head');
+  assert.deepEqual(dm.map((x) => x.category), ['Financial', 'People'],
+    'the carry must still work WITHIN a block');
+  assert.deepEqual(bh.map((x) => x.category), [null, null],
+    'a role with no Parameters of its own gets none — not the previous role\'s');
+});
+
+test('a parameter written on the same row as a new designation still applies to that block', async () => {
+  // The boundary reset must not throw away a parameter the new block DOES
+  // declare on its own first row — that would be the opposite bug.
+  const buf = await bufOf((wb) => librarySheet(wb, 'declared', [
+    ['Delivery Manager', 'People', 'Mentoring', 'Two a quarter', 100, ''],
+    ['Business Head', 'Financial', 'Project profitability', 'Margin vs plan', 60, ''],
+    ['', '', 'Revenue growth', 'YoY', 40, ''],
+  ]));
+  const r = validateKraBulkRows(await parseExcelSheets(buf), known, null, LIB);
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.deepEqual(r.rows.filter((x) => x.designation === 'Business Head').map((x) => x.category),
+    ['Financial', 'Financial'], 'declared on the boundary row, then carried down its own block');
+});
+
+test('the same boundary rule holds for the employee-keyed importer', async () => {
+  // employee_email is not forward-filled, but the category carry still has to
+  // stop when the person changes — one employee's Parameter must never end up
+  // on another employee's scorecard.
+  const buf = await bufOf((wb) => {
+    const ws = wb.addWorksheet('by email');
+    ws.addRow(['employee_email', 'Parameters', 'KRA \n(S.M.A.R.T GOALS)', 'KPIs', 'Weightage']);
+    ws.addRow(['a@example.com', 'People', 'Mentoring', 'Two a quarter', 100]);
+    ws.addRow(['b@example.com', '', 'Budget adherence', 'Variance', 100]);
+  });
+  const emails = new Set(['a@example.com', 'b@example.com']);
+  const r = validateKraBulkRows(await parseExcelSheets(buf), emails, new Map());
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.equal(r.rows.find((x) => x.employee_email === 'a@example.com').category, 'People');
+  assert.equal(r.rows.find((x) => x.employee_email === 'b@example.com').category, null,
+    'b declared no Parameter, so b gets none — not a\'s');
+});
