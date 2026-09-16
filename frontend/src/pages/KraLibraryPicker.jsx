@@ -83,6 +83,10 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
   // an accusation of a mistake you did not make.
   const elsewhere = !!state.asked_department && (!state.department
     || state.asked_department.trim().toLowerCase() !== state.department.trim().toLowerCase());
+  // The employee's own row out of the department roster. The server
+  // still sends every title the department employs — the department total
+  // above is the sum of them — but only this one is put on screen.
+  const mine = (state.department_designations || []).find((d) => d.mine) || null;
 
   const available = state.entries.filter((e) => !e.already_added);
   const chosen = state.entries.filter((e) => picked[e.id] && !e.already_added);
@@ -160,30 +164,29 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
               </div>
             )}
 
-            {/* The roles alongside them in their department. Every title is
-                listed so the employee can see the shape of the department,
-                but only their own is selectable — the rest are disabled
-                rather than hidden. Picking somebody else's title would put
-                another role's objectives on this person's appraisal, which
-                is the confusion the library exists to prevent; hiding them
-                would answer the question "what about the others?" by
-                pretending there are none. */}
-            {(state.department_designations || []).length > 1 && (
+            {/* The employee's OWN designation, and only that one. The
+                department's other titles used to be listed here, disabled,
+                so the shape of the department was visible; requested
+                directly, they are now hidden instead — an employee holds
+                one title, and the other nine were nine things they could
+                not do. The department total above still accounts for them,
+                so nothing has gone missing from the numbers.
+
+                Still a select rather than plain text, so the control keeps
+                its shape beside the Department dropdown and has somewhere
+                to grow if a second title ever applies to one person. */}
+            {mine && (
               <div className="flex items-center gap-2 mt-2">
                 <label className="lbl mb-0" htmlFor="shelf-desig">Designation</label>
                 <select id="shelf-desig" className="inp !py-1 !text-xs !w-auto"
-                  value={state.designation} onChange={() => {}}>
-                  {state.department_designations.map((d) => (
-                    <option key={d.designation} value={d.designation} disabled={!d.mine}>
-                      {d.designation} · {d.kras} KRA{d.kras === 1 ? '' : 's'}
-                      {d.mine ? ' (yours)' : ''}
-                    </option>
-                  ))}
+                  value={mine.designation} onChange={() => {}}>
+                  <option value={mine.designation}>
+                    {mine.designation} · {mine.kras} KRA{mine.kras === 1 ? '' : 's'}
+                  </option>
                 </select>
                 <span className="text-[11px] text-navy-400">
-                  The other {state.department_designations.length - 1} title
-                  {state.department_designations.length === 2 ? '' : 's'} in {state.department} are
-                  shown for context — you can only take KRAs from your own.
+                  Your designation in {state.department} — the KRAs below are the ones published
+                  for it.
                 </span>
               </div>
             )}
