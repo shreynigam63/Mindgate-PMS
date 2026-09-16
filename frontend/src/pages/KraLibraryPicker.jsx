@@ -77,6 +77,12 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
   // looked at if the viewer chose one, otherwise their own.
   const subject = state.asked_department || state.department;
   const onFallback = state.scope === 'department+designation' && !deptScoped && subject;
+  // Choosing a department by hand is not the same as choosing SOMEBODY
+  // ELSE'S. Picking your own from the list is the ordinary thing to do, and
+  // being told you are "browsing another department" for doing it reads as
+  // an accusation of a mistake you did not make.
+  const elsewhere = !!state.asked_department && (!state.department
+    || state.asked_department.trim().toLowerCase() !== state.department.trim().toLowerCase());
 
   const available = state.entries.filter((e) => !e.already_added);
   const chosen = state.entries.filter((e) => picked[e.id] && !e.already_added);
@@ -123,25 +129,26 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                 <select id="shelf-dept" className="inp !py-1 !text-xs !w-auto"
                   value={dept === null ? (state.viewing_department || '') : dept}
                   onChange={(e) => { setDept(e.target.value); setPicked({}); }}>
-                  {/* Department » Designation » count. The breadcrumb names
-                      both halves of the key the shelf is looked up by, so
-                      the number is unambiguous: it is how many KRAs match
-                      THAT department and THIS job title, not a total for
-                      either on its own. Where the department has no shelf
-                      of its own the count is the one it inherits — the
-                      line under the banner is what says so, rather than a
-                      parenthesis competing with the count. */}
+                  {/* A department option is about the DEPARTMENT: every KRA
+                      served to every job title it employs. The designation
+                      control underneath already breaks that down per title,
+                      so repeating this title's own count here would say the
+                      same thing twice and leave the department dimension
+                      unmeasured. The two numbers therefore count different
+                      things on purpose — "All departments" is this one job
+                      title, a named department is the whole department. */}
                   {state.shelves.map((sh) => (
                     <option key={sh.department || '__all'} value={sh.department || ''}>
                       {sh.department
-                        // A real department names both halves of the key, so
-                        // the count is unambiguous: how many KRAs match THAT
-                        // department and THIS job title.
-                        ? `${sh.department} » ${state.designation} » ${
-                            sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'none published'}`
-                        // "All departments" is left exactly as it was. It is
-                        // not one department, so a breadcrumb through it would
-                        // read as a path that does not exist.
+                        ? `${sh.department} · ${
+                            sh.department_kras
+                              ? `${sh.department_kras} KRA${sh.department_kras === 1 ? '' : 's'} across ${
+                                  sh.department_titles} title${sh.department_titles === 1 ? '' : 's'}`
+                              : 'none published'}`
+                        // "All departments" is left exactly as it was, on the
+                        // user's instruction — and it is not one department,
+                        // so a department total through it would be a number
+                        // for a thing that does not exist.
                         : `All departments · ${
                             sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'none published'}`}
                       {sh.department && state.department
@@ -149,7 +156,7 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                     </option>
                   ))}
                 </select>
-                {state.chosen_by_hand && (
+                {state.chosen_by_hand && elsewhere && (
                   <span className="text-[11px] text-navy-400">Browsing another department's shelf.</span>
                 )}
               </div>
@@ -190,7 +197,7 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
               <p className="text-[11px] text-navy-400 mt-1">
                 These are the company-wide {state.designation} KRAs. {subject} has
                 none of its own yet, so this is the list that applies
-                {state.asked_department ? ' there' : ' to you'}.
+                {elsewhere ? ' there' : ' to you'}.
               </p>
             )}
           </div>
