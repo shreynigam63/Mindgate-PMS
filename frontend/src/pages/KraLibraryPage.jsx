@@ -27,6 +27,10 @@ export default function KraLibraryPage() {
   // fallbacks. Anything else asks the server what people in THAT
   // department are offered, title by title.
   const [dept, setDept] = useState('');
+  // The second half of the cascade. Empty means "every title in this
+  // department"; a value narrows the view to one. Reset whenever the
+  // department changes, since a title rarely exists in both.
+  const [desig, setDesig] = useState('');
 
   // The department is part of the request now, not just a client-side
   // filter: the server answers "what will people in this department see?",
@@ -141,12 +145,30 @@ export default function KraLibraryPage() {
           <div className="ml-auto">
             <label className="lbl" htmlFor="dept-filter">Department</label>
             <select id="dept-filter" className="inp !py-1 !text-xs" value={dept}
-              onChange={(e) => { setDept(e.target.value); setOpenShelf(null); load(e.target.value); }}>
+              onChange={(e) => { setDept(e.target.value); setDesig(''); setOpenShelf(null); load(e.target.value); }}>
               <option value="">All departments</option>
               <option value="__none">Fallback shelves only</option>
               {(data.departments || []).map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
+          {/* The cascade. Without a department chosen this would be 267
+              options — the designation bottleneck itself. Choosing one
+              first cuts it to the titles that department actually employs,
+              which for Development is 42 and for most is far fewer. */}
+          {!!(data.department_view || []).length && (
+            <div>
+              <label className="lbl" htmlFor="desig-filter">Designation</label>
+              <select id="desig-filter" className="inp !py-1 !text-xs" value={desig}
+                onChange={(e) => setDesig(e.target.value)}>
+                <option value="">All {data.department_view.length} titles in {data.department}</option>
+                {data.department_view.map((r) => (
+                  <option key={r.designation} value={r.designation}>
+                    {r.designation} · {r.employees} {r.employees === 1 ? 'person' : 'people'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         {view && (
           <div className="p-3 space-y-2">
@@ -159,7 +181,7 @@ export default function KraLibraryPage() {
                 No active employees are recorded in {data.department}.
               </p>
             )}
-            {view.map((r) => (
+            {view.filter((r) => !desig || r.designation === desig).map((r) => (
               <div key={r.designation} className="flex flex-wrap items-center gap-2 text-sm border-t border-navy-50 pt-2">
                 <span className="font-semibold min-w-0 flex-1 truncate">{r.designation}</span>
                 <span className="chip bg-navy-50 text-navy-500">{r.employees} employee{r.employees === 1 ? '' : 's'}</span>
@@ -168,6 +190,20 @@ export default function KraLibraryPage() {
                 {r.source === 'own' && <span className="chip bg-teal-100 text-teal-700">{r.kras} KRAs · own shelf</span>}
                 {r.source === 'fallback' && <span className="chip bg-navy-50 text-navy-600">{r.kras} KRAs · company-wide</span>}
                 {r.source === 'none' && <span className="chip bg-amber-100 text-amber-700">no shelf at all</span>}
+                {r.source !== 'none' && (
+                  <button className="text-[11px] text-navy-500 hover:text-navy-700"
+                    onClick={() => setOpenShelf(openShelf === r.designation ? null : r.designation)}>
+                    {openShelf === r.designation ? 'Hide KRAs' : 'View KRAs'}
+                  </button>
+                )}
+                {openShelf === r.designation && (
+                  <div className="w-full">
+                    {/* The shelf these people are actually served: their own
+                        department's if it has one, otherwise the fallback. */}
+                    <ShelfDetail designation={r.designation}
+                      department={r.source === 'own' ? data.department : null} />
+                  </div>
+                )}
               </div>
             ))}
             {!!view.length && (

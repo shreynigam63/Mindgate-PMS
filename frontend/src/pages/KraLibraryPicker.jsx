@@ -73,7 +73,10 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
   // Silent when matching is off, because then there is only ever one shelf
   // per title and naming it would be noise.
   const deptScoped = state.matched_scope === 'department' && state.matched_department;
-  const onFallback = state.scope === 'department+designation' && !deptScoped && state.department;
+  // Which department the line underneath should talk about: the one being
+  // looked at if the viewer chose one, otherwise their own.
+  const subject = state.asked_department || state.department;
+  const onFallback = state.scope === 'department+designation' && !deptScoped && subject;
 
   const available = state.entries.filter((e) => !e.already_added);
   const chosen = state.entries.filter((e) => picked[e.id] && !e.already_added);
@@ -141,8 +144,9 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
               // so nobody assumes these KRAs were written for their
               // department when they were not.
               <p className="text-[11px] text-navy-400 mt-1">
-                These are the company-wide {state.designation} KRAs. {state.department} has
-                none of its own yet, so this is the list that applies to you.
+                These are the company-wide {state.designation} KRAs. {subject} has
+                none of its own yet, so this is the list that applies
+                {state.asked_department ? ' there' : ' to you'}.
               </p>
             )}
           </div>

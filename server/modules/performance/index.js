@@ -1808,7 +1808,13 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
         ORDER BY sort_order, id`, [tenantId, designation, department])).rows;
     if (entries.length) matchedDepartment = department;
   }
-  if (!entries.length && !askedValid) {
+  // The company-wide shelf, which is the answer whenever nothing more
+  // specific applies — INCLUDING when the employee picked a department
+  // that has no shelf of its own. That case used to be suppressed by
+  // `!askedValid` and returned an empty list: the dropdown offered
+  // "Admin · 8 KRAs (company-wide)", and picking it emptied the picker.
+  // An option that promises a count has to deliver it.
+  if (!entries.length) {
     entries = (await db.query(
       `SELECT id, designation, department, category, title, measures, description, suggested_weight
          FROM pms.kra_library
@@ -1819,6 +1825,15 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
   if (!entries.length) {
     return { designation, department, scope, shelves, entries: [], reason: 'no_library' };
   }
+
+  // Did the shelf on screen come from the department that was asked for,
+  // or is it the company-wide one standing in? The picker says so either
+  // way, and it must not claim a department wrote these KRAs when it did
+  // not — this is what tells it which.
+  const askedDepartment = askedValid && asked ? asked : null;
+  const servedOwnShelf = !!(matchedDepartment
+    && askedDepartment
+    && matchedDepartment.toLowerCase() === askedDepartment.toLowerCase());
 
   const existing = new Set((sheetId
     ? (await db.query(`SELECT title FROM pms.kras WHERE sheet_id=$1`, [sheetId])).rows
@@ -1832,6 +1847,10 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
     // rather than leaving them to assume the shelf was written for them.
     matched_department: matchedDepartment,
     matched_scope: matchedDepartment ? 'department' : 'designation',
+    // The department the viewer asked to look at, and whether it had a
+    // shelf of its own or inherited the company-wide one.
+    asked_department: askedDepartment,
+    asked_inherited: !!(askedDepartment && !servedOwnShelf),
     // Every shelf for this title, and whether the one on screen was chosen
     // by hand rather than matched.
     shelves,
