@@ -133,8 +133,17 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                       parenthesis competing with the count. */}
                   {state.shelves.map((sh) => (
                     <option key={sh.department || '__all'} value={sh.department || ''}>
-                      {`${sh.department || 'All departments'} » ${state.designation} » ${
-                        sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'none published'}`}
+                      {sh.department
+                        // A real department names both halves of the key, so
+                        // the count is unambiguous: how many KRAs match THAT
+                        // department and THIS job title.
+                        ? `${sh.department} » ${state.designation} » ${
+                            sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'none published'}`
+                        // "All departments" is left exactly as it was. It is
+                        // not one department, so a breadcrumb through it would
+                        // read as a path that does not exist.
+                        : `All departments · ${
+                            sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'none published'}`}
                       {sh.department && state.department
                         && sh.department.toLowerCase() === state.department.toLowerCase() ? ' (yours)' : ''}
                     </option>
