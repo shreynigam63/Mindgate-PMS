@@ -122,7 +122,9 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                   onChange={(e) => { setDept(e.target.value); setPicked({}); }}>
                   {state.shelves.map((sh) => (
                     <option key={sh.department || '__all'} value={sh.department || ''}>
-                      {sh.department || 'All departments'} · {sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'no shelf yet'}
+                      {sh.department || 'All departments'} · {sh.kras
+                        ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}${sh.inherited ? ' (company-wide)' : ''}`
+                        : 'none published'}
                       {sh.department && state.department
                         && sh.department.toLowerCase() === state.department.toLowerCase() ? ' (yours)' : ''}
                     </option>
@@ -139,8 +141,8 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
               // so nobody assumes these KRAs were written for their
               // department when they were not.
               <p className="text-[11px] text-navy-400 mt-1">
-                This is the company-wide shelf for {state.designation} — no shelf has been
-                published for {state.department} yet.
+                These are the company-wide {state.designation} KRAs. {state.department} has
+                none of its own yet, so this is the list that applies to you.
               </p>
             )}
           </div>

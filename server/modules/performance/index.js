@@ -1727,13 +1727,22 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
       GROUP BY 1 ORDER BY (coalesce(btrim(department),'')='') DESC, 1`,
     [tenantId, designation])).rows.map((r) => ({ department: r.department || null, kras: r.kras }));
 
-  // The employee's OWN department always appears in the list, even with no
-  // shelf behind it yet. Without this the chooser stays hidden until HR has
-  // already done the upload it exists to prompt — and the person looking at
-  // a generic shelf has no way to see that a department dimension exists at
-  // all. kras: 0 is what the UI renders as "no shelf yet".
+  // The employee's OWN department always appears in the list, even when no
+  // shelf has been published for it. Without this the chooser stays hidden
+  // until HR has already done the upload it exists to prompt.
+  //
+  // It carries the count of KRAs the employee WOULD ACTUALLY GET if they
+  // picked it, which when their department has no shelf is the company-wide
+  // set they are inheriting — never a dead "0". An option that leads
+  // nowhere is worse than no option: the employee cannot act on it, and the
+  // number they see should be the number they get.
+  //
+  // `inherited` is what lets the UI say where those KRAs came from, so the
+  // count is honest rather than implying somebody wrote them for this
+  // department.
   if (department && !shelves.some((sh) => (sh.department || '').toLowerCase() === department.toLowerCase())) {
-    shelves.push({ department, kras: 0 });
+    const companyWide = shelves.find((sh) => !sh.department);
+    shelves.push({ department, kras: companyWide ? companyWide.kras : 0, inherited: true });
   }
 
   // An explicit choice from the dropdown wins over the automatic match.
