@@ -1,0 +1,549 @@
+<title>Three Change Requests</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root{
+    --ink:#171A21; --body:#333840; --slate:#646B78; --faint:#8D94A0;
+    --ground:#F5F5F2; --card:#FFFFFF; --rule:#DFDFD9; --rule-soft:#ECECE6;
+    --ochre:#8A5A00; --ochre-soft:#FAF1DE;
+    --navy:#1B3B6F; --navy-soft:#E9EDF6;
+    --crimson:#A3183C; --crimson-soft:#FBEAEF;
+    --green:#186A45; --green-soft:#E3F1E9;
+    --code-bg:#14171D; --code-fg:#DDE1E7; --code-dim:#7C8594;
+    --sans:"Source Sans 3",ui-sans-serif,system-ui,sans-serif;
+    --display:"Archivo",var(--sans);
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ink:#F1F2F5; --body:#C8CCD3; --slate:#98A0AC; --faint:#737B88;
+      --ground:#101216; --card:#181B21; --rule:#2B2F37; --rule-soft:#22262C;
+      --ochre:#E2B25E; --ochre-soft:#2A2213;
+      --navy:#9AB6E8; --navy-soft:#16223A;
+      --crimson:#F2879F; --crimson-soft:#2D1620;
+      --green:#6CCC9E; --green-soft:#11261C;
+      --code-bg:#0A0C10; --code-fg:#D4D9E0; --code-dim:#6C7583;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#F1F2F5; --body:#C8CCD3; --slate:#98A0AC; --faint:#737B88;
+    --ground:#101216; --card:#181B21; --rule:#2B2F37; --rule-soft:#22262C;
+    --ochre:#E2B25E; --ochre-soft:#2A2213;
+    --navy:#9AB6E8; --navy-soft:#16223A;
+    --crimson:#F2879F; --crimson-soft:#2D1620;
+    --green:#6CCC9E; --green-soft:#11261C;
+    --code-bg:#0A0C10; --code-fg:#D4D9E0; --code-dim:#6C7583;
+  }
+
+  *{box-sizing:border-box}
+  body{background:var(--ground);color:var(--body);font-family:var(--sans);
+       font-size:16.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:860px;margin:0 auto;padding-inline:20px;padding-block:0 96px}
+
+  header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;
+    background:color-mix(in srgb,var(--ground) 92%,transparent);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--rule);
+    padding:10px 20px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+  header.top b{font-family:var(--display);font-weight:700;color:var(--ink);font-size:14px}
+  header.top span{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+
+  .hero{padding-block:44px 8px}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--ochre);font-weight:600}
+  h1{font-family:var(--display);font-weight:700;color:var(--ink);
+     font-size:clamp(30px,6vw,44px);line-height:1.08;letter-spacing:-.02em;
+     margin:.35em 0 .3em;text-wrap:balance}
+  .lede{font-size:19px;color:var(--slate);max-width:62ch;text-wrap:pretty}
+
+  h2{font-family:var(--display);font-weight:700;color:var(--ink);
+     font-size:25px;letter-spacing:-.012em;line-height:1.2;
+     margin:60px 0 4px;padding-top:22px;border-top:2px solid var(--ink);text-wrap:balance}
+  h2 .n{font-family:var(--mono);font-size:13px;color:var(--ochre);
+     display:block;font-weight:600;letter-spacing:.1em;margin-bottom:6px}
+  h3{font-family:var(--display);font-weight:600;color:var(--ink);
+     font-size:17.5px;margin:34px 0 6px;letter-spacing:-.005em}
+  h4{font-family:var(--display);font-weight:600;color:var(--ink);font-size:14px;
+     margin:22px 0 4px;letter-spacing:.01em}
+  p{margin:.65em 0;max-width:68ch}
+  ul,ol{margin:.6em 0;padding-left:1.35em;max-width:68ch}
+  li{margin:.32em 0}
+  strong{color:var(--ink);font-weight:600}
+  a{color:var(--navy)}
+  code{font-family:var(--mono);font-size:.855em;background:var(--navy-soft);
+    color:var(--ink);padding:.12em .4em;border-radius:4px;overflow-wrap:break-word}
+
+  pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);
+    font-size:12.8px;line-height:1.7;padding:15px 17px;border-radius:9px;
+    overflow-x:auto;margin:14px 0}
+  pre b{color:#8FD6AE;font-weight:400}
+  pre i{color:var(--code-dim);font-style:normal}
+  pre em{color:#F0B77A;font-style:normal}
+  pre u{color:#F2879F;text-decoration:none}
+
+  .tablewrap{overflow-x:auto;margin:16px 0;border:1px solid var(--rule);border-radius:9px;background:var(--card)}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+  th{background:var(--ink);color:var(--ground);font-family:var(--display);
+     font-weight:600;font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+     text-align:left;padding:9px 13px;white-space:nowrap}
+  td{padding:9px 13px;border-top:1px solid var(--rule-soft);vertical-align:top}
+  td:first-child{color:var(--ink);font-weight:600}
+  tbody tr:nth-child(even){background:color-mix(in srgb,var(--ground) 55%,transparent)}
+  .num{font-variant-numeric:tabular-nums}
+
+  .note{border-left:3px solid var(--navy);background:var(--navy-soft);
+    padding:13px 16px;border-radius:0 8px 8px 0;margin:20px 0;font-size:15.5px}
+  .warn{border-left-color:var(--ochre);background:var(--ochre-soft)}
+  .stop{border-left-color:var(--crimson);background:var(--crimson-soft)}
+  .ok{border-left-color:var(--green);background:var(--green-soft)}
+  .note p{margin:.35em 0;max-width:64ch}
+  .note .lbl{font-family:var(--display);font-weight:700;color:var(--ink);
+    font-size:12px;letter-spacing:.09em;text-transform:uppercase;display:block;margin-bottom:4px}
+
+  /* verdict strip under each heading */
+  .verdict{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px}
+  .pill{font-family:var(--mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;
+    font-weight:600;padding:4px 10px;border-radius:20px;border:1px solid transparent}
+  .pill.bug{color:var(--crimson);background:var(--crimson-soft);border-color:color-mix(in srgb,var(--crimson) 30%,transparent)}
+  .pill.new{color:var(--ochre);background:var(--ochre-soft);border-color:color-mix(in srgb,var(--ochre) 30%,transparent)}
+  .pill.done{color:var(--green);background:var(--green-soft);border-color:color-mix(in srgb,var(--green) 30%,transparent)}
+  .pill.plain{color:var(--slate);background:var(--card);border-color:var(--rule)}
+
+  /* --- PMS UI mock ------------------------------------------------- */
+  .mock{border:1px solid var(--rule);border-radius:11px;background:var(--card);
+    overflow:hidden;margin:18px 0}
+  .mock .bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    padding:8px 14px;border-bottom:1px solid var(--rule-soft);
+    background:color-mix(in srgb,var(--ground) 60%,transparent)}
+  .mock .bar b{font-family:var(--display);font-size:13.5px;color:var(--ink)}
+  .mock .bar .cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint);margin-left:auto}
+  .mock .in{padding:15px 16px;display:grid;gap:11px}
+  .chip{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:20px;
+    background:var(--navy-soft);color:var(--navy);display:inline-block}
+  .chip.g{background:var(--green-soft);color:var(--green)}
+  .chip.a{background:var(--ochre-soft);color:var(--ochre)}
+  .chip.r{background:var(--crimson-soft);color:var(--crimson)}
+  .fieldrow{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+  .fld{border:1px solid var(--rule);border-radius:7px;padding:7px 11px;
+    font-size:14px;background:var(--card);color:var(--ink);flex:1 1 180px;min-width:0}
+  .fld.ro{background:color-mix(in srgb,var(--ground) 70%,transparent);color:var(--slate)}
+  .fld.sel{position:relative;padding-right:28px;flex:0 1 240px;
+    background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);
+    background-position:calc(100% - 15px) 16px,calc(100% - 10px) 16px;
+    background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+  .lab{font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--faint);display:block;margin-bottom:3px}
+  .goal{border:1px solid var(--rule-soft);border-radius:8px;padding:10px 12px;display:grid;gap:7px;
+    background:color-mix(in srgb,var(--ground) 35%,transparent)}
+  .goal .t{font-family:var(--display);font-weight:600;color:var(--ink);font-size:14.5px}
+  .goal .m{font-size:12.5px;color:var(--slate)}
+  .track{height:7px;border-radius:5px;background:var(--rule);overflow:hidden}
+  .track i{display:block;height:100%;background:var(--green);border-radius:5px}
+  .kgroup{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ochre);
+    font-weight:600;text-transform:uppercase;padding-top:4px}
+  .hint{font-size:12.5px;color:var(--slate);max-width:none}
+  .mockcap{font-size:12.5px;color:var(--faint);margin:-8px 0 20px;max-width:68ch}
+  .mockcap b{color:var(--slate);font-weight:600}
+  .toggle{display:inline-flex;border:1px solid var(--rule);border-radius:7px;overflow:hidden}
+  .toggle span{font-size:12.5px;padding:6px 12px;color:var(--slate);font-weight:600}
+  .toggle span[aria-pressed="true"]{background:var(--navy);color:#fff}
+
+  .chk{list-style:none;padding:0;margin:14px 0}
+  .chk li{padding-left:26px;position:relative;margin:.45em 0}
+  .chk li::before{content:"";position:absolute;left:2px;top:.55em;width:11px;height:11px;
+    border:2px solid var(--slate);border-radius:3px}
+
+  footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--rule);
+    color:var(--faint);font-size:13.5px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<header class="top">
+  <b>Three change requests — confirmation before build</b>
+  <span>checked against commit 9cb180f</span>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <div class="eyebrow">Agentic PMS · Mindgate Solutions</div>
+    <h1>Approved goals, department shelves, and the KRA a goal serves</h1>
+    <p class="lede">Each of the three points below was run against the live
+      application before this was written — the API responses quoted are real.
+      Nothing has been built yet; this is what I propose, and what it will look
+      like.</p>
+  </div>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Request</th><th>Finding</th><th>Migration</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>1 · Approved goals lock on phase change</td>
+        <td><strong>Confirmed, and worse than reported</strong> — returning the plan to draft does not help either. Rolling the whole cycle back is the only lever today.</td>
+        <td>None</td>
+      </tr>
+      <tr>
+        <td>2 · Department dropdown</td>
+        <td><strong>Needed</strong> — 1,281 of 1,398 employees hold a job title that exists in more than one department.</td>
+        <td>One, additive</td>
+      </tr>
+      <tr>
+        <td>3 · Growth path after the KRA</td>
+        <td><strong>Half already true</strong> — the sequencing is enforced; the link from a goal to its KRA is computed and then thrown away.</td>
+        <td>One, additive</td>
+      </tr>
+    </tbody>
+  </table></div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Request 1</span>Approved goals stop being editable when the cycle moves on</h2>
+
+  <div class="verdict">
+    <span class="pill bug">Confirmed defect</span>
+    <span class="pill plain">No migration</span>
+    <span class="pill plain">Backend + one line of UI</span>
+  </div>
+
+  <h3>What happens today</h3>
+
+  <p>The phase machine grants development-plan editing to exactly one phase
+    (<code>server/modules/performance/phase-machine.js</code>):</p>
+
+<pre>const ALLOWS = {
+  kra_open:        [<em>'kra_edit'</em>, <em>'kra_submit'</em>, <em>'kra_decide'</em>],
+  growth_planning: [<u>'devplan_edit'</u>, <em>'devplan_submit'</em>, <em>'devplan_decide'</em>, <u>'career_edit'</u>],
+  mid_year_review: [<em>'midyear_self_edit'</em>, …],      <i>// devplan_edit is not here</i>
+  …
+};</pre>
+
+  <p>I put a cycle into <strong>Mid-Year Review</strong> with an approved plan and
+    called the real endpoints as the employee. Verbatim:</p>
+
+<pre><i>-- A. edit a goal's text</i>
+PUT /pms/my/development-plan/goals
+  <u>409</u> {"error":"Development plan editing is not open (phase: mid_year_review)"}
+
+<i>-- B. record progress on the same goal</i>
+PUT /pms/my/development-plan/goals/&lt;id&gt;/progress
+  <b>200</b> {"ok":true,"progress_pct":55}
+
+<i>-- C. the same edit, after HR returns the plan to draft</i>
+PUT /pms/my/development-plan/goals
+  <u>409</u> {"error":"Development plan editing is not open (phase: mid_year_review)"}</pre>
+
+  <p>Three things follow, and the third is the one that costs you time:</p>
+
+  <ul>
+    <li><strong>Progress already works after the phase moves</strong> (B). The
+      sliders on My Growth keep working all year — that part is by design and is
+      not what is broken.</li>
+    <li><strong>Goal text, target dates, and adding a goal are blocked</strong>
+      (A) the moment HR advances past Growth Planning.</li>
+    <li><strong>Returning the plan does not unblock it</strong> (C). The phase
+      check runs before the status check, so HR's normal remedy — return the plan
+      to the employee — has no effect. The only remaining lever is rolling the
+      whole cycle back, which moves <em>every employee in the company</em>
+      backwards to let one person fix one goal.</li>
+  </ul>
+
+  <div class="note stop">
+    <span class="lbl">This is the real cost</span>
+    <p>A cycle rollback is an all-tenant action. Using it as the routine way to
+      edit one goal is what the client is describing, and they are right that it
+      is not the intended behaviour.</p>
+  </div>
+
+  <h3>What I propose</h3>
+
+  <p>Keep the intent of the original design — scope is agreed once, in Growth
+    Planning — but stop using a company-wide rollback as the escape hatch. Two
+    changes, both in <code>modules/performance</code>:</p>
+
+  <ol>
+    <li><strong>Let a returned plan be edited in any phase up to Calibration.</strong>
+      The phase gate stops applying once a manager or HR has deliberately
+      returned the plan — the return <em>is</em> the authorisation. An approved or
+      submitted plan stays locked exactly as it is now.</li>
+    <li><strong>Give the manager a "Return for edits" control on the plan itself,</strong>
+      next to Approve. It exists for KRA sheets already; the development plan has
+      the endpoint but no button outside Growth Planning.</li>
+  </ol>
+
+  <p>Net effect: the employee who needs to revise a goal in November asks their
+    manager, the manager clicks Return, the employee edits and re-submits. No
+    rollback, nobody else affected.</p>
+
+  <h3>What it looks like</h3>
+
+  <div class="mock">
+    <div class="bar"><b>My Growth</b>
+      <span class="chip">Annual Appraisal FY 2026-27 · Mid-Year Review</span>
+      <span class="chip a">plan: returned for edits</span>
+      <span class="cap">Proposed</span></div>
+    <div class="in">
+      <div class="goal">
+        <div class="t">Complete PMP certification</div>
+        <div class="fieldrow">
+          <span class="fld">Complete PMP certification</span>
+          <span class="fld sel" style="flex:0 1 150px">15/12/2026</span>
+        </div>
+        <div class="m">Progress 55%</div>
+        <div class="track"><i style="width:55%"></i></div>
+      </div>
+      <p class="hint">Returned by Priya Menon on 14 Nov — <b>edit and re-submit.</b>
+        Your manager asked for the second goal to name the programme.</p>
+    </div>
+  </div>
+  <p class="mockcap"><b>Today</b> this same screen shows the goal titles as plain
+    grey text with only the progress bar live, and no way back except an HR
+    rollback of the entire cycle.</p>
+
+  <div class="note warn">
+    <span class="lbl">Decision needed</span>
+    <p>If you would rather goals stay freely editable all year with no return step
+      at all, that is a smaller change — add <code>devplan_edit</code> to the later
+      phases and stop there. It is simpler, but it means a goal can be rewritten
+      after the mid-year conversation has already been held against it. Say which
+      you want; I have built neither yet.</p>
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Request 2</span>A department dropdown for the KRA Library</h2>
+
+  <div class="verdict">
+    <span class="pill new">New capability</span>
+    <span class="pill plain">1 migration, additive</span>
+    <span class="pill plain">New HR settings screen</span>
+  </div>
+
+  <h3>The bottleneck, measured</h3>
+
+  <p>From the employee master loaded into the client instance:</p>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Measure</th><th class="num">Count</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Active employees</td><td class="num">1,398</td><td>the population a shelf has to serve</td></tr>
+      <tr><td>Departments</td><td class="num">34</td><td>the dimension the library cannot see today</td></tr>
+      <tr><td>Distinct job titles</td><td class="num">90</td><td>the only key the library has</td></tr>
+      <tr><td>Titles spanning more than one department</td><td class="num">37</td><td>every one of these is ambiguous</td></tr>
+      <tr><td><strong>People under an ambiguous title</strong></td><td class="num"><strong>1,281</strong></td><td><strong>92% of the company</strong></td></tr>
+    </tbody>
+  </table></div>
+
+  <p>The worst offenders are exactly the generic titles: <code>Manager</code>
+    appears in <strong>15 departments</strong>, <code>Senior Manager</code> in 15,
+    <code>Assistant Vice President</code> in 13, <code>Senior Software Analyst</code>
+    in 10 across 146 people. One shelf called "Manager" has to serve a manager in
+    Development and a manager in Human Resources at the same time. That is the
+    bottleneck.</p>
+
+  <h3>What I propose</h3>
+
+  <p>Three pieces, in the order they would be built:</p>
+
+  <ol>
+    <li><strong>A nullable <code>department</code> column</strong> on
+      <code>pms.kra_library</code> (migration 034, additive, nothing existing
+      altered). The upload sheet gains an optional <code>Department</code> column
+      next to <code>Designation</code>.</li>
+    <li><strong>Most-specific-wins matching.</strong> An employee sees the shelf
+      for <em>their</em> department + title if one exists; otherwise the shelf for
+      that title with the department left blank. <strong>Every shelf already
+      published keeps working untouched</strong> — they all have a blank
+      department, which is now the fallback rather than the only option.</li>
+    <li><strong>A department dropdown</strong> on the HR KRA Library screen and on
+      the employee's picker, sourced from the departments actually present in the
+      employee master — no list to maintain by hand.</li>
+  </ol>
+
+  <div class="note">
+    <span class="lbl">On "enable it in the system configuration"</span>
+    <p>Two tables for this already exist and are worth knowing about before
+      anything new is invented. <code>core.admin_settings</code>
+      (<code>tenant_id</code>, <code>key</code>, <code>value jsonb</code>) is real
+      and in use — for exactly one key, the mail send mode — with no screen behind
+      it. <code>pms.dropdown_options</code> exists and is <strong>completely
+      unused</strong>: no code reads or writes it.</p>
+    <p>So: store the switch as <code>kra_library_scope</code> in
+      <code>core.admin_settings</code> — <code>designation</code> (today's
+      behaviour, the default) or <code>department+designation</code> — and build
+      the small <strong>HR Admin → Settings</strong> screen that is missing. That
+      screen is the actual new surface here, and it gives the mail mode a home
+      too. If HR later wants to curate the department list by hand rather than
+      derive it, <code>pms.dropdown_options</code> is where it belongs.</p>
+  </div>
+
+  <h3>What it looks like</h3>
+
+  <div class="mock">
+    <div class="bar"><b>KRA Library</b><span class="chip">HR Admin</span>
+      <span class="cap">Proposed</span></div>
+    <div class="in">
+      <div class="fieldrow">
+        <span><span class="lab">Department</span><span class="fld sel">Development</span></span>
+        <span><span class="lab">Designation</span><span class="fld sel">Manager</span></span>
+        <span><span class="lab">Shelf</span><span class="chip g">7 KRAs · 105 pts</span></span>
+      </div>
+      <p class="hint">Showing the shelf for <b>Manager in Development</b>.
+        <b>Manager</b> also has shelves in 14 other departments, and one
+        department-blank shelf used as the fallback.</p>
+    </div>
+  </div>
+
+  <div class="mock">
+    <div class="bar"><b>HR Admin → Settings</b><span class="chip">New screen</span>
+      <span class="cap">Proposed</span></div>
+    <div class="in">
+      <div class="fieldrow">
+        <span style="flex:1 1 300px">
+          <span class="lab">KRA Library scope</span>
+          <span class="toggle"><span>By designation</span><span aria-pressed="true">By department + designation</span></span>
+        </span>
+      </div>
+      <p class="hint">Changes which shelf an employee is offered. Existing shelves
+        are unaffected either way — this only decides whether the department is
+        read when matching.</p>
+    </div>
+  </div>
+  <p class="mockcap"><b>Today</b> the KRA Library screen has a designation field
+    and nothing else, and there is no Settings screen at all.</p>
+
+  <div class="note warn">
+    <span class="lbl">Decision needed</span>
+    <p>Does HR want to re-upload the library with departments filled in, or start
+      department-blank and add departments only for the titles that actually
+      conflict? The second is far less work and the fallback makes it safe — but
+      it is HR's call, not mine.</p>
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Request 3</span>Associate the growth path with the KRA</h2>
+
+  <div class="verdict">
+    <span class="pill done">Sequencing already enforced</span>
+    <span class="pill bug">Association discarded</span>
+    <span class="pill plain">1 migration, additive</span>
+  </div>
+
+  <h3>Half of this is already true</h3>
+
+  <p>The <em>ordering</em> is already enforced by the phase machine. The phase
+    order is <code>kra_open → growth_planning → …</code>, KRA editing is granted
+    only in <code>kra_open</code>, and development-plan editing only in
+    <code>growth_planning</code>. The growth path cannot be written before KRAs
+    are locked — that is what the Growth Planning phase was added for.</p>
+
+  <h3>What is missing</h3>
+
+  <p>The <em>association</em>. The AI already works out which KRA each suggested
+    goal serves, and the picker groups the suggestions under KRA headings — you
+    can see it in the screenshots from earlier today. But
+    <code>pms.development_goals</code> has no column for it:</p>
+
+<pre>CREATE TABLE pms.development_goals (
+  id, tenant_id, plan_id,
+  title, description, target_date,
+  progress_pct, sort_order
+  <i>-- no kra_id, no serves_kra</i>
+)</pre>
+
+  <p>So the link is computed, shown once in the popup, and <strong>thrown away the
+    moment the goal is saved</strong>. Nothing downstream — the manager's view,
+    mid-year, the appraisal summary — can say which KRA a development goal was
+    meant to support.</p>
+
+  <h3>What I propose</h3>
+
+  <ul>
+    <li><strong><code>kra_id uuid</code> and <code>serves_kra text</code></strong>
+      on <code>pms.development_goals</code> (migration 035, both nullable, nothing
+      existing altered). The id is the real link; the text preserves the KRA title
+      as it stood when the goal was written, so the association survives the KRA
+      being edited or the cycle closing.</li>
+    <li><strong>Store what the AI already produced</strong> when a suggestion is
+      accepted — today that value is simply dropped.</li>
+    <li><strong>A "Serves KRA" selector</strong> on every manually written goal,
+      listing that employee's own approved KRAs for the cycle, plus a
+      "Not tied to a KRA" option, which stays legitimate.</li>
+    <li><strong>Group the saved goals by KRA</strong> on My Growth and on the
+      manager's view of the plan, the same grouping the suggestion popup already
+      uses.</li>
+  </ul>
+
+  <div class="mock">
+    <div class="bar"><b>My Growth</b><span class="chip">Target achievements for the year</span>
+      <span class="cap">Proposed</span></div>
+    <div class="in">
+      <div class="kgroup">Serves · Stage wise tracking of CR planned vs actual</div>
+      <div class="goal">
+        <div class="t">Design a repeatable monthly CR audit checklist</div>
+        <div class="m">Target 30/06/2027 · progress 30%</div>
+        <div class="track"><i style="width:30%"></i></div>
+      </div>
+      <div class="kgroup">Serves · Timely Interviews, Zoho compliance &amp; Team Attrition</div>
+      <div class="goal">
+        <div class="t">Practise structured interviewing with hiring partners</div>
+        <div class="m">Target 31/03/2027 · progress 10%</div>
+        <div class="track"><i style="width:10%"></i></div>
+      </div>
+      <div class="kgroup">Not tied to a KRA</div>
+      <div class="goal">
+        <div class="t">Complete PMP certification</div>
+        <div class="fieldrow">
+          <span><span class="lab">Serves KRA</span><span class="fld sel">Not tied to a KRA</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="mockcap"><b>Today</b> the saved goals are a flat list with no KRA
+    heading and no selector — the grouping exists only inside the AI suggestion
+    popup, before anything is saved.</p>
+
+  <div class="note ok">
+    <span class="lbl">What this unlocks later</span>
+    <p>Once the link is stored, "which KRAs has this person built capability
+      against?" becomes a query rather than a guess — on the manager's view, in
+      the appraisal summary, and in the mid-year conversation. None of that is in
+      scope here; it is simply not possible at all until the column exists.</p>
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Together</span>What building all three involves</h2>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th></th><th>Request 1</th><th>Request 2</th><th>Request 3</th></tr></thead>
+    <tbody>
+      <tr><td>Migration</td><td>None</td><td>034 — one nullable column</td><td>035 — two nullable columns</td></tr>
+      <tr><td>Backend</td><td>Phase gate + return route</td><td>Matching, upload, settings</td><td>Save and return the link</td></tr>
+      <tr><td>Frontend</td><td>Return button, editable state</td><td>Two dropdowns, Settings screen</td><td>Selector, grouped list</td></tr>
+      <tr><td>Existing data</td><td>Untouched</td><td>Shelves keep working as fallback</td><td>Old goals keep a null link</td></tr>
+      <tr><td>Reversible</td><td>Yes — revert the commit</td><td>Yes — the switch defaults to today's behaviour</td><td>Yes — columns go unread</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>All three are frontend-and-backend changes, so unlike switching the AI on
+    they need a <strong>full deploy</strong>: build the frontend, run the
+    migrations at boot, restart the API. The KRA Library deployment runbook
+    already covers that sequence.</p>
+
+  <h3>Before I build</h3>
+
+  <ul class="chk">
+    <li><strong>Request 1</strong> — return-to-edit (my recommendation), or
+      goals freely editable all year?</li>
+    <li><strong>Request 2</strong> — re-upload the whole library with departments,
+      or add departments only where titles conflict?</li>
+    <li><strong>Request 2</strong> — confirm the HR Admin → Settings screen is
+      wanted; it is a new page in the navigation.</li>
+    <li><strong>Request 3</strong> — should a goal be <em>required</em> to name a
+      KRA, or is "Not tied to a KRA" always allowed? I have assumed always
+      allowed.</li>
+  </ul>
+
+  <footer>
+    Agentic PMS · Mindgate Solutions — change requests raised 16 September,
+    checked against commit 9cb180f on a running instance. Nothing in this document
+    has been implemented.
+  </footer>
+
+</div>
