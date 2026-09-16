@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -31,6 +31,7 @@ import ConnectsPage from './pages/ConnectsPage';
 import ClosureLettersPage from './pages/ClosureLettersPage';
 import IncrementSimulationPage from './pages/IncrementSimulationPage';
 import ParameterAnalysisPage from './pages/ParameterAnalysisPage';
+import SettingsPage from './pages/SettingsPage';
 
 const NAV = [
   { group: 'My Performance', items: [
@@ -71,6 +72,9 @@ const NAV = [
     // HR and admin only, both in the nav and on the server.
     { to: '/admin/parameter-analysis', label: 'Review Analysis (HR)', icon: ShieldCheck, roles: ['admin', 'hr'] },
     { to: '/admin/watchlist', label: 'Super 50', icon: Award },
+    // Tenant-wide configuration. Last in the group because it is set once
+    // and then left alone, unlike everything above it.
+    { to: '/admin/settings', label: 'Settings', icon: SlidersHorizontal, roles: ['admin', 'hr'] },
   ]},
   { group: 'Engagement & People', items: [
     { to: '/engagement', label: 'Engagement', icon: HeartHandshake },
@@ -140,6 +144,7 @@ export default function App() {
             <Route path="/my/kras" element={<MyKRASheetPage />} />
             <Route path="/admin/increments" element={<IncrementSimulationPage />} />
             <Route path="/admin/parameter-analysis" element={<ParameterAnalysisPage />} />
+            <Route path="/admin/settings" element={<SettingsPage />} />
             <Route path="/my/self-appraisal" element={<SelfAppraisalPage />} />
             <Route path="/my/rating" element={<MyRatingPage />} />
             <Route path="/my/midyear" element={<MidYearReviewPage />} />

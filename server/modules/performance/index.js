@@ -820,6 +820,11 @@ const KRA_HEADER_ALIASES = {
   // column(s): designation" against a file that was otherwise perfect:
   // 2,145 KRAs across 265 designations, no other error. One letter.
   designation: 'designation', designations: 'designation',
+  // Optional, and only meaningful on the library importer: it splits one
+  // job title's shelf by department. Left out, the shelf is the fallback
+  // for that title everywhere, which is what every existing file does.
+  department: 'department', departments: 'department',
+  dept: 'department', function: 'department', business_unit: 'department',
   job_title: 'designation', job_titles: 'designation',
   role: 'designation', roles: 'designation',
   parameters: 'category', parameter: 'category', category: 'category',
@@ -966,6 +971,9 @@ function parseKraSheet(sheetName, rows, rowNumbers, merged, keyField = 'employee
   // would put someone else's objective on a person's appraisal.
   const carryKey = keyField === 'designation';
   let carriedKey = null;
+  // Forward-filled exactly like the designation beside it — HR writes
+  // "Development" once at the top of a block, not on all forty rows.
+  let carriedDepartment = null;
   let block = null;   // the weight cell currently in force (shape 2 above)
   let current = null; // the KRA currently being built (shape 1 above)
   let pastTotal = false; // the "100" row marks the end of the KRA table
@@ -981,6 +989,12 @@ function parseKraSheet(sheetName, rows, rowNumbers, merged, keyField = 'employee
     const keyCell = get(keyField).trim();
     const keyChanged = !!keyCell && keyCell !== carriedKey;
     if (keyCell) carriedKey = keyCell;
+    // A new key ends the block, so it ends the carried department too —
+    // the same boundary rule Parameters follows, and for the same reason:
+    // without it one role's department leaks onto the next role's KRAs.
+    const deptCell = get('department').trim();
+    if (keyChanged) carriedDepartment = null;
+    if (deptCell) carriedDepartment = deptCell;
 
     const cat = get('category');
     // FOUND IN THE CLIENT'S OWN FILE. Parameters was carried down across a
@@ -1072,6 +1086,7 @@ function parseKraSheet(sheetName, rows, rowNumbers, merged, keyField = 'employee
       measure_lines: kpi ? [kpi] : [],
       description_lines: get('description') ? [get('description')] : [],
       weight_raw: weightRaw,
+      department: carriedDepartment || null,
       block: rowBlock,
     };
     if (rowBlock) rowBlock.kras.push(current);
@@ -1438,16 +1453,38 @@ router.get('/hr/kra-library/template.csv', async (req, res) => {
 router.get('/hr/kra-library', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    // Grouped by department AND designation now. The employee count on a
+    // department shelf counts only that department's people; on a
+    // department-blank shelf it counts everyone with the title, because
+    // that is who the fallback reaches.
     const rows = (await db.query(
-      `SELECT l.designation, count(*)::int AS kras, sum(coalesce(l.suggested_weight,0))::float AS total_weight,
+      `SELECT l.designation, l.department,
+              count(*)::int AS kras, sum(coalesce(l.suggested_weight,0))::float AS total_weight,
               max(l.uploaded_at) AS uploaded_at, max(l.uploaded_by) AS uploaded_by,
               (SELECT count(*)::int FROM core.employees e
                 WHERE e.tenant_id = l.tenant_id AND e.status='active'
-                  AND lower(btrim(e.designation)) = lower(btrim(l.designation))) AS employees
+                  AND lower(btrim(e.designation)) = lower(btrim(l.designation))
+                  AND (coalesce(btrim(l.department),'') = ''
+                       OR lower(btrim(coalesce(e.department,''))) = lower(btrim(l.department)))) AS employees
          FROM pms.kra_library l
         WHERE l.tenant_id = $1
-        GROUP BY l.tenant_id, l.designation
-        ORDER BY l.designation`, [T(req)])).rows;
+        GROUP BY l.tenant_id, l.designation, l.department
+        ORDER BY l.designation, coalesce(l.department,'')`, [T(req)])).rows;
+    // The departments HR can choose from, taken from the employee master
+    // rather than a list somebody has to keep up to date.
+    const departments = (await db.query(
+      `SELECT DISTINCT btrim(department) AS department FROM core.employees
+        WHERE tenant_id=$1 AND status='active' AND coalesce(btrim(department),'') <> ''
+        ORDER BY 1`, [T(req)])).rows.map((r) => r.department);
+    // Titles held in more than one department: the shelves most likely to
+    // be wrong for somebody, and the reason this dimension exists.
+    const ambiguous = (await db.query(
+      `SELECT designation, count(DISTINCT btrim(department))::int AS departments, count(*)::int AS employees
+         FROM core.employees
+        WHERE tenant_id=$1 AND status='active'
+          AND coalesce(btrim(designation),'') <> '' AND coalesce(btrim(department),'') <> ''
+        GROUP BY designation HAVING count(DISTINCT btrim(department)) > 1
+        ORDER BY 2 DESC, 3 DESC`, [T(req)])).rows;
     // Designations that people hold but no shelf covers. This is the
     // actionable half of the screen: it is the to-do list.
     const uncovered = (await db.query(
@@ -1459,18 +1496,70 @@ router.get('/hr/kra-library', async (req, res) => {
                            WHERE l.tenant_id = e.tenant_id
                              AND lower(btrim(l.designation)) = lower(btrim(e.designation)))
         GROUP BY e.designation ORDER BY 2 DESC, 1`, [T(req)])).rows;
-    res.json({ shelves: rows, uncovered });
+    res.json({ shelves: rows, uncovered, departments, ambiguous, scope: await kraLibraryScope(T(req)) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------- HR settings ------------------------------------------------
+// core.admin_settings has existed since migration 001 and held exactly one
+// key (the mail send mode) with no screen behind it. These two routes give
+// it one, starting with the setting this change needs.
+const SETTINGS = {
+  kra_library_scope: {
+    label: 'KRA Library scope',
+    values: ['designation', 'department+designation'],
+    default: 'designation',
+  },
+};
+
+router.get('/hr/settings', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const rows = (await db.query(
+      `SELECT key, value FROM core.admin_settings WHERE tenant_id=$1`, [T(req)])).rows;
+    const stored = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    const settings = {};
+    for (const [key, def] of Object.entries(SETTINGS)) {
+      const v = stored[key];
+      settings[key] = { ...def, value: String((v && v.mode) || v || def.default) };
+    }
+    res.json({ settings });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/hr/settings/:key', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const def = SETTINGS[req.params.key];
+    if (!def) return res.status(404).json({ error: `unknown setting "${req.params.key}"` });
+    const value = String((req.body || {}).value || '');
+    // Named rather than rejected as "invalid": the caller should not have
+    // to read the source to find out what this setting accepts.
+    if (!def.values.includes(value)) {
+      return res.status(422).json({ error: `${req.params.key} must be one of: ${def.values.join(', ')}` });
+    }
+    await db.query(
+      `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,$2,$3)
+       ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
+      [T(req), req.params.key, JSON.stringify({ mode: value })]);
+    audit(req, 'SETTING_CHANGED', null, null, { key: req.params.key, value });
+    res.json({ ok: true, key: req.params.key, value });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.get('/hr/kra-library/:designation', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    // ?department= picks one department's shelf; ?department= (empty) or
+    // omitted returns the department-blank fallback shelf. Without this an
+    // "all departments" read would mix fifteen shelves into one list.
+    const dept = req.query.department == null ? null : String(req.query.department);
     const rows = (await db.query(
       `SELECT * FROM pms.kra_library
         WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
-        ORDER BY sort_order, id`, [T(req), req.params.designation])).rows;
-    res.json({ designation: req.params.designation, entries: rows });
+          AND lower(btrim(coalesce(department,'')))=lower(btrim($3))
+        ORDER BY sort_order, id`, [T(req), req.params.designation, dept || ''])).rows;
+    res.json({ designation: req.params.designation, department: dept || null, entries: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1480,11 +1569,17 @@ router.get('/hr/kra-library/:designation', async (req, res) => {
 router.delete('/hr/kra-library/:designation', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    // Scoped to one department's shelf since 034 — otherwise clearing the
+    // Development shelf for "Manager" would silently take the other
+    // fourteen departments' shelves with it.
+    const dept = req.query.department == null ? null : String(req.query.department);
     const r = await db.query(
-      `DELETE FROM pms.kra_library WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))`,
-      [T(req), req.params.designation]);
-    if (!r.rowCount) return res.status(404).json({ error: `no library entries for designation "${req.params.designation}"` });
-    audit(req, 'KRA_LIBRARY_CLEARED', null, null, { designation: req.params.designation, removed: r.rowCount });
+      `DELETE FROM pms.kra_library
+        WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
+          AND lower(btrim(coalesce(department,'')))=lower(btrim($3))`,
+      [T(req), req.params.designation, dept || '']);
+    if (!r.rowCount) return res.status(404).json({ error: `no library entries for designation "${req.params.designation}"${dept ? ` in ${dept}` : ''}` });
+    audit(req, 'KRA_LIBRARY_CLEARED', null, null, { designation: req.params.designation, department: dept || null, removed: r.rowCount });
     res.json({ ok: true, removed: r.rowCount });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1530,29 +1625,40 @@ router.post('/hr/kra-library/upload', (req, res, next) => kraUpload.single('file
     // Grouped on the normalised key, but the ORIGINAL spelling is what
     // gets stored and shown — HR wrote "Senior Software Engineer" and
     // should see that back, not a lower-cased version of it.
+    // Grouped on (department, designation) since 034. A file with no
+    // Department column groups on designation alone with a blank
+    // department, which is byte-for-byte what it did before — so an
+    // existing library file re-uploaded today produces the same shelves.
     const byDesignation = new Map();
     for (const r of report.rows) {
-      if (!byDesignation.has(r.key)) byDesignation.set(r.key, { label: r.designation, rows: [] });
-      byDesignation.get(r.key).rows.push(r);
+      const dept = (r.department || '').trim();
+      const key = `${dept.toLowerCase()}|${r.key}`;
+      if (!byDesignation.has(key)) byDesignation.set(key, { label: r.designation, department: dept || null, rows: [] });
+      byDesignation.get(key).rows.push(r);
     }
 
     const client = await db.getClient();
     try {
       await client.query('BEGIN');
-      for (const [key, { label, rows }] of byDesignation) {
-        // Replace this designation's shelf entirely and leave every other
-        // designation alone — so Engineering can be corrected without
-        // touching Sales, and a KRA dropped from the file is genuinely
-        // gone rather than lingering alongside its replacement.
+      for (const [, { label, department, rows }] of byDesignation) {
+        // Replace this shelf entirely and leave every other shelf alone —
+        // so Engineering can be corrected without touching Sales, and a KRA
+        // dropped from the file is genuinely gone rather than lingering
+        // alongside its replacement. Scoped to the department as well now:
+        // publishing the Development shelf for "Manager" must not wipe the
+        // Sales one, nor the department-blank fallback.
         await client.query(
-          `DELETE FROM pms.kra_library WHERE tenant_id=$1 AND lower(btrim(designation))=$2`, [T(req), key]);
+          `DELETE FROM pms.kra_library
+            WHERE tenant_id=$1 AND lower(btrim(designation))=$2
+              AND lower(btrim(coalesce(department,'')))=$3`,
+          [T(req), rows[0].key, (department || '').trim().toLowerCase()]);
         let i = 0;
         for (const k of rows) {
           await client.query(
             `INSERT INTO pms.kra_library
-               (tenant_id, designation, category, title, measures, description, suggested_weight, sort_order, uploaded_by)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-            [T(req), label, k.category || null, k.kra_title, k.measures, k.description,
+               (tenant_id, designation, department, category, title, measures, description, suggested_weight, sort_order, uploaded_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [T(req), label, department, k.category || null, k.kra_title, k.measures, k.description,
              Number.isFinite(k.weight) ? k.weight : null, (i += 10), req.user.email]);
         }
       }
@@ -1580,17 +1686,53 @@ router.post('/hr/kra-library/upload', (req, res, next) => kraUpload.single('file
 // will be offered the original again; correct, since after a rename it is
 // no longer the same KRA, and offering it back is less wrong than hiding
 // a KRA they might want.
+// Which shelf an employee is offered. Most-specific-wins: the shelf for
+// THEIR department and title if one has been published, otherwise the
+// department-blank shelf for that title.
+//
+// Never both. A department shelf is a replacement, not an addition — a
+// merged list would hand someone the generic "Manager" KRAs alongside the
+// ones written for Managers in their own department, which is the muddle
+// the department dimension exists to end.
+//
+// Switchable, because turning this on changes what every employee sees:
+// core.admin_settings.kra_library_scope is 'designation' (the behaviour
+// before this existed, and still the default) or 'department+designation'.
+async function kraLibraryScope(tenantId) {
+  const r = await db.query(
+    `SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='kra_library_scope'`, [tenantId]);
+  const v = r.rows[0] && r.rows[0].value;
+  return String(v && v.mode || v || 'designation') === 'department+designation'
+    ? 'department+designation' : 'designation';
+}
+
 async function kraLibraryFor(tenantId, employee, sheetId) {
   const designation = (employee && employee.designation || '').trim();
+  const department = (employee && employee.department || '').trim();
   if (!designation) {
     return { designation: null, entries: [], reason: 'no_designation' };
   }
-  const entries = (await db.query(
-    `SELECT id, designation, category, title, measures, description, suggested_weight
-       FROM pms.kra_library
-      WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
-      ORDER BY sort_order, id`, [tenantId, designation])).rows;
-  if (!entries.length) return { designation, entries: [], reason: 'no_library' };
+  const scope = await kraLibraryScope(tenantId);
+  let entries = [];
+  let matchedDepartment = null;
+  if (scope === 'department+designation' && department) {
+    entries = (await db.query(
+      `SELECT id, designation, department, category, title, measures, description, suggested_weight
+         FROM pms.kra_library
+        WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
+          AND lower(btrim(coalesce(department,'')))=lower(btrim($3))
+        ORDER BY sort_order, id`, [tenantId, designation, department])).rows;
+    if (entries.length) matchedDepartment = department;
+  }
+  if (!entries.length) {
+    entries = (await db.query(
+      `SELECT id, designation, department, category, title, measures, description, suggested_weight
+         FROM pms.kra_library
+        WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
+          AND coalesce(btrim(department),'')=''
+        ORDER BY sort_order, id`, [tenantId, designation])).rows;
+  }
+  if (!entries.length) return { designation, department, scope, entries: [], reason: 'no_library' };
 
   const existing = new Set((sheetId
     ? (await db.query(`SELECT title FROM pms.kras WHERE sheet_id=$1`, [sheetId])).rows
@@ -1598,6 +1740,12 @@ async function kraLibraryFor(tenantId, employee, sheetId) {
 
   return {
     designation,
+    department: department || null,
+    scope,
+    // What the employee is actually looking at, so the picker can say so
+    // rather than leaving them to assume the shelf was written for them.
+    matched_department: matchedDepartment,
+    matched_scope: matchedDepartment ? 'department' : 'designation',
     reason: null,
     entries: entries.map((e) => ({
       ...e,
@@ -1669,7 +1817,20 @@ router.get('/my/development-plan', async (req, res) => {
         [T(req), c.id, req.user.id, mgr ? mgr.manager_id : null])).rows[0];
     }
     const goals = (await db.query(`SELECT * FROM pms.development_goals WHERE plan_id=$1 ORDER BY sort_order`, [p.id])).rows;
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, plan: p, goals });
+    // editable is computed here, by the same function the write path uses,
+    // so the page can never offer an editor the API will refuse.
+    const gate = devplanEditable(c.phase, p.status);
+    // The employee's own KRAs, so a goal can name the one it serves (035).
+    // Sent on every load, including read-only ones: the grouped view needs
+    // the titles just as much as the editor needs the options.
+    const kras = (await db.query(
+      `SELECT k.id, k.title, k.weight FROM pms.kras k
+         JOIN pms.kra_sheets sh ON sh.id = k.sheet_id
+        WHERE sh.cycle_id=$1 AND sh.employee_id=$2
+        ORDER BY k.sort_order`, [c.id, req.user.id])).rows;
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, plan: p, goals, kras,
+      editable: gate.ok && p.status !== 'approved' && p.status !== 'submitted',
+      editable_via: gate.via || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1699,13 +1860,43 @@ function goalsMissingTargetDate(goals) {
   return bad;
 }
 
+// BR-2.3a — a RETURNED plan is editable whatever phase the cycle is in.
+//
+// The gate used to be phase-only, which made a whole-tenant cycle rollback
+// the sole way to fix one person's goal after Growth Planning closed:
+// the phase check ran before the status check, so a manager returning the
+// plan — the normal remedy everywhere else in this product — changed
+// nothing. A return is a deliberate act by the manager or HR, and it is
+// the authorisation; the phase is not needed to authorise it a second
+// time. Scope still locks on approval, and still opens for everybody only
+// during Growth Planning, so nothing here lets an employee quietly rewrite
+// an agreed plan.
+//
+// Calibration is the cut-off: past it the ratings conversation is under
+// way and the plan is evidence in it, not a working document.
+const DEVPLAN_EDIT_LAST_PHASE = 'calibration';
+function devplanEditable(phase, planStatus) {
+  if (pm.phaseAllows(phase, 'devplan_edit')) return { ok: true };
+  if (planStatus === 'returned') {
+    const i = pm.ORDER.indexOf(phase), stop = pm.ORDER.indexOf(DEVPLAN_EDIT_LAST_PHASE);
+    if (i !== -1 && i < stop) return { ok: true, via: 'returned' };
+    return { ok: false, error: `The cycle has reached ${phase} — a returned plan can no longer be edited` };
+  }
+  return { ok: false, error: `Development plan editing is not open (phase: ${phase || 'none'})`
+    + (planStatus === 'approved' ? ' — ask your manager to return the plan for edits' : '') };
+}
+
 router.put('/my/development-plan/goals', async (req, res) => {
   try {
     const c = await activeCycle(T(req));
-    if (!c || !pm.phaseAllows(c.phase, 'devplan_edit')) return res.status(409).json({ error: `Development plan editing is not open (phase: ${c ? c.phase : 'none'})` });
+    if (!c) return res.status(409).json({ error: 'Development plan editing is not open (phase: none)' });
+    // The plan is read BEFORE the gate, because whether it was returned is
+    // half of the answer — reading it after was the bug.
     const p = (await db.query(`SELECT * FROM pms.development_plans WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
     if (!p) return res.status(404).json({ error: 'plan not found — GET /my/development-plan first' });
-    if (p.status === 'approved') return res.status(409).json({ error: 'plan is approved — ask HR to return it for edits' });
+    const gate = devplanEditable(c.phase, p.status);
+    if (!gate.ok) return res.status(409).json({ error: gate.error });
+    if (p.status === 'approved') return res.status(409).json({ error: 'plan is approved — ask your manager to return it for edits' });
     const goals = Array.isArray(req.body && req.body.goals) ? req.body.goals : [];
     // Per-goal reasons rather than one flat "invalid" — the same
     // reporting shape the CSV importer uses, so the employee is told
@@ -1717,6 +1908,14 @@ router.put('/my/development-plan/goals', async (req, res) => {
         goals: missing,
       });
     }
+    // The employee's own KRAs for this cycle, by id — the allow-list the
+    // save below checks kra_id against.
+    const kraById = new Map((await db.query(
+      `SELECT k.id, k.title FROM pms.kras k
+         JOIN pms.kra_sheets sh ON sh.id = k.sheet_id
+        WHERE sh.cycle_id=$1 AND sh.employee_id=$2`, [c.id, req.user.id])).rows
+      .map((k) => [String(k.id), k.title]));
+
     const client = await db.getClient();
     try {
       await client.query('BEGIN');
@@ -1724,12 +1923,30 @@ router.put('/my/development-plan/goals', async (req, res) => {
       let i = 0;
       for (const g of goals) {
         if (!g.title || !String(g.title).trim()) continue;
+        // The KRA this goal serves (035). kra_id is trusted only if it is
+        // one of THIS employee's own KRAs on THIS cycle — the id arrives
+        // from the browser, and a goal must not be able to point at
+        // somebody else's objective. serves_kra is stored either way: for a
+        // goal that came from an AI suggestion it may name a KRA by title
+        // with no matching row, and that is still worth keeping.
+        const kraId = kraById.has(String(g.kra_id || '')) ? String(g.kra_id) : null;
+        const servesKra = kraId ? kraById.get(kraId) : (String(g.serves_kra || '').trim() || null);
         await client.query(
-          `INSERT INTO pms.development_goals (tenant_id, plan_id, title, description, target_date, progress_pct, sort_order)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [T(req), p.id, String(g.title).trim(), g.description || null, g.target_date || null, Math.min(100, Math.max(0, Number(g.progress_pct) || 0)), (i += 10)]);
+          `INSERT INTO pms.development_goals (tenant_id, plan_id, title, description, target_date, progress_pct, sort_order, kra_id, serves_kra)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [T(req), p.id, String(g.title).trim(), g.description || null, g.target_date || null,
+           Math.min(100, Math.max(0, Number(g.progress_pct) || 0)), (i += 10), kraId, servesKra]);
       }
-      await client.query(`UPDATE pms.development_plans SET status='draft', updated_at=now() WHERE id=$1`, [p.id]);
+      // A save normally puts the plan back to draft. NOT when the edit was
+      // authorised by the return itself: 'returned' is the only thing
+      // keeping editing open outside Growth Planning, so resetting it to
+      // draft would lock the employee out of the very plan they are in the
+      // middle of fixing, and refuse the submit that follows.
+      if (gate.via !== 'returned') {
+        await client.query(`UPDATE pms.development_plans SET status='draft', updated_at=now() WHERE id=$1`, [p.id]);
+      } else {
+        await client.query(`UPDATE pms.development_plans SET updated_at=now() WHERE id=$1`, [p.id]);
+      }
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
     const saved = (await db.query(`SELECT * FROM pms.development_goals WHERE plan_id=$1 ORDER BY sort_order`, [p.id])).rows;
@@ -1740,9 +1957,15 @@ router.put('/my/development-plan/goals', async (req, res) => {
 router.post('/my/development-plan/submit', async (req, res) => {
   try {
     const c = await activeCycle(T(req));
-    if (!c || !pm.phaseAllows(c.phase, 'devplan_submit')) return res.status(409).json({ error: 'Development plan submission is not open' });
+    if (!c) return res.status(409).json({ error: 'Development plan submission is not open' });
     const p = (await db.query(`SELECT * FROM pms.development_plans WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
     if (!p) return res.status(404).json({ error: 'plan not found' });
+    // An edit the employee cannot send back is not an edit. Submission
+    // follows the same rule as editing, so a returned plan completes the
+    // round trip in whatever phase the cycle happens to be in.
+    if (!pm.phaseAllows(c.phase, 'devplan_submit') && !devplanEditable(c.phase, p.status).ok) {
+      return res.status(409).json({ error: 'Development plan submission is not open' });
+    }
     const goals = (await db.query(`SELECT id, title, target_date FROM pms.development_goals WHERE plan_id=$1`, [p.id])).rows;
     if (!goals.length) return res.status(422).json({ error: 'Add at least one development goal before submitting' });
     // Re-checked here, not just on save: goals stored before the target
@@ -4051,4 +4274,4 @@ router.post('/hr/kra-sheet/clean-titles', async (req, res) => {
 // scores the Annual Review page shows. Building a second gatherer for the
 // model would mean the summary could describe a year that no screen
 // agrees with.
-module.exports = { router, checkAndSendConnectReminders, runReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader, buildAnnualReviewSummary };
+module.exports = { router, checkAndSendConnectReminders, runReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader, buildAnnualReviewSummary, devplanEditable };

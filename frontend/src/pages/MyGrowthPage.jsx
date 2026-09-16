@@ -39,7 +39,14 @@ function DevelopmentPlanCard() {
   if (!data) return <div className="card p-4"><p className="text-sm text-navy-400">Loading…</p></div>;
   if (!data.cycle) return <div className="card p-8 text-center text-sm text-navy-400">No active cycle.</div>;
 
-  const editable = data.plan.status === 'draft' || data.plan.status === 'returned';
+  // The server decides this now and says so on the response — it holds both
+  // halves of the rule (the phase AND whether the plan was returned), and
+  // the page used to guess with only the status, offering an editor the API
+  // then refused. Older builds do not send the flag, hence the fallback.
+  const editable = data.editable !== undefined
+    ? data.editable
+    : data.plan.status === 'draft' || data.plan.status === 'returned';
+  const reopened = editable && data.editable_via === 'returned';
 
   return (
     <div className="card p-4 space-y-3">
@@ -50,7 +57,13 @@ function DevelopmentPlanCard() {
       {data.plan.status === 'returned' && data.plan.manager_comment && (
         <p className="text-xs bg-rose-50 text-rose-700 rounded-lg p-2"><b>Returned:</b> {data.plan.manager_comment}</p>
       )}
-      <GoalList goals={data.goals} editable={editable} onSaved={load} />
+      {reopened && (
+        <p className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">
+          Your manager returned this plan, so it is <b>open for edits</b> even though the
+          cycle has moved to {phaseLabel(data.cycle.phase)}. Edit and submit it again.
+        </p>
+      )}
+      <GoalList goals={data.goals} editable={editable} onSaved={load} kras={data.kras || []} />
       {editable && (
         <button className="btn-pri" disabled={!data.goals.length} onClick={async () => {
           try { await api('/pms/my/development-plan/submit', { method: 'POST' }); load(); }
@@ -182,14 +195,18 @@ function DevPlanAiPanel({ onAdd }) {
   );
 }
 
-function GoalList({ goals: initial, editable, onSaved }) {
+function GoalList({ goals: initial, editable, onSaved, kras = [] }) {
   const [goals, setGoals] = useState(initial);
   const [err, setErr] = useState(null);
   useEffect(() => { setGoals(initial); }, [initial]);
 
   const update = (i, field, value) => setGoals(gs => gs.map((g, j) => j === i ? { ...g, [field]: value } : g));
+  // <input type="date"> accepts yyyy-mm-dd and nothing else. The column
+  // comes back as a full ISO timestamp, which the control rejects silently
+  // — the field rendered empty and the next save wrote that emptiness back.
+  const dateValue = (v) => (v ? String(v).slice(0, 10) : '');
   const remove = (i) => setGoals(gs => gs.filter((_, j) => j !== i));
-  const add = () => setGoals(gs => [...gs, { title: '', description: '', target_date: '', progress_pct: 0 }]);
+  const add = () => setGoals(gs => [...gs, { title: '', description: '', target_date: '', progress_pct: 0, kra_id: null, serves_kra: null }]);
 
   const saveAll = async () => {
     setErr(null);
@@ -212,10 +229,27 @@ function GoalList({ goals: initial, editable, onSaved }) {
   };
 
   if (!editable) {
+    // Grouped by the KRA each goal serves — the same grouping the
+    // suggestion popup uses, now that the link survives being saved (035).
+    // Goals with no KRA collect at the end under their own heading rather
+    // than being hidden; "not tied to a KRA" is a legitimate answer.
+    const groups = [];
+    for (const g of goals) {
+      const name = (g.serves_kra || '').trim() || 'Not tied to a KRA';
+      let grp = groups.find((x) => x.name === name);
+      if (!grp) { grp = { name, goals: [] }; groups.push(grp); }
+      grp.goals.push(g);
+    }
+    groups.sort((a, b) => (a.name === 'Not tied to a KRA') - (b.name === 'Not tied to a KRA'));
     return (
       <div className="space-y-2">
         {!goals.length && <p className="text-xs text-navy-400">No development goals recorded.</p>}
-        {goals.map(g => (
+        {groups.map(grp => (
+          <div key={grp.name} className="space-y-2">
+            <p className="text-[10.5px] font-semibold tracking-[0.08em] uppercase text-teal-700 pt-1">
+              {grp.name === 'Not tied to a KRA' ? grp.name : <>Serves · {grp.name}</>}
+            </p>
+            {grp.goals.map(g => (
           <div key={g.id} className="text-xs bg-navy-50 rounded-lg p-2 space-y-1">
             {/* The target date was always saved and returned; this view just
                 never drew it, while the manager's view of the same goals did
@@ -229,6 +263,8 @@ function GoalList({ goals: initial, editable, onSaved }) {
             </div>
             {g.description && <p className="text-navy-500">{g.description}</p>}
             <ProgressBar value={g.progress_pct} onChange={(v) => setProgress(g.id, v)} />
+          </div>
+            ))}
           </div>
         ))}
       </div>
@@ -266,7 +302,14 @@ function GoalList({ goals: initial, editable, onSaved }) {
       });
       return;
     }
+    // The KRA the suggestion named is matched back to one of the
+    // employee's own KRAs by title, so the saved goal carries the real id
+    // rather than a string. No match keeps the title anyway — see 035.
+    const named = String(g.serves_kra || '').trim();
+    const hit = kras.find((k) => String(k.title || '').trim().toLowerCase() === named.toLowerCase());
     setGoals((gs) => [...gs, {
+      kra_id: hit ? hit.id : null,
+      serves_kra: named || null,
       title: g.title || '',
       description: [
         asLines(g.why),
@@ -293,9 +336,25 @@ function GoalList({ goals: initial, editable, onSaved }) {
           </div>
           <div className="max-w-[200px]">
             <label className="lbl">Target date <span className="text-rose-600">*</span></label>
-            <input className={`inp w-full ${!(g.target_date || '') ? '!border-rose-300 !bg-rose-50/50' : ''}`}
-              type="date" required value={g.target_date || ''} onChange={e => update(i, 'target_date', e.target.value)} />
-            {!(g.target_date || '') && <p className="text-[11px] text-rose-600 mt-1">Required before this goal can be saved.</p>}
+            <input className={`inp w-full ${!dateValue(g.target_date) ? '!border-rose-300 !bg-rose-50/50' : ''}`}
+              type="date" required value={dateValue(g.target_date)} onChange={e => update(i, 'target_date', e.target.value)} />
+            {!dateValue(g.target_date) && <p className="text-[11px] text-rose-600 mt-1">Required before this goal can be saved.</p>}
+          </div>
+          <div className="max-w-[420px]">
+            <label className="lbl">Serves KRA</label>
+            <select className="inp w-full" value={g.kra_id || ''}
+              onChange={e => {
+                const id = e.target.value || null;
+                const k = kras.find((x) => String(x.id) === String(id));
+                setGoals(gs => gs.map((x, j) => j === i ? { ...x, kra_id: id, serves_kra: k ? k.title : null } : x));
+              }}>
+              {/* "Not tied to a KRA" is a real answer, not a placeholder: a
+                  language course or a certification often serves the person
+                  rather than one objective. */}
+              <option value="">Not tied to a KRA</option>
+              {kras.map((k) => <option key={k.id} value={k.id}>{k.title}</option>)}
+            </select>
+            {!kras.length && <p className="text-[11px] text-navy-400 mt-1">No approved KRAs on this cycle yet — goals can still be written.</p>}
           </div>
           <div>
             <label className="lbl">Description (optional)</label>

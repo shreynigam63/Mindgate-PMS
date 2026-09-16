@@ -38,10 +38,16 @@ export default function KraLibraryPage() {
     } catch (e) { setUpErr(e.message); setReport(e.data && e.data.errors ? e.data : null); }
   };
 
-  const clearShelf = async (designation) => {
-    if (!window.confirm(`Remove every library KRA for "${designation}"?\n\nKRAs already copied onto people's sheets are not affected.`)) return;
+  // "" = every shelf, "__none" = only the department-blank fallbacks,
+  // anything else = that department's shelves plus the fallbacks they
+  // sit behind, because seeing one without the other tells HR half the
+  // story about what an employee in that department will be offered.
+  const [dept, setDept] = useState('');
+  const clearShelf = async (designation, department) => {
+    const where = department ? `"${designation}" in ${department}` : `"${designation}" (all departments)`;
+    if (!window.confirm(`Remove every library KRA for ${where}?\n\nKRAs already copied onto people's sheets are not affected.`)) return;
     setErr(null);
-    try { await api(`/pms/hr/kra-library/${encodeURIComponent(designation)}`, { method: 'DELETE' }); load(); }
+    try { await api(`/pms/hr/kra-library/${encodeURIComponent(designation)}?department=${encodeURIComponent(department || '')}`, { method: 'DELETE' }); load(); }
     catch (e) { setErr(e.message); }
   };
 
@@ -49,6 +55,11 @@ export default function KraLibraryPage() {
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
 
   const token = localStorage.getItem('apms_token');
+
+  const shown = (data.shelves || []).filter((x) => (
+    dept === '' ? true
+      : dept === '__none' ? !x.department
+      : (x.department || '') === dept || !x.department));
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
@@ -93,22 +104,62 @@ export default function KraLibraryPage() {
 
       {err && <p className="text-xs text-rose-600">{err}</p>}
 
+      {data.scope === 'designation' && !!(data.ambiguous || []).length && (
+        <div className="card p-4 space-y-1 border-amber-200 bg-amber-50/60">
+          <p className="lbl mb-0 text-amber-800">Department matching is switched off</p>
+          <p className="text-[11px] text-amber-700">
+            {data.ambiguous.length} job title{data.ambiguous.length === 1 ? '' : 's'} exist in more than
+            one department — {data.ambiguous.reduce((n, a) => n + a.employees, 0)} employees — so those
+            people all see one shelf. Turn on <b>department + designation</b> in HR Admin → Settings to
+            give each department its own.
+          </p>
+          <div className="flex flex-wrap gap-2 pt-1">
+            {data.ambiguous.slice(0, 8).map((a) => (
+              <span key={a.designation} className="chip bg-white text-amber-800">
+                {a.designation} · {a.departments} depts · {a.employees}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="card divide-y divide-navy-50">
-        <div className="p-3">
-          <p className="lbl mb-0">Published shelves</p>
+        <div className="p-3 flex flex-wrap items-end gap-3">
+          <div>
+            <p className="lbl mb-0">Published shelves</p>
+          </div>
+          {/* Sourced from the departments people actually hold on their
+              employee records, so there is no list to keep up to date. */}
+          <div className="ml-auto">
+            <label className="lbl" htmlFor="dept-filter">Department</label>
+            <select id="dept-filter" className="inp !py-1 !text-xs" value={dept}
+              onChange={(e) => { setDept(e.target.value); setOpenShelf(null); }}>
+              <option value="">All departments</option>
+              <option value="__none">Fallback shelves only</option>
+              {(data.departments || []).map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
         </div>
         {!data.shelves.length && (
           <p className="p-6 text-center text-sm text-navy-400">
             Nothing published yet. Upload a file above to create the first shelf.
           </p>
         )}
-        {data.shelves.map((s) => (
-          <div key={s.designation}>
+        {shown.map((s) => {
+          const key = `${s.department || ''}|${s.designation}`;
+          return (
+          <div key={key}>
             <div className="p-3 flex flex-wrap items-center gap-3 text-sm">
               <button className="flex items-center gap-1.5 font-semibold min-w-0 flex-1 text-left"
-                onClick={() => setOpenShelf(openShelf === s.designation ? null : s.designation)}>
-                {openShelf === s.designation ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                onClick={() => setOpenShelf(openShelf === key ? null : key)}>
+                {openShelf === key ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 <span className="truncate">{s.designation}</span>
+                {/* Which shelf this is. A blank department is not missing
+                    data — it is the fallback used wherever no department
+                    shelf has been published for the title. */}
+                {s.department
+                  ? <span className="chip bg-teal-100 text-teal-700 shrink-0">{s.department}</span>
+                  : <span className="chip bg-navy-50 text-navy-500 shrink-0">all departments</span>}
               </button>
               <span className="chip bg-navy-50 text-navy-600">{s.kras} KRA{s.kras === 1 ? '' : 's'}</span>
               <span className="chip bg-navy-50 text-navy-500">{Math.round(s.total_weight * 100) / 100}% on the shelf</span>
@@ -120,11 +171,12 @@ export default function KraLibraryPage() {
                 {s.employees} employee{s.employees === 1 ? '' : 's'}
               </span>
               <button className="text-rose-500" title={`Remove the ${s.designation} shelf`}
-                onClick={() => clearShelf(s.designation)}><Trash2 size={14} /></button>
+                onClick={() => clearShelf(s.designation, s.department)}><Trash2 size={14} /></button>
             </div>
-            {openShelf === s.designation && <ShelfDetail designation={s.designation} />}
+            {openShelf === key && <ShelfDetail designation={s.designation} department={s.department} />}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* The actionable half of this screen. A list of what IS published
@@ -149,14 +201,14 @@ export default function KraLibraryPage() {
   );
 }
 
-function ShelfDetail({ designation }) {
+function ShelfDetail({ designation, department }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState(null);
   useEffect(() => {
     setRows(null);
-    api(`/pms/hr/kra-library/${encodeURIComponent(designation)}`)
+    api(`/pms/hr/kra-library/${encodeURIComponent(designation)}?department=${encodeURIComponent(department || '')}`)
       .then((r) => setRows(r.entries)).catch((e) => setErr(e.message));
-  }, [designation]);
+  }, [designation, department]);
 
   if (err) return <p className="px-4 pb-3 text-xs text-rose-600">{err}</p>;
   if (!rows) return <p className="px-4 pb-3 text-xs text-navy-400">Loading…</p>;
