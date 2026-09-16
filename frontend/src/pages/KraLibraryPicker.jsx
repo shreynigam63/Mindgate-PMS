@@ -92,6 +92,11 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
   // still sends every title the department employs — the department total
   // above is the sum of them — but only this one is put on screen.
   const mine = (state.department_designations || []).find((d) => d.mine) || null;
+  // What the Department dropdown is currently showing. '' is "All
+  // departments", which is a real selection and not a missing one, so the
+  // untouched case (null) has to fall back to the server's view rather
+  // than be treated as blank.
+  const selectedDept = dept === null ? (state.viewing_department || '') : dept;
 
   const available = state.entries.filter((e) => !e.already_added);
   const chosen = state.entries.filter((e) => picked[e.id] && !e.already_added);
@@ -185,8 +190,14 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
 
                 Still a select rather than plain text, so the control keeps
                 its shape beside the Department dropdown and has somewhere
-                to grow if a second title ever applies to one person. */}
-            {mine && (
+                to grow if a second title ever applies to one person.
+
+                It appears only once a specific department is chosen.
+                "All departments" is not a department, so there is nothing
+                for a designation to be read within — and the row would
+                otherwise sit there unchanged whatever the dropdown above
+                it said, which is what made it look inert. */}
+            {mine && selectedDept && (
               <div className="flex items-center gap-2 mt-2">
                 <label className="lbl mb-0" htmlFor="shelf-desig">Designation</label>
                 <select id="shelf-desig" className="inp !py-1 !text-xs !w-auto"
