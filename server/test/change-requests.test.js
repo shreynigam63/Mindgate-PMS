@@ -33,9 +33,12 @@ async function sheet(rows) {
 
 // ---- 1. the returned plan ---------------------------------------------
 
-test('Growth Planning still opens editing for everybody, returned or not', () => {
-  assert.equal(devplanEditable('growth_planning', 'draft').ok, true);
-  assert.equal(devplanEditable('growth_planning', 'approved').ok, true);
+test('inside the merged phase, editing follows the sheet, not the cycle', () => {
+  // 036 folded growth_planning into kra_open, so there is no phase that
+  // opens the growth plan for everybody: the employee's own submission
+  // does. A plan already approved stays locked either way.
+  assert.equal(devplanEditable('kra_open', 'draft', 'submitted').ok, true);
+  assert.equal(devplanEditable('kra_open', 'approved', 'submitted').ok, false, 'approved still locks');
 });
 
 test('A RETURNED PLAN IS EDITABLE AFTER THE CYCLE MOVES ON — the whole point', () => {
@@ -157,14 +160,15 @@ test('before you submit, the growth plan is shut — and says which', () => {
   }
 });
 
-test('Growth Planning still opens it for everybody, submitted or not', () => {
-  // Somebody who never submitted a sheet must not be locked out of their
-  // own plan for the rest of the cycle because of it.
-  for (const status of ['draft', 'submitted', 'approved', null]) {
-    const w = growthWindow('growth_planning', status);
-    assert.equal(w.ok, true);
-    assert.equal(w.via, 'phase');
+test('there is no phase that opens it for everybody any more (036)', () => {
+  // growth_planning was the one that did. Folding it away means the
+  // submission is the ONLY way in, which is the point of the merge — and
+  // the one consequence worth stating plainly: an employee who never
+  // submits a KRA sheet never gets a growth plan on that cycle.
+  for (const status of ['draft', null]) {
+    assert.equal(growthWindow('kra_open', status).ok, false);
   }
+  assert.equal(growthWindow('growth_planning', 'submitted').ok, false, 'the phase itself is gone');
 });
 
 test('a submitted KRA sheet does not open the growth plan in a LATER phase', () => {

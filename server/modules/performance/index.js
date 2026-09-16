@@ -185,8 +185,11 @@ router.put('/cycles/:id/pip-threshold', async (req, res) => {
 // actually have something to do in a phase get notified about it, not
 // the whole tenant every time.
 const PHASE_OPEN_NOTICES = {
-  kra_open: [{ audience: 'all', title: 'KRA Setting is now open', body: 'Set your KRAs for this cycle.' }],
-  growth_planning: [{ audience: 'all', title: 'Growth Planning is now open', body: 'Set your target achievements for the year and your Aspiring Career for this cycle.' }],
+  // One notice since 036 folded the two phases together. It names the
+  // order they happen in, because the growth half opens on the employee's
+  // own submission rather than on anything HR does.
+  kra_open: [{ audience: 'all', title: 'KRA Setting and Growth Planning are now open',
+    body: 'Set your KRAs for this cycle and send them to your manager. Doing that opens your target achievements for the year and your Aspiring Career.' }],
   mid_year_review: [
     { audience: 'all', title: 'Mid-Year Review is now open', body: 'Your Mid-Year Review is open — add your reflection and self-rating.' },
     { audience: 'managers', title: 'Mid-Year Review is now open for your team', body: 'Mid-Year Review is open for your direct reports.' },

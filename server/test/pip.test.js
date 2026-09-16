@@ -88,7 +88,7 @@ test('PIP: full lifecycle — auto-trigger on publish, manager-only writes, mand
   assert.equal(cycleR.body.cycle.pip_threshold, '3.0', 'default threshold is 3.0');
   const cycleId = cycleR.body.cycle.id;
 
-  for (const phase of ['kra_open', 'growth_planning', 'mid_year_review', 'self_appraisal', 'manager_eval']) {
+  for (const phase of ['kra_open', 'mid_year_review', 'self_appraisal', 'manager_eval']) {
     await api(`/pms/cycles/${cycleId}/phase`, hrTok, { method: 'POST', body: JSON.stringify({ to: phase }) });
   }
 

@@ -73,7 +73,7 @@ async function scoreAllParamsTo(mgrTok, employeeId, value) {
 async function runAnnualCycle(hrTok, mgrTok, rating, name) {
   const cycleR = await api('/pms/cycles', hrTok, { method: 'POST', body: JSON.stringify({ name, fiscal_year: name, cycle_type: 'annual' }) });
   const cycleId = cycleR.body.cycle.id;
-  for (const phase of ['kra_open', 'growth_planning', 'mid_year_review', 'self_appraisal', 'manager_eval']) {
+  for (const phase of ['kra_open', 'mid_year_review', 'self_appraisal', 'manager_eval']) {
     await api(`/pms/cycles/${cycleId}/phase`, hrTok, { method: 'POST', body: JSON.stringify({ to: phase }) });
   }
   await scoreAllParamsTo(mgrTok, empId, rating);

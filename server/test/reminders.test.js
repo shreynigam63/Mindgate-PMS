@@ -123,7 +123,7 @@ test('an employee who has submitted stops being reminded', { skip }, async () =>
 test('a reminder is not sent while the phase makes the action impossible — and fires later instead', { skip }, async () => {
   await reset();
   await db.query(`DELETE FROM pms.midyear_checkins WHERE cycle_id=$1`, [cycleId]);
-  await setPhase('growth_planning');
+  await setPhase('kra_open');   // growth planning lives here since 036
   const blocked = await runReminders(tenantId, on(2025, 9, 16));
   assert.equal(blocked.midyear_self, 0, 'the page is locked — a nudge would send them to a wall');
   assert.equal((await db.query(`SELECT count(*)::int AS n FROM pms.reminder_log WHERE tenant_id=$1 AND rule='midyear_self'`, [tenantId])).rows[0].n, 0,

@@ -3,14 +3,20 @@
 // order, rollback one step (HR-controlled, audited by the caller), cancel
 // from any non-closed phase. Downstream gates use phaseAllows().
 
-// growth_planning added per explicit request: "after KRAs are approved by
-// managers, HR will move the cycle to lock KRA and it will open
-// development plan and career path." Previously devplan_* shared the
-// kra_open window (see the old comment below, now out of date) — there
-// was no way to lock KRAs while still letting Development Plan/Career
-// Path stay open. This phase is that missing middle step: KRA is locked
-// the moment the cycle advances past kra_open, and Development Plan +
-// Career Path only become editable once it reaches growth_planning.
+// growth_planning was FOLDED BACK INTO kra_open on 16 Sep, at the client's
+// request, and the two are now one phase shown as "KRA Setting and Growth
+// Planning". It had been added earlier to give HR a way to lock KRAs while
+// leaving the growth plan open — but that lock is now per-employee and
+// automatic (growthEditable below: your sheet locks when you submit it,
+// and that same act opens your growth plan), so a second cycle-wide phase
+// bought nothing and cost HR two extra transitions per cycle, plus a
+// rollback whenever anybody was out of step.
+//
+// The stored value stays 'kra_open'. Renaming it would rewrite every
+// cycle row, every audit entry and every notification ever sent, to change
+// a word only shown through phaseLabel() anyway. Migration 036 moves any
+// cycle sitting in 'growth_planning' back to 'kra_open'; the label for the
+// old value is kept in the frontend so historical rows still read.
 // mid_year_review added per an explicit request, with a reference
 // screenshot: a checkpoint phase between Growth Planning and
 // Self-Appraisal, gating "should not open before growth plan is
@@ -28,7 +34,7 @@
 // this same phase machine end to end) — this is a PHASE inside any
 // cycle's own timeline (annual or midyear), named similarly because the
 // request used that name.
-const ORDER = ['draft', 'kra_open', 'growth_planning', 'mid_year_review', 'self_appraisal', 'manager_eval', 'hod_eval', 'calibration', 'publish', 'closed'];
+const ORDER = ['draft', 'kra_open', 'mid_year_review', 'self_appraisal', 'manager_eval', 'hod_eval', 'calibration', 'publish', 'closed'];
 
 function canAdvance(from, to) {
   const i = ORDER.indexOf(from), j = ORDER.indexOf(to);
@@ -50,12 +56,16 @@ function canCancel(from) {
   return from === 'closed' ? { ok: false, reason: 'closed cycles cannot be cancelled' } : { ok: true };
 }
 
-// What each phase permits (gates for downstream endpoints). KRA locks the
-// moment the cycle leaves kra_open — kra_edit/kra_submit/kra_decide are
-// NOT carried into growth_planning, by design (that's the "lock" HR asked
-// for). Development Plan and Career Path share the growth_planning window
-// (career_edit is a new action, consumed by modules/people's career path
-// route — the only one of these three that isn't in modules/performance).
+// What each phase permits (gates for downstream endpoints).
+//
+// kra_open now covers KRA setting AND growth planning, but devplan_* and
+// career_edit are still deliberately absent from it: phaseAllows() only
+// knows the cycle, and inside this phase the growth plan depends on the
+// EMPLOYEE having submitted their own KRA sheet. Listing them here would
+// make phaseAllows(phase,'devplan_submit') true for somebody who has
+// submitted nothing — exactly the case the merged window must refuse.
+// growthEditable() below carries that rule, and every devplan/career route
+// goes through it rather than through phaseAllows() alone.
 const ALLOWS = {
   // devplan_* and career_edit are deliberately NOT listed here, even though
   // the two windows were merged on 16 Sep. In kra_open they depend on the
@@ -66,7 +76,6 @@ const ALLOWS = {
   // growthEditable() below carries the real rule; every devplan/career route
   // goes through it rather than through phaseAllows() alone.
   kra_open:        ['kra_edit', 'kra_submit', 'kra_decide'],
-  growth_planning: ['devplan_edit', 'devplan_submit', 'devplan_decide', 'career_edit'],
   mid_year_review: ['midyear_self_edit', 'midyear_self_submit', 'midyear_manager_edit', 'midyear_manager_submit'],
   self_appraisal:  ['self_edit', 'self_submit'],
   manager_eval:    ['manager_edit', 'manager_submit'],
@@ -118,6 +127,19 @@ function growthEditable(phase, { sheetStatus = null, planStatus = null } = {}) {
   // only remedy for one person's goal.
   if (planStatus === 'returned' && beforeCutoff) return { ok: true, via: 'returned' };
 
+  // An agreed plan is locked, and that outranks the window it sits in.
+  // This check used to sit below the kra_open branch, which made an
+  // APPROVED plan editable inside the merged phase — the routes caught it
+  // with a second check of their own, but the career routes have no such
+  // backstop, and a shared rule that is only right because of what the
+  // caller does afterwards is not a shared rule.
+  if (planStatus === 'approved' || planStatus === 'submitted') {
+    return { ok: false, reason: planStatus,
+      error: planStatus === 'approved'
+        ? `Your plan is approved — ask your manager to return it for edits (phase: ${phase || 'none'})`
+        : 'Your plan is with your manager — it reopens if they return it' };
+  }
+
   if (phase === 'kra_open') {
     if (SHEET_SENT.includes(sheetStatus)) return { ok: true, via: 'kra_submitted' };
     return {
@@ -129,10 +151,6 @@ function growthEditable(phase, { sheetStatus = null, planStatus = null } = {}) {
 
   if (phaseAllows(phase, 'devplan_edit')) return { ok: true, via: 'phase' };
 
-  if (planStatus === 'approved') {
-    return { ok: false, reason: 'approved',
-      error: `Your plan is approved — ask your manager to return it for edits (phase: ${phase || 'none'})` };
-  }
   return { ok: false, reason: 'phase',
     error: `Growth planning is not open (phase: ${phase || 'none'})` };
 }

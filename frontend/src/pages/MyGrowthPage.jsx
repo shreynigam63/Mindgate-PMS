@@ -60,8 +60,7 @@ function DevelopmentPlanCard() {
       )}
       {openedByKraSubmit && (
         <p className="text-xs bg-teal-50 text-teal-700 rounded-lg p-2">
-          Your KRAs are with your manager, so this is <b>open now</b> — no need to wait for
-          the {phaseLabel('growth_planning')} phase.
+          Your KRAs are with your manager, so this is <b>open now</b>.
         </p>
       )}
       {!editable && data.shut_because === 'kra_not_submitted' && (
@@ -73,7 +72,7 @@ function DevelopmentPlanCard() {
       {reopened && (
         <p className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">
           Your manager returned this plan, so it is <b>open for edits</b> even though the
-          cycle has moved to {phaseLabel(data.cycle.phase)}. Edit and submit it again.
+          cycle has moved on to {phaseLabel(data.cycle.phase)}. Edit and submit it again.
         </p>
       )}
       <GoalList goals={data.goals} editable={editable} onSaved={load} kras={data.kras || []} />
@@ -687,8 +686,8 @@ function CareerPathCard() {
       ) : (
         <p className="text-xs text-navy-400">
           {data.shut_because === 'kra_not_submitted'
-            ? <>Submit your KRAs to your manager and this opens straight away — you do not have to wait for {phaseLabel('growth_planning')}.</>
-            : <>Aspiring Career editing opens once you submit your KRAs, or once HR moves the cycle to {phaseLabel('growth_planning')}.</>}
+            ? <>Submit your KRAs to your manager and this opens straight away.</>
+            : <>Aspiring Career editing opens once you submit your KRAs for this cycle.</>}
         </p>
       )}
     </div>

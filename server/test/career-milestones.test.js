@@ -57,9 +57,17 @@ before(async () => {
   }
 
   const cycle = (await db.query(
-    `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase) VALUES ($1,'CMS Cycle','FYCMS','annual','growth_planning') RETURNING id`,
+    `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase) VALUES ($1,'CMS Cycle','FYCMS','annual','kra_open') RETURNING id`,
     [t.id])).rows[0];
   cycleId = cycle.id;
+  // Milestone CONTENT opens when the employee submits their own KRA sheet
+  // (036 merged growth_planning into kra_open, and the growth half is
+  // per-employee), so every employee this file drives needs one.
+  for (const id of [empId, other.id]) {
+    await db.query(
+      `INSERT INTO pms.kra_sheets (tenant_id, cycle_id, employee_id, status, submitted_at)
+       VALUES ($1,$2,$3,'submitted',now())`, [t.id, cycle.id, id]);
+  }
 
   const app = express();
   app.use(express.json());
@@ -160,7 +168,7 @@ test('progress updates are NOT phase-gated — progress happens all year', { ski
   });
   assert.equal(moved.status, 200, JSON.stringify(moved.body));
   assert.equal(moved.body.progress_pct, 33, 'one of three complete, rounded');
-  await db.query(`UPDATE pms.cycles SET phase='growth_planning' WHERE id=$1`, [cycleId]);
+  await db.query(`UPDATE pms.cycles SET phase='kra_open' WHERE id=$1`, [cycleId]);
 });
 
 test('progress is rejected outside 0-100 rather than clamped silently', { skip }, async () => {

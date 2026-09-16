@@ -34,7 +34,13 @@ before(async () => {
     await db.query(`INSERT INTO core.local_credentials (tenant_id, email, password_hash) VALUES ($1,$2,$3)`, [t.id, email, hash]);
   }
 
-  const cycle = (await db.query(`INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase) VALUES ($1,'DP Cycle','FYDP','annual','growth_planning') RETURNING id`, [t.id])).rows[0];
+  const cycle = (await db.query(`INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase) VALUES ($1,'DP Cycle','FYDP','annual','kra_open') RETURNING id`, [t.id])).rows[0];
+  // The growth plan opens when the EMPLOYEE submits their own KRA sheet
+  // (036 merged growth_planning into kra_open), so the fixture needs one —
+  // otherwise every write below correctly 409s with "Submit your KRAs".
+  await db.query(
+    `INSERT INTO pms.kra_sheets (tenant_id, cycle_id, employee_id, manager_id, status, submitted_at)
+     VALUES ($1,$2,$3,$4,'submitted',now())`, [t.id, cycle.id, emp.id, mgr.id]);
 
   const app = express();
   app.use(cors());

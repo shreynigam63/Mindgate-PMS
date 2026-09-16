@@ -38,12 +38,12 @@ before(async () => {
     await db.query(`INSERT INTO core.local_credentials (tenant_id, email, password_hash) VALUES ($1,$2,$3)`, [t.id, email, hash]);
   }
 
-  // Starts in growth_planning ON PURPOSE — several tests below assert
+  // Starts in kra_open ON PURPOSE — several tests below assert
   // Mid-Year Review is correctly BLOCKED until the cycle actually reaches
   // the mid_year_review phase (the exact "should not open before growth
   // plan is complete" request this feature implements).
   const cycle = (await db.query(
-    `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase) VALUES ($1,'MY Cycle','FYMY','annual','growth_planning') RETURNING id`,
+    `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase) VALUES ($1,'MY Cycle','FYMY','annual','kra_open') RETURNING id`,
     [t.id])).rows[0];
   cycleId = cycle.id;
 
@@ -72,7 +72,7 @@ async function api(path, token, opts = {}) {
   return { status: r.status, body: await r.json() };
 }
 
-test('Mid-Year Review is blocked while the cycle is still in growth_planning', { skip }, async () => {
+test('Mid-Year Review is blocked while the cycle is still in KRA Setting and Growth Planning', { skip }, async () => {
   const empAuth = await login('my-emp@x.com');
   const get = await api('/pms/my/midyear-review', empAuth.token);
   assert.equal(get.status, 200);

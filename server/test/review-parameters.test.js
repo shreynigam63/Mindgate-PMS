@@ -95,7 +95,7 @@ test('parameter-scores: partial scoring is incomplete; full scoring computes and
 
   const cycleR = await api('/pms/cycles', hrTok, { method: 'POST', body: JSON.stringify({ name: 'Param Cycle', fiscal_year: 'FYP', cycle_type: 'annual' }) });
   const cycleId = cycleR.body.cycle.id;
-  for (const phase of ['kra_open', 'growth_planning', 'mid_year_review', 'self_appraisal', 'manager_eval']) {
+  for (const phase of ['kra_open', 'mid_year_review', 'self_appraisal', 'manager_eval']) {
     await api(`/pms/cycles/${cycleId}/phase`, hrTok, { method: 'POST', body: JSON.stringify({ to: phase }) });
   }
 
@@ -145,7 +145,7 @@ test('team/evaluations: directly setting overall_rating on an annual cycle is re
   const mgrAuth = await login('param-mgr@x.com');
   const cycleR = await api('/pms/cycles', hrAuth.token, { method: 'POST', body: JSON.stringify({ name: 'Guard Cycle', fiscal_year: 'FYG', cycle_type: 'annual' }) });
   const cycleId = cycleR.body.cycle.id;
-  for (const phase of ['kra_open', 'growth_planning', 'mid_year_review', 'self_appraisal', 'manager_eval']) {
+  for (const phase of ['kra_open', 'mid_year_review', 'self_appraisal', 'manager_eval']) {
     await api(`/pms/cycles/${cycleId}/phase`, hrAuth.token, { method: 'POST', body: JSON.stringify({ to: phase }) });
   }
   const direct = await api(`/pms/team/evaluations/${empId}`, mgrAuth.token, { method: 'PUT', body: JSON.stringify({ overall_rating: 5 }) });

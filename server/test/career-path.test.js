@@ -45,11 +45,17 @@ before(async () => {
   for (const email of ['cp-mgr@x.com', 'cp-emp@x.com']) {
     await db.query(`INSERT INTO core.local_credentials (tenant_id, email, password_hash) VALUES ($1,$2,$3)`, [t.id, email, hash]);
   }
-  // Career Path editing is gated to the growth_planning phase (see
-  // phase-machine.js) — "HR locks KRA, then Development Plan and Career
-  // Path open." Without an active cycle in this phase, every PUT below
-  // would 409.
-  await db.query(`INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase) VALUES ($1,'CP Cycle','FYCP','annual','growth_planning')`, [t.id]);
+  // Career Path editing opens when the EMPLOYEE submits their own KRA
+  // sheet (growthEditable in phase-machine.js), inside the merged KRA
+  // Setting and Growth Planning phase. So the fixture needs both: a cycle
+  // in that phase, and a submitted sheet for the employee under test —
+  // otherwise every PUT below correctly 409s.
+  const cyc = (await db.query(
+    `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase)
+     VALUES ($1,'CP Cycle','FYCP','annual','kra_open') RETURNING id`, [t.id])).rows[0];
+  await db.query(
+    `INSERT INTO pms.kra_sheets (tenant_id, cycle_id, employee_id, manager_id, status, submitted_at)
+     VALUES ($1,$2,$3,$4,'submitted',now())`, [t.id, cyc.id, emp.id, mgr.id]);
 
   const app = express();
   app.use(cors());
@@ -135,7 +141,8 @@ test('career path: an update replaces (upserts), not duplicates', { skip }, asyn
 
 // The gate this feature exists for, as it stands after the 16 Sep merge:
 // Aspiring Career opens when the EMPLOYEE submits their own KRA sheet, and
-// unconditionally once the cycle reaches growth_planning. The original
+// unconditionally while the cycle is in KRA Setting and Growth Planning.
+// The original
 // rule — "blocked until HR moves the cycle" — is what made HR advance and
 // then roll back the whole cycle to serve one person's timing.
 //
@@ -167,23 +174,24 @@ test('career path: editing is blocked until the employee submits their KRAs', { 
   const afterWindow = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'too late' }) });
   assert.equal(afterWindow.status, 409);
 
-  await db.query(`UPDATE pms.cycles SET phase='growth_planning' WHERE tenant_id=$1`, [t]);
+  await db.query(`UPDATE pms.cycles SET phase='kra_open' WHERE tenant_id=$1`, [t]);
   const duringWindow = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'right on time' }) });
   assert.equal(duringWindow.status, 200);
 
   const getResp = await api('/people/career/my-path', token);
   assert.equal(getResp.body.editable, true);
-  assert.equal(getResp.body.cycle_phase, 'growth_planning');
+  assert.equal(getResp.body.cycle_phase, 'kra_open');
 });
 
 // Found missing: employees could set a target role and a plan narrative,
 // but nowhere to say WHEN they expect to get there.
 test('career path: expected timeline is saved and returned alongside target role', { skip }, async () => {
   const { token } = await login('cp-emp@x.com');
-  // The previous test leaves the cycle in growth_planning; make that
-  // explicit rather than depending on the order tests happen to run in.
+  // Set the state this test needs rather than depending on the order
+  // tests happen to run in: the merged phase, with the sheet submitted.
   const tid = (await db.query(`SELECT tenant_id FROM core.employees WHERE id=$1`, [empId])).rows[0].tenant_id;
-  await db.query(`UPDATE pms.cycles SET phase='growth_planning' WHERE tenant_id=$1`, [tid]);
+  await db.query(`UPDATE pms.cycles SET phase='kra_open' WHERE tenant_id=$1`, [tid]);
+  await db.query(`UPDATE pms.kra_sheets SET status='submitted' WHERE tenant_id=$1 AND employee_id=$2`, [tid, empId]);
   const set = await api('/people/career/my-path', token, {
     method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', target_timeline: '12-18 months', plan: 'Grow into a tech-lead role' }),
   });

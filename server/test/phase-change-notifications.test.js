@@ -83,13 +83,13 @@ test('advancing to kra_open notifies every active employee, not managers/HOD onl
   for (const id of [empId, mgrId, hodId]) {
     const notes = await notificationsFor(id);
     assert.equal(notes.length, 1);
-    assert.equal(notes[0].title, 'KRA Setting is now open');
+    assert.equal(notes[0].title, 'KRA Setting and Growth Planning are now open');
   }
 });
 
 test('advancing to manager_eval only notifies managers, not individual contributors or Delivery Heads', { skip }, async () => {
   const { token } = await login('pcn-admin@x.com');
-  for (const to of ['growth_planning', 'mid_year_review', 'self_appraisal', 'manager_eval']) {
+  for (const to of ['mid_year_review', 'self_appraisal', 'manager_eval']) {
     await api(`/pms/cycles/${cycleId}/phase`, token, { method: 'POST', body: JSON.stringify({ to }) });
   }
   const mgrNotes = await notificationsFor(mgrId);

@@ -57,7 +57,7 @@ async function growthWindowFor(tenantId, employeeId) {
 // routes refused them, and it names the single action that opens it.
 const careerShutMessage = (phase, w) => (w.reason === 'kra_not_submitted'
   ? 'Submit your KRAs to your manager first — Aspiring Career opens the moment you do'
-  : `Aspiring Career editing is not open (phase: ${phase || 'no active cycle'}) — it opens once you submit your KRAs, or once HR moves the cycle to Growth Planning`);
+  : `Aspiring Career editing is not open (phase: ${phase || 'no active cycle'}) — it opens in KRA Setting and Growth Planning, once you submit your KRAs`);
 
 // ---- Awards -----------------------------------------------------------------
 router.get('/awards', async (req, res) => {
