@@ -1499,7 +1499,41 @@ router.get('/hr/kra-library', async (req, res) => {
                            WHERE l.tenant_id = e.tenant_id
                              AND lower(btrim(l.designation)) = lower(btrim(e.designation)))
         GROUP BY e.designation ORDER BY 2 DESC, 1`, [T(req)])).rows;
-    res.json({ shelves: rows, uncovered, departments, ambiguous, scope: await kraLibraryScope(T(req)) });
+    // ?department=X answers the question the filter is actually for:
+    // "what will people in this department see?" — which is not the same
+    // as "which shelves mention this department". With no department
+    // shelves published yet, filtering the flat list by department returns
+    // every fallback shelf and therefore looks identical to All
+    // departments, i.e. broken. This returns one row per designation THAT
+    // DEPARTMENT ACTUALLY EMPLOYS, saying which shelf each one lands on.
+    const wanted = req.query.department == null ? null : String(req.query.department).trim();
+    let departmentView = null;
+    if (wanted) {
+      departmentView = (await db.query(
+        `SELECT e.designation,
+                count(*)::int AS employees,
+                (SELECT count(*)::int FROM pms.kra_library l
+                  WHERE l.tenant_id=e.tenant_id
+                    AND lower(btrim(l.designation))=lower(btrim(e.designation))
+                    AND lower(btrim(coalesce(l.department,'')))=lower(btrim($2))) AS own_kras,
+                (SELECT count(*)::int FROM pms.kra_library l
+                  WHERE l.tenant_id=e.tenant_id
+                    AND lower(btrim(l.designation))=lower(btrim(e.designation))
+                    AND coalesce(btrim(l.department),'')='') AS fallback_kras
+           FROM core.employees e
+          WHERE e.tenant_id=$1 AND e.status='active'
+            AND lower(btrim(coalesce(e.department,'')))=lower(btrim($2))
+            AND coalesce(btrim(e.designation),'') <> ''
+          GROUP BY e.tenant_id, e.designation
+          ORDER BY 2 DESC, 1`, [T(req), wanted])).rows.map((r) => ({
+        ...r,
+        // What an employee in this department and title is offered today.
+        source: r.own_kras ? 'own' : (r.fallback_kras ? 'fallback' : 'none'),
+        kras: r.own_kras || r.fallback_kras,
+      }));
+    }
+    res.json({ shelves: rows, uncovered, departments, ambiguous, department_view: departmentView,
+      department: wanted || null, scope: await kraLibraryScope(T(req)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -23,7 +23,17 @@ export default function KraLibraryPage() {
   const [upErr, setUpErr] = useState(null);
   const [openShelf, setOpenShelf] = useState(null);
 
-  const load = () => api('/pms/hr/kra-library').then(setData).catch((e) => setErr(e.message));
+  // "" = every published shelf. "__none" = only the department-blank
+  // fallbacks. Anything else asks the server what people in THAT
+  // department are offered, title by title.
+  const [dept, setDept] = useState('');
+
+  // The department is part of the request now, not just a client-side
+  // filter: the server answers "what will people in this department see?",
+  // which needs the employee master and cannot be derived from the shelf
+  // list alone.
+  const load = (d = dept) => api(`/pms/hr/kra-library${d && d !== '__none' ? `?department=${encodeURIComponent(d)}` : ''}`)
+    .then(setData).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
 
   // Dry run first, then commit — the same two-step the employee importer
@@ -38,11 +48,6 @@ export default function KraLibraryPage() {
     } catch (e) { setUpErr(e.message); setReport(e.data && e.data.errors ? e.data : null); }
   };
 
-  // "" = every shelf, "__none" = only the department-blank fallbacks,
-  // anything else = that department's shelves plus the fallbacks they
-  // sit behind, because seeing one without the other tells HR half the
-  // story about what an employee in that department will be offered.
-  const [dept, setDept] = useState('');
   const clearShelf = async (designation, department) => {
     const where = department ? `"${designation}" in ${department}` : `"${designation}" (all departments)`;
     if (!window.confirm(`Remove every library KRA for ${where}?\n\nKRAs already copied onto people's sheets are not affected.`)) return;
@@ -56,10 +61,13 @@ export default function KraLibraryPage() {
 
   const token = localStorage.getItem('apms_token');
 
-  const shown = (data.shelves || []).filter((x) => (
-    dept === '' ? true
-      : dept === '__none' ? !x.department
-      : (x.department || '') === dept || !x.department));
+  // Only the two list-shaped choices filter the published shelves. A real
+  // department switches the card to the server's department view instead,
+  // because filtering this list by department was the bug: with no
+  // department shelves published, every shelf is a fallback, so every
+  // department showed the identical 267 rows and the filter looked dead.
+  const shown = (data.shelves || []).filter((x) => (dept === '__none' ? !x.department : true));
+  const view = data.department_view;
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
@@ -133,19 +141,53 @@ export default function KraLibraryPage() {
           <div className="ml-auto">
             <label className="lbl" htmlFor="dept-filter">Department</label>
             <select id="dept-filter" className="inp !py-1 !text-xs" value={dept}
-              onChange={(e) => { setDept(e.target.value); setOpenShelf(null); }}>
+              onChange={(e) => { setDept(e.target.value); setOpenShelf(null); load(e.target.value); }}>
               <option value="">All departments</option>
               <option value="__none">Fallback shelves only</option>
               {(data.departments || []).map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
         </div>
-        {!data.shelves.length && (
+        {view && (
+          <div className="p-3 space-y-2">
+            <p className="text-[11px] text-navy-500">
+              What people in <b>{data.department}</b> are offered today — one row per job title
+              that department actually employs.
+            </p>
+            {!view.length && (
+              <p className="text-sm text-navy-400 py-4 text-center">
+                No active employees are recorded in {data.department}.
+              </p>
+            )}
+            {view.map((r) => (
+              <div key={r.designation} className="flex flex-wrap items-center gap-2 text-sm border-t border-navy-50 pt-2">
+                <span className="font-semibold min-w-0 flex-1 truncate">{r.designation}</span>
+                <span className="chip bg-navy-50 text-navy-500">{r.employees} employee{r.employees === 1 ? '' : 's'}</span>
+                {/* The whole point of this view: which shelf lands on those
+                    people's screens, and whether anybody wrote it for them. */}
+                {r.source === 'own' && <span className="chip bg-teal-100 text-teal-700">{r.kras} KRAs · own shelf</span>}
+                {r.source === 'fallback' && <span className="chip bg-navy-50 text-navy-600">{r.kras} KRAs · company-wide</span>}
+                {r.source === 'none' && <span className="chip bg-amber-100 text-amber-700">no shelf at all</span>}
+              </div>
+            ))}
+            {!!view.length && (
+              <p className="text-[11px] text-navy-400 pt-1">
+                <b>{view.filter((r) => r.source === 'own').length}</b> of {view.length} titles have a
+                shelf written for {data.department};{' '}
+                <b>{view.filter((r) => r.source === 'fallback').length}</b> fall back to the
+                company-wide one;{' '}
+                <b>{view.filter((r) => r.source === 'none').length}</b> have none at all.
+                Upload a file with a <b>Department</b> column to give this department its own.
+              </p>
+            )}
+          </div>
+        )}
+        {!view && !data.shelves.length && (
           <p className="p-6 text-center text-sm text-navy-400">
             Nothing published yet. Upload a file above to create the first shelf.
           </p>
         )}
-        {shown.map((s) => {
+        {!view && shown.map((s) => {
           const key = `${s.department || ''}|${s.designation}`;
           return (
           <div key={key}>
