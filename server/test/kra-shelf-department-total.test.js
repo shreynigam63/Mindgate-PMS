@@ -132,12 +132,47 @@ test('another department\'s KRAs, and titles nobody holds, are not in the total'
   assert.ok(!(d.department_designations || []).some((x) => /Sales|Nobody/.test(x.designation)));
 });
 
-test('"All departments" is left alone — it is not a department', { skip }, async () => {
+test('"All departments" counts every department, added up', { skip }, async () => {
   const d = await shelf();
   const all = (d.shelves || []).find((s) => !s.department);
   assert.ok(all, 'the company-wide shelf stays on the menu');
-  assert.equal(all.kras, 2, 'still the viewer\'s own title, company-wide');
-  assert.equal(all.department_kras, undefined, 'no department total on a non-department');
+  // Admin 6 (Executive 3 + Office Assistant 2 + Admin Manager 1)
+  // + Sales 1 = 7, across the 2 departments anybody works in.
+  assert.equal(all.all_kras, 7);
+  assert.equal(all.all_departments, 2);
+  // It is NOT a department, so it carries no department total...
+  assert.equal(all.department_kras, undefined);
+  // ...and `kras` still means what it always did: the shelf this option
+  // actually loads, which is this one job title's company-wide set. The
+  // label says something different from what the option does, which is
+  // deliberate and is why this assertion is here rather than deleted.
+  assert.equal(all.kras, 2);
+});
+
+test('THE TOP LINE IS THE SUM OF THE LINES BELOW IT', { skip }, async () => {
+  // The invariant that makes the menu coherent: pick any department and
+  // it is part of the "All departments" figure. Only this viewer's own
+  // department is on their menu, so the check goes through the server's
+  // own rollup — every department, not just the visible one.
+  const d = await shelf();
+  const all = (d.shelves || []).find((s) => !s.department);
+  const admin = (d.shelves || []).find((s) => s.department === 'Admin');
+  assert.ok(all.all_kras > admin.department_kras, 'the whole exceeds the part');
+  assert.equal(all.all_kras - admin.department_kras, 1, 'Sales is the only other department');
+});
+
+test('an employee with no department at all is in neither total', { skip }, async () => {
+  // They belong to no department, so they cannot be part of "all
+  // departments" — and counting them would break the sum-of-parts rule
+  // above. Proven by adding one and re-reading the totals.
+  const before = (await shelf()).shelves.find((s) => !s.department).all_kras;
+  await db.query(
+    `INSERT INTO core.employees (tenant_id, name, email, status, department, designation)
+     SELECT tenant_id,'No Dept','sdt-nodept@x.com','active','','Executive'
+       FROM core.employees WHERE email='sdt-exec@x.com'`);
+  const after = (await shelf()).shelves.find((s) => !s.department).all_kras;
+  assert.equal(after, before, 'a department-less employee changes nothing');
+  await db.query(`DELETE FROM core.employees WHERE email='sdt-nodept@x.com'`);
 });
 
 test('two people with the same title are one title, not two', { skip }, async () => {

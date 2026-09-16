@@ -1779,20 +1779,29 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
     shelves.push({ department, kras: companyWide ? companyWide.kras : 0, inherited: true });
   }
 
+  // WHAT THE TWO KINDS OF OPTION COUNT.
+  //
   // A department option counts the WHOLE department: every KRA served to
-  // every job title it employs. That is a different number from the one
-  // beside "All departments", which counts this one job title — and it is
-  // the right one here, because the designation control below does the
-  // per-title breakdown. A department entry that repeated the title's own
-  // count would just say the same thing twice.
+  // every job title it employs. "All departments" counts every department
+  // that way and adds them up, so the top line is exactly the sum of the
+  // lines below it — pick any department and it is part of that total.
+  // Neither is the viewer's own title, because the Designation control
+  // beside them is what reports that; an option repeating it would say
+  // the same thing twice and leave both dimensions unmeasured.
   //
   // Per title it is the department's own shelf where one exists, else the
   // company-wide shelf — NULLIF/COALESCE rather than a sum of both, or a
-  // title with two shelves would be counted twice. Scoped to the
-  // departments actually on the menu, so this is a handful of rows and not
-  // a scan of all 34.
-  const deptNames = shelves.map((sh) => sh.department).filter(Boolean);
-  const deptTotals = deptNames.length ? Object.fromEntries((await db.query(
+  // title with two shelves would be counted twice.
+  //
+  // Every department is rolled up, not just the ones on this viewer's
+  // menu, because the company total is the sum of all of them. That is
+  // ~230 groups and ~4ms on the live data, measured, so one query serves
+  // both numbers rather than two queries scanning the same rows twice.
+  //
+  // Employees with NO department are left out of both: they belong to no
+  // department, so they cannot be part of "all departments", and counting
+  // them would make the total stop equalling the sum of its parts.
+  const rollup = (await db.query(
     `SELECT department, sum(kras)::int AS total_kras, count(*)::int AS titles
        FROM (
          SELECT e.department, e.designation,
@@ -1806,18 +1815,25 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
                              AND coalesce(btrim(l.department),'')='')) AS kras
            FROM core.employees e
           WHERE e.tenant_id=$1 AND e.status='active'
-            AND lower(btrim(coalesce(e.department,''))) = ANY($2::text[])
+            AND coalesce(btrim(e.department),'') <> ''
             AND coalesce(btrim(e.designation),'') <> ''
           GROUP BY e.tenant_id, e.department, e.designation
        ) x
-      GROUP BY department`,
-    [tenantId, deptNames.map((d) => d.trim().toLowerCase())])).rows
-      .map((r) => [r.department.trim().toLowerCase(), r])) : {};
+      GROUP BY department`, [tenantId])).rows;
+  const deptTotals = Object.fromEntries(rollup.map((r) => [r.department.trim().toLowerCase(), r]));
+  const allKras = rollup.reduce((n, r) => n + r.total_kras, 0);
   for (const sh of shelves) {
-    if (!sh.department) continue;
-    const t = deptTotals[sh.department.trim().toLowerCase()];
-    sh.department_kras = t ? t.total_kras : 0;
-    sh.department_titles = t ? t.titles : 0;
+    if (sh.department) {
+      const t = deptTotals[sh.department.trim().toLowerCase()];
+      sh.department_kras = t ? t.total_kras : 0;
+      sh.department_titles = t ? t.titles : 0;
+    } else {
+      // The company-wide entry. `kras` stays what it always was — the
+      // shelf this option actually loads, for this one job title — and
+      // these are the overall figures shown beside it.
+      sh.all_kras = allKras;
+      sh.all_departments = rollup.length;
+    }
   }
 
   // An explicit choice from the dropdown wins over the automatic match.
