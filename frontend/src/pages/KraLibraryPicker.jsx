@@ -109,11 +109,12 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
               {available.length !== state.entries.length && `, ${available.length} not yet on this sheet`}.
               Pick what applies, then adjust the wording and weights.
             </p>
-            {/* One shelf, no chooser: a dropdown with a single option is
-                furniture. It appears the moment a job title has more than
-                one, which is exactly when "which list am I looking at?"
-                becomes a real question. */}
-            {(state.shelves || []).length > 1 && (
+            {/* Shown whenever department matching is switched on, because
+                from that moment "which department's shelf is this?" is a
+                real question even if the answer is still "the only one".
+                Hidden when matching is off, since the dimension is not in
+                play and the dropdown would be furniture. */}
+            {state.scope === 'department+designation' && (state.shelves || []).length > 1 && (
               <div className="flex items-center gap-2 mt-2">
                 <label className="lbl mb-0" htmlFor="shelf-dept">Department</label>
                 <select id="shelf-dept" className="inp !py-1 !text-xs !w-auto"
@@ -121,7 +122,7 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                   onChange={(e) => { setDept(e.target.value); setPicked({}); }}>
                   {state.shelves.map((sh) => (
                     <option key={sh.department || '__all'} value={sh.department || ''}>
-                      {sh.department || 'All departments'} · {sh.kras} KRA{sh.kras === 1 ? '' : 's'}
+                      {sh.department || 'All departments'} · {sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'no shelf yet'}
                       {sh.department && state.department
                         && sh.department.toLowerCase() === state.department.toLowerCase() ? ' (yours)' : ''}
                     </option>

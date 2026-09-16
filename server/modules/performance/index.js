@@ -1727,6 +1727,15 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
       GROUP BY 1 ORDER BY (coalesce(btrim(department),'')='') DESC, 1`,
     [tenantId, designation])).rows.map((r) => ({ department: r.department || null, kras: r.kras }));
 
+  // The employee's OWN department always appears in the list, even with no
+  // shelf behind it yet. Without this the chooser stays hidden until HR has
+  // already done the upload it exists to prompt — and the person looking at
+  // a generic shelf has no way to see that a department dimension exists at
+  // all. kras: 0 is what the UI renders as "no shelf yet".
+  if (department && !shelves.some((sh) => (sh.department || '').toLowerCase() === department.toLowerCase())) {
+    shelves.push({ department, kras: 0 });
+  }
+
   // An explicit choice from the dropdown wins over the automatic match.
   // '' is a real answer meaning the company-wide shelf, so the test is for
   // undefined/null rather than falsiness — and it is only honoured when a
