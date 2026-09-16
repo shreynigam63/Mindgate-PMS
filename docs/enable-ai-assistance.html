@@ -1,0 +1,484 @@
+<title>AI Assistance Switch-On</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root{
+    --ink:#131A18; --body:#2E3A37; --slate:#5F6D69; --faint:#8A9793;
+    --ground:#F4F7F5; --card:#FFFFFF; --rule:#D9E2DD; --rule-soft:#E8EFEA;
+    --live:#0E6B4F; --live-soft:#E0F1E8;
+    --off:#7A6A3E; --off-soft:#F7F1E0;
+    --crimson:#A3183C; --crimson-soft:#FBEAEF;
+    --navy:#1B3B6F; --navy-soft:#E9EEF7;
+    --code-bg:#101816; --code-fg:#DAE4E0; --code-dim:#798A85;
+    --sans:"Source Sans 3",ui-sans-serif,system-ui,sans-serif;
+    --display:"Archivo",var(--sans);
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ink:#EEF3F1; --body:#C4CFCB; --slate:#93A19D; --faint:#6E7E79;
+      --ground:#0D1211; --card:#151D1B; --rule:#283330; --rule-soft:#202A28;
+      --live:#68CFA5; --live-soft:#0F2620;
+      --off:#DCB670; --off-soft:#27210F;
+      --crimson:#F2879F; --crimson-soft:#2C1620;
+      --navy:#9AB8E9; --navy-soft:#16233A;
+      --code-bg:#080D0C; --code-fg:#D1DCD8; --code-dim:#6A7A76;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#EEF3F1; --body:#C4CFCB; --slate:#93A19D; --faint:#6E7E79;
+    --ground:#0D1211; --card:#151D1B; --rule:#283330; --rule-soft:#202A28;
+    --live:#68CFA5; --live-soft:#0F2620;
+    --off:#DCB670; --off-soft:#27210F;
+    --crimson:#F2879F; --crimson-soft:#2C1620;
+    --navy:#9AB8E9; --navy-soft:#16233A;
+    --code-bg:#080D0C; --code-fg:#D1DCD8; --code-dim:#6A7A76;
+  }
+
+  *{box-sizing:border-box}
+  body{background:var(--ground);color:var(--body);font-family:var(--sans);
+       font-size:16.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:840px;margin:0 auto;padding-inline:20px;padding-block:0 96px}
+
+  header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;
+    background:color-mix(in srgb,var(--ground) 92%,transparent);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--rule);
+    padding:10px 20px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+  header.top b{font-family:var(--display);font-weight:700;color:var(--ink);font-size:14px;letter-spacing:.01em}
+  header.top span{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+
+  .hero{padding-block:44px 8px}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--live);font-weight:600}
+  h1{font-family:var(--display);font-weight:700;color:var(--ink);
+     font-size:clamp(30px,6vw,46px);line-height:1.08;letter-spacing:-.02em;
+     margin:.35em 0 .3em;text-wrap:balance}
+  .lede{font-size:19px;color:var(--slate);max-width:62ch;text-wrap:pretty}
+
+  .facts{display:flex;flex-wrap:wrap;gap:0;margin-top:26px;
+    border:1px solid var(--rule);border-radius:10px;background:var(--card);overflow:hidden}
+  .fact{flex:1 1 150px;padding:13px 16px;border-right:1px solid var(--rule-soft)}
+  .fact:last-child{border-right:0}
+  .fact dt{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint);margin-bottom:3px}
+  .fact dd{margin:0;font-family:var(--display);font-weight:600;color:var(--ink);font-size:15.5px}
+
+  h2{font-family:var(--display);font-weight:700;color:var(--ink);
+     font-size:25px;letter-spacing:-.012em;line-height:1.2;
+     margin:56px 0 4px;padding-top:22px;border-top:2px solid var(--ink);text-wrap:balance}
+  h2 .n{font-family:var(--mono);font-size:13px;color:var(--live);
+     display:block;font-weight:600;letter-spacing:.1em;margin-bottom:6px}
+  h3{font-family:var(--display);font-weight:600;color:var(--ink);
+     font-size:17.5px;margin:32px 0 6px;letter-spacing:-.005em}
+  h4{font-family:var(--display);font-weight:600;color:var(--ink);font-size:14.5px;margin:22px 0 4px}
+  p{margin:.65em 0;max-width:68ch}
+  ul,ol{margin:.6em 0;padding-left:1.35em;max-width:68ch}
+  li{margin:.3em 0}
+  strong{color:var(--ink);font-weight:600}
+  a{color:var(--navy)}
+  code{font-family:var(--mono);font-size:.855em;background:var(--navy-soft);
+    color:var(--ink);padding:.12em .4em;border-radius:4px;overflow-wrap:break-word}
+
+  pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);
+    font-size:13px;line-height:1.66;padding:15px 17px;border-radius:9px;
+    overflow-x:auto;margin:14px 0;border:1px solid transparent}
+  pre b{color:#8FD6AE;font-weight:400}
+  pre i{color:var(--code-dim);font-style:normal}
+  pre em{color:#F0B77A;font-style:normal}
+
+  .tablewrap{overflow-x:auto;margin:16px 0;border:1px solid var(--rule);border-radius:9px;background:var(--card)}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+  th{background:var(--ink);color:var(--ground);font-family:var(--display);
+     font-weight:600;font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+     text-align:left;padding:9px 13px;white-space:nowrap}
+  td{padding:9px 13px;border-top:1px solid var(--rule-soft);vertical-align:top}
+  td:first-child{color:var(--ink);font-weight:600}
+  tbody tr:nth-child(even){background:color-mix(in srgb,var(--ground) 55%,transparent)}
+
+  .note{border-left:3px solid var(--navy);background:var(--navy-soft);
+    padding:13px 16px;border-radius:0 8px 8px 0;margin:20px 0;font-size:15.5px}
+  .warn{border-left-color:var(--off);background:var(--off-soft)}
+  .stop{border-left-color:var(--crimson);background:var(--crimson-soft)}
+  .ok{border-left-color:var(--live);background:var(--live-soft)}
+  .note p{margin:.35em 0;max-width:64ch}
+  .note .lbl{font-family:var(--display);font-weight:700;color:var(--ink);
+    font-size:12px;letter-spacing:.09em;text-transform:uppercase;display:block;margin-bottom:4px}
+
+  /* The one thing this document is about: a single state change. */
+  .states{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:stretch;
+    margin:26px 0 8px}
+  .state{border:1px solid var(--rule);border-radius:10px;background:var(--card);padding:14px 16px}
+  .state .tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;
+    text-transform:uppercase;font-weight:600;display:flex;align-items:center;gap:7px;margin-bottom:7px}
+  .state .tag::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
+  .state.off{border-color:color-mix(in srgb,var(--off) 45%,var(--rule))}
+  .state.off .tag{color:var(--off)}
+  .state.on{border-color:color-mix(in srgb,var(--live) 45%,var(--rule))}
+  .state.on .tag{color:var(--live)}
+  .state p{margin:0;font-size:14.5px;max-width:none}
+  .state .say{font-family:var(--mono);font-size:12.5px;color:var(--ink);
+    display:block;margin-top:7px;line-height:1.5}
+  .arrow{align-self:center;font-family:var(--mono);font-size:22px;color:var(--faint)}
+  @media (max-width:620px){
+    .states{grid-template-columns:1fr}
+    .arrow{transform:rotate(90deg);justify-self:center}
+  }
+
+  .tabs{display:flex;gap:4px;margin:22px 0 0;flex-wrap:wrap}
+  .tabs button{font-family:var(--display);font-weight:600;font-size:13.5px;
+    background:transparent;color:var(--slate);border:1px solid var(--rule);
+    border-bottom:none;padding:9px 15px;border-radius:8px 8px 0 0;cursor:pointer}
+  .tabs button[aria-selected="true"]{background:var(--card);color:var(--ink);
+    border-color:var(--rule);box-shadow:inset 0 3px 0 var(--live)}
+  .tabs button:focus-visible{outline:2px solid var(--navy);outline-offset:1px}
+  .panel{border:1px solid var(--rule);background:var(--card);
+    border-radius:0 9px 9px 9px;padding:4px 20px 20px}
+  .panel h4:first-of-type{margin-top:16px}
+
+  .steps{list-style:none;padding:0;counter-reset:s;margin:18px 0}
+  .steps>li{counter-increment:s;position:relative;padding-left:44px;margin:0 0 20px}
+  .steps>li::before{content:counter(s);position:absolute;left:0;top:1px;
+    width:28px;height:28px;border-radius:50%;background:var(--ink);color:var(--ground);
+    font-family:var(--mono);font-size:13px;font-weight:600;display:grid;place-items:center}
+  .steps>li>b{font-family:var(--display);color:var(--ink);font-size:16.5px;
+    display:block;margin-bottom:2px}
+
+  .chk{list-style:none;padding:0;margin:14px 0}
+  .chk li{padding-left:26px;position:relative;margin:.45em 0}
+  .chk li::before{content:"";position:absolute;left:2px;top:.55em;width:11px;height:11px;
+    border:2px solid var(--slate);border-radius:3px}
+
+  .no{list-style:none;padding:0;margin:14px 0;max-width:68ch}
+  .no li{padding-left:26px;position:relative;margin:.4em 0}
+  .no li::before{content:"\00d7";position:absolute;left:3px;top:0;
+    font-family:var(--mono);font-weight:600;color:var(--crimson)}
+
+  footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--rule);
+    color:var(--faint);font-size:13.5px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  @media (max-width:560px){ .fact{flex-basis:50%;border-right:0;border-bottom:1px solid var(--rule-soft)} }
+</style>
+
+<header class="top">
+  <b>AI assistance — developer handover</b>
+  <span>configuration only · no code change</span>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <div class="eyebrow">Agentic PMS · Mindgate Solutions</div>
+    <h1>Switching the AI assistance on</h1>
+    <p class="lede">Scope for this round: <strong>the AI features only.</strong>
+      No other tab, screen or behaviour changes. The code is already deployed —
+      this is one environment variable and a restart.</p>
+
+    <dl class="facts">
+      <div class="fact"><dt>Work</dt><dd>~5 minutes</dd></div>
+      <div class="fact"><dt>Code to deploy</dt><dd>None</dd></div>
+      <div class="fact"><dt>Migrations to run</dt><dd>None</dd></div>
+      <div class="fact"><dt>Screens changed</dt><dd>None</dd></div>
+    </dl>
+  </div>
+
+  <div class="states">
+    <div class="state off">
+      <div class="tag">Today</div>
+      <p><code>ANTHROPIC_API_KEY</code> is not set. Every AI button is present and
+        clickable; each one answers <strong>HTTP 503</strong>:</p>
+      <span class="say">“Agentic features are not configured on this instance
+        (ANTHROPIC_API_KEY missing).”</span>
+    </div>
+    <div class="arrow" aria-hidden="true">→</div>
+    <div class="state on">
+      <div class="tag">After</div>
+      <p>The same buttons, in the same places, return drafts. Nothing appears,
+        moves or disappears — the screens are identical either way.</p>
+      <span class="say">{"ok": true, …}</span>
+    </div>
+  </div>
+
+  <p>That message is the product behaving correctly, not a fault. The AI work is
+    already written, tested and deployed; it is gated on a key the instance has
+    never been given. Supplying the key is the whole change.</p>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 1</span>Why nothing else moves</h2>
+
+  <p>The gate is a single runtime check in <code>server/core/ai.js</code>:</p>
+
+<pre>const MODEL = process.env.AI_MODEL || <em>'claude-sonnet-4-5'</em>;
+
+function aiEnabled() { return !!process.env.ANTHROPIC_API_KEY; }
+
+<i>// the one entry point every AI route goes through</i>
+if (!aiEnabled()) {
+  const e = new Error(<em>'Agentic features are not configured on this instance (ANTHROPIC_API_KEY missing).'</em>);
+  e.status = 503; throw e;
+}</pre>
+
+  <p>It reads <code>process.env</code> at call time, not at build time. So the
+    switch is thrown by the environment, and the following are all things you
+    explicitly <strong>do not</strong> do:</p>
+
+  <ul class="no">
+    <li><strong>No code deploy.</strong> Not one line changes. Leave the running
+      build on the commit it is on.</li>
+    <li><strong>No database migration.</strong> Nothing in
+      <code>server/migrations/</code> runs, and no existing table is touched.</li>
+    <li><strong>No frontend rebuild.</strong> The key is read server-side only and
+      sent as the <code>x-api-key</code> header to <code>api.anthropic.com</code>.
+      It never reaches the browser — there is no reference to it anywhere in
+      <code>frontend/src</code>. The static bundle stays exactly as served.</li>
+    <li><strong>No change to any other tab.</strong> KRAs, Mid-Year, Team
+      Evaluation, Calibration, Increment Simulation, the KRA Library, the employee
+      Directory — all unchanged, before and after.</li>
+    <li><strong>No new route, permission or role.</strong> The 23 routes under
+      <code>/api/v1/agentic</code> already exist and are already reachable; today
+      the 16 that call the model refuse with 503.</li>
+  </ul>
+
+  <div class="note warn">
+    <span class="lbl">The one thing the database gains</span>
+    <p>On the first <em>successful</em> AI call the server runs
+      <code>CREATE SCHEMA IF NOT EXISTS agentic</code> and
+      <code>CREATE TABLE IF NOT EXISTS agentic.drafts</code>, then stores each
+      draft alongside the exact deterministic input that produced it. Purely
+      additive, in its own schema, and it alters nothing that already exists — but
+      it is a real write, so it is named here rather than glossed over.</p>
+  </div>
+
+  <div class="note">
+    <span class="lbl">If the instance is on an older build</span>
+    <p>The key enables every AI feature <em>the deployed bundle already
+      contains</em>. If an instance is running a build from before a given AI
+      feature was added, that feature needs the normal deploy — which is out of
+      scope for this round. Check what the instance is running before promising a
+      specific button.</p>
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 2</span>Setting the key</h2>
+
+  <div class="note stop">
+    <span class="lbl">The key never goes in git</span>
+    <p>Not in <code>render.yaml</code>, not in a committed <code>.env</code>, not
+      in a Dockerfile, not in this document. <strong>The repository is
+      public.</strong> A key that reaches a commit is burned and must be revoked,
+      not deleted — the history keeps it. Everywhere below, <code>sk-ant-…</code>
+      is a placeholder; paste the real value only into the store named, and send
+      it to whoever needs it over a channel that is not the repo.</p>
+  </div>
+
+  <p>Pick the row that matches how this instance runs. Each is: put the value in
+    one place, restart the API process, done.</p>
+
+  <div class="tabs" role="tablist" aria-label="Deployment path">
+    <button role="tab" id="b-svc" aria-controls="t-svc" aria-selected="true">systemd (EC2)</button>
+    <button role="tab" id="b-dkr" aria-controls="t-dkr" aria-selected="false" tabindex="-1">Docker</button>
+    <button role="tab" id="b-rnd" aria-controls="t-rnd" aria-selected="false" tabindex="-1">Render</button>
+  </div>
+
+  <div class="panel" role="tabpanel" id="t-svc" aria-labelledby="b-svc">
+    <h4>Edit the env file, restart the unit</h4>
+<pre>sudo sed -i <em>'/^ANTHROPIC_API_KEY=/d'</em> /etc/agentic-pms/api.env
+echo <em>'ANTHROPIC_API_KEY=sk-ant-…'</em> | sudo tee -a /etc/agentic-pms/api.env &gt;/dev/null
+sudo systemctl restart agentic-pms-api
+
+<i># nothing else gets restarted — nginx and the static bundle are untouched</i>
+systemctl status agentic-pms-api --no-pager</pre>
+    <p>The file is <code>root:apms</code>, mode <code>0640</code>. Keep it that
+      way — it is readable by the service user and nobody else. The installer
+      never overwrites this file, so re-running <code>install.sh</code> later will
+      not wipe the key.</p>
+    <p>If the restart fails, <code>journalctl -u agentic-pms-api -n 40</code> will
+      say why; a stray quote or a trailing space around the <code>=</code> is the
+      usual cause.</p>
+  </div>
+
+  <div class="panel" role="tabpanel" id="t-dkr" aria-labelledby="b-dkr" hidden>
+    <h4>Add it to the compose env file</h4>
+<pre><i># deploy/docker/.env — gitignored, and must stay so</i>
+ANTHROPIC_API_KEY=sk-ant-…
+
+<i># then, from deploy/docker/</i>
+docker compose up -d</pre>
+    <p>The compose file already passes it through as
+      <code>ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}</code>, which is why the
+      variable resolves to empty today instead of failing to start. Only the API
+      container is recreated; the database volume and the web container are
+      untouched.</p>
+  </div>
+
+  <div class="panel" role="tabpanel" id="t-rnd" aria-labelledby="b-rnd" hidden>
+    <h4>Dashboard → the API service → Environment</h4>
+    <p>Open the <code>agentic-pms-api</code> service, add
+      <code>ANTHROPIC_API_KEY</code> with the real value, and save. Render
+      restarts the service on its own.</p>
+    <p><code>render.yaml</code> already declares the variable with
+      <code>sync: false</code>. That is what keeps the value out of git
+      <em>and</em> preserves it across Blueprint syncs — do not give it a
+      <code>value:</code>, ever.</p>
+    <p>Do not touch the frontend service. It does not need the key and does not
+      need redeploying for this change.</p>
+  </div>
+
+  <h3>The second variable</h3>
+  <p><code>AI_MODEL</code> selects the model. It is <strong>not</strong> a secret
+    and belongs in version control. The code falls back to
+    <code>claude-sonnet-4-5</code> if it is unset, which is a generation behind —
+    both <code>render.yaml</code> and the systemd installer already set
+    <code>claude-opus-5</code>, so on a current instance there is nothing to do
+    here. The request body is plain
+    <code>model / max_tokens / system / messages</code>, so a newer model is
+    drop-in with no code change.</p>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 3</span>Confirming it worked</h2>
+
+  <p>One call proves it, and it is safe to run against a live instance — it reads
+    an employee's own KRAs and returns a draft; it writes no rating and changes no
+    record.</p>
+
+<pre>B=https://<em>&lt;host&gt;</em>/api/v1
+
+TOK=$(curl -s -X POST <em>"$B/auth/dev-login"</em> -H <em>'Content-Type: application/json'</em> \
+  -d <em>'{"email":"&lt;hr-admin&gt;","password":"&lt;password&gt;"}'</em> | jq -r .token)
+
+curl -s -X POST <em>"$B/agentic/devplan-suggest"</em> \
+  -H <em>"Authorization: Bearer $TOK"</em> -H <em>'Content-Type: application/json'</em> -d <em>'{}'</em> \
+  | jq <em>'{ok, goals: (.draft.suggested_goals | length)}'</em>
+
+<i># {"ok": true, "goals": 9}   -> the key is live</i>
+<i># HTTP 503                   -> still not configured: the value did not reach</i>
+<i>#                               the process, or it was not restarted</i></pre>
+
+  <p>Then confirm it in the product the way a user will see it:</p>
+
+  <ul class="chk">
+    <li>Sign in as any employee and open <strong>My Growth</strong>.</li>
+    <li>Use the suggestion button under <em>Target achievements for the year</em>.</li>
+    <li>Suggestions appear instead of the 503 banner.</li>
+    <li>Open one other tab — <strong>My KRAs</strong> will do — and confirm it
+      looks exactly as it did before.</li>
+  </ul>
+
+  <div class="note ok">
+    <span class="lbl">Blast radius, stated plainly</span>
+    <p>If the key is wrong or the account has no credit, the AI buttons keep
+      returning an error and <em>everything else in the product carries on
+      working</em>. There is no failure mode of this change that takes the PMS
+      down.</p>
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 4</span>What the key turns on</h2>
+
+  <p>23 routes exist under <code>/api/v1/agentic</code>; 16 of them call the model
+    and are the ones this unblocks. The rest — reading stored drafts, saved
+    analyses and kept recommendations — already work without a key. In the UI they
+    surface as buttons on these screens, and nowhere else:</p>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Screen</th><th>Who sees it</th><th>What the button does</th></tr></thead>
+    <tbody>
+      <tr><td>My Growth</td><td>Employee</td><td>Suggests development goals from the employee's own KRAs; suggests aspiring-career steps</td></tr>
+      <tr><td>Mid-Year Review</td><td>Employee</td><td>Drafts the mid-year write-up; reviews each KRA justification; summarises the discussion</td></tr>
+      <tr><td>Self-Appraisal</td><td>Employee</td><td>Review assist on the self-appraisal; meeting summary</td></tr>
+      <tr><td>My Rating</td><td>Employee</td><td>Appraisal summary and the recommendations the employee can keep</td></tr>
+      <tr><td>Team Evaluation</td><td>Manager</td><td>Drafts the manager's appraisal text; pre-publish appraisal summary</td></tr>
+      <tr><td>Quarterly Connects</td><td>Manager</td><td>Themes across connects, auto-tagging, meeting summary</td></tr>
+      <tr><td>Cycles</td><td>HR / admin</td><td>Cycle health — where the cycle is stuck and who to chase</td></tr>
+      <tr><td>Calibration</td><td>HR / admin</td><td>Calibration brief for the panel</td></tr>
+      <tr><td>Closure Letters</td><td>HR / admin</td><td>Drafts the letter body</td></tr>
+      <tr><td>Review Analysis (HR)</td><td>HR / admin</td><td>The confidential 7-parameter analysis</td></tr>
+      <tr><td>Engagement</td><td>HR / admin</td><td>Themes across survey responses</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>Every one of these is a <strong>draft</strong> the person can edit, discard or
+    ignore. Nothing is auto-submitted, and no AI output is shown to anyone other
+    than the person who asked for it.</p>
+
+  <div class="note">
+    <span class="lbl">What it is not allowed to do</span>
+    <p>The house rule is <strong>deterministic numbers, AI narrates</strong>,
+      enforced at the single entry point in <code>server/core/ai.js</code>. No AI
+      call can produce a rating, score or distribution;
+      <code>stripRatingSuggestions()</code> removes rating-shaped keys from
+      structured output as a second line of defence. Every number in the product —
+      weights, ratings, weighted averages, increment costs — is computed by the
+      application from the data. If a change ever makes a number depend on a model
+      reply, that change is wrong.</p>
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 5</span>Turning it back off</h2>
+
+  <p>Symmetrical with turning it on, and just as cheap. Remove the variable and
+    restart the API:</p>
+
+<pre>sudo sed -i <em>'/^ANTHROPIC_API_KEY=/d'</em> /etc/agentic-pms/api.env
+sudo systemctl restart agentic-pms-api
+
+<i># Docker: delete the line from deploy/docker/.env, then: docker compose up -d</i>
+<i># Render: delete the variable in the dashboard; the service restarts itself</i></pre>
+
+  <p>Every AI endpoint returns the clean 503 again and the rest of the product is
+    untouched. Drafts already stored in <code>agentic.drafts</code> stay readable —
+    dropping that table is not part of a rollback and should not be done casually.</p>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 6</span>Handover checklist</h2>
+
+  <ul class="chk">
+    <li>Key received over a channel that is not the repository, and not pasted
+      into a ticket, a commit message or a chat that is archived publicly.</li>
+    <li>Value set in exactly one place for this instance — the row from Part 2.</li>
+    <li>API process restarted; nothing else restarted or redeployed.</li>
+    <li><code>devplan-suggest</code> returns <code>{"ok": true, …}</code>.</li>
+    <li>My Growth shows suggestions; one unrelated tab confirmed unchanged.</li>
+    <li>Confirmed the key is <em>not</em> present in <code>git status</code>,
+      <code>git diff</code>, or any file staged for commit.</li>
+    <li>Billing alert set on the Anthropic account, so usage is visible before it
+      is a surprise.</li>
+  </ul>
+
+  <div class="note stop">
+    <span class="lbl">Standing security note</span>
+    <p>Any key that has previously been shared in chat, email or a document should
+      be treated as exposed and rotated before this goes to a client instance.
+      Rotating is a two-minute job in the Anthropic console and the only place the
+      new value needs to reach is the one store named in Part 2.</p>
+  </div>
+
+  <footer>
+    Agentic PMS · Mindgate Solutions — AI enablement handover. Scope: AI features
+    only; no other screen or behaviour changes in this round. Companion document:
+    the KRA Library handover, for the separate feature deployment.
+  </footer>
+
+</div>
+
+<script>
+  (function () {
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.tabs [role="tab"]'));
+    function select(tab) {
+      tabs.forEach(function (t) {
+        var on = t === tab;
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+        t.tabIndex = on ? 0 : -1;
+        document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+      });
+    }
+    tabs.forEach(function (t, i) {
+      t.addEventListener('click', function () { select(t); });
+      t.addEventListener('keydown', function (e) {
+        var d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+        if (!d) return;
+        e.preventDefault();
+        var next = tabs[(i + d + tabs.length) % tabs.length];
+        select(next); next.focus();
+      });
+    });
+  })();
+</script>
