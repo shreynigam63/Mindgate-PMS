@@ -1,0 +1,639 @@
+<title>KRA Library Handover</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root{
+    --ink:#131820; --body:#2F3742; --slate:#616C7D; --faint:#8B95A4;
+    --ground:#F6F7F9; --card:#FFFFFF; --rule:#DDE2EA; --rule-soft:#EBEEF3;
+    --navy:#1B3B6F; --navy-soft:#E8EEF8;
+    --crimson:#A3183C; --crimson-soft:#FBEAEF;
+    --amber:#8A5A00; --amber-soft:#FCF2DF;
+    --green:#186A45; --green-soft:#E4F2EA;
+    --code-bg:#151B24; --code-fg:#DCE3EC; --code-dim:#7C8AA0;
+    --sans:"Source Sans 3",ui-sans-serif,system-ui,sans-serif;
+    --display:"Archivo",var(--sans);
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ink:#F0F3F7; --body:#C7CFDA; --slate:#96A1B2; --faint:#717D8E;
+      --ground:#0E1218; --card:#161C25; --rule:#2A323E; --rule-soft:#222933;
+      --navy:#93B4E8; --navy-soft:#17253C;
+      --crimson:#F2879F; --crimson-soft:#2E1620;
+      --amber:#E0AE5A; --amber-soft:#2B2213;
+      --green:#6FCFA0; --green-soft:#12271C;
+      --code-bg:#0A0E13; --code-fg:#D3DBE5; --code-dim:#6B788C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#F0F3F7; --body:#C7CFDA; --slate:#96A1B2; --faint:#717D8E;
+    --ground:#0E1218; --card:#161C25; --rule:#2A323E; --rule-soft:#222933;
+    --navy:#93B4E8; --navy-soft:#17253C;
+    --crimson:#F2879F; --crimson-soft:#2E1620;
+    --amber:#E0AE5A; --amber-soft:#2B2213;
+    --green:#6FCFA0; --green-soft:#12271C;
+    --code-bg:#0A0E13; --code-fg:#D3DBE5; --code-dim:#6B788C;
+  }
+
+  *{box-sizing:border-box}
+  body{background:var(--ground);color:var(--body);font-family:var(--sans);
+       font-size:16.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:860px;margin:0 auto;padding-inline:20px;padding-block:0 96px}
+
+  header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;
+    background:color-mix(in srgb,var(--ground) 92%,transparent);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--rule);
+    padding:10px 20px;display:flex;gap:12px;
+    align-items:baseline;flex-wrap:wrap}
+  header.top b{font-family:var(--display);font-weight:700;color:var(--ink);font-size:14px;letter-spacing:.01em}
+  header.top span{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+
+  .hero{padding-block:44px 8px}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--crimson);font-weight:600}
+  h1{font-family:var(--display);font-weight:700;color:var(--ink);
+     font-size:clamp(30px,6vw,46px);line-height:1.08;letter-spacing:-.02em;
+     margin:.35em 0 .3em;text-wrap:balance}
+  .lede{font-size:19px;color:var(--slate);max-width:62ch;text-wrap:pretty}
+
+  .facts{display:flex;flex-wrap:wrap;gap:0;margin-top:26px;
+    border:1px solid var(--rule);border-radius:10px;background:var(--card);overflow:hidden}
+  .fact{flex:1 1 150px;padding:13px 16px;border-right:1px solid var(--rule-soft)}
+  .fact:last-child{border-right:0}
+  .fact dt{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint);margin-bottom:3px}
+  .fact dd{margin:0;font-family:var(--display);font-weight:600;color:var(--ink);font-size:15.5px}
+
+  h2{font-family:var(--display);font-weight:700;color:var(--ink);
+     font-size:25px;letter-spacing:-.012em;line-height:1.2;
+     margin:56px 0 4px;padding-top:22px;border-top:2px solid var(--ink);text-wrap:balance}
+  h2 .n{font-family:var(--mono);font-size:13px;color:var(--crimson);
+     display:block;font-weight:600;letter-spacing:.1em;margin-bottom:6px}
+  h3{font-family:var(--display);font-weight:600;color:var(--ink);
+     font-size:17.5px;margin:32px 0 6px;letter-spacing:-.005em}
+  h4{font-family:var(--display);font-weight:600;color:var(--ink);font-size:14.5px;margin:22px 0 4px}
+  p{margin:.65em 0;max-width:68ch}
+  ul,ol{margin:.6em 0;padding-left:1.35em;max-width:68ch}
+  li{margin:.3em 0}
+  strong{color:var(--ink);font-weight:600}
+  a{color:var(--navy)}
+  code{font-family:var(--mono);font-size:.855em;background:var(--navy-soft);
+    color:var(--ink);padding:.12em .4em;border-radius:4px;overflow-wrap:break-word}
+
+  pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);
+    font-size:13px;line-height:1.66;padding:15px 17px;border-radius:9px;
+    overflow-x:auto;margin:14px 0;border:1px solid transparent}
+  pre b{color:#8FD6AE;font-weight:400}
+  pre i{color:var(--code-dim);font-style:normal}
+  pre em{color:#F0B77A;font-style:normal}
+
+  .tablewrap{overflow-x:auto;margin:16px 0;border:1px solid var(--rule);border-radius:9px;background:var(--card)}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+  th{background:var(--ink);color:var(--ground);font-family:var(--display);
+     font-weight:600;font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+     text-align:left;padding:9px 13px;white-space:nowrap}
+  td{padding:9px 13px;border-top:1px solid var(--rule-soft);vertical-align:top}
+  td:first-child{color:var(--ink);font-weight:600}
+  tbody tr:nth-child(even){background:color-mix(in srgb,var(--ground) 55%,transparent)}
+
+  .note{border-left:3px solid var(--navy);background:var(--navy-soft);
+    padding:13px 16px;border-radius:0 8px 8px 0;margin:20px 0;font-size:15.5px}
+  .warn{border-left-color:var(--amber);background:var(--amber-soft)}
+  .stop{border-left-color:var(--crimson);background:var(--crimson-soft)}
+  .ok{border-left-color:var(--green);background:var(--green-soft)}
+  .note p{margin:.35em 0;max-width:64ch}
+  .note .lbl{font-family:var(--display);font-weight:700;color:var(--ink);
+    font-size:12px;letter-spacing:.09em;text-transform:uppercase;display:block;margin-bottom:4px}
+
+  .tabs{display:flex;gap:4px;margin:22px 0 0;flex-wrap:wrap}
+  .tabs button{font-family:var(--display);font-weight:600;font-size:13.5px;
+    background:transparent;color:var(--slate);border:1px solid var(--rule);
+    border-bottom:none;padding:9px 15px;border-radius:8px 8px 0 0;cursor:pointer}
+  .tabs button[aria-selected="true"]{background:var(--card);color:var(--ink);
+    border-color:var(--rule);box-shadow:inset 0 3px 0 var(--crimson)}
+  .tabs button:focus-visible{outline:2px solid var(--navy);outline-offset:1px}
+  .panel{border:1px solid var(--rule);background:var(--card);
+    border-radius:0 9px 9px 9px;padding:4px 20px 20px}
+  .panel h4:first-of-type{margin-top:16px}
+
+  .steps{list-style:none;padding:0;counter-reset:s;margin:18px 0}
+  .steps>li{counter-increment:s;position:relative;padding-left:44px;margin:0 0 20px}
+  .steps>li::before{content:counter(s);position:absolute;left:0;top:1px;
+    width:28px;height:28px;border-radius:50%;background:var(--ink);color:var(--ground);
+    font-family:var(--mono);font-size:13px;font-weight:600;
+    display:grid;place-items:center}
+  .steps>li>b{font-family:var(--display);color:var(--ink);font-size:16.5px;
+    display:block;margin-bottom:2px}
+
+  .chk{list-style:none;padding:0;margin:14px 0}
+  .chk li{padding-left:26px;position:relative;margin:.45em 0}
+  .chk li::before{content:"";position:absolute;left:2px;top:.55em;width:11px;height:11px;
+    border:2px solid var(--slate);border-radius:3px}
+
+  footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--rule);
+    color:var(--faint);font-size:13.5px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  @media (max-width:560px){ .fact{flex-basis:50%;border-right:0;border-bottom:1px solid var(--rule-soft)} }
+</style>
+
+<header class="top">
+  <b>KRA Library — developer handover</b>
+  <span>target commit cc0c23d · main</span>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <div class="eyebrow">Agentic PMS · Mindgate Solutions</div>
+    <h1>Designation-wise KRA Library</h1>
+    <p class="lede">Everything a developer needs to get this feature into a client
+      instance and switch the AI assistance on. The code is written, tested and
+      merged — this is deployment and configuration only.</p>
+
+    <dl class="facts">
+      <div class="fact"><dt>To deploy</dt><dd>~20 minutes</dd></div>
+      <div class="fact"><dt>Migrations</dt><dd>1, additive</dd></div>
+      <div class="fact"><dt>Test suite</dt><dd>414 passing</dd></div>
+      <div class="fact"><dt>Code to write</dt><dd>None</dd></div>
+    </dl>
+  </div>
+
+  <div class="note ok">
+    <span class="lbl">Already live for reference</span>
+    <p><code>pms.agentichumans.in</code> is running this exact commit with the
+      full library published — 1,397 employees, 267 shelves, 1,382 employees
+      reaching a dropdown. Use it to see the finished state before you touch
+      anything else.</p>
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 1</span>What the feature is</h2>
+
+  <p>HR publishes a shelf of suggested KRAs <strong>per job title</strong>, once.
+    Every employee holding that title then picks from their own role's shelf when
+    writing their KRAs, instead of being emailed a spreadsheet.</p>
+
+  <p>It sits <em>alongside</em> the KRA importer that already exists. The two are
+    different on purpose, and confusing them is the single most common support
+    question on this feature — a designation-keyed file uploaded on the
+    employee-keyed screen is the exact mistake that prompted this document.</p>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th></th><th>KRA Overview</th><th>KRA Library</th></tr></thead>
+    <tbody>
+      <tr><td>Keyed on</td><td><code>employee_email</code></td><td><code>Designation</code></td></tr>
+      <tr><td>Means</td><td>“these KRAs, on this named person's sheet, now”</td><td>“these KRAs are available to anyone with this job title”</td></tr>
+      <tr><td>Scales with</td><td>headcount (~1,400 rows)</td><td>roles (~265 rows)</td></tr>
+      <tr><td>Lifetime</td><td>one cycle</td><td>carries into the next cycle</td></tr>
+      <tr><td>Must total 100</td><td><strong>Yes</strong> — it is somebody's scorecard</td><td><strong>No</strong> — it is a menu; the employee picks 100 points' worth</td></tr>
+      <tr><td>Table</td><td><code>pms.kras</code></td><td><code>pms.kra_library</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <p>Uploading a file on the wrong screen is refused with a message naming the
+    right one, in both directions. That check lives in
+    <code>validateKraBulkRows</code>.</p>
+
+  <h3>What ships</h3>
+
+  <h4>Database — one migration</h4>
+  <p><code>server/migrations/033-kra-library.js</code> creates one table and one
+    index. It alters nothing that already exists.</p>
+<pre><i>-- pms.kra_library</i>
+id               uuid PRIMARY KEY DEFAULT gen_random_uuid()
+tenant_id        uuid NOT NULL
+designation      text NOT NULL
+category         text            <i>-- the sheet's "Parameters" column</i>
+title            text NOT NULL   <i>-- the KRA</i>
+measures         text            <i>-- the KPIs</i>
+description      text            <i>-- Comments</i>
+suggested_weight numeric(6,2)
+sort_order       integer NOT NULL DEFAULT 0
+uploaded_by      text
+uploaded_at      timestamptz NOT NULL DEFAULT now()
+
+<b>CREATE INDEX</b> kra_library_designation_idx
+  <b>ON</b> pms.kra_library (tenant_id, <b>lower</b>(<b>btrim</b>(designation)), sort_order);</pre>
+
+  <p>Three decisions someone will otherwise undo by accident:</p>
+  <ul>
+    <li><strong>No <code>cycle_id</code>.</strong> The library is reference data
+      about <em>roles</em>, not about a year. Scoping it to a cycle would mean
+      re-uploading every shelf each time HR opens one — which is most of the work
+      this removes.</li>
+    <li><strong>No unique constraint, no <code>ON CONFLICT</code>.</strong> A
+      re-upload is a delete-then-insert <em>per designation</em> in one
+      transaction. That is the only way to express “this designation now has
+      exactly these six KRAs, and the seventh is gone”, and it is why correcting
+      one role never disturbs another.</li>
+    <li><strong>The index is on <code>lower(btrim(designation))</code></strong>
+      because the designation on an employee record and the one typed into a
+      spreadsheet differ by case and stray spaces. To an employee, a shelf that
+      silently fails to match is indistinguishable from a shelf that is empty.</li>
+  </ul>
+
+  <h4>API — <code>server/modules/performance/index.js</code></h4>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Method</th><th>Path under <code>/api/v1/pms</code></th><th>Permission</th></tr></thead>
+    <tbody>
+      <tr><td>GET</td><td><code>/hr/kra-library/template.xlsx</code></td><td><code>pms_admin</code></td></tr>
+      <tr><td>GET</td><td><code>/hr/kra-library/template.csv</code></td><td><code>pms_admin</code></td></tr>
+      <tr><td>GET</td><td><code>/hr/kra-library</code></td><td><code>pms_admin</code></td></tr>
+      <tr><td>GET</td><td><code>/hr/kra-library/:designation</code></td><td><code>pms_admin</code></td></tr>
+      <tr><td>DELETE</td><td><code>/hr/kra-library/:designation</code></td><td><code>pms_admin</code></td></tr>
+      <tr><td>POST</td><td><code>/hr/kra-library/upload?commit=1</code></td><td><code>pms_admin</code></td></tr>
+      <tr><td>GET</td><td><code>/my/kra-library</code></td><td>any signed-in user — returns <strong>only their own</strong> shelf</td></tr>
+      <tr><td>GET</td><td><code>/team/kra-library/:employeeId</code></td><td>that employee's manager, or <code>pms_admin</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="note warn">
+    <span class="lbl">Don't get this one backwards</span>
+    <p><code>/team/kra-library/:employeeId</code> resolves the <strong>report's</strong>
+      designation, never the caller's. A manager filling in a sheet on someone's
+      behalf must see that person's shelf. Inverted, it is a quiet,
+      plausible-looking bug that nobody notices until appraisals are wrong.</p>
+  </div>
+
+  <h4>Frontend</h4>
+  <div class="tablewrap"><table>
+    <thead><tr><th>File</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>pages/KraLibraryPage.jsx</code></td><td>new — HR screen: upload, published shelves, uncovered designations</td></tr>
+      <tr><td><code>pages/KraLibraryPicker.jsx</code></td><td>new — the employee's pick list, reused by the HR/manager path</td></tr>
+      <tr><td><code>App.jsx</code></td><td>nav entry + route, gated to <code>admin</code> and <code>hr</code></td></tr>
+      <tr><td><code>pages/MyKRASheetPage.jsx</code></td><td>mounts the picker on the employee's own sheet</td></tr>
+      <tr><td><code>pages/KraOrgOverviewPage.jsx</code></td><td>mounts the picker for HR entering on someone's behalf</td></tr>
+      <tr><td><code>pages/AiDraftPanel.jsx</code></td><td><code>AiModal</code> gained a <code>badge</code> prop so the picker reuses the modal without the AI badge</td></tr>
+    </tbody>
+  </table></div>
+
+  <h4>Tests</h4>
+  <p><code>server/test/kra-library.test.js</code> — 17 tests, pure: they build
+    real <code>.xlsx</code> buffers and drive the parser directly, no database and
+    no HTTP. Three of them are load-bearing:</p>
+  <ul>
+    <li><em>“A SHELF DOES NOT HAVE TO TOTAL 100”</em> — if this starts failing,
+      the library has been made to behave like an assignment and the feature is
+      pointless.</li>
+    <li><em>“the same file keyed by employee_email still enforces 100”</em> — the
+      control. If this stops failing, the library's leniency has leaked into the
+      importer that must not have it.</li>
+    <li><em>“the Parameters carry stops at a designation boundary”</em> — pins a
+      real bug found in the client's own 2,145-row file, where 235 KRAs across 14
+      designations silently inherited the previous role's Parameter.</li>
+  </ul>
+
+  <p>Run the whole suite against a real PostgreSQL before deploying:</p>
+<pre>createdb apms_check
+<b>cd</b> server
+DATABASE_URL=<em>"postgres://USER:PASS@127.0.0.1:5432/apms_check"</em> \
+  DATABASE_SSL=false JWT_SECRET=x TENANT_SLUG=x npm test
+<i># expect: # pass 414 / # fail 0</i></pre>
+
+  <p><code>DATABASE_SSL=false</code> is <strong>required</strong> for a local
+    PostgreSQL. Without it the pool attempts TLS against a server that never
+    offered it, and every test fails to connect.</p>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 2</span>Deploying the code</h2>
+
+  <p>Pick the path matching how the instance runs. In all three the migration
+    runs itself on the next boot — there is nothing to execute by hand.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" id="t-svc" aria-controls="p-svc" aria-selected="true">EC2 · systemd</button>
+    <button role="tab" id="t-dkr" aria-controls="p-dkr" aria-selected="false">EC2 · Docker</button>
+    <button role="tab" id="t-rnd" aria-controls="p-rnd" aria-selected="false">Render</button>
+  </div>
+
+  <div class="panel" id="p-svc" role="tabpanel" aria-labelledby="t-svc">
+    <h4>One command</h4>
+<pre>sudo /opt/agentic-pms/deploy/service/update.sh</pre>
+    <p>It takes a backup first, fetches, fast-forward pulls, reinstalls, rebuilds
+      the frontend, rsyncs into the web root <em>only after the build
+      succeeds</em>, restarts the API and health-checks it for 90 seconds. It
+      does not touch the environment file.</p>
+    <h4>Confirm the migration ran</h4>
+<pre>sudo journalctl -u agentic-pms-api -n 50 --no-pager | <b>grep</b> migration
+<i># migration 033-kra-library.js: done</i></pre>
+    <div class="note"><p>The installer deliberately never overwrites
+      <code>/etc/agentic-pms/api.env</code> on a re-run, so your API key and
+      secrets survive an update.</p></div>
+  </div>
+
+  <div class="panel" id="p-dkr" role="tabpanel" aria-labelledby="t-dkr" hidden>
+    <h4>Rebuild and recreate</h4>
+<pre><b>cd</b> /opt/agentic-pms/deploy/docker
+git -C /opt/agentic-pms pull
+docker compose build && docker compose up -d
+docker compose logs api | <b>grep</b> migration</pre>
+    <p>Environment comes from the <code>.env</code> file beside the compose file
+      — see <code>deploy/docker/.env.example</code> for the full list.</p>
+  </div>
+
+  <div class="panel" id="p-rnd" role="tabpanel" aria-labelledby="t-rnd" hidden>
+    <h4>Merging is the deploy</h4>
+<pre>git fetch origin
+git checkout main
+git merge --ff-only origin/<em>&lt;feature-branch&gt;</em>
+git push origin main</pre>
+    <p>Then watch both services in the dashboard. <code>agentic-pms-api</code>
+      runs the migration during boot — look for
+      <code>migration 033-kra-library.js: done</code>; if it crash-loops, read the
+      migration error, because a failed boot <em>is</em> the safety mechanism.
+      <code>agentic-pms-frontend</code> is a static rebuild; the asset hash
+      changing is how you know it landed.</p>
+
+    <div class="note warn">
+      <span class="lbl">Check auto-deploy is actually on</span>
+      <p>This has already caught us out: a push reached <code>main</code> and
+        nothing happened, because auto-deploy was off on both services. The site
+        served a two-week-old build with no error anywhere. Verify from outside
+        rather than assuming:</p>
+<pre>BUNDLE=$(curl -s https://<em>&lt;frontend-host&gt;</em>/ | <b>grep</b> -oP <em>'src="\K/assets/[^"]+\.js'</em> | <b>head</b> -1)
+curl -s <em>"https://&lt;frontend-host&gt;$BUNDLE"</em> | <b>grep</b> -c <em>"Choose from library"</em>
+<i># 0 means the old bundle is still being served</i></pre>
+    </div>
+
+    <div class="note stop">
+      <span class="lbl">Free tier is not durable</span>
+      <p>On Render's free plan the API sleeps after 15 minutes idle, and the
+        database is removed at the end of its trial window with no backup and no
+        restore path. Fine for a PoC on disposable data. Move to a paid tier
+        before any real employee record goes in.</p>
+    </div>
+  </div>
+
+  <h3>Verifying the migration landed</h3>
+<pre><b>SELECT</b> * <b>FROM</b> core.migrations_log <b>WHERE</b> filename <b>LIKE</b> <em>'033%'</em>;
+<b>SELECT</b> count(*) <b>FROM</b> pms.kra_library;   <i>-- 0 on a fresh deploy</i>
+\d pms.kra_library</pre>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 3</span>Switching the AI assistance on</h2>
+
+  <p>If an instance shows <em>“Agentic features are not configured on this
+    instance (ANTHROPIC_API_KEY missing)”</em>, that is the product behaving
+    correctly, not a fault. One environment variable turns it on.</p>
+
+  <div class="note stop">
+    <span class="lbl">The key never goes in git</span>
+    <p>Not in <code>render.yaml</code>, not in a committed <code>.env</code>, not
+      in a Dockerfile, not in this document. <strong>The repository is
+      public.</strong> A key that reaches a commit is burned and must be revoked,
+      not deleted — the history keeps it. Everywhere below, <code>sk-ant-…</code>
+      is a placeholder; paste the real value only into the store named.</p>
+  </div>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Deployment</th><th>Where the key goes</th></tr></thead>
+    <tbody>
+      <tr><td>systemd</td><td><code>/etc/agentic-pms/api.env</code> → <code>ANTHROPIC_API_KEY=sk-ant-…</code>, then <code>sudo systemctl restart agentic-pms-api</code>. File is <code>root:apms 0640</code>; never loosen that.</td></tr>
+      <tr><td>Docker</td><td><code>deploy/docker/.env</code> → <code>ANTHROPIC_API_KEY=sk-ant-…</code>, then <code>docker compose up -d</code>. That file is gitignored — keep it so.</td></tr>
+      <tr><td>Render</td><td>Dashboard → the <code>agentic-pms-api</code> service → Environment. <code>render.yaml</code> already declares it with <code>sync: false</code>, which is what keeps the value out of git <em>and</em> preserves it across Blueprint syncs.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>The second variable</h3>
+  <p><code>AI_MODEL</code> selects the model. It is <strong>not</strong> a secret
+    and belongs in version control. The code falls back to
+    <code>claude-sonnet-4-5</code> if it is unset, which is a generation behind —
+    both <code>render.yaml</code> and the systemd installer set
+    <code>claude-opus-5</code>. The request body is plain
+    <code>model / max_tokens / system / messages</code>, so a newer model is
+    drop-in with no code change.</p>
+
+  <h3>What the key turns on</h3>
+  <p>21 endpoints under <code>/api/v1/agentic</code> — drafting help for the
+    self-appraisal, mid-year review, development plan, career aspiration,
+    calibration brief, closure letter, appraisal summary and the HR-only
+    parameter analysis.</p>
+
+  <div class="note">
+    <span class="lbl">What it is not allowed to do</span>
+    <p>The house rule is <strong>deterministic numbers, AI narrates</strong>,
+      enforced at the single entry point in <code>server/core/ai.js</code>. No AI
+      call can produce a rating, score or distribution;
+      <code>stripRatingSuggestions()</code> removes rating-shaped keys from
+      structured output as a second line of defence. Every number in the product
+      — weights, ratings, weighted averages, increment costs — is computed by the
+      application from the data. If a change makes a number depend on a model
+      reply, that change is wrong.</p>
+  </div>
+
+  <p>The key is read server-side only, sent as the <code>x-api-key</code> header
+    to <code>api.anthropic.com</code>. It never reaches the browser — there is no
+    reference to it anywhere in <code>frontend/src</code>.</p>
+
+  <h3>Confirming it works</h3>
+<pre>TOK=$(curl -s -X POST <em>"$B/auth/dev-login"</em> -H <em>'Content-Type: application/json'</em> \
+  -d <em>'{"email":"&lt;hr-admin&gt;","password":"&lt;password&gt;"}'</em> | jq -r .token)
+
+curl -s -X POST <em>"$B/agentic/devplan-suggest"</em> \
+  -H <em>"Authorization: Bearer $TOK"</em> -H <em>'Content-Type: application/json'</em> -d <em>'{}'</em> \
+  | jq <em>'{ok, goals: (.draft.suggested_goals | length)}'</em>
+
+<i># {"ok": true, "goals": 9}   -> the key is live</i>
+<i># HTTP 503                   -> still not configured; restart after editing the env</i></pre>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 4</span>Publishing the library</h2>
+
+  <p>Once the code is live this is <strong>HR's job, through the screen</strong>.
+    Document it for them rather than doing it for them.</p>
+
+  <ol class="steps">
+    <li><b>HR Admin → KRA Library</b>The nav entry only appears for
+      <code>admin</code> and <code>hr</code> roles.</li>
+    <li><b>Choose the workbook</b>Designation-keyed. Every worksheet is read, so a
+      multi-tab role workbook publishes in one go.</li>
+    <li><b>Validate</b>A dry run. Nothing is written. Read the report.</li>
+    <li><b>Publish</b>Only enabled once the dry run passes.</li>
+  </ol>
+
+  <h3>The upload format</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Column</th><th>Req.</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Designation</td><td>Yes</td><td><code>Designations</code>, <code>Job Title</code>, <code>Role</code> and their plurals also accepted. Written once above a block carries down it.</td></tr>
+      <tr><td>Parameters</td><td>No</td><td>Financial / Project / Process / Customer / People. Carries down <em>within its own designation block only</em>. Stored as <code>category</code>.</td></tr>
+      <tr><td>KRA (S.M.A.R.T GOALS)</td><td>Yes</td><td>Stored as <code>title</code>.</td></tr>
+      <tr><td>KPIs (Measuring Metrics &amp; Data Source)</td><td>No</td><td>Stored as <code>measures</code>.</td></tr>
+      <tr><td>Suggested Weightage</td><td>Yes</td><td><code>Weightage</code> and <code>Weight</code> also accepted. Positive number.</td></tr>
+      <tr><td>Comments</td><td>No</td><td>Stored as <code>description</code>.</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>Header matching ignores case, punctuation and parenthesised qualifiers, so
+    <code>KRA \n(S.M.A.R.T GOALS)</code> and <code>kra</code> both resolve. An
+    unrecognised column is an ignored-column warning, not an error.</p>
+
+  <h3>Reading the report</h3>
+  <ul>
+    <li><strong>Errors</strong> block the publish and name the sheet and row.</li>
+    <li><strong>A designation nobody holds</strong> is a warning, not an error —
+      HR builds shelves ahead of hiring.</li>
+    <li><strong><code>employees</code> per shelf</strong> is the number that
+      decides whether a shelf does anything. <strong>Zero means published and
+      unreachable</strong> — almost always the designation is spelt differently
+      here than on the employee records. Shown in amber for that reason.</li>
+    <li><strong>“Designations with no shelf yet”</strong> lists what is left,
+      ordered by how many employees it affects.</li>
+  </ul>
+
+  <div class="note"><p>Publishing <strong>replaces</strong> the shelf for each
+    designation in the file and leaves every other designation untouched.
+    KRAs employees have already picked are <em>copies</em> on their own sheets —
+    revising the library never rewrites a KRA somebody has agreed with their
+    manager.</p></div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 5</span>Verifying end to end</h2>
+
+<pre>B=https://<em>&lt;host&gt;</em>/api/v1
+TOK=$(curl -s -X POST <em>"$B/auth/dev-login"</em> -H <em>'Content-Type: application/json'</em> \
+  -d <em>'{"email":"&lt;hr-admin&gt;","password":"&lt;password&gt;"}'</em> | jq -r .token)
+
+<i># 1. Dry run — expect ok:true, errors 0</i>
+curl -s -X POST <em>"$B/pms/hr/kra-library/upload"</em> -H <em>"Authorization: Bearer $TOK"</em> \
+  -F <em>"file=@Mindgate_KRA_Library.xlsx"</em> | jq <em>'{ok, summary}'</em>
+
+<i># 2. Publish</i>
+curl -s -X POST <em>"$B/pms/hr/kra-library/upload?commit=1"</em> -H <em>"Authorization: Bearer $TOK"</em> \
+  -F <em>"file=@Mindgate_KRA_Library.xlsx"</em> | jq <em>'{ok, committed, summary}'</em>
+
+<i># 3. Coverage — how many employees will actually see a dropdown</i>
+curl -s <em>"$B/pms/hr/kra-library"</em> -H <em>"Authorization: Bearer $TOK"</em> | jq <em>'{
+  shelves:           (.shelves | length),
+  reaching_someone:  ([.shelves[] | select(.employees > 0)] | length),
+  employees_covered: ([.shelves[].employees] | add),
+  uncovered:         [.uncovered[] | {designation, employees}]
+}'</em></pre>
+
+  <p>Then confirm the last mile without minting a login for a real employee — the
+    HR-side endpoint resolves any employee's shelf:</p>
+<pre>curl -s <em>"$B/pms/team/kra-library/&lt;employeeId&gt;"</em> -H <em>"Authorization: Bearer $TOK"</em> \
+  | jq <em>'{designation, offered: (.entries | length)}'</em></pre>
+
+  <p>In the interface the employee should see a banner reading <em>“Start from the
+    &lt;designation&gt; KRA library”</em> on <strong>My KRAs</strong>, and
+    <strong>Choose from library</strong> should open a pick list grouped by
+    Parameter with a running total in the footer.</p>
+
+  <h3>Two honest empty states — neither is a bug</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Employee sees</th><th>Means</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>“Your record has no designation set”</td><td><code>core.employees.designation</code> is NULL</td><td>HR sets it, or re-import</td></tr>
+      <tr><td>“No KRA library published for X yet”</td><td>no shelf for that designation</td><td>publish one, or accept they write from scratch</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>If no banner appears at all, the shelf exists but the strings do not match:</p>
+<pre><b>SELECT</b> e.designation, count(*) <b>AS</b> employees,
+       <b>EXISTS</b> (<b>SELECT</b> 1 <b>FROM</b> pms.kra_library l
+                <b>WHERE</b> l.tenant_id = e.tenant_id
+                  <b>AND lower</b>(<b>btrim</b>(l.designation)) = <b>lower</b>(<b>btrim</b>(e.designation))) <b>AS</b> has_shelf
+  <b>FROM</b> core.employees e
+ <b>WHERE</b> e.tenant_id = <em>'&lt;tenant uuid&gt;'</em> <b>AND</b> e.status = <em>'active'</em>
+ <b>GROUP BY</b> 1, 3 <b>ORDER BY</b> has_shelf, employees <b>DESC</b>;</pre>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 6</span>Rolling back</h2>
+
+  <p>The feature is additive, so reverting the code is enough — the table can stay
+    where it is, because nothing else reads it.</p>
+<pre><i># Newest first, or the two reverts conflict with each other.</i>
+git revert --no-commit cc0c23d 1e57582 07fcd01 && git commit && git push origin main</pre>
+
+  <p>There is <strong>no down migration</strong>, by design: migrations in this
+    codebase only go forward, and a failed boot is the safety net. If the table
+    genuinely has to go:</p>
+<pre><b>DROP TABLE IF EXISTS</b> pms.kra_library;
+<b>DELETE FROM</b> core.migrations_log <b>WHERE</b> filename = <em>'033-kra-library.js'</em>;</pre>
+
+  <p>Dropping it does <strong>not</strong> affect any KRA an employee has already
+    picked — those are copies in <code>pms.kras</code>.</p>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Part 7</span>Things that have already cost us time</h2>
+
+  <p>None of these is guessable from the code. Each one was found the hard way.</p>
+
+  <ul class="chk">
+    <li><strong><code>DATABASE_SSL=false</code> is required for a local or
+      same-host PostgreSQL.</strong> Without it every connection attempts TLS and
+      the boot dies on an error that reads like a bad password.</li>
+    <li><strong><code>VITE_API_URL</code> must stay UNSET on a single-host
+      deployment.</strong> The frontend builds <code>https://${VITE_API_URL}/api/v1</code>
+      when set and a plain <code>/api/v1</code> when not. Behind nginx on one box
+      the relative path is what you want. It is also <em>build-time</em> —
+      changing it needs a frontend rebuild, not a restart.</li>
+    <li><strong><code>AUTH_DEV=true</code> is currently the only working sign-in
+      path.</strong> OIDC is scaffolded, not implemented. Set it to
+      <code>false</code> and nobody can log in, including the administrator.</li>
+    <li><strong>Legacy <code>.xls</code> is refused deliberately.</strong> The only
+      maintained parser for it ships unpatched high-severity advisories. Re-save
+      as <code>.xlsx</code>.</li>
+    <li><strong>A <code>.xlsx</code> carrying cell comments can fail the
+      import.</strong> Known, not yet fixed. Save a copy without comments.</li>
+    <li><strong><code>npm test</code> must run serially.</strong> The suite shares
+      one database; run in parallel it produces a different set of phantom
+      failures every time. The script already sets
+      <code>--test-concurrency=1</code> — do not remove it.</li>
+    <li><strong>Never add <code>title</code> as an alias for the designation
+      column.</strong> In these sheets that word means the KRA's own title far
+      more often than the job title, so it would file every KRA under a
+      designation named after itself. A test pins this.</li>
+    <li><strong>A helper tab whose headers look like a KRA table gets read as
+      one</strong> and fails the upload. Keep the words “KRA” and “Weightage” out
+      of any notes sheet in an upload workbook.</li>
+  </ul>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2><span class="n">Reference</span>Where things are</h2>
+
+  <div class="tablewrap"><table>
+    <tbody>
+      <tr><td>Feature commit</td><td><code>07fcd01</code> — a KRA library employees pick from, keyed on designation</td></tr>
+      <tr><td>Follow-ups</td><td><code>1e57582</code> plural headers + wrong-screen message · <code>cc0c23d</code> Parameters boundary fix</td></tr>
+      <tr><td>Migration</td><td><code>server/migrations/033-kra-library.js</code></td></tr>
+      <tr><td>API</td><td><code>server/modules/performance/index.js</code></td></tr>
+      <tr><td>AI client</td><td><code>server/core/ai.js</code></td></tr>
+      <tr><td>Tests</td><td><code>server/test/kra-library.test.js</code> (17) · full suite 414</td></tr>
+      <tr><td>Markdown copy</td><td><code>docs/KRA-LIBRARY-DEPLOYMENT.md</code></td></tr>
+      <tr><td>General runbook</td><td><code>DEPLOY.md</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <footer>
+    Agentic PMS · prepared for the Mindgate Solutions implementation team ·
+    target commit <code>cc0c23d</code> on <code>main</code>.
+    Credentials and API keys are supplied separately and never appear in this
+    document or in the repository.
+  </footer>
+</div>
+
+<script>
+  (function () {
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+    function show(id) {
+      tabs.forEach(function (t) {
+        var on = t.id === id;
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+        document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+      });
+    }
+    tabs.forEach(function (t) {
+      t.addEventListener('click', function () { show(t.id); });
+      t.addEventListener('keydown', function (e) {
+        var i = tabs.indexOf(t);
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          e.preventDefault();
+          var n = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+          n.focus(); show(n.id);
+        }
+      });
+    });
+  })();
+</script>

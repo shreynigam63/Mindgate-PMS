@@ -34,7 +34,7 @@ a message naming the correct screen, and vice versa. That check is in
 
 ## 2. What ships
 
-Everything is on `main` as of commit `1e57582`. Nothing needs writing.
+Everything is on `main` as of commit `cc0c23d`. Nothing needs writing.
 
 ### Database
 
@@ -108,8 +108,8 @@ shelf; getting this backwards would be a quiet, plausible-looking bug.
 
 ### Tests
 
-`server/test/kra-library.test.js` — 14 tests, pure (no database, no HTTP). They
-build real `.xlsx` buffers and drive the parser directly. The two that matter
+`server/test/kra-library.test.js` — 17 tests, pure (no database, no HTTP). They
+build real `.xlsx` buffers and drive the parser directly. The three that matter
 most if you change anything here:
 
 - *"A SHELF DOES NOT HAVE TO TOTAL 100"* — if this ever starts failing, the
@@ -117,6 +117,9 @@ most if you change anything here:
 - *"the same file keyed by employee_email still enforces 100"* — the control. If
   this stops failing, the library's leniency has leaked into the importer that
   must not have it.
+- *"the Parameters carry stops at a designation boundary"* — pins a real bug found
+  in the client's own 2,145-row file, where 235 KRAs across 14 designations
+  silently inherited the preceding role's Parameter.
 
 Run the whole suite against a real database before deploying:
 
@@ -125,7 +128,7 @@ createdb apms_check
 cd server
 DATABASE_URL="postgres://USER:PASS@127.0.0.1:5432/apms_check" \
   DATABASE_SSL=false JWT_SECRET=x TENANT_SLUG=x npm test
-# expect: # pass 411 / # fail 0
+# expect: # pass 414 / # fail 0
 ```
 
 `DATABASE_SSL=false` is required for a local PostgreSQL. Without it the pool
@@ -196,7 +199,7 @@ docker compose logs api | grep migration
 ### Verifying the migration landed
 
 ```sql
-SELECT name, run_at FROM core.migrations_log WHERE name LIKE '033%';
+SELECT filename, ran_at FROM core.migrations_log WHERE filename LIKE '033%';
 SELECT count(*) FROM pms.kra_library;          -- 0 on a fresh deploy
 \d pms.kra_library
 ```
@@ -331,7 +334,7 @@ be left in place — nothing else reads it.
 
 ```bash
 # Newest first, or the two reverts conflict with each other.
-git revert --no-commit 1e57582 07fcd01 && git commit && git push origin main
+git revert --no-commit cc0c23d 1e57582 07fcd01 && git commit && git push origin main
 ```
 
 (Verified to apply cleanly in that order at `1e57582`.)
@@ -342,7 +345,7 @@ gone:
 
 ```sql
 DROP TABLE IF EXISTS pms.kra_library;
-DELETE FROM core.migrations_log WHERE name = '033-kra-library.js';
+DELETE FROM core.migrations_log WHERE filename = '033-kra-library.js';
 ```
 
 Dropping the table **does not** affect any KRA an employee has already picked —
@@ -381,10 +384,10 @@ Listed because each one cost real time and none of them is obvious.
 | | |
 |---|---|
 | Feature commit | `07fcd01` — *Add a KRA library employees pick from, keyed on designation* |
-| Follow-up | `1e57582` — plural headers + the wrong-screen message |
+| Follow-ups | `1e57582` plural headers + wrong-screen message; `cc0c23d` Parameters boundary fix |
 | Migration | `server/migrations/033-kra-library.js` |
 | API | `server/modules/performance/index.js` |
-| Tests | `server/test/kra-library.test.js` (14) |
-| Full suite | 411 tests, all passing at `1e57582` |
+| Tests | `server/test/kra-library.test.js` (17) |
+| Full suite | 414 tests, all passing at `cc0c23d` |
 | Deployment runbook (general) | `DEPLOY.md` |
 | House rules for this codebase | `.claude/skills/apms-conventions`, `.claude/skills/apms-migrations` |
