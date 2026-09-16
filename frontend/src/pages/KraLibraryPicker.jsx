@@ -151,8 +151,6 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                         // for a thing that does not exist.
                         : `All departments · ${
                             sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'none published'}`}
-                      {sh.department && state.department
-                        && sh.department.toLowerCase() === state.department.toLowerCase() ? ' (yours)' : ''}
                     </option>
                   ))}
                 </select>
