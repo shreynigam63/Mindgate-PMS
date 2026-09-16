@@ -123,11 +123,18 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                 <select id="shelf-dept" className="inp !py-1 !text-xs !w-auto"
                   value={dept === null ? (state.viewing_department || '') : dept}
                   onChange={(e) => { setDept(e.target.value); setPicked({}); }}>
+                  {/* Department » Designation » count. The breadcrumb names
+                      both halves of the key the shelf is looked up by, so
+                      the number is unambiguous: it is how many KRAs match
+                      THAT department and THIS job title, not a total for
+                      either on its own. Where the department has no shelf
+                      of its own the count is the one it inherits — the
+                      line under the banner is what says so, rather than a
+                      parenthesis competing with the count. */}
                   {state.shelves.map((sh) => (
                     <option key={sh.department || '__all'} value={sh.department || ''}>
-                      {sh.department || 'All departments'} · {sh.kras
-                        ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}${sh.inherited ? ' (company-wide)' : ''}`
-                        : 'none published'}
+                      {`${sh.department || 'All departments'} » ${state.designation} » ${
+                        sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'none published'}`}
                       {sh.department && state.department
                         && sh.department.toLowerCase() === state.department.toLowerCase() ? ' (yours)' : ''}
                     </option>
