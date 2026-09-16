@@ -133,19 +133,36 @@ test('career path: an update replaces (upserts), not duplicates', { skip }, asyn
   assert.equal(rows.rows[0].n, 1, 'upsert, not a second row');
 });
 
-// The feature this whole gate exists for: "after KRAs are approved by
-// managers, HR will move the cycle to lock KRA and it will open
-// development plan and career path." Editing must be blocked before
-// growth_planning and after it moves on, not just allowed during it.
-test('career path: editing is blocked outside the growth_planning phase', { skip }, async () => {
+// The gate this feature exists for, as it stands after the 16 Sep merge:
+// Aspiring Career opens when the EMPLOYEE submits their own KRA sheet, and
+// unconditionally once the cycle reaches growth_planning. The original
+// rule — "blocked until HR moves the cycle" — is what made HR advance and
+// then roll back the whole cycle to serve one person's timing.
+//
+// What has NOT changed, and is the reason the gate is here at all: you
+// cannot write a growth plan against KRAs you are still inventing. The
+// sheet being submitted is what replaces the phase as proof of that.
+test('career path: editing is blocked until the employee submits their KRAs', { skip }, async () => {
   const t = (await db.query(`SELECT tenant_id FROM core.employees WHERE id=$1`, [empId])).rows[0].tenant_id;
   const { token } = await login('cp-emp@x.com');
 
   await db.query(`UPDATE pms.cycles SET phase='kra_open' WHERE tenant_id=$1`, [t]);
-  const beforeLock = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'too early' }) });
-  assert.equal(beforeLock.status, 409);
-  assert.match(beforeLock.body.error, /not open/);
+  await db.query(`UPDATE pms.kra_sheets SET status='draft' WHERE tenant_id=$1 AND employee_id=$2`, [t, empId]);
+  const beforeSubmit = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'too early' }) });
+  assert.equal(beforeSubmit.status, 409);
+  // The message names the one action that opens it, rather than telling
+  // the employee to wait for somebody else.
+  assert.match(beforeSubmit.body.error, /Submit your KRAs/i);
 
+  // THE MERGE: submitting opens it, with the cycle still in kra_open.
+  await db.query(
+    `INSERT INTO pms.kra_sheets (tenant_id, cycle_id, employee_id, status)
+     SELECT $1, id, $2, 'submitted' FROM pms.cycles WHERE tenant_id=$1
+     ON CONFLICT (cycle_id, employee_id) DO UPDATE SET status='submitted'`, [t, empId]);
+  const afterSubmit = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'opened by my own submission' }) });
+  assert.equal(afterSubmit.status, 200, 'submitting the KRA sheet must open Aspiring Career in kra_open');
+
+  // Still shut once the growth window has passed, submitted or not.
   await db.query(`UPDATE pms.cycles SET phase='self_appraisal' WHERE tenant_id=$1`, [t]);
   const afterWindow = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'too late' }) });
   assert.equal(afterWindow.status, 409);
@@ -163,6 +180,10 @@ test('career path: editing is blocked outside the growth_planning phase', { skip
 // but nowhere to say WHEN they expect to get there.
 test('career path: expected timeline is saved and returned alongside target role', { skip }, async () => {
   const { token } = await login('cp-emp@x.com');
+  // The previous test leaves the cycle in growth_planning; make that
+  // explicit rather than depending on the order tests happen to run in.
+  const tid = (await db.query(`SELECT tenant_id FROM core.employees WHERE id=$1`, [empId])).rows[0].tenant_id;
+  await db.query(`UPDATE pms.cycles SET phase='growth_planning' WHERE tenant_id=$1`, [tid]);
   const set = await api('/people/career/my-path', token, {
     method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', target_timeline: '12-18 months', plan: 'Grow into a tech-lead role' }),
   });

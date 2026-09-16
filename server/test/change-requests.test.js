@@ -56,14 +56,15 @@ test('a plan that was NOT returned stays locked once the phase moves on', () => 
 
 test('an approved plan is told how to get unstuck, not just refused', () => {
   const g = devplanEditable('mid_year_review', 'approved');
-  assert.match(g.error, /return the plan/i);
+  assert.match(g.error, /return it for edits/i);
 });
 
 test('calibration is the cut-off — a returned plan does not stay open forever', () => {
   assert.equal(devplanEditable('calibration', 'returned').ok, false);
   assert.equal(devplanEditable('publish', 'returned').ok, false);
   assert.equal(devplanEditable('closed', 'returned').ok, false);
-  assert.match(devplanEditable('calibration', 'returned').error, /no longer be edited/i);
+  // Shut is what matters; the message is the generic phase one by then.
+  assert.equal(devplanEditable('calibration', 'returned').reason, 'phase');
 });
 
 // ---- 2. the department dimension --------------------------------------
@@ -130,4 +131,55 @@ test('Department is recognised under the names HR actually writes', async () => 
     const r = validateKraBulkRows(sheets, known, null, LIB);
     assert.equal(r.rows[0].department, 'Development', `"${header}" should map to department`);
   }
+});
+
+// ---- the merged KRA / growth window -----------------------------------
+//
+// Requested directly: "once the KRA is submitted to manager, employee can
+// use growth plan tab including target achievement for the year and
+// aspiring career". The point is to stop HR having to advance — and then
+// roll back — the whole cycle to serve one person's timing.
+const { growthEditable } = require('../modules/performance/phase-machine');
+const growthWindow = (phase, sheetStatus) => growthEditable(phase, { sheetStatus });
+
+test('SUBMITTING YOUR KRAs OPENS YOUR GROWTH PLAN, without HR advancing the cycle', () => {
+  assert.equal(growthWindow('kra_open', 'submitted').ok, true);
+  assert.equal(growthWindow('kra_open', 'submitted').via, 'kra_submitted');
+  // approved implies submitted — a manager deciding must not close it again
+  assert.equal(growthWindow('kra_open', 'approved').ok, true);
+});
+
+test('before you submit, the growth plan is shut — and says which', () => {
+  for (const status of ['draft', 'returned', null]) {
+    const w = growthWindow('kra_open', status);
+    assert.equal(w.ok, false, `sheet ${status} should not open the growth plan`);
+    assert.equal(w.reason, 'kra_not_submitted');
+  }
+});
+
+test('Growth Planning still opens it for everybody, submitted or not', () => {
+  // Somebody who never submitted a sheet must not be locked out of their
+  // own plan for the rest of the cycle because of it.
+  for (const status of ['draft', 'submitted', 'approved', null]) {
+    const w = growthWindow('growth_planning', status);
+    assert.equal(w.ok, true);
+    assert.equal(w.via, 'phase');
+  }
+});
+
+test('a submitted KRA sheet does not open the growth plan in a LATER phase', () => {
+  // kra_submitted is a way to start EARLY, not a permanent key. Past
+  // Growth Planning the plan is agreed and locks like anything else.
+  const w = growthWindow('mid_year_review', 'submitted');
+  assert.equal(w.ok, false);
+  assert.equal(w.reason, 'phase');
+});
+
+test('the development plan honours the same window, and still refuses a locked plan', () => {
+  assert.equal(devplanEditable('kra_open', 'draft', 'submitted').ok, true);
+  assert.equal(devplanEditable('kra_open', 'draft', 'submitted').via, 'kra_submitted');
+  // shut before submission, and told what to do about it
+  const shut = devplanEditable('kra_open', 'draft', 'draft');
+  assert.equal(shut.ok, false);
+  assert.match(shut.error, /Submit your KRAs/i);
 });

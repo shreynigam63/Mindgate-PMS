@@ -35,6 +35,30 @@ async function activeCyclePhase(tenantId) {
   return r.rows[0] ? r.rows[0].phase : null;
 }
 
+// Aspiring Career opens on the SAME trigger as the development plan — the
+// employee submitting their own KRA sheet — because the two are one tab to
+// the person using them, and opening one without the other would be a
+// distinction only the phase machine can see.
+//
+// The rule itself lives in performance/phase-machine (pure, no db) so the
+// two modules cannot drift apart; this reads the one fact that file cannot.
+async function growthWindowFor(tenantId, employeeId) {
+  const c = (await db.query(
+    `SELECT id, phase FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled')
+      ORDER BY created_at DESC LIMIT 1`, [tenantId])).rows[0];
+  if (!c) return { phase: null, window: pm.growthEditable(null, {}) };
+  const sheet = (await db.query(
+    `SELECT status FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [tenantId, c.id, employeeId])).rows[0];
+  return { phase: c.phase, window: pm.growthEditable(c.phase, { sheetStatus: sheet ? sheet.status : null }) };
+}
+
+// One message, so the employee is told the same thing whichever of the two
+// routes refused them, and it names the single action that opens it.
+const careerShutMessage = (phase, w) => (w.reason === 'kra_not_submitted'
+  ? 'Submit your KRAs to your manager first — Aspiring Career opens the moment you do'
+  : `Aspiring Career editing is not open (phase: ${phase || 'no active cycle'}) — it opens once you submit your KRAs, or once HR moves the cycle to Growth Planning`);
+
 // ---- Awards -----------------------------------------------------------------
 router.get('/awards', async (req, res) => {
   try {
@@ -485,18 +509,19 @@ router.get('/career/my-path', async (req, res) => {
     // could only say "nothing configured", which is wrong whenever a
     // transition exists but was excluded on level.
     const diagnostics = eligibleTargetRoles.length ? null : await careerPathDiagnostics(T(req), req.user.id);
+    const gw = await growthWindowFor(T(req), req.user.id);
     res.json({ path: p || null, milestones, progress_pct: careerProgress(milestones),
       eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
-      editable: pm.phaseAllows(phase, 'career_edit'), path_diagnostics: diagnostics });
+      editable: gw.window.ok, editable_via: gw.window.via || null,
+      shut_because: gw.window.ok ? null : gw.window.reason,
+      path_diagnostics: diagnostics });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.put('/career/my-path', async (req, res) => {
   try {
-    const phase = await activeCyclePhase(T(req));
-    if (!pm.phaseAllows(phase, 'career_edit')) {
-      return res.status(409).json({ error: `Aspiring Career editing is not open (phase: ${phase || 'no active cycle'}) — opens once HR locks KRAs and moves the cycle to Growth Planning` });
-    }
+    const gw = await growthWindowFor(T(req), req.user.id);
+    if (!gw.window.ok) return res.status(409).json({ error: careerShutMessage(gw.phase, gw.window) });
     const { target_role, target_timeline, plan } = req.body || {};
     if (!target_role || !String(target_role).trim()) return res.status(400).json({ error: 'target_role required' });
     const transitions = await eligibleTransitionsFor(T(req), req.user.id);
@@ -553,10 +578,8 @@ function careerProgress(milestones) {
 // shape as the development plan's goals editor.
 router.put('/career/my-milestones', async (req, res) => {
   try {
-    const phase = await activeCyclePhase(T(req));
-    if (!pm.phaseAllows(phase, 'career_edit')) {
-      return res.status(409).json({ error: `Aspiring Career editing is not open (phase: ${phase || 'no active cycle'}) — opens once HR locks KRAs and moves the cycle to Growth Planning` });
-    }
+    const gw = await growthWindowFor(T(req), req.user.id);
+    if (!gw.window.ok) return res.status(409).json({ error: careerShutMessage(gw.phase, gw.window) });
     const pathId = await myCareerPathId(T(req), req.user.id);
     if (!pathId) return res.status(409).json({ error: 'Set your target role first — milestones are the steps towards it' });
 

@@ -57,6 +57,14 @@ function canCancel(from) {
 // (career_edit is a new action, consumed by modules/people's career path
 // route — the only one of these three that isn't in modules/performance).
 const ALLOWS = {
+  // devplan_* and career_edit are deliberately NOT listed here, even though
+  // the two windows were merged on 16 Sep. In kra_open they depend on the
+  // EMPLOYEE's own KRA sheet being submitted, which phaseAllows() cannot
+  // express — it only knows the cycle. Listing them would make
+  // phaseAllows(phase,'devplan_submit') true for somebody who has not
+  // submitted anything, which is precisely the case the merge must refuse.
+  // growthEditable() below carries the real rule; every devplan/career route
+  // goes through it rather than through phaseAllows() alone.
   kra_open:        ['kra_edit', 'kra_submit', 'kra_decide'],
   growth_planning: ['devplan_edit', 'devplan_submit', 'devplan_decide', 'career_edit'],
   mid_year_review: ['midyear_self_edit', 'midyear_self_submit', 'midyear_manager_edit', 'midyear_manager_submit'],
@@ -70,6 +78,65 @@ function phaseAllows(phase, action) {
   return (ALLOWS[phase] || []).includes(action);
 }
 
+
+// GROWTH PLANNING OPENS PER EMPLOYEE, ON THEIR OWN KRA SUBMISSION.
+//
+// Asked for by the client on 16 Sep, to stop the cycle rollback being the
+// routine tool: "KRA editing and growth plan can be merged in cycles to
+// avoid roll back phase, so once the KRA is submitted to manager, employee
+// can use growth plan tab including target achievement for the year and
+// aspiring career."
+//
+// So the two windows overlap at the CYCLE level and are sequenced at the
+// PERSON level. An employee who has sent their KRAs to their manager moves
+// straight on to Target achievements for the year and Aspiring Career,
+// without waiting for the manager's approval and without waiting for HR to
+// advance the whole tenant. HR advancing to growth_planning still opens it
+// for everyone, including anyone whose sheet never arrived.
+//
+// This replaces the old rule, which the previous test pinned as "devplan
+// must not be editable before KRA is locked". The intent behind that rule —
+// don't write a growth plan against KRAs you are still inventing — is
+// preserved by the submission condition: the sheet is out of the employee's
+// hands at that point, weights totalling 100 and all.
+//
+// Pure, and phase-machine has no db by design, so the caller fetches the
+// two statuses and passes them in.
+//
+//   sheetStatus  pms.kra_sheets.status   draft | submitted | approved | returned
+//   planStatus   pms.development_plans.status   same four
+const GROWTH_EDIT_LAST_PHASE = 'calibration';
+const SHEET_SENT = ['submitted', 'approved'];
+
+function growthEditable(phase, { sheetStatus = null, planStatus = null } = {}) {
+  const i = ORDER.indexOf(phase);
+  const beforeCutoff = i !== -1 && i < ORDER.indexOf(GROWTH_EDIT_LAST_PHASE);
+
+  // A plan the manager RETURNED is editable whatever phase it is in, up to
+  // Calibration. The return is the authorisation — asking the phase to
+  // authorise it a second time is what made a whole-tenant rollback the
+  // only remedy for one person's goal.
+  if (planStatus === 'returned' && beforeCutoff) return { ok: true, via: 'returned' };
+
+  if (phase === 'kra_open') {
+    if (SHEET_SENT.includes(sheetStatus)) return { ok: true, via: 'kra_submitted' };
+    return {
+      ok: false,
+      reason: 'kra_not_submitted',
+      error: 'Submit your KRAs to your manager first — Target achievements for the year and Aspiring Career open as soon as you do.',
+    };
+  }
+
+  if (phaseAllows(phase, 'devplan_edit')) return { ok: true, via: 'phase' };
+
+  if (planStatus === 'approved') {
+    return { ok: false, reason: 'approved',
+      error: `Your plan is approved — ask your manager to return it for edits (phase: ${phase || 'none'})` };
+  }
+  return { ok: false, reason: 'phase',
+    error: `Growth planning is not open (phase: ${phase || 'none'})` };
+}
+
 // KRA weight rule: total must be exactly 100 to submit (tolerance for
 // numeric drift: 0.01).
 function weightsValid(kras) {
@@ -77,4 +144,4 @@ function weightsValid(kras) {
   return { ok: Math.abs(total - 100) < 0.01, total: +total.toFixed(2) };
 }
 
-module.exports = { ORDER, canAdvance, canRollback, canCancel, phaseAllows, weightsValid };
+module.exports = { ORDER, canAdvance, canRollback, canCancel, phaseAllows, weightsValid, growthEditable };

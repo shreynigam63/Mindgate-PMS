@@ -1819,7 +1819,9 @@ router.get('/my/development-plan', async (req, res) => {
     const goals = (await db.query(`SELECT * FROM pms.development_goals WHERE plan_id=$1 ORDER BY sort_order`, [p.id])).rows;
     // editable is computed here, by the same function the write path uses,
     // so the page can never offer an editor the API will refuse.
-    const gate = devplanEditable(c.phase, p.status);
+    const sheetStatus = await myKraSheetStatus(T(req), c.id, req.user.id);
+    const gate = devplanEditable(c.phase, p.status, sheetStatus);
+    const window = pm.growthEditable(c.phase, { sheetStatus, planStatus: p.status });
     // The employee's own KRAs, so a goal can name the one it serves (035).
     // Sent on every load, including read-only ones: the grouped view needs
     // the titles just as much as the editor needs the options.
@@ -1829,8 +1831,12 @@ router.get('/my/development-plan', async (req, res) => {
         WHERE sh.cycle_id=$1 AND sh.employee_id=$2
         ORDER BY k.sort_order`, [c.id, req.user.id])).rows;
     res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, plan: p, goals, kras,
+      kra_sheet_status: sheetStatus,
       editable: gate.ok && p.status !== 'approved' && p.status !== 'submitted',
-      editable_via: gate.via || null });
+      editable_via: gate.via || null,
+      // Why it is shut, so the page can name the one action that opens it
+      // instead of telling everybody to wait for HR.
+      shut_because: gate.ok ? null : (window.reason || 'phase') });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1874,16 +1880,22 @@ function goalsMissingTargetDate(goals) {
 //
 // Calibration is the cut-off: past it the ratings conversation is under
 // way and the plan is evidence in it, not a working document.
-const DEVPLAN_EDIT_LAST_PHASE = 'calibration';
-function devplanEditable(phase, planStatus) {
-  if (pm.phaseAllows(phase, 'devplan_edit')) return { ok: true };
-  if (planStatus === 'returned') {
-    const i = pm.ORDER.indexOf(phase), stop = pm.ORDER.indexOf(DEVPLAN_EDIT_LAST_PHASE);
-    if (i !== -1 && i < stop) return { ok: true, via: 'returned' };
-    return { ok: false, error: `The cycle has reached ${phase} — a returned plan can no longer be edited` };
-  }
-  return { ok: false, error: `Development plan editing is not open (phase: ${phase || 'none'})`
-    + (planStatus === 'approved' ? ' — ask your manager to return the plan for edits' : '') };
+// Thin adapter over the ONE growth rule in phase-machine, kept because
+// every call site here reads better with the plan's own vocabulary and the
+// tests pin this name. The rule itself lives in exactly one place.
+function devplanEditable(phase, planStatus, kraSheetStatus) {
+  const r = pm.growthEditable(phase, { sheetStatus: kraSheetStatus, planStatus });
+  return r.ok ? { ok: true, via: r.via === 'phase' ? undefined : r.via } : { ok: false, error: r.error, reason: r.reason };
+}
+
+// The caller's own KRA sheet status for the active cycle, which is half of
+// the growth window. null when they have no sheet at all — which reads as
+// "not submitted", the safe answer.
+async function myKraSheetStatus(tenantId, cycleId, employeeId) {
+  const r = await db.query(
+    `SELECT status FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [tenantId, cycleId, employeeId]);
+  return r.rows[0] ? r.rows[0].status : null;
 }
 
 router.put('/my/development-plan/goals', async (req, res) => {
@@ -1894,7 +1906,7 @@ router.put('/my/development-plan/goals', async (req, res) => {
     // half of the answer — reading it after was the bug.
     const p = (await db.query(`SELECT * FROM pms.development_plans WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
     if (!p) return res.status(404).json({ error: 'plan not found — GET /my/development-plan first' });
-    const gate = devplanEditable(c.phase, p.status);
+    const gate = devplanEditable(c.phase, p.status, await myKraSheetStatus(T(req), c.id, req.user.id));
     if (!gate.ok) return res.status(409).json({ error: gate.error });
     if (p.status === 'approved') return res.status(409).json({ error: 'plan is approved — ask your manager to return it for edits' });
     const goals = Array.isArray(req.body && req.body.goals) ? req.body.goals : [];
@@ -1963,7 +1975,8 @@ router.post('/my/development-plan/submit', async (req, res) => {
     // An edit the employee cannot send back is not an edit. Submission
     // follows the same rule as editing, so a returned plan completes the
     // round trip in whatever phase the cycle happens to be in.
-    if (!pm.phaseAllows(c.phase, 'devplan_submit') && !devplanEditable(c.phase, p.status).ok) {
+    if (!pm.phaseAllows(c.phase, 'devplan_submit')
+        && !devplanEditable(c.phase, p.status, await myKraSheetStatus(T(req), c.id, req.user.id)).ok) {
       return res.status(409).json({ error: 'Development plan submission is not open' });
     }
     const goals = (await db.query(`SELECT id, title, target_date FROM pms.development_goals WHERE plan_id=$1`, [p.id])).rows;
@@ -2058,6 +2071,10 @@ router.post('/team/development-plans/:planId/decide', async (req, res) => {
       return res.status(403).json({ error: 'Not your report' });
     if (p.status !== 'submitted') return res.status(409).json({ error: `plan is ${p.status}, not submitted` });
     if (decision === 'returned' && !(comment && comment.trim())) return res.status(422).json({ error: 'A return needs a comment — the employee must know why' });
+    // No phase gate here, and deliberately: a plan that could be SUBMITTED
+    // in kra_open has to be decidable there too, or it sits in the
+    // manager's queue until HR advances the cycle — which is the wait this
+    // whole change exists to remove.
     await db.query(`UPDATE pms.development_plans SET status=$1, manager_comment=$2, decided_at=now(), updated_at=now() WHERE id=$3`,
       [decision, comment || null, p.id]);
     audit(req, `DEVPLAN_${decision.toUpperCase()}`, p.cycle_id, p.employee_id, { comment: comment || null });

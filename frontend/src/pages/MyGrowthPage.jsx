@@ -47,6 +47,7 @@ function DevelopmentPlanCard() {
     ? data.editable
     : data.plan.status === 'draft' || data.plan.status === 'returned';
   const reopened = editable && data.editable_via === 'returned';
+  const openedByKraSubmit = editable && data.editable_via === 'kra_submitted';
 
   return (
     <div className="card p-4 space-y-3">
@@ -56,6 +57,18 @@ function DevelopmentPlanCard() {
       </div>
       {data.plan.status === 'returned' && data.plan.manager_comment && (
         <p className="text-xs bg-rose-50 text-rose-700 rounded-lg p-2"><b>Returned:</b> {data.plan.manager_comment}</p>
+      )}
+      {openedByKraSubmit && (
+        <p className="text-xs bg-teal-50 text-teal-700 rounded-lg p-2">
+          Your KRAs are with your manager, so this is <b>open now</b> — no need to wait for
+          the {phaseLabel('growth_planning')} phase.
+        </p>
+      )}
+      {!editable && data.shut_because === 'kra_not_submitted' && (
+        <p className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">
+          Submit your KRAs to your manager first. <b>This opens the moment you do</b> — you do
+          not have to wait for HR to move the cycle on.
+        </p>
       )}
       {reopened && (
         <p className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">
@@ -663,7 +676,7 @@ function CareerPathCard() {
             <Plus size={12} className="inline mr-1" />Add milestone
           </button>
         )}
-        {!editable && milestones.length > 0 && <p className="text-[11px] text-navy-400">Milestone text is editable in Growth Planning — progress can be updated any time.</p>}
+        {!editable && milestones.length > 0 && <p className="text-[11px] text-navy-400">Milestone text is editable once your KRAs are submitted — progress can be updated any time.</p>}
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {editable ? (
@@ -672,7 +685,11 @@ function CareerPathCard() {
           {saved && <span className="text-[11px] text-emerald-600 font-medium ml-2">Saved ✓</span>}
         </>
       ) : (
-        <p className="text-xs text-navy-400">Aspiring Career editing opens in the {phaseLabel('growth_planning')} phase, once HR locks KRAs.</p>
+        <p className="text-xs text-navy-400">
+          {data.shut_because === 'kra_not_submitted'
+            ? <>Submit your KRAs to your manager and this opens straight away — you do not have to wait for {phaseLabel('growth_planning')}.</>
+            : <>Aspiring Career editing opens once you submit your KRAs, or once HR moves the cycle to {phaseLabel('growth_planning')}.</>}
+        </p>
       )}
     </div>
   );
