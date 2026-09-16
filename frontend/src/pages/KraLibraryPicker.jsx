@@ -52,11 +52,22 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
   if (state.reason === 'no_library') {
     return (
       <p className="text-[11px] text-navy-400">
-        No KRA library has been published for <b>{state.designation}</b> yet. Write your KRAs
-        below, or ask HR to publish a set for your role.
+        No KRA library has been published for <b>{state.designation}</b>
+        {state.scope === 'department+designation' && state.department && <> in <b>{state.department}</b></>} yet.
+        Write your KRAs below, or ask HR to publish a set for your role.
       </p>
     );
   }
+
+  // WHICH SHELF THIS IS. With department matching on, one job title can
+  // have several shelves, and the employee should not have to guess which
+  // one they are looking at — "Manager" in Development and "Manager" in
+  // Human Resources are different lists with the same name.
+  //
+  // Silent when matching is off, because then there is only ever one shelf
+  // per title and naming it would be noise.
+  const deptScoped = state.matched_scope === 'department' && state.matched_department;
+  const onFallback = state.scope === 'department+designation' && !deptScoped && state.department;
 
   const available = state.entries.filter((e) => !e.already_added);
   const chosen = state.entries.filter((e) => picked[e.id] && !e.already_added);
@@ -80,12 +91,28 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
       <div className="card p-3 border-lagoon-300 bg-lagoon-50">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-[18ch] flex-1">
-            <p className="text-xs font-bold text-lagoon-700">Start from the {state.designation} KRA library</p>
+            <p className="text-xs font-bold text-lagoon-700">
+              Start from the {state.designation} KRA library
+              {deptScoped && <> · <span className="text-lagoon-600">{state.matched_department}</span></>}
+            </p>
             <p className="text-[11px] text-navy-500">
               HR has published <b>{state.entries.length}</b> KRA{state.entries.length === 1 ? '' : 's'} for
-              this role{available.length !== state.entries.length && `, ${available.length} not yet on this sheet`}.
+              {deptScoped
+                ? <> <b>{state.designation}</b> in <b>{state.matched_department}</b></>
+                : <> this role</>}
+              {available.length !== state.entries.length && `, ${available.length} not yet on this sheet`}.
               Pick what applies, then adjust the wording and weights.
             </p>
+            {onFallback && (
+              // Not a warning: a company-wide shelf is a legitimate answer,
+              // and most roles will only ever have one. It is said out loud
+              // so nobody assumes these KRAs were written for their
+              // department when they were not.
+              <p className="text-[11px] text-navy-400 mt-1">
+                This is the company-wide shelf for {state.designation} — no shelf has been
+                published for {state.department} yet.
+              </p>
+            )}
           </div>
           <button className="btn-pri !bg-lagoon-700 whitespace-nowrap" disabled={disabled || !available.length}
             title={!available.length ? 'Everything on the shelf is already on this sheet' : ''}

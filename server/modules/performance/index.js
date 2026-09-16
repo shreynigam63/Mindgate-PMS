@@ -1761,8 +1761,12 @@ async function kraLibraryFor(tenantId, employee, sheetId) {
 // GET /pms/my/kra-library — the caller's own shelf.
 router.get('/my/kra-library', async (req, res) => {
   try {
+    // department as well as designation: kraLibraryFor() matches on both
+    // (034), and leaving it out of the SELECT made department matching
+    // silently impossible — the column was read as undefined on every
+    // request, so the fallback shelf was the only shelf anybody ever saw.
     const emp = (await db.query(
-      `SELECT id, designation FROM core.employees WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`,
+      `SELECT id, designation, department FROM core.employees WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`,
       [T(req), req.user.email])).rows[0];
     if (!emp) return res.status(404).json({ error: 'no employee record' });
     const c = await activeCycle(T(req));
@@ -1782,7 +1786,7 @@ router.get('/my/kra-library', async (req, res) => {
 router.get('/team/kra-library/:employeeId', async (req, res) => {
   try {
     const emp = (await db.query(
-      `SELECT id, manager_id, designation FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      `SELECT id, manager_id, designation, department FROM core.employees WHERE id=$1 AND tenant_id=$2`,
       [req.params.employeeId, T(req)])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
 
