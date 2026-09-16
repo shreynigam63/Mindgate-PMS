@@ -18,6 +18,11 @@ import { AiModal } from './AiDraftPanel';
 // own, and a manager or HR filling a sheet on someone's behalf. `source`
 // is the endpoint, so the caller decides whose shelf this is — a manager
 // must see their REPORT's designation, never their own.
+// Thousands grouping. The company-wide total runs to four figures on a
+// tenant this size, and "1656 KRAs" reads as a reference number rather
+// than a count.
+const num = (n) => Number(n).toLocaleString('en-IN');
+
 export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
   const [state, setState] = useState(null);   // null until loaded
   const [open, setOpen] = useState(false);
@@ -146,15 +151,21 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                       {sh.department
                         ? `${sh.department} · ${
                             sh.department_kras
-                              ? `${sh.department_kras} KRA${sh.department_kras === 1 ? '' : 's'} across ${
+                              ? `${num(sh.department_kras)} KRA${sh.department_kras === 1 ? '' : 's'} across ${
                                   sh.department_titles} title${sh.department_titles === 1 ? '' : 's'}`
                               : 'none published'}`
-                        // "All departments" is left exactly as it was, on the
-                        // user's instruction — and it is not one department,
-                        // so a department total through it would be a number
-                        // for a thing that does not exist.
+                        // "All departments" is every department added up,
+                        // so this line is exactly the sum of the lines
+                        // below it. It is NOT what selecting the option
+                        // loads — that is still this one job title's
+                        // company-wide shelf — for the same reason the
+                        // department entries are not: the Designation
+                        // control beside them reports that number.
                         : `All departments · ${
-                            sh.kras ? `${sh.kras} KRA${sh.kras === 1 ? '' : 's'}` : 'none published'}`}
+                            sh.all_kras
+                              ? `${num(sh.all_kras)} KRA${sh.all_kras === 1 ? '' : 's'} across ${
+                                  sh.all_departments} department${sh.all_departments === 1 ? '' : 's'}`
+                              : 'none published'}`}
                     </option>
                   ))}
                 </select>
