@@ -1779,6 +1779,47 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
     shelves.push({ department, kras: companyWide ? companyWide.kras : 0, inherited: true });
   }
 
+  // A department option counts the WHOLE department: every KRA served to
+  // every job title it employs. That is a different number from the one
+  // beside "All departments", which counts this one job title — and it is
+  // the right one here, because the designation control below does the
+  // per-title breakdown. A department entry that repeated the title's own
+  // count would just say the same thing twice.
+  //
+  // Per title it is the department's own shelf where one exists, else the
+  // company-wide shelf — NULLIF/COALESCE rather than a sum of both, or a
+  // title with two shelves would be counted twice. Scoped to the
+  // departments actually on the menu, so this is a handful of rows and not
+  // a scan of all 34.
+  const deptNames = shelves.map((sh) => sh.department).filter(Boolean);
+  const deptTotals = deptNames.length ? Object.fromEntries((await db.query(
+    `SELECT department, sum(kras)::int AS total_kras, count(*)::int AS titles
+       FROM (
+         SELECT e.department, e.designation,
+                COALESCE(NULLIF((SELECT count(*)::int FROM pms.kra_library l
+                                  WHERE l.tenant_id=e.tenant_id
+                                    AND lower(btrim(l.designation))=lower(btrim(e.designation))
+                                    AND lower(btrim(coalesce(l.department,'')))=lower(btrim(e.department))), 0),
+                         (SELECT count(*)::int FROM pms.kra_library l
+                           WHERE l.tenant_id=e.tenant_id
+                             AND lower(btrim(l.designation))=lower(btrim(e.designation))
+                             AND coalesce(btrim(l.department),'')='')) AS kras
+           FROM core.employees e
+          WHERE e.tenant_id=$1 AND e.status='active'
+            AND lower(btrim(coalesce(e.department,''))) = ANY($2::text[])
+            AND coalesce(btrim(e.designation),'') <> ''
+          GROUP BY e.tenant_id, e.department, e.designation
+       ) x
+      GROUP BY department`,
+    [tenantId, deptNames.map((d) => d.trim().toLowerCase())])).rows
+      .map((r) => [r.department.trim().toLowerCase(), r])) : {};
+  for (const sh of shelves) {
+    if (!sh.department) continue;
+    const t = deptTotals[sh.department.trim().toLowerCase()];
+    sh.department_kras = t ? t.total_kras : 0;
+    sh.department_titles = t ? t.titles : 0;
+  }
+
   // An explicit choice from the dropdown wins over the automatic match.
   // '' is a real answer meaning the company-wide shelf, so the test is for
   // undefined/null rather than falsiness — and it is only honoured when a
@@ -1831,11 +1872,20 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
   const departmentDesignations = department ? (await db.query(
     `SELECT e.designation,
             count(*)::int AS employees,
-            (SELECT count(*)::int FROM pms.kra_library l
-              WHERE l.tenant_id=e.tenant_id
-                AND lower(btrim(l.designation))=lower(btrim(e.designation))
-                AND (lower(btrim(coalesce(l.department,'')))=lower(btrim($2))
-                     OR coalesce(btrim(l.department),'')='')) AS kras
+            -- The department's own shelf where it has one, ELSE the
+            -- company-wide shelf — never both. An OR here summed the two,
+            -- so a title with 3 departmental KRAs and 2 company-wide ones
+            -- read "5 KRAs" when only 3 would ever be offered. Invisible
+            -- while no row carries a department, and wrong the day HR
+            -- publishes the first one.
+            COALESCE(NULLIF((SELECT count(*)::int FROM pms.kra_library l
+                              WHERE l.tenant_id=e.tenant_id
+                                AND lower(btrim(l.designation))=lower(btrim(e.designation))
+                                AND lower(btrim(coalesce(l.department,'')))=lower(btrim($2))), 0),
+                     (SELECT count(*)::int FROM pms.kra_library l
+                       WHERE l.tenant_id=e.tenant_id
+                         AND lower(btrim(l.designation))=lower(btrim(e.designation))
+                         AND coalesce(btrim(l.department),'')='')) AS kras
        FROM core.employees e
       WHERE e.tenant_id=$1 AND e.status='active'
         AND lower(btrim(coalesce(e.department,'')))=lower(btrim($2))
