@@ -154,6 +154,34 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                 )}
               </div>
             )}
+
+            {/* The roles alongside them in their department. Every title is
+                listed so the employee can see the shape of the department,
+                but only their own is selectable — the rest are disabled
+                rather than hidden. Picking somebody else's title would put
+                another role's objectives on this person's appraisal, which
+                is the confusion the library exists to prevent; hiding them
+                would answer the question "what about the others?" by
+                pretending there are none. */}
+            {(state.department_designations || []).length > 1 && (
+              <div className="flex items-center gap-2 mt-2">
+                <label className="lbl mb-0" htmlFor="shelf-desig">Designation</label>
+                <select id="shelf-desig" className="inp !py-1 !text-xs !w-auto"
+                  value={state.designation} onChange={() => {}}>
+                  {state.department_designations.map((d) => (
+                    <option key={d.designation} value={d.designation} disabled={!d.mine}>
+                      {d.designation} · {d.kras} KRA{d.kras === 1 ? '' : 's'}
+                      {d.mine ? ' (yours)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-navy-400">
+                  The other {state.department_designations.length - 1} title
+                  {state.department_designations.length === 2 ? '' : 's'} in {state.department} are
+                  shown for context — you can only take KRAs from your own.
+                </span>
+              </div>
+            )}
             {onFallback && (
               // Not a warning: a company-wide shelf is a legitimate answer,
               // and most roles will only ever have one. It is said out loud

@@ -1822,8 +1822,33 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
           AND coalesce(btrim(department),'')=''
         ORDER BY sort_order, id`, [tenantId, designation])).rows;
   }
+  // Every job title the employee's own department employs, so the picker
+  // can show the roles around them. Read-only by design: the employee may
+  // SEE that Admin also has Office Assistants and an Admin Manager, but
+  // only their own title is selectable — picking somebody else's would put
+  // another role's objectives on their appraisal, which is the confusion
+  // the library exists to prevent.
+  const departmentDesignations = department ? (await db.query(
+    `SELECT e.designation,
+            count(*)::int AS employees,
+            (SELECT count(*)::int FROM pms.kra_library l
+              WHERE l.tenant_id=e.tenant_id
+                AND lower(btrim(l.designation))=lower(btrim(e.designation))
+                AND (lower(btrim(coalesce(l.department,'')))=lower(btrim($2))
+                     OR coalesce(btrim(l.department),'')='')) AS kras
+       FROM core.employees e
+      WHERE e.tenant_id=$1 AND e.status='active'
+        AND lower(btrim(coalesce(e.department,'')))=lower(btrim($2))
+        AND coalesce(btrim(e.designation),'') <> ''
+      GROUP BY e.tenant_id, e.designation
+      ORDER BY 2 DESC, 1`, [tenantId, department])).rows.map((r) => ({
+    ...r,
+    mine: r.designation.trim().toLowerCase() === designation.trim().toLowerCase(),
+  })) : [];
+
   if (!entries.length) {
-    return { designation, department, scope, shelves, entries: [], reason: 'no_library' };
+    return { designation, department, scope, shelves, entries: [],
+      department_designations: departmentDesignations, reason: 'no_library' };
   }
 
   // Did the shelf on screen come from the department that was asked for,
@@ -1854,6 +1879,7 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
     // Every shelf for this title, and whether the one on screen was chosen
     // by hand rather than matched.
     shelves,
+    department_designations: departmentDesignations,
     viewing_department: matchedDepartment,
     chosen_by_hand: !!askedValid,
     reason: null,
