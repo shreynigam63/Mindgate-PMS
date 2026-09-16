@@ -23,17 +23,23 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState({});
   const [err, setErr] = useState(null);
+  // null = show me whatever the matching rule picks. A string (including
+  // '') is a deliberate choice from the dropdown, and '' means the
+  // company-wide shelf — which is why this is not just a falsy check.
+  const [dept, setDept] = useState(null);
 
   useEffect(() => {
     let live = true;
-    api(source)
+    const url = dept === null ? source
+      : `${source}${source.includes('?') ? '&' : '?'}department=${encodeURIComponent(dept)}`;
+    api(url)
       .then((d) => { if (live) setState(d); })
       // A shelf that fails to load must not take the KRA page down with
       // it — the page's actual job is editing KRAs, and this is an
       // optional shortcut on top of that.
       .catch((e) => { if (live) setErr(e.message); });
     return () => { live = false; };
-  }, [source]);
+  }, [source, dept]);
 
   if (err) return <p className="text-[11px] text-rose-500">KRA library unavailable: {err}</p>;
   if (!state) return null;
@@ -103,6 +109,29 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
               {available.length !== state.entries.length && `, ${available.length} not yet on this sheet`}.
               Pick what applies, then adjust the wording and weights.
             </p>
+            {/* One shelf, no chooser: a dropdown with a single option is
+                furniture. It appears the moment a job title has more than
+                one, which is exactly when "which list am I looking at?"
+                becomes a real question. */}
+            {(state.shelves || []).length > 1 && (
+              <div className="flex items-center gap-2 mt-2">
+                <label className="lbl mb-0" htmlFor="shelf-dept">Department</label>
+                <select id="shelf-dept" className="inp !py-1 !text-xs !w-auto"
+                  value={dept === null ? (state.viewing_department || '') : dept}
+                  onChange={(e) => { setDept(e.target.value); setPicked({}); }}>
+                  {state.shelves.map((sh) => (
+                    <option key={sh.department || '__all'} value={sh.department || ''}>
+                      {sh.department || 'All departments'} · {sh.kras} KRA{sh.kras === 1 ? '' : 's'}
+                      {sh.department && state.department
+                        && sh.department.toLowerCase() === state.department.toLowerCase() ? ' (yours)' : ''}
+                    </option>
+                  ))}
+                </select>
+                {state.chosen_by_hand && (
+                  <span className="text-[11px] text-navy-400">Browsing another department's shelf.</span>
+                )}
+              </div>
+            )}
             {onFallback && (
               // Not a warning: a company-wide shelf is a legitimate answer,
               // and most roles will only ever have one. It is said out loud

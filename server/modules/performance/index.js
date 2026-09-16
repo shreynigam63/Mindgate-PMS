@@ -1709,16 +1709,45 @@ async function kraLibraryScope(tenantId) {
     ? 'department+designation' : 'designation';
 }
 
-async function kraLibraryFor(tenantId, employee, sheetId) {
+async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
   const designation = (employee && employee.designation || '').trim();
   const department = (employee && employee.department || '').trim();
   if (!designation) {
     return { designation: null, entries: [], reason: 'no_designation' };
   }
   const scope = await kraLibraryScope(tenantId);
+
+  // Every shelf published for this job title, so the employee can see that
+  // others exist and look at one. A title with a single shelf gets a list
+  // of one, and the picker then shows no chooser at all.
+  const shelves = (await db.query(
+    `SELECT coalesce(btrim(department),'') AS department, count(*)::int AS kras
+       FROM pms.kra_library
+      WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
+      GROUP BY 1 ORDER BY (coalesce(btrim(department),'')='') DESC, 1`,
+    [tenantId, designation])).rows.map((r) => ({ department: r.department || null, kras: r.kras }));
+
+  // An explicit choice from the dropdown wins over the automatic match.
+  // '' is a real answer meaning the company-wide shelf, so the test is for
+  // undefined/null rather than falsiness — and it is only honoured when a
+  // shelf by that name actually exists, since it arrives from a query
+  // string.
+  const asked = wanted == null ? null : String(wanted).trim();
+  const askedValid = asked !== null
+    && shelves.some((sh) => (sh.department || '') .toLowerCase() === asked.toLowerCase());
+
   let entries = [];
   let matchedDepartment = null;
-  if (scope === 'department+designation' && department) {
+  if (askedValid) {
+    entries = (await db.query(
+      `SELECT id, designation, department, category, title, measures, description, suggested_weight
+         FROM pms.kra_library
+        WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
+          AND lower(btrim(coalesce(department,'')))=lower($3)
+        ORDER BY sort_order, id`, [tenantId, designation, asked.toLowerCase()])).rows;
+    if (entries.length && asked) matchedDepartment = entries[0].department;
+  }
+  if (!entries.length && !askedValid && scope === 'department+designation' && department) {
     entries = (await db.query(
       `SELECT id, designation, department, category, title, measures, description, suggested_weight
          FROM pms.kra_library
@@ -1727,7 +1756,7 @@ async function kraLibraryFor(tenantId, employee, sheetId) {
         ORDER BY sort_order, id`, [tenantId, designation, department])).rows;
     if (entries.length) matchedDepartment = department;
   }
-  if (!entries.length) {
+  if (!entries.length && !askedValid) {
     entries = (await db.query(
       `SELECT id, designation, department, category, title, measures, description, suggested_weight
          FROM pms.kra_library
@@ -1735,7 +1764,9 @@ async function kraLibraryFor(tenantId, employee, sheetId) {
           AND coalesce(btrim(department),'')=''
         ORDER BY sort_order, id`, [tenantId, designation])).rows;
   }
-  if (!entries.length) return { designation, department, scope, entries: [], reason: 'no_library' };
+  if (!entries.length) {
+    return { designation, department, scope, shelves, entries: [], reason: 'no_library' };
+  }
 
   const existing = new Set((sheetId
     ? (await db.query(`SELECT title FROM pms.kras WHERE sheet_id=$1`, [sheetId])).rows
@@ -1749,6 +1780,11 @@ async function kraLibraryFor(tenantId, employee, sheetId) {
     // rather than leaving them to assume the shelf was written for them.
     matched_department: matchedDepartment,
     matched_scope: matchedDepartment ? 'department' : 'designation',
+    // Every shelf for this title, and whether the one on screen was chosen
+    // by hand rather than matched.
+    shelves,
+    viewing_department: matchedDepartment,
+    chosen_by_hand: !!askedValid,
     reason: null,
     entries: entries.map((e) => ({
       ...e,
@@ -1772,7 +1808,7 @@ router.get('/my/kra-library', async (req, res) => {
     const c = await activeCycle(T(req));
     const s = c ? (await db.query(
       `SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, emp.id])).rows[0] : null;
-    res.json(await kraLibraryFor(T(req), emp, s && s.id));
+    res.json(await kraLibraryFor(T(req), emp, s && s.id, req.query.department));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1801,7 +1837,7 @@ router.get('/team/kra-library/:employeeId', async (req, res) => {
     const c = await activeCycle(T(req));
     const s = c ? (await db.query(
       `SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, emp.id])).rows[0] : null;
-    res.json(await kraLibraryFor(T(req), emp, s && s.id));
+    res.json(await kraLibraryFor(T(req), emp, s && s.id, req.query.department));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
