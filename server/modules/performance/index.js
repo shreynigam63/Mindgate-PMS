@@ -358,6 +358,20 @@ router.put('/my/kra-sheet/kras', async (req, res) => {
     if (!c || !pm.phaseAllows(c.phase, 'kra_edit')) return res.status(409).json({ error: `KRA editing is not open (phase: ${c ? c.phase : 'none'})` });
     const s = (await db.query(`SELECT * FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
     if (!s) return res.status(404).json({ error: 'sheet not found — GET /my/kra-sheet first' });
+    // THE LOCK. Now that editing is open in every phase, the sheet's own
+    // status is the only thing standing between a submitted KRA and the
+    // employee quietly rewriting it while the manager reads it.
+    //
+    // 'submitted' was missing here. The page hid the editor, so nobody hit
+    // it by hand, but the route accepted the save and then set the status
+    // back to 'draft' at the end of the same transaction — un-submitting
+    // the sheet without telling the manager, whose pending queue it then
+    // vanished from. Harmless while kra_open was the only editable phase
+    // and the button was hidden; a real hole the moment the window opens
+    // all year.
+    if (s.status === 'submitted') {
+      return res.status(409).json({ error: 'sheet is submitted — your manager has it. Ask them to return it if you need to change something.' });
+    }
     if (s.status === 'approved') return res.status(409).json({ error: 'sheet is approved — ask HR to return it for edits' });
     const kras = Array.isArray(req.body && req.body.kras) ? req.body.kras : [];
     const client = await db.getClient();
@@ -394,6 +408,10 @@ router.post('/my/kra-sheet/submit', async (req, res) => {
     if (!c || !pm.phaseAllows(c.phase, 'kra_submit')) return res.status(409).json({ error: 'KRA submission is not open' });
     const s = (await db.query(`SELECT * FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
     if (!s) return res.status(404).json({ error: 'sheet not found' });
+    // Submitting twice would move decided_at forward and, on an approved
+    // sheet, silently undo the manager's decision.
+    if (s.status === 'submitted') return res.status(409).json({ error: 'sheet is already submitted' });
+    if (s.status === 'approved') return res.status(409).json({ error: 'sheet is approved — ask HR to return it for edits' });
     const kras = (await db.query(`SELECT weight FROM pms.kras WHERE sheet_id=$1`, [s.id])).rows;
     const w = pm.weightsValid(kras);
     if (!kras.length) return res.status(422).json({ error: 'Add at least one KRA before submitting' });
@@ -736,9 +754,10 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
     }
     const c = await activeCycle(T(req));
     if (!c) return res.status(409).json({ error: 'No active cycle' });
-    if (!pm.phaseAllows(c.phase, 'kra_edit')) {
-      return res.status(409).json({ error: `KRA editing is closed in the ${c.phase} phase — roll the cycle back to KRA Setting before reopening a sheet, or the employee will not be able to edit it.` });
-    }
+    // No phase check any more. This used to refuse outside kra_open and
+    // tell HR to roll the whole tenant back first — which reopened every
+    // other employee's sheet to fix one. Editing now follows the sheet's
+    // status, so reopening one sheet reopens exactly that sheet.
     const s = (await db.query(`SELECT * FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.params.employeeId])).rows[0];
     if (!s) return res.status(404).json({ error: 'sheet not found' });
     if (s.status !== 'approved') return res.status(409).json({ error: `sheet is ${s.status}, not approved — only an approved sheet needs reopening` });

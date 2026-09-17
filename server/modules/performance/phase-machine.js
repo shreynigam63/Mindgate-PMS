@@ -83,7 +83,36 @@ const ALLOWS = {
   calibration:     ['calibrate', 'adjust', 'top_talent'],
   publish:         ['publish'],
 };
+// THE KRA SHEET IS OPEN FOR THE WHOLE CYCLE.
+//
+// Asked for by the client on 17 Sep: "KRA should be open for all in entire
+// cycle, but once KRA is submitted by employee it should be locked for him
+// unless manager returns the KRA with any feedback."
+//
+// So the lock moved off the CYCLE and onto the SHEET. It used to be that
+// kra_open was the only phase in which anybody could touch a KRA sheet,
+// which made HR roll the whole tenant back to kra_open to let one late
+// joiner write their KRAs — and that rollback reopened everybody's sheet
+// as a side effect, which is the opposite of locking.
+//
+// Now the phase says only WHETHER THE CYCLE IS RUNNING, and
+// pms.kra_sheets.status decides who may edit:
+//
+//   draft / returned  → the employee edits and submits
+//   submitted         → locked to the employee; the manager decides
+//   approved          → locked to everyone until HR reopens it
+//
+// draft and closed stay shut because there is no cycle to write into: a
+// draft cycle has not been opened to employees at all, and a closed one is
+// history. Every other phase is open, and the sheet's own status is what
+// stops an approved KRA being quietly rewritten in, say, calibration.
+const KRA_ACTIONS = ['kra_edit', 'kra_submit', 'kra_decide'];
+const KRA_SHUT = ['draft', 'closed'];
+
 function phaseAllows(phase, action) {
+  if (KRA_ACTIONS.includes(action)) {
+    return ORDER.includes(phase) && !KRA_SHUT.includes(phase);
+  }
   return (ALLOWS[phase] || []).includes(action);
 }
 

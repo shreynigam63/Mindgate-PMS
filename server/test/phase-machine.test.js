@@ -32,9 +32,51 @@ test('cancel from any phase except closed', () => {
 
 test('phase gates', () => {
   assert.equal(pm.phaseAllows('kra_open', 'kra_edit'), true);
-  assert.equal(pm.phaseAllows('self_appraisal', 'kra_edit'), false);
+  // Was false. The KRA sheet is now open for the whole running cycle and
+  // the SHEET'S STATUS is the lock — see the test below.
+  assert.equal(pm.phaseAllows('self_appraisal', 'kra_edit'), true);
   assert.equal(pm.phaseAllows('calibration', 'adjust'), true);
   assert.equal(pm.phaseAllows('publish', 'publish'), true);
+});
+
+// "KRA should be open for all in entire cycle, but once KRA is submitted
+// by employee it should be locked for him unless manager returns the KRA
+// with any feedback." — 17 Sep.
+//
+// The lock moved off the cycle and onto the sheet, so these two halves are
+// tested separately: the phase says only whether the cycle is running, and
+// pms.kra_sheets.status decides who may write.
+test('THE KRA SHEET IS OPEN IN EVERY RUNNING PHASE', () => {
+  for (const phase of ['kra_open', 'mid_year_review', 'self_appraisal',
+                       'manager_eval', 'hod_eval', 'calibration', 'publish']) {
+    for (const action of ['kra_edit', 'kra_submit', 'kra_decide']) {
+      assert.equal(pm.phaseAllows(phase, action), true, `${action} should be open in ${phase}`);
+    }
+  }
+});
+
+test('…but not before the cycle opens, or after it closes', () => {
+  // A draft cycle has not been shown to employees at all, and a closed one
+  // is history. Neither is "the entire cycle".
+  for (const phase of ['draft', 'closed']) {
+    for (const action of ['kra_edit', 'kra_submit', 'kra_decide']) {
+      assert.equal(pm.phaseAllows(phase, action), false, `${action} must stay shut in ${phase}`);
+    }
+  }
+  // An unknown phase is not a licence either — a typo must not open a gate.
+  assert.equal(pm.phaseAllows('not_a_phase', 'kra_edit'), false);
+  assert.equal(pm.phaseAllows(undefined, 'kra_edit'), false);
+});
+
+test('opening KRA editing everywhere does not open anything else', () => {
+  // The blast radius of the change: only the three kra_* actions moved.
+  // Every other gate still answers from the per-phase table.
+  assert.equal(pm.phaseAllows('kra_open', 'self_edit'), false);
+  assert.equal(pm.phaseAllows('kra_open', 'manager_submit'), false);
+  assert.equal(pm.phaseAllows('kra_open', 'adjust'), false);
+  assert.equal(pm.phaseAllows('calibration', 'self_submit'), false);
+  assert.equal(pm.phaseAllows('publish', 'midyear_self_edit'), false);
+  assert.equal(pm.phaseAllows('self_appraisal', 'publish'), false);
 });
 
 // "After KRAs are approved by managers, HR will move the cycle to lock
@@ -58,8 +100,11 @@ test('KRA SETTING AND GROWTH PLANNING ARE ONE PHASE (036)', () => {
   assert.equal(pm.growthEditable('kra_open', { sheetStatus: 'draft' }).ok, false);
   assert.equal(pm.growthEditable('kra_open', { sheetStatus: 'submitted' }).ok, true);
 
-  // KRA editing still closes the moment the cycle moves on.
-  assert.equal(pm.phaseAllows('mid_year_review', 'kra_edit'), false);
+  // KRA editing no longer closes when the cycle moves on — the sheet's own
+  // status locks it instead (17 Sep). The growth-plan rule is untouched by
+  // that: a submitted sheet is still a way to start EARLY, not a permanent
+  // key, so the growth window still shuts when the phase passes.
+  assert.equal(pm.phaseAllows('mid_year_review', 'kra_edit'), true);
   assert.equal(pm.growthEditable('mid_year_review', { sheetStatus: 'submitted' }).ok, false,
     'a submitted sheet is a way to start early, not a permanent key');
 });

@@ -54,8 +54,13 @@ export default function MyKRASheetPage() {
   if (!data.cycle) return <div className="card p-8 text-center text-sm text-navy-400">No active appraisal cycle. HR opens the cycle; your KRA sheet appears here.</div>;
 
   const total = kras.reduce((s, k) => s + (Number(k.weight) || 0), 0);
+  // The sheet's own status is the lock, not the cycle's phase. An employee
+  // may write and rewrite their KRAs at any point in the cycle; submitting
+  // hands the sheet to their manager and closes it to them until the
+  // manager returns it with feedback. See phase-machine.js for the rule and
+  // why it moved off the phase.
   const locked = data.sheet.status === 'approved' || data.sheet.status === 'submitted';
-  const editable = data.cycle.phase === 'kra_open' && !locked;
+  const editable = !locked;
   const set = (i, k) => (e) => setKras(ks => ks.map((r, j) => j === i ? { ...r, [k]: e.target.value } : r));
 
   // KRAs picked from the role library land as ordinary unsaved rows —
@@ -216,7 +221,16 @@ export default function MyKRASheetPage() {
             <Send size={13} className="inline mr-1" />Save & submit to manager</button>
         </div>
       )}
-      {!editable && !locked && <p className="text-xs text-navy-400">KRA editing opens in the {phaseLabel('kra_open')} phase.</p>}
+      {/* Being locked out is never left to be inferred from greyed-out
+          boxes: it says who holds the sheet and what unlocks it. The two
+          locks have different remedies, so they say different things. */}
+      {locked && (
+        <p className="text-xs text-navy-400">
+          {data.sheet.status === 'submitted'
+            ? 'Your manager has this sheet. It is locked until they approve it or return it with feedback.'
+            : 'This sheet is approved and locked. Ask HR to reopen it if something needs to change.'}
+        </p>
+      )}
     </div>
   );
 }
