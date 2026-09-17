@@ -835,6 +835,52 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// HR reopens a locked growth plan. The KRA sheet has had this since the
+// lock shipped; the growth plan never did, so once a plan was submitted or
+// approved the ONLY ways back were the manager returning it or the
+// employee's job changing. Found on the client's instance: an employee
+// resubmitted a growth plan whose goals still served their previous role's
+// KRAs, and there was no way for HR to hand it back.
+//
+// Accepts 'submitted' as well as 'approved', unlike the sheet version. A
+// submitted plan is with the manager, but a manager who has not acted on it
+// is not a reason to make HR wait — and the manager is told.
+router.post('/hr/development-plan/:employeeId/reopen', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const comment = String((req.body || {}).comment || '').trim();
+    if (!comment) {
+      return res.status(422).json({ error: 'A reopen needs a comment — the employee must know what to change.' });
+    }
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const p = (await db.query(
+      `SELECT * FROM pms.development_plans WHERE cycle_id=$1 AND employee_id=$2`,
+      [c.id, req.params.employeeId])).rows[0];
+    if (!p) return res.status(404).json({ error: 'growth plan not found' });
+    if (!['submitted', 'approved'].includes(p.status)) {
+      return res.status(409).json({ error: `plan is ${p.status} — it is already the employee's to edit` });
+    }
+
+    // reopened_reason stays NULL: a person decided this, so the page must
+    // read it as one rather than as an automatic role-change reopen.
+    await db.query(
+      `UPDATE pms.development_plans
+          SET status='returned', manager_comment=$1, reopened_reason=NULL,
+              decided_at=now(), updated_at=now() WHERE id=$2`,
+      [comment, p.id]);
+    audit(req, 'DEVPLAN_REOPENED', c.id, p.employee_id, { comment, from: p.status });
+    await notify(T(req), p.employee_id, 'devplan_reopened',
+      'Your growth plan was reopened for edits', comment, '/my/growth');
+    if (p.manager_id) {
+      await notify(T(req), p.manager_id, 'devplan_reopened',
+        "A report's growth plan was reopened by HR",
+        `${comment} It has gone back to them to edit.`, '/pms/team');
+    }
+    res.json({ ok: true, status: 'returned', from: p.status });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ---------------- HR: bulk KRA upload — BR-1.1 ------------------------------
 // "A bulk Excel upload option must be made available so as to avoid manual
 // entry work in PMS." The existing bulk importer (core/employees.js) only
