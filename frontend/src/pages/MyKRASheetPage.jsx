@@ -146,8 +146,10 @@ export default function MyKRASheetPage() {
       {data.sheet.status === 'returned' && data.sheet.manager_comment && (
         <div className="card p-3 border-rose-200 bg-rose-50 text-sm text-rose-700 space-y-2">
           <p>
-            <b>{data.sheet.reopened_reason === 'profile_change'
-              ? 'Reopened after a change to your role:'
+            {/* THREE things land on 'returned', not two. A two-way branch
+                credited HR's reopen to the manager. */}
+            <b>{data.sheet.reopened_reason === 'profile_change' ? 'Reopened after a change to your role:'
+              : data.sheet.reopened_reason === 'hr_reopen'      ? 'Reopened by HR:'
               : 'Returned by your manager:'}</b> {data.sheet.manager_comment}
           </p>
           {/* The KRAs on the sheet are still the OLD role's. They are kept

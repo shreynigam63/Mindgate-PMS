@@ -40,6 +40,10 @@ export const phaseColor = (p) => ({ draft: 'bg-navy-50 text-navy-600', kra_open:
 // a person who did nothing.
 export const sheetStatusLabel = (s, reopenedReason) => {
   if (s === 'returned' && reopenedReason === 'profile_change') return 'reopened — role changed';
+  // HR reopening a sheet is a third thing, and it must not fall through to
+  // the 'returned by manager' default below: it credits a decision the
+  // manager did not make.
+  if (s === 'returned' && reopenedReason === 'hr_reopen') return 'reopened by HR';
   return ({
     draft:     'draft',
     submitted: 'submitted to manager',

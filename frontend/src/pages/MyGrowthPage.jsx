@@ -54,18 +54,24 @@ function DevelopmentPlanCard() {
   // development goals. reopened_reason is a stored column rather than a
   // guess at the comment text (migration 039), matching the KRA sheet.
   const byRoleChange = data.plan.reopened_reason === 'profile_change';
+  const byHr = data.plan.reopened_reason === 'hr_reopen';
 
   return (
     <div className="card p-4 space-y-3">
       <div className="flex items-center gap-2">
         <p className="font-bold text-sm flex-1">Target achievements for the year</p>
         <span className={`chip ${STATUS_COLOR[data.plan.status]}`}>
-          {data.plan.status === 'returned' && byRoleChange ? 'reopened — role changed' : data.plan.status}
+          {data.plan.status !== 'returned' ? data.plan.status
+            : byRoleChange ? 'reopened — role changed'
+            : byHr ? 'reopened by HR'
+            : 'returned by manager'}
         </span>
       </div>
       {data.plan.status === 'returned' && data.plan.manager_comment && (
         <p className="text-xs bg-rose-50 text-rose-700 rounded-lg p-2">
-          <b>{byRoleChange ? 'Reopened after a change to your role:' : 'Returned by your manager:'}</b>
+          <b>{byRoleChange ? 'Reopened after a change to your role:'
+            : byHr           ? 'Reopened by HR:'
+            : 'Returned by your manager:'}</b>
           {' '}{data.plan.manager_comment}
         </p>
       )}
@@ -86,6 +92,10 @@ function DevelopmentPlanCard() {
             ? <>Your role changed, so this plan is <b>open for edits</b> again even though the
                 cycle has moved on to {phaseLabel(data.cycle.phase)}. Review the goals and your
                 career aspiration against the job you now hold, then submit again.</>
+            : byHr
+            ? <>HR reopened this plan, so it is <b>open for edits</b> even though the cycle has
+                moved on to {phaseLabel(data.cycle.phase)}. Make the changes they asked for, then
+                submit it again.</>
             : <>Your manager returned this plan, so it is <b>open for edits</b> even though the
                 cycle has moved on to {phaseLabel(data.cycle.phase)}. Edit and submit it again.</>}
         </p>
@@ -272,13 +282,32 @@ function GoalList({ goals: initial, editable, onSaved, kras = [] }) {
       grp.goals.push(g);
     }
     groups.sort((a, b) => (a.name === 'Not tied to a KRA') - (b.name === 'Not tied to a KRA'));
+    // A goal can name a KRA that is no longer on the sheet — after a role
+    // change the employee refills My KRAs, and the goals keep the previous
+    // role's KRA TITLE as a text snapshot. Printing that heading as if it
+    // were live is how a plan describing the old job gets resubmitted
+    // without anyone noticing. Found on the client's instance: five goals
+    // still headed by KRAs that had been replaced.
+    const onSheet = new Set((kras || []).map((k) => String(k.title || '').trim().toLowerCase()));
+    const isStale = (name) => name !== 'Not tied to a KRA'
+      && onSheet.size > 0 && !onSheet.has(name.toLowerCase());
+    const staleCount = groups.filter((g) => isStale(g.name)).reduce((n, g) => n + g.goals.length, 0);
     return (
       <div className="space-y-2">
         {!goals.length && <p className="text-xs text-navy-400">No development goals recorded.</p>}
+        {staleCount > 0 && (
+          <p className="text-xs bg-amber-50 text-amber-800 rounded-lg p-2">
+            <b>{staleCount} goal{staleCount === 1 ? '' : 's'} below still serve{staleCount === 1 ? 's' : ''} a KRA
+            that is no longer on your sheet.</b> Your KRAs changed after these were written. Ask your
+            manager or HR to reopen this plan if you need to point them at your current KRAs.
+          </p>
+        )}
         {groups.map(grp => (
           <div key={grp.name} className="space-y-2">
-            <p className="text-[10.5px] font-semibold tracking-[0.08em] uppercase text-teal-700 pt-1">
-              {grp.name === 'Not tied to a KRA' ? grp.name : <>Serves · {grp.name}</>}
+            <p className={`text-[10.5px] font-semibold tracking-[0.08em] uppercase pt-1 ${isStale(grp.name) ? 'text-amber-700' : 'text-teal-700'}`}>
+              {grp.name === 'Not tied to a KRA'
+                ? grp.name
+                : <>Serves · {grp.name}{isStale(grp.name) && ' · no longer on your KRA sheet'}</>}
             </p>
             {grp.goals.map(g => (
           <div key={g.id} className="text-xs bg-navy-50 rounded-lg p-2 space-y-1">

@@ -825,13 +825,64 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
     if (!s) return res.status(404).json({ error: 'sheet not found' });
     if (s.status !== 'approved') return res.status(409).json({ error: `sheet is ${s.status}, not approved — only an approved sheet needs reopening` });
 
+    // 'hr_reopen', NOT null. Null falls through to the page's default,
+    // which names the MANAGER — and a sheet HR reopened was not the
+    // manager's judgement on anybody's KRAs. Same misattribution the
+    // profile_change flag exists to prevent, one branch over.
     await db.query(
-      `UPDATE pms.kra_sheets SET status='returned', manager_comment=$1, reopened_reason=NULL,
+      `UPDATE pms.kra_sheets SET status='returned', manager_comment=$1, reopened_reason='hr_reopen',
               decided_at=now(), updated_at=now() WHERE id=$2`,
       [String(comment).trim(), s.id]);
     audit(req, 'KRA_REOPENED', c.id, s.employee_id, { comment: String(comment).trim(), from: 'approved' });
     await notify(T(req), s.employee_id, 'kra_reopened', 'Your approved KRA sheet was reopened for edits', String(comment).trim(), '/pms');
     res.json({ ok: true, status: 'returned' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// HR reopens a locked growth plan. The KRA sheet has had this since the
+// lock shipped; the growth plan never did, so once a plan was submitted or
+// approved the ONLY ways back were the manager returning it or the
+// employee's job changing. Found on the client's instance: an employee
+// resubmitted a growth plan whose goals still served their previous role's
+// KRAs, and there was no way for HR to hand it back.
+//
+// Accepts 'submitted' as well as 'approved', unlike the sheet version. A
+// submitted plan is with the manager, but a manager who has not acted on it
+// is not a reason to make HR wait — and the manager is told.
+router.post('/hr/development-plan/:employeeId/reopen', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const comment = String((req.body || {}).comment || '').trim();
+    if (!comment) {
+      return res.status(422).json({ error: 'A reopen needs a comment — the employee must know what to change.' });
+    }
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const p = (await db.query(
+      `SELECT * FROM pms.development_plans WHERE cycle_id=$1 AND employee_id=$2`,
+      [c.id, req.params.employeeId])).rows[0];
+    if (!p) return res.status(404).json({ error: 'growth plan not found' });
+    if (!['submitted', 'approved'].includes(p.status)) {
+      return res.status(409).json({ error: `plan is ${p.status} — it is already the employee's to edit` });
+    }
+
+    // 'hr_reopen' so the page can say who actually did this. It must not
+    // be null: null is the page's "returned by your manager" default, and
+    // HR reopening a plan is not the manager returning it.
+    await db.query(
+      `UPDATE pms.development_plans
+          SET status='returned', manager_comment=$1, reopened_reason='hr_reopen',
+              decided_at=now(), updated_at=now() WHERE id=$2`,
+      [comment, p.id]);
+    audit(req, 'DEVPLAN_REOPENED', c.id, p.employee_id, { comment, from: p.status });
+    await notify(T(req), p.employee_id, 'devplan_reopened',
+      'Your growth plan was reopened for edits', comment, '/my/growth');
+    if (p.manager_id) {
+      await notify(T(req), p.manager_id, 'devplan_reopened',
+        "A report's growth plan was reopened by HR",
+        `${comment} It has gone back to them to edit.`, '/pms/team');
+    }
+    res.json({ ok: true, status: 'returned', from: p.status });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
