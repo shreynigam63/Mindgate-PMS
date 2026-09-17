@@ -119,9 +119,27 @@ test('mid-year ratings reach the employee’s own KRA sheet, against the right K
      empId]);
 
   const token = await login('mkp-emp@x.com');
+
+  // The manager's half is withheld from the employee until HR publishes
+  // (17 Sep: "only self rating should be visible to employees before
+  // publish"). Their OWN mid-year rating is theirs and stays visible.
+  const before = await api('/pms/my/kra-sheet', token);
+  const b = Object.fromEntries(before.body.kras.map((k) => [k.id, k]));
+  assert.equal(before.body.manager_ratings_withheld, true);
+  assert.equal(b[kraA].midyear.self.rating, 5, 'their own rating is still there');
+  assert.equal(b[kraA].midyear.manager, null, "the manager's is not");
+  assert.equal(before.body.midyear.manager_overall, null);
+
+  // This test is about the mapping — which rating lands against which KRA
+  // — so publish, then assert it, rather than weakening what it checks.
+  await db.query(
+    `INSERT INTO pms.employee_performance_history (tenant_id, employee_id, cycle_id, final_rating, rating_label)
+     VALUES ($1,$2,$3,4.0,'Exceeds') ON CONFLICT DO NOTHING`, [tenantId, empId, cycleId]);
+
   const r = await api('/pms/my/kra-sheet', token);
   const byId = Object.fromEntries(r.body.kras.map((k) => [k.id, k]));
 
+  assert.equal(r.body.manager_ratings_withheld, false);
   assert.equal(byId[kraA].midyear.self.rating, 5);
   assert.equal(byId[kraA].midyear.self.narrative, 'Every milestone on plan');
   assert.equal(byId[kraA].midyear.manager.rating, 4);
@@ -158,6 +176,14 @@ test('the Annual Review carries mid-year as the mid-point, alongside self and ma
   // (17 Sep, client instruction — see manager-rating-visibility.test.js).
   // This test is about the SHAPE of the year on one row, so publish first
   // and then assert it, rather than weakening what it checks.
+  //
+  // The precondition is set explicitly rather than inherited: an earlier
+  // test in this file publishes the same employee, and a test that only
+  // passes in file order is a test that will fail for somebody else.
+  await db.query(
+    `DELETE FROM pms.employee_performance_history WHERE employee_id=$1 AND cycle_id=$2`,
+    [empId, cycleId]);
+
   const before = await api('/pms/my/annual-review', token);
   assert.equal(before.body.manager_ratings_withheld, true, 'hidden until published');
   assert.equal(before.body.kra.outcomes.find((k) => k.id === kraA).manager, null);

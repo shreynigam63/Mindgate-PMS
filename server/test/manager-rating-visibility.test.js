@@ -204,3 +204,65 @@ test('HR reaches the publish route — it refuses on the phase, not on permissio
   assert.equal(r.status, 409, `expected a phase refusal, got ${r.status} ${JSON.stringify(r.body)}`);
   assert.match(r.body.error, /Publish is not open/);
 });
+
+test('MY KRAs DOES NOT LEAK THE MANAGER\'S MID-YEAR RATING EITHER', { skip }, async () => {
+  await db.query(`DELETE FROM pms.employee_performance_history WHERE employee_id=$1 AND cycle_id=$2`, [empId, cycleId]);
+  await db.query(`UPDATE pms.cycles SET phase='kra_open' WHERE id=$1`, [cycleId]);
+  const r = await get('/pms/my/kra-sheet', empTok);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.manager_ratings_withheld, true);
+  assert.equal(r.body.midyear.manager_overall, null, 'the overall is withheld');
+  assert.equal(r.body.kras[0].midyear.manager, null, 'and the per-KRA one');
+  assert.ok(r.body.kras[0].midyear.self, 'but their own self rating is still there');
+  assert.ok(!JSON.stringify(r.body).includes('manager halfway view'),
+    "the manager's mid-year narrative must not appear");
+});
+
+test('THE MID-YEAR PAGE WITHHOLDS THE MANAGER HALF, KEEPS THE STATUS', { skip }, async () => {
+  await db.query(`UPDATE pms.cycles SET phase='mid_year_review' WHERE id=$1`, [cycleId]);
+  const r = await get('/pms/my/midyear-review', empTok);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.manager_ratings_withheld, true);
+  assert.equal(r.body.checkin.manager_rating, null);
+  assert.equal(r.body.checkin.manager_narrative, null);
+  assert.deepEqual(r.body.checkin.manager_entries, {});
+  // Status is not a rating, and hiding it would leave the employee unable
+  // to tell whether the halfway conversation had happened at all.
+  assert.equal(r.body.checkin.manager_status, 'submitted', 'the status stays');
+  // Their own half is untouched.
+  assert.equal(Number(r.body.checkin.self_rating), 4);
+  assert.ok(JSON.stringify(r.body.checkin.self_entries).includes('halfway, on track'));
+});
+
+test('ONCE PUBLISHED, ALL THREE EMPLOYEE VIEWS RELEASE THE MANAGER RATINGS', { skip }, async () => {
+  await publishRow();
+  const kra = await get('/pms/my/kra-sheet', empTok);
+  assert.equal(kra.body.manager_ratings_withheld, false);
+  assert.equal(kra.body.kras[0].midyear.manager.rating, 3);
+
+  const mid = await get('/pms/my/midyear-review', empTok);
+  assert.equal(mid.body.manager_ratings_withheld, false);
+  assert.equal(Number(mid.body.checkin.manager_rating), 3);
+  assert.ok(JSON.stringify(mid.body.checkin.manager_entries).includes('manager halfway view'));
+
+  await db.query(`UPDATE pms.cycles SET phase='hod_eval' WHERE id=$1`, [cycleId]);
+  const ann = await get('/pms/my/annual-review', empTok);
+  assert.equal(ann.body.manager_ratings_withheld, false);
+  assert.ok(ann.body.manager_evaluation);
+});
+
+test('NO RATING THE EMPLOYEE DID NOT GIVE APPEARS ON ANY OF THEIR ROUTES', { skip }, async () => {
+  // The catch-all. Every phrase here was written by the manager; none may
+  // reach the employee before publish, whatever shape a refactor gives the
+  // payloads.
+  await db.query(`DELETE FROM pms.employee_performance_history WHERE employee_id=$1 AND cycle_id=$2`, [empId, cycleId]);
+  const SECRETS = ['exceeded the SLA', 'Strong delivery', 'Broaden exposure', 'manager halfway view'];
+  for (const path of ['/pms/my/kra-sheet', '/pms/my/midyear-review', '/pms/my/annual-review', '/pms/my/self-appraisal']) {
+    const r = await get(path, empTok);
+    assert.equal(r.status, 200, `${path} -> ${r.status}`);
+    const blob = JSON.stringify(r.body);
+    for (const secret of SECRETS) {
+      assert.ok(!blob.includes(secret), `"${secret}" leaked from ${path}`);
+    }
+  }
+});
