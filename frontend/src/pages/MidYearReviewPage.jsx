@@ -291,6 +291,16 @@ function MyMidYearCard() {
         <StatusPill label="Employee (you)" signed={selfSigned} />
         <StatusPill label="Manager" signed={mgrSigned} />
       </div>
+      {/* Mid-year has no 'returned' state and no comment column, so a
+          reopen lands on 'in_progress' with its reason in its own
+          reopened_note (migration 040). Read from reopened_reason rather
+          than the note's text: this is the first line somebody reads after
+          an unexpected change, and prose must not decide attribution. */}
+      {data.checkin.reopened_reason === 'profile_change' && data.checkin.reopened_note && (
+        <p className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">
+          <b>Reopened after a change to your role:</b> {data.checkin.reopened_note}
+        </p>
+      )}
 
       {!data.editable && !selfSigned && (
         <p className="text-xs text-navy-400 bg-navy-50 rounded-lg p-2">
@@ -466,6 +476,14 @@ function TeamMidYearDetail({ employeeId }) {
         <StatusPill label="Employee" signed={selfSigned} />
         <StatusPill label="You" signed={mgrSigned} />
       </div>
+      {/* The manager sees it too — their own half went back to
+          'in_progress' as well, and a rating that quietly un-submitted
+          with no explanation is worse than the change itself. */}
+      {data.checkin.reopened_reason === 'profile_change' && data.checkin.reopened_note && (
+        <p className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">
+          <b>Reopened after a change to their role:</b> {data.checkin.reopened_note}
+        </p>
+      )}
       <div className="bg-navy-50 rounded-lg p-3 text-xs space-y-1">
         <p className="font-bold text-navy-500 uppercase text-[10px]">Their reflection</p>
         {data.checkin.self_narrative ? <p className="whitespace-pre-wrap">{data.checkin.self_narrative}</p> : <p className="text-navy-400">Not written yet.</p>}

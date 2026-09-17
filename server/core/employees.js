@@ -494,7 +494,7 @@ async function loadEmployees(tenantId, rows, opts = {}) {
   // Required here rather than at the top of the file: see the header of
   // profile-change.js for why core reaches into the performance module for
   // this one rule, and why it does so lazily.
-  const { watchedChanges, reopenLockedSheets, reopenLockedGrowthPlans } = require('../modules/performance/profile-change');
+  const { watchedChanges, reopenLockedSheets, reopenLockedGrowthPlans, reopenLockedMidyear } = require('../modules/performance/profile-change');
   const departmentHeads = Array.isArray(opts.departmentHeads) ? opts.departmentHeads : [];
   const client = await db.getClient();
   // Sheets to reopen once the import COMMITS. Collected inside the
@@ -504,6 +504,7 @@ async function loadEmployees(tenantId, rows, opts = {}) {
   // nothing, which is exactly what an empty list after a throw gives.
   const reopenAfterCommit = [];
   const reopenedPlans = [];
+  const reopenedMidyear = [];
   try {
     await client.query('BEGIN');
     // Pass 0: what these people looked like BEFORE the file landed, so
@@ -656,12 +657,20 @@ async function loadEmployees(tenantId, rows, opts = {}) {
         logger.error({ msg: 'growth plan reopen after import failed', employee_id: item.employeeId, err: e.message });
         reopenFailures.push({ employee_id: item.employeeId, error: e.message, kind: 'growth_plan' });
       }
+      try {
+        const mid = await reopenLockedMidyear(tenantId, item.employeeId, item.changes,
+          { actorEmail: opts.actorEmail || null });
+        if (mid.length) reopenedMidyear.push({ employee_id: item.employeeId, changes: item.changes, checkins: mid.length });
+      } catch (e) {
+        logger.error({ msg: 'midyear reopen after import failed', employee_id: item.employeeId, err: e.message });
+        reopenFailures.push({ employee_id: item.employeeId, error: e.message, kind: 'midyear' });
+      }
     }
 
     return { loaded: rows.length, manager_roles_granted: grants,
              department_heads_set: headsSet, hod_roles_granted: headGrants,
              kra_sheets_reopened: reopened, growth_plans_reopened: reopenedPlans,
-             kra_reopen_failures: reopenFailures };
+             midyear_reopened: reopenedMidyear, kra_reopen_failures: reopenFailures };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     throw e;
@@ -850,6 +859,7 @@ router.put('/:employeeId', async (req, res) => {
     res.json({ ok: true,
       reopened_kra_sheets: moved.reopened.length,
       reopened_growth_plans: (moved.reopened_growth_plans || []).length,
+      reopened_midyear: (moved.reopened_midyear || []).length,
       changes: moved.changes });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1019,8 +1029,9 @@ router.put('/:employeeId/role', async (req, res) => {
     // KRAs describe the old one.
     let reopened = [];
     let reopenedPlans = [];
+    let reopenedMid = [];
     if (before !== role) {
-      const { reopenLockedSheets, reopenLockedGrowthPlans } = require('../modules/performance/profile-change');
+      const { reopenLockedSheets, reopenLockedGrowthPlans, reopenLockedMidyear } = require('../modules/performance/profile-change');
       const changes = [{ field: 'Role', from: before, to: role }];
       reopened = await reopenLockedSheets(req.user.tenant_id, req.params.employeeId,
         changes, { actorEmail: req.user.email });
@@ -1028,8 +1039,12 @@ router.put('/:employeeId/role', async (req, res) => {
       // the old role is the same kind of wrong as objectives written for it.
       reopenedPlans = await reopenLockedGrowthPlans(req.user.tenant_id, req.params.employeeId,
         changes, { actorEmail: req.user.email });
+      // And the mid-year review (040) — a halfway reading of the old job.
+      reopenedMid = await reopenLockedMidyear(req.user.tenant_id, req.params.employeeId,
+        changes, { actorEmail: req.user.email });
     }
-    res.json({ ok: true, reopened_kra_sheets: reopened.length, reopened_growth_plans: reopenedPlans.length });
+    res.json({ ok: true, reopened_kra_sheets: reopened.length,
+      reopened_growth_plans: reopenedPlans.length, reopened_midyear: reopenedMid.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

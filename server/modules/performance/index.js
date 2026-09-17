@@ -2796,7 +2796,14 @@ router.post('/my/midyear-review/submit', async (req, res) => {
       const sc = midyearOverall(selfKras, row.self_entries);
       if (!sc.complete) return res.status(422).json({ error: `Rate all ${selfKras.length} KRAs before signing — ${sc.missing.length} still unrated.` });
     }
-    await db.query(`UPDATE pms.midyear_checkins SET self_status='submitted', self_submitted_at=now(), updated_at=now() WHERE id=$1`, [row.id]);
+    // The reopen flag is cleared on submit (040), for the reason the KRA
+    // sheet learned the hard way: a flag that outlives a resubmission
+    // labels a LATER, unrelated event as a role change.
+    await db.query(
+      `UPDATE pms.midyear_checkins
+          SET self_status='submitted', self_submitted_at=now(),
+              reopened_reason=NULL, reopened_note=NULL, updated_at=now()
+        WHERE id=$1`, [row.id]);
     audit(req, 'MIDYEAR_SELF_SUBMITTED', c.id, req.user.id, null);
     // The LIVE manager, not the manager_id snapshotted on the check-in row
     // when it was created. Same bug the KRA flow had: an employee whose
@@ -2881,7 +2888,14 @@ router.post('/team/midyear-review/:employeeId/submit', async (req, res) => {
       const sc = midyearOverall(mgrKras, row.manager_entries);
       if (!sc.complete) return res.status(422).json({ error: `Rate all ${mgrKras.length} KRAs before signing — ${sc.missing.length} still unrated.` });
     }
-    await db.query(`UPDATE pms.midyear_checkins SET manager_status='submitted', manager_submitted_at=now(), updated_at=now() WHERE id=$1`, [row.id]);
+    // Same clearing here. Either party submitting ends the reopened state:
+    // the note is addressed to both of them, and once one has acted on it
+    // leaving it on screen for the other reads as a fresh event.
+    await db.query(
+      `UPDATE pms.midyear_checkins
+          SET manager_status='submitted', manager_submitted_at=now(),
+              reopened_reason=NULL, reopened_note=NULL, updated_at=now()
+        WHERE id=$1`, [row.id]);
     audit(req, 'MIDYEAR_MANAGER_SUBMITTED', c.id, emp.id, null);
     await notify(T(req), emp.id, 'midyear_manager_signed', `${req.user.name} signed off your Mid-Year Review`, null, '/pms/my/midyear');
     res.json({ ok: true });

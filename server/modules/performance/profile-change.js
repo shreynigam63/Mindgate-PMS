@@ -1,5 +1,5 @@
-// A KRA sheet and a growth plan are both written FOR a job. Change the job,
-// reopen them.
+// A KRA sheet, a growth plan and a mid-year review are all written FOR a
+// job. Change the job, reopen them.
 //
 // Asked for on 17 Sep: "if employee has submitted his KRA to manager and
 // his department, designation or role is changed, his KRAs should be
@@ -184,6 +184,70 @@ async function reopenLockedGrowthPlans(tenantId, employeeId, changes, { actorEma
   return reopened;
 }
 
+// The Mid-Year Review, on the same rule — and the one that needed a
+// different landing state, because mid-year is shaped differently.
+//
+// It has no 'returned' status (not_started | in_progress | submitted) and no
+// comment column: self_narrative and manager_narrative are the two parties'
+// own writing and are not ours to overwrite. So a reopened mid-year goes
+// back to 'in_progress', which the save routes already accept, and the
+// sentence lands in its own reopened_note column (migration 040).
+//
+// BOTH HALVES reopen. The alternative — reopen the employee's half and
+// leave the manager's submitted — leaves a mid-year that reads as complete
+// while one half describes the old job and the other the new one. It is
+// also consistent with the sheet, where an 'approved' sheet reopens rather
+// than being protected because a manager had already decided.
+//
+// NOTHING IS DELETED. Ratings, narratives and both per-KRA entry maps are
+// untouched; only the status and the submitted timestamp move. If the job
+// change does not actually affect what someone wrote, they resubmit exactly
+// what they had.
+async function reopenLockedMidyear(tenantId, employeeId, changes, { actorEmail = null } = {}) {
+  if (!changes || !changes.length) return [];
+
+  const note = `Your ${describe(changes)}. `
+    + 'Please review your mid-year review against the new role and submit again.';
+
+  // Only rows where at least one half is actually submitted. A check-in
+  // sitting at not_started/in_progress is already open, so there is nothing
+  // to reopen and no notification worth spending.
+  const reopened = (await db.query(
+    `UPDATE pms.midyear_checkins mc
+        SET self_status    = CASE WHEN mc.self_status='submitted'    THEN 'in_progress' ELSE mc.self_status END,
+            manager_status = CASE WHEN mc.manager_status='submitted' THEN 'in_progress' ELSE mc.manager_status END,
+            self_submitted_at    = CASE WHEN mc.self_status='submitted'    THEN NULL ELSE mc.self_submitted_at END,
+            manager_submitted_at = CASE WHEN mc.manager_status='submitted' THEN NULL ELSE mc.manager_submitted_at END,
+            reopened_reason='profile_change', reopened_note=$1, updated_at=now()
+       FROM pms.cycles c
+      WHERE mc.cycle_id = c.id
+        AND mc.tenant_id = $2 AND mc.employee_id = $3
+        AND (mc.self_status='submitted' OR mc.manager_status='submitted')
+        AND c.phase <> ALL($4::text[])
+      RETURNING mc.id, mc.cycle_id, mc.manager_id, mc.self_status, mc.manager_status`,
+    [note, tenantId, employeeId, DEAD_PHASES])).rows;
+
+  if (!reopened.length) return [];
+
+  for (const r of reopened) {
+    await db.query(
+      `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+       VALUES ($1,$2,'MIDYEAR_REOPENED_PROFILE_CHANGE','midyear_checkins',$3,$4)`,
+      [tenantId, actorEmail, r.id,
+       JSON.stringify({ employee_id: employeeId, cycle_id: r.cycle_id, changes })]);
+  }
+
+  await notify(tenantId, employeeId, 'midyear_reopened',
+    'Your mid-year review was reopened after a change to your role', note, '/my/midyear');
+  for (const managerId of [...new Set(reopened.map((r) => r.manager_id).filter(Boolean))]) {
+    await notify(tenantId, managerId, 'midyear_reopened',
+      'A report\'s mid-year review was reopened after a role change',
+      `${describe(changes)}. Their mid-year review is open again for both of you.`, '/pms/team');
+  }
+
+  return reopened;
+}
+
 // The convenience wrapper the callers actually use: work out what changed,
 // then reopen if it matters. Kept separate so the comparison is testable
 // on its own — most of the bugs in a feature like this are in deciding
@@ -198,10 +262,16 @@ async function applyProfileChange(tenantId, employeeId, before, after, opts = {}
   const changes = watchedChanges(before, after);
   const reopened = await reopenLockedSheets(tenantId, employeeId, changes, opts);
   const reopenedGrowthPlans = await reopenLockedGrowthPlans(tenantId, employeeId, changes, opts);
-  return { changes, reopened, reopened_growth_plans: reopenedGrowthPlans };
+  const reopenedMidyear = await reopenLockedMidyear(tenantId, employeeId, changes, opts);
+  return {
+    changes,
+    reopened,
+    reopened_growth_plans: reopenedGrowthPlans,
+    reopened_midyear: reopenedMidyear,
+  };
 }
 
 module.exports = {
-  reopenLockedSheets, reopenLockedGrowthPlans, applyProfileChange,
+  reopenLockedSheets, reopenLockedGrowthPlans, reopenLockedMidyear, applyProfileChange,
   watchedChanges, WATCHED, LOCKED,
 };
