@@ -129,6 +129,63 @@ test('a MANAGER\'s own return is not labelled as an automatic one', { skip }, as
   assert.equal(s2.reopened_reason, null, 'a manager deciding clears the automatic label');
 });
 
+// The two reasons a sheet comes back, kept apart end to end. The client
+// asked for exactly this distinction on 17 Sep:
+//   "reopened - role change will be for department, designation and role
+//    change. returned by manager will be when manager has not approved
+//    and returned with feedback."
+test('THE TWO REASONS NEVER BLUR INTO EACH OTHER, over a full round trip', { skip }, async () => {
+  await setProfile('Admin', 'Executive');
+  await setSheet('submitted');
+
+  // 1. a job change → the automatic label
+  await edit({ ...BASE_EDIT, department: 'Finance' });
+  let s = await sheet();
+  assert.equal(s.status, 'returned');
+  assert.equal(s.reopened_reason, 'profile_change');
+
+  // 2. the employee sends it back → the flag goes with it, or a manager's
+  //    later return would still be wearing a label from a job change
+  //    months earlier.
+  await db.query(`DELETE FROM pms.kras WHERE sheet_id=$1`, [sheetId]);
+  await db.query(
+    `INSERT INTO pms.kras (tenant_id, sheet_id, title, weight, sort_order) VALUES ($1,$2,'A KRA',100,10)`,
+    [tenantId, sheetId]);
+  const sent = await req('POST', `/pms/hr/kra-sheet/${empId}/submit`, hrTok, {});
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  s = await sheet();
+  assert.equal(s.status, 'submitted');
+  assert.equal(s.reopened_reason, null, 'a submitted sheet is not "reopened" anything');
+
+  // 3. the MANAGER returns it with feedback → the manager label
+  const ret = await req('POST', `/pms/team/kra-sheets/${sheetId}/decide`, hrTok,
+    { decision: 'returned', comment: 'Second KRA needs a measure.' });
+  assert.equal(ret.status, 200);
+  s = await sheet();
+  assert.equal(s.status, 'returned');
+  assert.equal(s.reopened_reason, null, 'this one IS the manager, and must read as such');
+  assert.match(s.manager_comment, /Second KRA needs a measure/);
+});
+
+test('every watched field produces the role-change label, not the manager one', { skip }, async () => {
+  // Department, designation and role band — the three the client named,
+  // plus the permission role, covered in its own test above.
+  for (const [field, patch, expect] of [
+    ['department', { department: 'Finance' }, /Department: Admin → Finance/],
+    ['designation', { designation: 'Team Lead' }, /Designation: Executive → Team Lead/],
+    ['role_band', { role_band: 'M2' }, /Role band: \(none\) → M2/],
+  ]) {
+    await setProfile('Admin', 'Executive');
+    await db.query(`UPDATE core.employees SET role_band=NULL WHERE id=$1`, [empId]);
+    await setSheet('submitted');
+    const r = await edit({ ...BASE_EDIT, ...patch });
+    assert.equal(r.body.reopened_kra_sheets, 1, `${field} should reopen`);
+    const s = await sheet();
+    assert.equal(s.reopened_reason, 'profile_change', `${field} must not read as a manager return`);
+    assert.match(s.manager_comment, expect);
+  }
+});
+
 test('a department change does too', { skip }, async () => {
   await setProfile('Admin', 'Executive');
   await setSheet('submitted');

@@ -416,7 +416,13 @@ router.post('/my/kra-sheet/submit', async (req, res) => {
     const w = pm.weightsValid(kras);
     if (!kras.length) return res.status(422).json({ error: 'Add at least one KRA before submitting' });
     if (!w.ok) return res.status(422).json({ error: `KRA weights must total 100 (currently ${w.total})` });
-    await db.query(`UPDATE pms.kra_sheets SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [s.id]);
+    // reopened_reason describes why the sheet is CURRENTLY back with the
+    // employee, so sending it on clears it. Left behind, a sheet the
+    // manager later returns would still be labelled "reopened — role
+    // changed" from a job change two months earlier.
+    await db.query(
+      `UPDATE pms.kra_sheets SET status='submitted', reopened_reason=NULL,
+              submitted_at=now(), updated_at=now() WHERE id=$1`, [s.id]);
     audit(req, 'KRA_SUBMITTED', c.id, req.user.id, { kras: kras.length });
     const n = await notifySheetSubmitted(req, T(req), req.user.id, req.user.name, false);
     // Surfaced rather than swallowed: a sheet that reaches nobody is the
@@ -719,7 +725,13 @@ router.post('/hr/kra-sheet/:employeeId/submit', async (req, res) => {
     const w = pm.weightsValid(kras);
     if (!kras.length) return res.status(422).json({ error: 'Add at least one KRA before submitting' });
     if (!w.ok) return res.status(422).json({ error: `KRA weights must total 100 (currently ${w.total})` });
-    await db.query(`UPDATE pms.kra_sheets SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [s.id]);
+    // reopened_reason describes why the sheet is CURRENTLY back with the
+    // employee, so sending it on clears it. Left behind, a sheet the
+    // manager later returns would still be labelled "reopened — role
+    // changed" from a job change two months earlier.
+    await db.query(
+      `UPDATE pms.kra_sheets SET status='submitted', reopened_reason=NULL,
+              submitted_at=now(), updated_at=now() WHERE id=$1`, [s.id]);
     audit(req, 'KRA_SUBMITTED_ON_BEHALF', c.id, req.params.employeeId, { kras: kras.length });
     // HR's on-behalf path is a deliberate backstop for employees who do not
     // self-serve, so it has to feed the SAME approval flow. It previously
