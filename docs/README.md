@@ -49,6 +49,7 @@ commands and the expected after-state.
 | 2 | [`CHANGE-KRA-REOPEN-ON-ROLE-CHANGE.md`](CHANGE-KRA-REOPEN-ON-ROLE-CHANGE.md) — a submitted sheet reopens when the job changes | **migration 037** | employees, managers, HR |
 | 3 | [`CHANGE-KRA-LIBRARY-TEMPLATE-DEPARTMENT.md`](CHANGE-KRA-LIBRARY-TEMPLATE-DEPARTMENT.md) — Department added to the KRA Library template | none | HR only |
 | 4 | [`PAGE-CAREER-PATHING-MATRIX-UPLOAD.md`](PAGE-CAREER-PATHING-MATRIX-UPLOAD.md) — bulk upload for the career matrix | none | HR only |
+| 5 | [`CHANGE-KRA-LIBRARY-EDIT.md`](CHANGE-KRA-LIBRARY-EDIT.md) — HR can edit a published KRA and its weightage in place | none | HR only |
 
 > **1 and 2 belong together.** The lock without the reopen traps an employee
 > holding objectives for a job they no longer have. Never ship 1 alone.
@@ -60,6 +61,7 @@ commands and the expected after-state.
 | [`PAGE-MY-KRAS-LIBRARY-PICKER.md`](PAGE-MY-KRAS-LIBRARY-PICKER.md) | My KRAs — the "Start from the … KRA library" banner |
 | [`PAGE-HR-KRA-LIBRARY.md`](PAGE-HR-KRA-LIBRARY.md) | HR Admin — KRA Library |
 | [`PAGE-CAREER-PATHING-MATRIX-UPLOAD.md`](PAGE-CAREER-PATHING-MATRIX-UPLOAD.md) | HR Admin — Career Pathing Matrix |
+| [`CHANGE-KRA-LIBRARY-EDIT.md`](CHANGE-KRA-LIBRARY-EDIT.md) | HR Admin — KRA Library, editing a shelf |
 
 ## Older material
 
