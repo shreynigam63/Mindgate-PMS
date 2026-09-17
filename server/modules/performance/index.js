@@ -1438,15 +1438,32 @@ router.post('/hr/kra-sheet/bulk-upload', (req, res, next) => kraUpload.single('f
 // where employee_email sits — which is the whole reason the parser above
 // takes a key field rather than having been copied.
 
-const KRA_LIBRARY_BANNER = 'One row per KRA. Fill Designation for every row (or write it once per block and leave the rows below blank). Parameters may be written once per group. Suggested Weightage guides the employee — a shelf does NOT need to total 100, since employees pick from it. Delete the sample rows before uploading.';
+// DEPARTMENT IS THE FIRST COLUMN, added 17 Sep at the client's request
+// with a filled-in example of the sheet they want.
+//
+// The parser has accepted a Department column since migration 034 — under
+// Department, Dept, Departments or Business Unit — but the template HR
+// downloads never had one, so nobody knew it could be supplied. That is
+// the whole reason not a single published row carries a department today
+// while the department dimension is switched on: the feature was
+// reachable only by someone who had read the code.
+//
+// The banner states the forward-fill rule, because it is the one thing
+// about this column that can silently publish the wrong shelf. Department
+// carries DOWN a designation block exactly as Parameters does (HR writes
+// "Development" once above forty rows, not on all forty), and a new
+// Designation resets it. So a blank cell means company-wide only at the
+// START of a block; inside one it means "same as above".
+const KRA_LIBRARY_BANNER = 'One row per KRA. Fill Designation for every row (or write it once per block and leave the rows below blank). Department is optional and behaves like Designation: written once it carries down the rows beneath it, and a new Designation clears it. Leave it blank on a designation\'s FIRST row for a company-wide shelf everyone with that title sees; name one to publish a shelf only that department sees. Parameters may be written once per group. Suggested Weightage guides the employee — a shelf does NOT need to total 100, since employees pick from it. Delete the sample rows before uploading.';
 const KRA_LIBRARY_HEADERS = [
-  'Designation', 'Parameters', 'KRA \n(S.M.A.R.T GOALS)',
+  'Department', 'Designation', 'Parameters', 'KRA \n(S.M.A.R.T GOALS)',
   'KPIs \n(Measuring Metrics & Data Source)', 'Suggested Weightage', 'Comments',
 ];
+// The client's own example, kept as they sent it.
 const KRA_LIBRARY_SAMPLE = [
-  ['Senior Software Engineer', 'Financial', 'Delivery within allocated project budget', 'Variance against approved budget, per release', 20, 'Delete this sample row'],
-  ['Senior Software Engineer', 'Customer', 'On-time milestone delivery', '100% of milestones met per project plan', 25, 'Delete this sample row'],
-  ['Senior Software Engineer', 'People', 'Mentoring and knowledge sharing', 'Two sessions per quarter, logged', 15, 'Delete this sample row'],
+  ['Admin', 'Manager', 'Financial', 'Delivery within allocated project budget', 'Variance against approved budget, per release', 20, 'Delete this sample row'],
+  ['Admin', 'Manager', 'Customer', 'On-time milestone delivery', '100% of milestones met per project plan', 25, 'Delete this sample row'],
+  ['Admin', 'Manager', 'People', 'Mentoring and knowledge sharing', 'Two sessions per quarter, logged', 15, 'Delete this sample row'],
 ];
 
 // Registered before any /hr/kra-library/:param route for the same reason
@@ -1464,7 +1481,7 @@ router.get('/hr/kra-library/template.xlsx', async (req, res) => {
     header.font = { bold: true };
     header.alignment = { wrapText: true, vertical: 'middle' };
     for (const row of KRA_LIBRARY_SAMPLE) ws.addRow(row);
-    ws.columns.forEach((col, i) => { col.width = [30, 18, 38, 46, 18, 30][i] || 20; });
+    ws.columns.forEach((col, i) => { col.width = [20, 30, 18, 38, 46, 18, 34][i] || 20; });
     const buf = await wb.xlsx.writeBuffer();
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="kra_library_template.xlsx"');

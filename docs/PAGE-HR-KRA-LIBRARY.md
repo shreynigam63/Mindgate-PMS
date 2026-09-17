@@ -76,11 +76,16 @@ HR sees the whole set of errors at once rather than one per attempt.
 Columns the template uses:
 
 ```
-Designation | Parameters | KRA (S.M.A.R.T GOALS) | KPIs (Measuring Metrics & Data Source) | Suggested Weightage | Comments
+Department | Designation | Parameters | KRA (S.M.A.R.T GOALS) | KPIs (Measuring Metrics & Data Source) | Suggested Weightage | Comments
 ```
 
-`Department` is optional and recognised under `Department`, `Dept`,
-`Departments` or `Business Unit`.
+`Department` leads the template as of 17 Sep. It is optional, and also
+recognised under `Dept`, `Departments` or `Business Unit`.
+
+> The template was missing this column until then, even though the parser
+> had accepted it since migration 034. That is the whole reason no published
+> row carries a department: the feature was reachable only by someone who
+> had read the source.
 
 Behaviour worth knowing before someone uploads to production:
 
@@ -90,10 +95,19 @@ Behaviour worth knowing before someone uploads to production:
   the file, and leaves every other shelf untouched. It is not a merge.
 - **A designation nobody holds is a warning, not an error.** HR may legitimately
   publish ahead of a hire.
-- **Department does not forward-fill.** A blank Department on a row means
-  *company-wide*, even when the row above it named one. Inheriting it down the
-  column would silently publish a Sales shelf under Development — the same
-  boundary rule Parameters follows, and it was broken there first.
+- **Department forward-fills down a designation block, and a new
+  Designation clears it.** Written once above forty rows it applies to all
+  forty, exactly as Parameters does — which is how HR actually writes these
+  files. So a blank cell means *company-wide* only on a designation's FIRST
+  row; inside a block it means "same as above". The reset at a new
+  designation is the load-bearing half: without it one role's department
+  would leak onto the next role's KRAs.
+
+  This entry previously said Department did *not* forward-fill. That was
+  wrong — the claim came from a test that only exercised a blank Department
+  across a designation CHANGE, which is the resetting case. Corrected 17 Sep
+  after checking the parser against a real file; `kra-library-template.test.js`
+  now pins both halves.
 - **Legacy `.xls` is rejected** with a message telling HR to re-save as `.xlsx`.
 
 ---

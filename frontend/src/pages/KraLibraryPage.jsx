@@ -94,12 +94,16 @@ export default function KraLibraryPage() {
           <button className="btn-pri" disabled={!file || !(report && report.ok && !report.committed)} onClick={() => send(true)}>Publish</button>
         </div>
         <p className="text-[11px] text-navy-400">
-          Columns: Designation, Parameters, KRA (S.M.A.R.T GOALS), KPIs (Measuring Metrics &amp; Data
-          Source), Suggested Weightage, Comments. Every worksheet is read, so a multi-tab role
-          workbook publishes in one go.
+          Columns: <b>Department</b>, Designation, Parameters, KRA (S.M.A.R.T GOALS), KPIs
+          (Measuring Metrics &amp; Data Source), Suggested Weightage, Comments. Every worksheet is
+          read, so a multi-tab role workbook publishes in one go.
+          {' '}<b>Department is optional</b> and behaves like Designation: written once it carries
+          down the rows beneath it, and a new Designation clears it. Blank on a designation's
+          first row publishes a company-wide shelf everyone with that title sees; naming one
+          publishes a shelf only that department sees.
           {' '}<b>A shelf does not need to total 100</b> — it is a menu, and employees pick a
-          hundred points' worth from it. Publishing <b>replaces</b> the shelf for each designation
-          in the file and leaves every other designation untouched.
+          hundred points' worth from it. Publishing <b>replaces</b> the shelf for each department
+          and designation in the file and leaves every other shelf untouched.
         </p>
         {upErr && <p className="text-xs text-rose-600">{upErr}</p>}
         {report && (
