@@ -491,10 +491,33 @@ async function pendingManagerRoleGrants(tenantId, rows) {
 }
 
 async function loadEmployees(tenantId, rows, opts = {}) {
+  // Required here rather than at the top of the file: see the header of
+  // profile-change.js for why core reaches into the performance module for
+  // this one rule, and why it does so lazily.
+  const { watchedChanges, reopenLockedSheets } = require('../modules/performance/profile-change');
   const departmentHeads = Array.isArray(opts.departmentHeads) ? opts.departmentHeads : [];
   const client = await db.getClient();
+  // Sheets to reopen once the import COMMITS. Collected inside the
+  // transaction, acted on outside it: profile-change.js writes through the
+  // pool, so calling it here would either not see this transaction's work
+  // or block on its own row locks. A rolled-back import must reopen
+  // nothing, which is exactly what an empty list after a throw gives.
+  const reopenAfterCommit = [];
   try {
     await client.query('BEGIN');
+    // Pass 0: what these people looked like BEFORE the file landed, so
+    // pass 4 can tell a real designation change from a re-import of the
+    // same values. Read once for the whole file rather than per row — an
+    // HRMS export is usually the entire company, and 1,400 extra queries
+    // to answer a question one query answers is not a sync, it is a
+    // stall.
+    const beforeByEmail = new Map((await client.query(
+      `SELECT LOWER(email) AS email, id, department, designation, role_band
+         FROM core.employees
+        WHERE tenant_id=$1 AND LOWER(email) = ANY($2::text[])`,
+      [tenantId, rows.map((r) => String(r.email || '').toLowerCase())])).rows
+        .map((r) => [r.email, r]));
+
     // Pass 1: upsert people without manager links.
     for (const r of rows) {
       await client.query(
@@ -544,6 +567,20 @@ async function loadEmployees(tenantId, rows, opts = {}) {
             AND dp.manager_id IS DISTINCT FROM e.manager_id`,
         [tenantId, r.email]);
     }
+    // Pass 4: a KRA sheet is written FOR a job, so a department,
+    // designation or role-band change reopens a sheet the employee can no
+    // longer edit — the same rule the HR quick-edit route applies, because
+    // this is the path most of these changes actually arrive on.
+    //
+    // Only people who were ALREADY on file can have changed: someone
+    // appearing for the first time has no old designation and no sheet.
+    for (const r of rows) {
+      const before = beforeByEmail.get(String(r.email || '').toLowerCase());
+      if (!before) continue;
+      const moved = watchedChanges(before,
+        { department: r.department, designation: r.designation, role_band: r.role_band });
+      if (moved.length) reopenAfterCommit.push({ employeeId: before.id, changes: moved });
+    }
     // Grant the manager role to anyone this file shows managing someone,
     // who has no explicit role yet.
     //
@@ -590,8 +627,27 @@ async function loadEmployees(tenantId, rows, opts = {}) {
     }
 
     await client.query('COMMIT');
+
+    // Now the file is committed, reopen the sheets its changes invalidated.
+    // One employee's failure must not lose the rest of the import, which
+    // is already durable — so each is attempted on its own and reported,
+    // never swallowed.
+    const reopened = [];
+    const reopenFailures = [];
+    for (const item of reopenAfterCommit) {
+      try {
+        const rows2 = await reopenLockedSheets(tenantId, item.employeeId, item.changes,
+          { actorEmail: opts.actorEmail || null });
+        if (rows2.length) reopened.push({ employee_id: item.employeeId, changes: item.changes, sheets: rows2.length });
+      } catch (e) {
+        logger.error({ msg: 'kra reopen after import failed', employee_id: item.employeeId, err: e.message });
+        reopenFailures.push({ employee_id: item.employeeId, error: e.message });
+      }
+    }
+
     return { loaded: rows.length, manager_roles_granted: grants,
-             department_heads_set: headsSet, hod_roles_granted: headGrants };
+             department_heads_set: headsSet, hod_roles_granted: headGrants,
+             kra_sheets_reopened: reopened, kra_reopen_failures: reopenFailures };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     throw e;
@@ -727,7 +783,12 @@ router.get('/', async (req, res) => {
 router.put('/:employeeId', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
-    const emp = (await db.query(`SELECT id, email FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, req.user.tenant_id])).rows[0];
+    // department/designation/role_band are read BEFORE the update so the
+    // reopen below can compare. Reading them after would compare a value
+    // with itself and never reopen anything.
+    const emp = (await db.query(
+      `SELECT id, email, department, designation, role_band FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.params.employeeId, req.user.tenant_id])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
 
     const { name, department, designation, role_band, manager_email, date_of_joining, status } = req.body || {};
@@ -762,7 +823,17 @@ router.put('/:employeeId', async (req, res) => {
          FROM pms.cycles c WHERE dp.employee_id=$2 AND dp.cycle_id=c.id AND c.phase NOT IN ('closed','cancelled')`,
       [managerId, emp.id]);
 
-    res.json({ ok: true });
+    // A KRA sheet is written FOR a job. Changing the job reopens a sheet
+    // the employee can no longer edit, so they can refill it against the
+    // role they now hold. A manager change does NOT reopen anything — the
+    // objectives are the same, just reviewed by someone else.
+    const { applyProfileChange } = require('../modules/performance/profile-change');
+    const moved = await applyProfileChange(req.user.tenant_id, emp.id, emp,
+      { department, designation, role_band }, { actorEmail: req.user.email });
+
+    // Said out loud rather than done quietly: HR changed one field and a
+    // submitted sheet went back to the employee as a side effect.
+    res.json({ ok: true, reopened_kra_sheets: moved.reopened.length, changes: moved.changes });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -908,6 +979,15 @@ router.put('/:employeeId/role', async (req, res) => {
     if (!VALID.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID.join(', ')}` });
     const emp = (await db.query(`SELECT email FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, req.user.tenant_id])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
+    // The role before the change, for the same reason the edit route reads
+    // the old designation first.
+    const was = (await db.query(
+      `SELECT role FROM core.user_roles WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`,
+      [req.user.tenant_id, emp.email])).rows[0];
+    // No row means 'employee' — principalByEmail defaults it — so a first
+    // grant of 'manager' is a change from 'employee', not from nothing.
+    const before = (was && was.role) || 'employee';
+
     if (role === 'employee') {
       await db.query(`DELETE FROM core.user_roles WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [req.user.tenant_id, emp.email]);
     } else {
@@ -916,7 +996,17 @@ router.put('/:employeeId/role', async (req, res) => {
          ON CONFLICT (tenant_id, email) DO UPDATE SET role=EXCLUDED.role`,
         [req.user.tenant_id, emp.email.toLowerCase(), role]);
     }
-    res.json({ ok: true });
+
+    // "role" in the client's request covers this one too: an employee
+    // promoted to manager is doing a different job, and their submitted
+    // KRAs describe the old one.
+    let reopened = [];
+    if (before !== role) {
+      const { reopenLockedSheets } = require('../modules/performance/profile-change');
+      reopened = await reopenLockedSheets(req.user.tenant_id, req.params.employeeId,
+        [{ field: 'Role', from: before, to: role }], { actorEmail: req.user.email });
+    }
+    res.json({ ok: true, reopened_kra_sheets: reopened.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1011,7 +1101,8 @@ router.post('/import', (req, res, next) => upload.single('file')(req, res, (err)
       return res.json({ ok: true, committed: false, note: 'Dry run — pass ?commit=1 to load.',
         manager_roles_to_grant: willGrant, hod_roles_to_grant: [...heads], ...report });
     }
-    const loaded = await loadEmployees(req.user.tenant_id, report.rows, { departmentHeads: report.department_heads });
+    const loaded = await loadEmployees(req.user.tenant_id, report.rows,
+      { departmentHeads: report.department_heads, actorEmail: req.user.email });
     await db.query(`INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details)
                     VALUES ($1,$2,'EMPLOYEE_CSV_IMPORT','employees',$3)`,
       [req.user.tenant_id, req.user.email,

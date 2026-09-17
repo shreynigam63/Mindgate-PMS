@@ -34,12 +34,19 @@ export const phaseColor = (p) => ({ draft: 'bg-navy-50 text-navy-600', kra_open:
 // the machine value (draft | submitted | approved | returned); "submitted" on
 // its own never told them where the sheet went. Same shape as phaseLabel,
 // including the fallback to the raw value for anything unmapped.
-export const sheetStatusLabel = (s) => ({
-  draft:     'draft',
-  submitted: 'submitted to manager',
-  approved:  'approved by manager',
-  returned:  'returned by manager',
-}[s] || s);
+// `reopened_reason` distinguishes the two things that land on 'returned':
+// a manager's decision, and a sheet reopened automatically because the
+// employee's job changed. Saying "by manager" over the second one credits
+// a person who did nothing.
+export const sheetStatusLabel = (s, reopenedReason) => {
+  if (s === 'returned' && reopenedReason === 'profile_change') return 'reopened — role changed';
+  return ({
+    draft:     'draft',
+    submitted: 'submitted to manager',
+    approved:  'approved by manager',
+    returned:  'returned by manager',
+  }[s] || s);
+};
 
 export function DraftBadge() {
   return <span className="chip bg-amber-100 text-amber-700">AI DRAFT — edit before use</span>;

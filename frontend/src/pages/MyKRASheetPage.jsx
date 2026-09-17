@@ -54,8 +54,13 @@ export default function MyKRASheetPage() {
   if (!data.cycle) return <div className="card p-8 text-center text-sm text-navy-400">No active appraisal cycle. HR opens the cycle; your KRA sheet appears here.</div>;
 
   const total = kras.reduce((s, k) => s + (Number(k.weight) || 0), 0);
+  // The sheet's own status is the lock, not the cycle's phase. An employee
+  // may write and rewrite their KRAs at any point in the cycle; submitting
+  // hands the sheet to their manager and closes it to them until the
+  // manager returns it with feedback. See phase-machine.js for the rule and
+  // why it moved off the phase.
   const locked = data.sheet.status === 'approved' || data.sheet.status === 'submitted';
-  const editable = data.cycle.phase === 'kra_open' && !locked;
+  const editable = !locked;
   const set = (i, k) => (e) => setKras(ks => ks.map((r, j) => j === i ? { ...r, [k]: e.target.value } : r));
 
   // KRAs picked from the role library land as ordinary unsaved rows —
@@ -128,11 +133,22 @@ export default function MyKRASheetPage() {
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-bold">My KRAs</h2>
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
-        <span className={`chip ${data.sheet.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : data.sheet.status === 'returned' ? 'bg-rose-100 text-rose-700' : 'bg-navy-50 text-navy-600'}`}>sheet: {sheetStatusLabel(data.sheet.status)}</span>
+        <span className={`chip ${data.sheet.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : data.sheet.status === 'returned' ? 'bg-rose-100 text-rose-700' : 'bg-navy-50 text-navy-600'}`}>sheet: {sheetStatusLabel(data.sheet.status, data.sheet.reopened_reason)}</span>
         <span className={`chip ${Math.abs(total - 100) < 0.01 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>weights: {total}/100</span>
       </div>
+      {/* Two different things land on 'returned', and attributing the
+          wrong one to a manager is worse than saying nothing: a sheet
+          reopened because HR changed somebody's designation was not a
+          manager's judgement on their KRAs. reopened_reason is a stored
+          column rather than a guess at the comment text (migration 037),
+          because this is the first line the employee reads after an
+          unexpected change. */}
       {data.sheet.status === 'returned' && data.sheet.manager_comment && (
-        <div className="card p-3 border-rose-200 bg-rose-50 text-sm text-rose-700"><b>Returned by your manager:</b> {data.sheet.manager_comment}</div>
+        <div className="card p-3 border-rose-200 bg-rose-50 text-sm text-rose-700">
+          <b>{data.sheet.reopened_reason === 'profile_change'
+            ? 'Reopened after a change to your role:'
+            : 'Returned by your manager:'}</b> {data.sheet.manager_comment}
+        </div>
       )}
       {/* Only while KRAs are editable. Offering a shelf to someone who
           cannot add anything from it is a dead control, and after the
@@ -216,7 +232,16 @@ export default function MyKRASheetPage() {
             <Send size={13} className="inline mr-1" />Save & submit to manager</button>
         </div>
       )}
-      {!editable && !locked && <p className="text-xs text-navy-400">KRA editing opens in the {phaseLabel('kra_open')} phase.</p>}
+      {/* Being locked out is never left to be inferred from greyed-out
+          boxes: it says who holds the sheet and what unlocks it. The two
+          locks have different remedies, so they say different things. */}
+      {locked && (
+        <p className="text-xs text-navy-400">
+          {data.sheet.status === 'submitted'
+            ? 'Your manager has this sheet. It is locked until they approve it or return it with feedback.'
+            : 'This sheet is approved and locked. Ask HR to reopen it if something needs to change.'}
+        </p>
+      )}
     </div>
   );
 }
