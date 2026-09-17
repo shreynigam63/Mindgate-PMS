@@ -133,11 +133,22 @@ export default function MyKRASheetPage() {
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-bold">My KRAs</h2>
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
-        <span className={`chip ${data.sheet.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : data.sheet.status === 'returned' ? 'bg-rose-100 text-rose-700' : 'bg-navy-50 text-navy-600'}`}>sheet: {sheetStatusLabel(data.sheet.status)}</span>
+        <span className={`chip ${data.sheet.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : data.sheet.status === 'returned' ? 'bg-rose-100 text-rose-700' : 'bg-navy-50 text-navy-600'}`}>sheet: {sheetStatusLabel(data.sheet.status, data.sheet.reopened_reason)}</span>
         <span className={`chip ${Math.abs(total - 100) < 0.01 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>weights: {total}/100</span>
       </div>
+      {/* Two different things land on 'returned', and attributing the
+          wrong one to a manager is worse than saying nothing: a sheet
+          reopened because HR changed somebody's designation was not a
+          manager's judgement on their KRAs. reopened_reason is a stored
+          column rather than a guess at the comment text (migration 037),
+          because this is the first line the employee reads after an
+          unexpected change. */}
       {data.sheet.status === 'returned' && data.sheet.manager_comment && (
-        <div className="card p-3 border-rose-200 bg-rose-50 text-sm text-rose-700"><b>Returned by your manager:</b> {data.sheet.manager_comment}</div>
+        <div className="card p-3 border-rose-200 bg-rose-50 text-sm text-rose-700">
+          <b>{data.sheet.reopened_reason === 'profile_change'
+            ? 'Reopened after a change to your role:'
+            : 'Returned by your manager:'}</b> {data.sheet.manager_comment}
+        </div>
       )}
       {/* Only while KRAs are editable. Offering a shelf to someone who
           cannot add anything from it is a dead control, and after the

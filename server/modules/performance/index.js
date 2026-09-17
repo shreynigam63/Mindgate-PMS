@@ -494,7 +494,12 @@ router.post('/team/kra-sheets/:sheetId/decide', async (req, res) => {
       return res.status(403).json({ error: 'Not your report' });
     if (s.status !== 'submitted') return res.status(409).json({ error: `sheet is ${s.status}, not submitted` });
     if (decision === 'returned' && !(comment && comment.trim())) return res.status(422).json({ error: 'A return needs a comment — the employee must know why' });
-    await db.query(`UPDATE pms.kra_sheets SET status=$1, manager_comment=$2, decided_at=now(), updated_at=now() WHERE id=$3`,
+    // reopened_reason is cleared: this IS the manager deciding, so a sheet
+    // previously reopened by a profile change must stop being labelled as
+    // one the moment they touch it.
+    await db.query(
+      `UPDATE pms.kra_sheets SET status=$1, manager_comment=$2, reopened_reason=NULL,
+              decided_at=now(), updated_at=now() WHERE id=$3`,
       [decision, comment || null, s.id]);
     audit(req, `KRA_${decision.toUpperCase()}`, s.cycle_id, s.employee_id, { comment: comment || null });
     await notify(T(req), s.employee_id, 'kra_decided', `Your KRA sheet was ${decision}`, comment || null, '/pms');
@@ -763,7 +768,8 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
     if (s.status !== 'approved') return res.status(409).json({ error: `sheet is ${s.status}, not approved — only an approved sheet needs reopening` });
 
     await db.query(
-      `UPDATE pms.kra_sheets SET status='returned', manager_comment=$1, decided_at=now(), updated_at=now() WHERE id=$2`,
+      `UPDATE pms.kra_sheets SET status='returned', manager_comment=$1, reopened_reason=NULL,
+              decided_at=now(), updated_at=now() WHERE id=$2`,
       [String(comment).trim(), s.id]);
     audit(req, 'KRA_REOPENED', c.id, s.employee_id, { comment: String(comment).trim(), from: 'approved' });
     await notify(T(req), s.employee_id, 'kra_reopened', 'Your approved KRA sheet was reopened for edits', String(comment).trim(), '/pms');
