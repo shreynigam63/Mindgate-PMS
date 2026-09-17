@@ -71,7 +71,7 @@ export default function DepartmentHeadsPage() {
       <div className="card p-3">
         <p className="lbl mb-1">Add a department</p>
         <div className="flex flex-wrap items-center gap-2">
-          <input className="inp !py-1 !text-xs w-64" value={newDept} placeholder="e.g. Cloud Ops"
+          <input className="inp !py-1 !text-xs !w-64 shrink-0" value={newDept} placeholder="e.g. Cloud Ops"
             onChange={e => setNewDept(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') addDept(); }} />
           <button className="btn-pri !py-1 !text-xs" disabled={busy || !newDept.trim()} onClick={addDept}>
@@ -89,21 +89,32 @@ export default function DepartmentHeadsPage() {
       <div className="card p-4">
         <div className="grid sm:grid-cols-2 gap-2">
           {data.map(d => (
-            <div key={d.department} className="flex items-center justify-between gap-2 bg-navy-50 rounded-lg px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold truncate">{d.department}</p>
-                <p className="text-[11px] text-navy-400">
+            // STACKED, not side by side. The name gets the card's full
+            // width on its own line; the head dropdown and the bin share the
+            // line below it. Putting the name BESIDE a fixed-width select
+            // inside this two-column grid truncated it — "Core Banking
+            // Application" is 24 characters and there were eight names
+            // reading "Accou...", "Applic...", "Devel..." on the live page,
+            // which is exactly the department you need to identify before
+            // assigning it a Delivery Head. The count also wrapped to its
+            // own line in the squeeze.
+            <div key={d.department} className="bg-navy-50 rounded-lg px-3 py-2 space-y-1.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-xs font-semibold">{d.department}</p>
+                <p className="text-[11px] text-navy-400 shrink-0 whitespace-nowrap">
                   {d.employees} employee{d.employees === 1 ? '' : 's'}
-                  {!d.in_use && ' · nobody in it yet'}
+                  {!d.in_use && ' · none yet'}
                 </p>
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <select className="inp !py-1 w-44" value={d.head ? d.head.employee_id : ''} onChange={e => setHead(d.department, e.target.value)}>
+              <div className="flex items-center gap-1.5">
+                {/* flex-1 + min-w-0 so the select takes the remaining width
+                    and shrinks rather than pushing the bin off the card. */}
+                <select className="inp !py-1 flex-1 min-w-0" value={d.head ? d.head.employee_id : ''} onChange={e => setHead(d.department, e.target.value)}>
                   <option value="">— no head assigned —</option>
                   {(employees || []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
                 <button
-                  className={`p-1 rounded ${d.removable ? 'text-rose-500 hover:text-rose-700' : 'text-navy-300 cursor-not-allowed'}`}
+                  className={`p-1 rounded shrink-0 ${d.removable ? 'text-rose-500 hover:text-rose-700' : 'text-navy-300 cursor-not-allowed'}`}
                   disabled={busy || !d.removable}
                   title={d.removable
                     ? 'Remove this department'
