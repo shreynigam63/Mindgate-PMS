@@ -1017,17 +1017,136 @@ router.put('/:employeeId/role', async (req, res) => {
 // wrote to. Setting someone's role to "hod" alone left their queue
 // permanently empty ("Nothing awaiting Delivery Head review"), with no
 // way for HR to fix it — this is that missing piece.
+// The list is the UNION of two things, and the distinction is shown rather
+// than smoothed over:
+//
+//   in_use     — at least one active employee is filed under it. Cannot be
+//                removed; removing it would orphan those people.
+//   registered — HR added it (migration 038) and nobody is in it yet.
+//                Removable, and assignable a head in advance.
+//
+// Derived-only was the old behaviour and it meant a department could not be
+// set up before its first hire, and a typo from one HRMS import could never
+// be taken off the page.
 router.get('/department-heads', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
-    const depts = (await db.query(
-      `SELECT DISTINCT department FROM core.employees WHERE tenant_id=$1 AND status='active' AND department IS NOT NULL ORDER BY department`,
-      [req.user.tenant_id])).rows.map((r) => r.department);
+    const rows = (await db.query(
+      `WITH held AS (
+         SELECT btrim(department) AS name, count(*)::int AS employees
+           FROM core.employees
+          WHERE tenant_id=$1 AND status='active' AND coalesce(btrim(department),'') <> ''
+          GROUP BY btrim(department)
+       ), registered AS (
+         SELECT btrim(name) AS name FROM core.departments WHERE tenant_id=$1
+       ), all_names AS (
+         SELECT name FROM held UNION SELECT name FROM registered
+       )
+       SELECT a.name AS department,
+              coalesce(h.employees, 0) AS employees,
+              (h.name IS NOT NULL) AS in_use,
+              (r.name IS NOT NULL) AS registered
+         FROM all_names a
+         LEFT JOIN held h       ON lower(h.name) = lower(a.name)
+         LEFT JOIN registered r ON lower(r.name) = lower(a.name)
+        ORDER BY a.name`, [req.user.tenant_id])).rows;
     const heads = (await db.query(
       `SELECT dh.department, dh.employee_id, e.name, e.email FROM core.department_heads dh
          JOIN core.employees e ON e.id=dh.employee_id WHERE dh.tenant_id=$1`, [req.user.tenant_id])).rows;
-    const headByDept = Object.fromEntries(heads.map((h) => [h.department, h]));
-    res.json({ departments: depts.map((d) => ({ department: d, head: headByDept[d] || null })) });
+    // Matched case-insensitively: a head may have been assigned against
+    // "Finance" while employees carry "finance", and the page must show one
+    // line with the head on it rather than two lines disagreeing.
+    const headByDept = new Map(heads.map((h) => [String(h.department).trim().toLowerCase(), h]));
+    res.json({
+      departments: rows.map((d) => ({
+        department: d.department,
+        employees: d.employees,
+        in_use: d.in_use,
+        registered: d.registered,
+        removable: !d.in_use,
+        head: headByDept.get(String(d.department).trim().toLowerCase()) || null,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Add a department before anybody is in it.
+router.post('/departments', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    const name = String((req.body && req.body.name) == null ? '' : req.body.name).trim();
+    if (!name) return res.status(422).json({ error: 'A department needs a name' });
+    if (name.length > 120) return res.status(422).json({ error: `That name is ${name.length} characters — keep it under 120` });
+
+    // Already there, either registered or held by an employee. Said plainly
+    // with which of the two it is, because "already exists" on a name HR
+    // cannot see in the list is the confusing version.
+    const held = (await db.query(
+      `SELECT count(*)::int AS n FROM core.employees
+        WHERE tenant_id=$1 AND status='active' AND lower(btrim(coalesce(department,'')))=lower($2)`,
+      [req.user.tenant_id, name])).rows[0].n;
+    const reg = (await db.query(
+      `SELECT name FROM core.departments WHERE tenant_id=$1 AND lower(btrim(name))=lower($2)`,
+      [req.user.tenant_id, name])).rows[0];
+    if (reg) return res.status(409).json({ error: `"${reg.name}" is already on the list` });
+    if (held) {
+      // Not registered but employees are in it — register it rather than
+      // refusing, so the name stops being derived-only and becomes
+      // manageable. Nothing about the employees changes.
+      await db.query(`INSERT INTO core.departments (tenant_id, name, created_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+        [req.user.tenant_id, name, req.user.email]);
+      return res.json({ ok: true, department: name, employees: held, note: `${held} employee${held === 1 ? '' : 's'} already in it` });
+    }
+
+    await db.query(`INSERT INTO core.departments (tenant_id, name, created_by) VALUES ($1,$2,$3)`,
+      [req.user.tenant_id, name, req.user.email]);
+    await db.query(
+      `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+       VALUES ($1,$2,'DEPARTMENT_ADDED','departments',NULL,$3)`,
+      [req.user.tenant_id, req.user.email, JSON.stringify({ department: name })])
+      .catch(e => logger.warn('department add audit failed', { error: e.message }));
+    res.json({ ok: true, department: name, employees: 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Remove a department. REFUSED while anybody is still in it — the whole
+// point of the rule is that removing a department must never quietly leave
+// employees pointing at something that is no longer on the list. The refusal
+// says how many, because that is the number HR has to act on.
+router.delete('/departments/:department', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    const name = decodeURIComponent(req.params.department).trim();
+    if (!name) return res.status(422).json({ error: 'Which department?' });
+
+    const held = (await db.query(
+      `SELECT count(*)::int AS n FROM core.employees
+        WHERE tenant_id=$1 AND status='active' AND lower(btrim(coalesce(department,'')))=lower($2)`,
+      [req.user.tenant_id, name])).rows[0].n;
+    if (held) {
+      return res.status(409).json({
+        error: `${held} active employee${held === 1 ? ' is' : 's are'} still in "${name}" — move them to another department first`,
+        employees: held,
+      });
+    }
+
+    const gone = await db.query(
+      `DELETE FROM core.departments WHERE tenant_id=$1 AND lower(btrim(name))=lower($2)`,
+      [req.user.tenant_id, name]);
+    // The head mapping goes with it. Leaving it behind would resurrect the
+    // department on the next read of core.department_heads and hand a
+    // Delivery Head a queue for something that no longer exists.
+    const headGone = await db.query(
+      `DELETE FROM core.department_heads WHERE tenant_id=$1 AND lower(btrim(department))=lower($2)`,
+      [req.user.tenant_id, name]);
+    if (!gone.rowCount && !headGone.rowCount) return res.status(404).json({ error: `"${name}" is not on the list` });
+
+    await db.query(
+      `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+       VALUES ($1,$2,'DEPARTMENT_REMOVED','departments',NULL,$3)`,
+      [req.user.tenant_id, req.user.email, JSON.stringify({ department: name, head_cleared: headGone.rowCount > 0 })])
+      .catch(e => logger.warn('department remove audit failed', { error: e.message }));
+    res.json({ ok: true, department: name, head_cleared: headGone.rowCount > 0 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

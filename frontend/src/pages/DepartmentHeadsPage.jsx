@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
 import { api } from '../utils/api';
 
 // Moved to its own HR Admin tab, per a direct request — was previously a
@@ -12,6 +13,8 @@ export default function DepartmentHeadsPage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [newDept, setNewDept] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const load = () => api('/employees/department-heads').then(r => setData(r.departments)).catch(e => setErr(e.message));
   useEffect(() => {
@@ -27,6 +30,35 @@ export default function DepartmentHeadsPage() {
     } catch (e) { setErr(e.message); }
   };
 
+  const addDept = async () => {
+    const name = newDept.trim();
+    if (!name) return;
+    setErr(null); setMsg(null); setBusy(true);
+    try {
+      const r = await api('/employees/departments', { method: 'POST', body: JSON.stringify({ name }) });
+      setNewDept('');
+      setMsg(r.note ? `Added ${r.department} — ${r.note}.` : `Added ${r.department}.`);
+      load();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  // A department with people in it is not removable, and the button is
+  // disabled rather than hidden — HR needs to see WHY, and the count is the
+  // number they have to act on. The server refuses it too; this is the
+  // explanation, not the guard.
+  const removeDept = async (d) => {
+    if (!window.confirm(`Remove "${d.department}" from the list?\n\n`
+      + (d.head ? `Its Delivery Head assignment (${d.head.name}) is cleared too.\n\n` : '')
+      + 'No employee record is changed.')) return;
+    setErr(null); setMsg(null); setBusy(true);
+    try {
+      await api(`/employees/departments/${encodeURIComponent(d.department)}`, { method: 'DELETE' });
+      setMsg(`Removed ${d.department}.`); load();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
   if (err && !data) return <p className="text-sm text-rose-600">{err}</p>;
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
 
@@ -36,20 +68,60 @@ export default function DepartmentHeadsPage() {
         <h2 className="text-lg font-bold">Department Heads</h2>
         <p className="text-xs text-navy-400">Who each department's Delivery Head Review queue belongs to. Giving someone the "hod" role only grants access to the screen; this is what actually scopes which department's evaluations they see.</p>
       </div>
-      {!data.length && <div className="card p-8 text-center text-sm text-navy-400">No departments found — add employees with a department set first.</div>}
+      <div className="card p-3">
+        <p className="lbl mb-1">Add a department</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input className="inp !py-1 !text-xs w-64" value={newDept} placeholder="e.g. Cloud Ops"
+            onChange={e => setNewDept(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') addDept(); }} />
+          <button className="btn-pri !py-1 !text-xs" disabled={busy || !newDept.trim()} onClick={addDept}>
+            <Plus size={12} className="inline mr-1" />Add
+          </button>
+          <span className="text-[11px] text-navy-400">
+            Added here it can be given a Delivery Head before anyone is in it. It does
+            <b> not</b> restrict what the HRMS import may send — employee departments stay free text.
+          </span>
+        </div>
+      </div>
+
+      {!data.length && <div className="card p-8 text-center text-sm text-navy-400">No departments yet — add one above, or import employees with a department set.</div>}
+      {data.length > 0 && (
       <div className="card p-4">
         <div className="grid sm:grid-cols-2 gap-2">
           {data.map(d => (
             <div key={d.department} className="flex items-center justify-between gap-2 bg-navy-50 rounded-lg px-3 py-2">
-              <span className="text-xs font-semibold">{d.department}</span>
-              <select className="inp !py-1 w-48" value={d.head ? d.head.employee_id : ''} onChange={e => setHead(d.department, e.target.value)}>
-                <option value="">— no head assigned —</option>
-                {(employees || []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-              </select>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold truncate">{d.department}</p>
+                <p className="text-[11px] text-navy-400">
+                  {d.employees} employee{d.employees === 1 ? '' : 's'}
+                  {!d.in_use && ' · nobody in it yet'}
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <select className="inp !py-1 w-44" value={d.head ? d.head.employee_id : ''} onChange={e => setHead(d.department, e.target.value)}>
+                  <option value="">— no head assigned —</option>
+                  {(employees || []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+                <button
+                  className={`p-1 rounded ${d.removable ? 'text-rose-500 hover:text-rose-700' : 'text-navy-300 cursor-not-allowed'}`}
+                  disabled={busy || !d.removable}
+                  title={d.removable
+                    ? 'Remove this department'
+                    : `${d.employees} active employee${d.employees === 1 ? ' is' : 's are'} still in it — move them first`}
+                  onClick={() => removeDept(d)}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
+        <p className="text-[11px] text-navy-400 pt-2">
+          A department can only be removed once nobody is in it — otherwise those employees
+          would be left pointing at something no longer on the list. Removing one clears its
+          Delivery Head assignment and changes no employee record.
+        </p>
       </div>
+      )}
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {msg && <p className="text-xs text-emerald-600">{msg}</p>}
     </div>
