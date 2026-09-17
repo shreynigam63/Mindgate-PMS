@@ -38,8 +38,15 @@ const NAV = [
     { to: '/my/kras', label: 'My KRAs', icon: Target },
     { to: '/my/growth', label: 'My Growth', icon: TrendingUp },
     { to: '/my/midyear', label: 'Mid-Year Review', icon: Clock },
-    { to: '/my/self-appraisal', label: 'Self-Appraisal', icon: ClipboardList },
-    { to: '/my/annual-review', label: 'Annual Review', icon: Award },
+    // RENAMED on request, as a pair. What was 'Self-Appraisal' is now
+    // 'Annual Review', and what was 'Annual Review' is now 'Final Rating'
+    // (it presents consolidated ratings). These two MUST move together —
+    // renaming either alone puts two 'Annual Review' entries in this menu.
+    // The ROUTES are unchanged: /my/self-appraisal and /my/annual-review
+    // are in people's bookmarks and in links inside notifications already
+    // sent. Only the labels move.
+    { to: '/my/self-appraisal', label: 'Annual Review', icon: ClipboardList },
+    { to: '/my/annual-review', label: 'Final Rating', icon: Award },
     { to: '/my/rating', label: 'My Rating', icon: Star },
     { to: '/my/history', label: 'Past Cycles', icon: History },
   ]},

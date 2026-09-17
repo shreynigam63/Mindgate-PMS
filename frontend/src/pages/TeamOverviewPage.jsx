@@ -40,7 +40,7 @@ export default function TeamOverviewPage() {
               <th className="px-3 py-2">Employee</th><th className="px-3 py-2">Dept</th>
               <th className="px-3 py-2">KRA</th><th className="px-3 py-2">Dev Plan</th>
               <th className="px-3 py-2">Aspiring Career</th>
-              <th className="px-3 py-2">Self-Appraisal</th><th className="px-3 py-2">Manager Eval</th>
+              <th className="px-3 py-2">Annual Review</th><th className="px-3 py-2">Manager Eval</th>
               <th className="px-3 py-2">Connects (this cycle)</th>
             </tr>
           </thead>

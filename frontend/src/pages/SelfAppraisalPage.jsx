@@ -86,7 +86,7 @@ export default function SelfAppraisalPage() {
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Self-Appraisal</h2>
+        <h2 className="text-lg font-bold">Annual Review</h2>
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
         {a.status === 'submitted' && <span className="chip bg-emerald-100 text-emerald-700">submitted — locked</span>}
         {badge && <span className={`text-[11px] font-medium ${badge[1]}`}>{badge[0]}</span>}
@@ -96,7 +96,7 @@ export default function SelfAppraisalPage() {
       {/* Same assist as the mid-year page, requested for both: the record
           the employee already built — connects, target achievements,
           Aspiring Career — read back to them per KRA before they write. */}
-      {open && <ReviewAssist stage="annual" label="self-appraisal" />}
+      {open && <ReviewAssist stage="annual" label="annual review" />}
       {open && <MeetingPanel context="annual" title="Appraisal discussion with your manager" />}
 
       <div className="card p-3 space-y-1">
