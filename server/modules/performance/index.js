@@ -2335,7 +2335,14 @@ router.post('/my/development-plan/submit', async (req, res) => {
         goals: undated,
       });
     }
-    await db.query(`UPDATE pms.development_plans SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [p.id]);
+    // reopened_reason is cleared on submit (039). Without this the flag
+    // survives a resubmission, so a manager's return WEEKS later would
+    // still wear the "role changed" label from a job change months
+    // earlier. Exactly the bug that was found and fixed on the KRA sheet.
+    await db.query(
+      `UPDATE pms.development_plans
+          SET status='submitted', reopened_reason=NULL, submitted_at=now(), updated_at=now()
+        WHERE id=$1`, [p.id]);
     audit(req, 'DEVPLAN_SUBMITTED', c.id, req.user.id, { goals: goals.length });
     // Live manager, not development_plans.manager_id — that column is the
     // same creation-time snapshot the KRA sheet had, and it drifts the same
@@ -2418,7 +2425,14 @@ router.post('/team/development-plans/:planId/decide', async (req, res) => {
     // in kra_open has to be decidable there too, or it sits in the
     // manager's queue until HR advances the cycle — which is the wait this
     // whole change exists to remove.
-    await db.query(`UPDATE pms.development_plans SET status=$1, manager_comment=$2, decided_at=now(), updated_at=now() WHERE id=$3`,
+    // Cleared here too: this IS the manager deciding, so a plan previously
+    // reopened by a profile change must stop being labelled as one the
+    // moment they touch it. Saying "reopened — role changed" over a return
+    // the manager actually wrote credits a change nobody made.
+    await db.query(
+      `UPDATE pms.development_plans
+          SET status=$1, manager_comment=$2, reopened_reason=NULL, decided_at=now(), updated_at=now()
+        WHERE id=$3`,
       [decision, comment || null, p.id]);
     audit(req, `DEVPLAN_${decision.toUpperCase()}`, p.cycle_id, p.employee_id, { comment: comment || null });
     await notify(T(req), p.employee_id, 'devplan_decided', `Your target achievements for the year were ${decision}`, comment || null, '/pms/my-growth');
@@ -2782,7 +2796,14 @@ router.post('/my/midyear-review/submit', async (req, res) => {
       const sc = midyearOverall(selfKras, row.self_entries);
       if (!sc.complete) return res.status(422).json({ error: `Rate all ${selfKras.length} KRAs before signing — ${sc.missing.length} still unrated.` });
     }
-    await db.query(`UPDATE pms.midyear_checkins SET self_status='submitted', self_submitted_at=now(), updated_at=now() WHERE id=$1`, [row.id]);
+    // The reopen flag is cleared on submit (040), for the reason the KRA
+    // sheet learned the hard way: a flag that outlives a resubmission
+    // labels a LATER, unrelated event as a role change.
+    await db.query(
+      `UPDATE pms.midyear_checkins
+          SET self_status='submitted', self_submitted_at=now(),
+              reopened_reason=NULL, reopened_note=NULL, updated_at=now()
+        WHERE id=$1`, [row.id]);
     audit(req, 'MIDYEAR_SELF_SUBMITTED', c.id, req.user.id, null);
     // The LIVE manager, not the manager_id snapshotted on the check-in row
     // when it was created. Same bug the KRA flow had: an employee whose
@@ -2867,7 +2888,14 @@ router.post('/team/midyear-review/:employeeId/submit', async (req, res) => {
       const sc = midyearOverall(mgrKras, row.manager_entries);
       if (!sc.complete) return res.status(422).json({ error: `Rate all ${mgrKras.length} KRAs before signing — ${sc.missing.length} still unrated.` });
     }
-    await db.query(`UPDATE pms.midyear_checkins SET manager_status='submitted', manager_submitted_at=now(), updated_at=now() WHERE id=$1`, [row.id]);
+    // Same clearing here. Either party submitting ends the reopened state:
+    // the note is addressed to both of them, and once one has acted on it
+    // leaving it on screen for the other reads as a fresh event.
+    await db.query(
+      `UPDATE pms.midyear_checkins
+          SET manager_status='submitted', manager_submitted_at=now(),
+              reopened_reason=NULL, reopened_note=NULL, updated_at=now()
+        WHERE id=$1`, [row.id]);
     audit(req, 'MIDYEAR_MANAGER_SUBMITTED', c.id, emp.id, null);
     await notify(T(req), emp.id, 'midyear_manager_signed', `${req.user.name} signed off your Mid-Year Review`, null, '/pms/my/midyear');
     res.json({ ok: true });

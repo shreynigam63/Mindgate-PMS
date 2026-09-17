@@ -3,8 +3,15 @@ import { Video, Sparkles, Trash2, Link2 } from 'lucide-react';
 import { api, KraBullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 
-// Meetings for a one-on-one connect, a mid-year review or an annual
-// appraisal — and the KRA-wise summary of what was said.
+// Meetings for a one-on-one connect or an annual review — and the KRA-wise
+// summary of what was said.
+//
+// NOT on Mid-Year Review any more (removed 17 Sep, requested directly:
+// "meeting links and date option is supposed to be in quarterly connects
+// and not in mid year review"). Quarterly Connects is the screen for
+// logging one-on-ones, and having the same control on two screens meant a
+// mid-year conversation could be recorded in either place with the two
+// never adding up.
 //
 // GOOGLE MEET IS SHOWN AS A NAMED, NOT-YET-CONNECTED OPTION rather than
 // hidden. The client asked for the provision without the connection, and
@@ -119,7 +126,7 @@ export default function MeetingPanel({ employeeId, context, refId, title }) {
         </div>
       ))}
 
-      {/* This panel is embedded inside other screens (self-appraisal,
+      {/* This panel is embedded inside other screens (annual review,
           mid-year, a connect), so a KRA-wise summary printed inline pushes
           whatever is hosting it down the page. */}
       {d && !summaryOpen && (

@@ -48,15 +48,26 @@ function DevelopmentPlanCard() {
     : data.plan.status === 'draft' || data.plan.status === 'returned';
   const reopened = editable && data.editable_via === 'returned';
   const openedByKraSubmit = editable && data.editable_via === 'kra_submitted';
+  // Two different things land on 'returned', and attributing the wrong one
+  // to a manager is worse than saying nothing: a plan reopened because HR
+  // changed somebody's designation was not a manager's judgement on their
+  // development goals. reopened_reason is a stored column rather than a
+  // guess at the comment text (migration 039), matching the KRA sheet.
+  const byRoleChange = data.plan.reopened_reason === 'profile_change';
 
   return (
     <div className="card p-4 space-y-3">
       <div className="flex items-center gap-2">
         <p className="font-bold text-sm flex-1">Target achievements for the year</p>
-        <span className={`chip ${STATUS_COLOR[data.plan.status]}`}>{data.plan.status}</span>
+        <span className={`chip ${STATUS_COLOR[data.plan.status]}`}>
+          {data.plan.status === 'returned' && byRoleChange ? 'reopened — role changed' : data.plan.status}
+        </span>
       </div>
       {data.plan.status === 'returned' && data.plan.manager_comment && (
-        <p className="text-xs bg-rose-50 text-rose-700 rounded-lg p-2"><b>Returned:</b> {data.plan.manager_comment}</p>
+        <p className="text-xs bg-rose-50 text-rose-700 rounded-lg p-2">
+          <b>{byRoleChange ? 'Reopened after a change to your role:' : 'Returned by your manager:'}</b>
+          {' '}{data.plan.manager_comment}
+        </p>
       )}
       {openedByKraSubmit && (
         <p className="text-xs bg-teal-50 text-teal-700 rounded-lg p-2">
@@ -71,8 +82,12 @@ function DevelopmentPlanCard() {
       )}
       {reopened && (
         <p className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">
-          Your manager returned this plan, so it is <b>open for edits</b> even though the
-          cycle has moved on to {phaseLabel(data.cycle.phase)}. Edit and submit it again.
+          {byRoleChange
+            ? <>Your role changed, so this plan is <b>open for edits</b> again even though the
+                cycle has moved on to {phaseLabel(data.cycle.phase)}. Review the goals and your
+                career aspiration against the job you now hold, then submit again.</>
+            : <>Your manager returned this plan, so it is <b>open for edits</b> even though the
+                cycle has moved on to {phaseLabel(data.cycle.phase)}. Edit and submit it again.</>}
         </p>
       )}
       <GoalList goals={data.goals} editable={editable} onSaved={load} kras={data.kras || []} />

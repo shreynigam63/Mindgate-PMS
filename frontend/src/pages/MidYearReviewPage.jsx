@@ -3,7 +3,6 @@ import { Sparkles, Send, CheckCircle2, Clock, ChevronDown, ChevronRight } from '
 import { api, phaseLabel, phaseColor, KraBullets, Bullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import ReviewAssist from './ReviewAssist';
-import MeetingPanel from './MeetingPanel';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -291,6 +290,16 @@ function MyMidYearCard() {
         <StatusPill label="Employee (you)" signed={selfSigned} />
         <StatusPill label="Manager" signed={mgrSigned} />
       </div>
+      {/* Mid-year has no 'returned' state and no comment column, so a
+          reopen lands on 'in_progress' with its reason in its own
+          reopened_note (migration 040). Read from reopened_reason rather
+          than the note's text: this is the first line somebody reads after
+          an unexpected change, and prose must not decide attribution. */}
+      {data.checkin.reopened_reason === 'profile_change' && data.checkin.reopened_note && (
+        <p className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">
+          <b>Reopened after a change to your role:</b> {data.checkin.reopened_note}
+        </p>
+      )}
 
       {!data.editable && !selfSigned && (
         <p className="text-xs text-navy-400 bg-navy-50 rounded-lg p-2">
@@ -299,7 +308,15 @@ function MyMidYearCard() {
       )}
 
       {editable && <ReviewAssist stage="midyear" label="mid-year review" />}
-      {editable && <MeetingPanel context="midyear" title="Mid-year discussion with your manager" />}
+      {/* NO MeetingPanel here. Scheduling a discussion — the link, the date
+          and the transcript — belongs on Quarterly Connects, which is the
+          screen for logging one-on-ones; requested directly on 17 Sep:
+          "meeting links and date option is supposed to be in quarterly
+          connects and not in mid year review."
+          Having it on two screens meant a mid-year conversation could be
+          recorded in one of two places, and the pair would not add up:
+          Connects is what the manager's 1-on-1 history and the AI mid-year
+          draft actually read. */}
 
       {editable && (
         <div className="bg-gradient-to-r from-fuchsia-50 to-rose-50 border border-fuchsia-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
@@ -466,6 +483,14 @@ function TeamMidYearDetail({ employeeId }) {
         <StatusPill label="Employee" signed={selfSigned} />
         <StatusPill label="You" signed={mgrSigned} />
       </div>
+      {/* The manager sees it too — their own half went back to
+          'in_progress' as well, and a rating that quietly un-submitted
+          with no explanation is worse than the change itself. */}
+      {data.checkin.reopened_reason === 'profile_change' && data.checkin.reopened_note && (
+        <p className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">
+          <b>Reopened after a change to their role:</b> {data.checkin.reopened_note}
+        </p>
+      )}
       <div className="bg-navy-50 rounded-lg p-3 text-xs space-y-1">
         <p className="font-bold text-navy-500 uppercase text-[10px]">Their reflection</p>
         {data.checkin.self_narrative ? <p className="whitespace-pre-wrap">{data.checkin.self_narrative}</p> : <p className="text-navy-400">Not written yet.</p>}
