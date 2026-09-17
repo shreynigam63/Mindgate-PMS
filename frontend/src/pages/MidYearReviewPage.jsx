@@ -3,7 +3,6 @@ import { Sparkles, Send, CheckCircle2, Clock, ChevronDown, ChevronRight } from '
 import { api, phaseLabel, phaseColor, KraBullets, Bullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import ReviewAssist from './ReviewAssist';
-import MeetingPanel from './MeetingPanel';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -309,7 +308,15 @@ function MyMidYearCard() {
       )}
 
       {editable && <ReviewAssist stage="midyear" label="mid-year review" />}
-      {editable && <MeetingPanel context="midyear" title="Mid-year discussion with your manager" />}
+      {/* NO MeetingPanel here. Scheduling a discussion — the link, the date
+          and the transcript — belongs on Quarterly Connects, which is the
+          screen for logging one-on-ones; requested directly on 17 Sep:
+          "meeting links and date option is supposed to be in quarterly
+          connects and not in mid year review."
+          Having it on two screens meant a mid-year conversation could be
+          recorded in one of two places, and the pair would not add up:
+          Connects is what the manager's 1-on-1 history and the AI mid-year
+          draft actually read. */}
 
       {editable && (
         <div className="bg-gradient-to-r from-fuchsia-50 to-rose-50 border border-fuchsia-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
