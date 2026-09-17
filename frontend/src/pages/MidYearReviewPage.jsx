@@ -3,6 +3,7 @@ import { Sparkles, Send, CheckCircle2, Clock, ChevronDown, ChevronRight } from '
 import { api, phaseLabel, phaseColor, KraBullets, Bullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import ReviewAssist from './ReviewAssist';
+import MeetingPanel from './MeetingPanel';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -308,15 +309,17 @@ function MyMidYearCard() {
       )}
 
       {editable && <ReviewAssist stage="midyear" label="mid-year review" />}
-      {/* NO MeetingPanel here. Scheduling a discussion — the link, the date
-          and the transcript — belongs on Quarterly Connects, which is the
-          screen for logging one-on-ones; requested directly on 17 Sep:
-          "meeting links and date option is supposed to be in quarterly
-          connects and not in mid year review."
-          Having it on two screens meant a mid-year conversation could be
-          recorded in one of two places, and the pair would not add up:
-          Connects is what the manager's 1-on-1 history and the AI mid-year
-          draft actually read. */}
+      {/* Mid-year keeps the meeting panel, matching Annual Review. It was
+          briefly removed on 17 Sep and put back the same day at the
+          client's direction: the mid-year conversation is a real scheduled
+          discussion between the two of them, and it should be arranged from
+          the screen they are already on rather than by leaving for
+          Quarterly Connects.
+          The three screens are not duplicates — each meeting carries its
+          own `context` (connect | midyear | annual), so a mid-year
+          discussion is stored and listed as a mid-year one and does not
+          mix into the quarterly one-on-one history. */}
+      {editable && <MeetingPanel context="midyear" title="Mid-year discussion with your manager" />}
 
       {editable && (
         <div className="bg-gradient-to-r from-fuchsia-50 to-rose-50 border border-fuchsia-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
