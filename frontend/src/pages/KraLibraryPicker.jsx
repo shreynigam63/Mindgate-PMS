@@ -134,7 +134,9 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                 ? <> <b>{state.designation}</b> in <b>{state.matched_department}</b></>
                 : <> this role</>}
               {available.length !== state.entries.length && `, ${available.length} not yet on this sheet`}.
-              Pick what applies, then adjust the wording and weights.
+              {available.length
+                ? ' Pick what applies, then adjust the wording and weights.'
+                : ' You already have all of them — open it to check the wording and weights against your new role.'}
             </p>
             {/* Shown whenever department matching is switched on, because
                 from that moment "which department's shelf is this?" is a
@@ -228,10 +230,21 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
               </p>
             )}
           </div>
-          <button className="btn-pri !bg-lagoon-700 whitespace-nowrap" disabled={disabled || !available.length}
-            title={!available.length ? 'Everything on the shelf is already on this sheet' : ''}
+          {/* Opens whenever a shelf EXISTS, not only when something on it is
+              addable. It used to disable itself once every published KRA was
+              already on the sheet — technically true, and the wrong answer
+              after a role change: the sheet reopens precisely so the employee
+              can review it against the NEW role, and the one control that
+              shows them that role's shelf was dead, with the only explanation
+              in a hover tooltip nobody sees.
+              Nothing can be double-added: an entry already on the sheet keeps
+              its "Added" chip instead of a checkbox, and the Add button inside
+              stays disabled until something is ticked. */}
+          <button className="btn-pri !bg-lagoon-700 whitespace-nowrap" disabled={disabled || !state.entries.length}
+            title={!state.entries.length ? 'HR has not published any KRAs for this role yet' : ''}
             onClick={() => setOpen(true)}>
-            <Library size={13} className="inline mr-1" />Choose from library
+            <Library size={13} className="inline mr-1" />
+            {available.length ? 'Choose from library' : 'View library'}
           </button>
         </div>
       </div>
@@ -269,6 +282,13 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
           <p className="text-[11px] text-navy-400 -mt-1">
             {state.designation} · everything you add stays fully editable.
           </p>
+          {!available.length && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg p-2">
+              Every KRA published for this role is already on your sheet, so there is
+              nothing new to tick. This is the list as HR published it — compare the
+              wording and the suggested weights against what you have.
+            </p>
+          )}
           <Shelf entries={state.entries} picked={picked}
             toggle={(id) => setPicked((p) => ({ ...p, [id]: !p[id] }))}
             allPicked={allPicked}
