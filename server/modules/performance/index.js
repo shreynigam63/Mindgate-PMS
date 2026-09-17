@@ -825,8 +825,12 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
     if (!s) return res.status(404).json({ error: 'sheet not found' });
     if (s.status !== 'approved') return res.status(409).json({ error: `sheet is ${s.status}, not approved — only an approved sheet needs reopening` });
 
+    // 'hr_reopen', NOT null. Null falls through to the page's default,
+    // which names the MANAGER — and a sheet HR reopened was not the
+    // manager's judgement on anybody's KRAs. Same misattribution the
+    // profile_change flag exists to prevent, one branch over.
     await db.query(
-      `UPDATE pms.kra_sheets SET status='returned', manager_comment=$1, reopened_reason=NULL,
+      `UPDATE pms.kra_sheets SET status='returned', manager_comment=$1, reopened_reason='hr_reopen',
               decided_at=now(), updated_at=now() WHERE id=$2`,
       [String(comment).trim(), s.id]);
     audit(req, 'KRA_REOPENED', c.id, s.employee_id, { comment: String(comment).trim(), from: 'approved' });
@@ -862,11 +866,12 @@ router.post('/hr/development-plan/:employeeId/reopen', async (req, res) => {
       return res.status(409).json({ error: `plan is ${p.status} — it is already the employee's to edit` });
     }
 
-    // reopened_reason stays NULL: a person decided this, so the page must
-    // read it as one rather than as an automatic role-change reopen.
+    // 'hr_reopen' so the page can say who actually did this. It must not
+    // be null: null is the page's "returned by your manager" default, and
+    // HR reopening a plan is not the manager returning it.
     await db.query(
       `UPDATE pms.development_plans
-          SET status='returned', manager_comment=$1, reopened_reason=NULL,
+          SET status='returned', manager_comment=$1, reopened_reason='hr_reopen',
               decided_at=now(), updated_at=now() WHERE id=$2`,
       [comment, p.id]);
     audit(req, 'DEVPLAN_REOPENED', c.id, p.employee_id, { comment, from: p.status });

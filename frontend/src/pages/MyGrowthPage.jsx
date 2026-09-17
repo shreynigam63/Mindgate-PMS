@@ -54,18 +54,24 @@ function DevelopmentPlanCard() {
   // development goals. reopened_reason is a stored column rather than a
   // guess at the comment text (migration 039), matching the KRA sheet.
   const byRoleChange = data.plan.reopened_reason === 'profile_change';
+  const byHr = data.plan.reopened_reason === 'hr_reopen';
 
   return (
     <div className="card p-4 space-y-3">
       <div className="flex items-center gap-2">
         <p className="font-bold text-sm flex-1">Target achievements for the year</p>
         <span className={`chip ${STATUS_COLOR[data.plan.status]}`}>
-          {data.plan.status === 'returned' && byRoleChange ? 'reopened — role changed' : data.plan.status}
+          {data.plan.status !== 'returned' ? data.plan.status
+            : byRoleChange ? 'reopened — role changed'
+            : byHr ? 'reopened by HR'
+            : 'returned by manager'}
         </span>
       </div>
       {data.plan.status === 'returned' && data.plan.manager_comment && (
         <p className="text-xs bg-rose-50 text-rose-700 rounded-lg p-2">
-          <b>{byRoleChange ? 'Reopened after a change to your role:' : 'Returned by your manager:'}</b>
+          <b>{byRoleChange ? 'Reopened after a change to your role:'
+            : byHr           ? 'Reopened by HR:'
+            : 'Returned by your manager:'}</b>
           {' '}{data.plan.manager_comment}
         </p>
       )}
@@ -86,6 +92,10 @@ function DevelopmentPlanCard() {
             ? <>Your role changed, so this plan is <b>open for edits</b> again even though the
                 cycle has moved on to {phaseLabel(data.cycle.phase)}. Review the goals and your
                 career aspiration against the job you now hold, then submit again.</>
+            : byHr
+            ? <>HR reopened this plan, so it is <b>open for edits</b> even though the cycle has
+                moved on to {phaseLabel(data.cycle.phase)}. Make the changes they asked for, then
+                submit it again.</>
             : <>Your manager returned this plan, so it is <b>open for edits</b> even though the
                 cycle has moved on to {phaseLabel(data.cycle.phase)}. Edit and submit it again.</>}
         </p>
