@@ -4,6 +4,8 @@
 // employees act on their own rows (RSVP, participate, nominate, query).
 
 const express = require('express');
+const multer = require('multer');
+const ExcelJS = require('exceljs');
 const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
@@ -11,6 +13,19 @@ const { guardUuidParams } = require('../../core/http');
 const { apiPermissionParity, hasPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const pm = require('../performance/phase-machine');
+// The spreadsheet readers live in core/employees because the employee
+// importer needed them first; they are format helpers, not employee
+// logic, and every importer since has reused them rather than carrying a
+// second copy of xlsx parsing.
+const { parseExcelSheets, parseCsv, detectFormat } = require('../../core/employees');
+const {
+  validateCareerTransitionRows, COLUMNS: CT_COLUMNS, rowKey: ctRowKey,
+} = require('./career-transitions-import');
+
+// 2 MB: a career matrix is tens of rows, not tens of thousands. A limit
+// this low turns "somebody uploaded the wrong file" into a clear error
+// rather than a slow request.
+const transitionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -409,6 +424,156 @@ router.delete('/career/transitions/:id', async (req, res) => {
     if (!r.rows.length) return res.status(404).json({ error: 'transition not found' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---- Career Pathing Matrix: bulk upload ------------------------------
+//
+// Asked for on 17 Sep: "can we have template upload option so HR can
+// upload template for next defined roles." One transition at a time
+// through the modal is an afternoon of clicking for a company with 90
+// job titles, and gives nobody a way to review the whole ladder before
+// committing it.
+//
+// Deliberately the same three controls, in the same order, as the KRA
+// Library screen: Download template, Validate, Publish. HR has learnt
+// that shape once; a second importer that behaves differently is a
+// second thing to learn and a new set of mistakes.
+
+const TRANSITION_BANNER = 'One row per transition. From Role and To Role are required and should match designations on the employee master exactly — a role nobody holds yet is allowed (that is what a career path is for) and only warned about. Leave From Level blank for "any level". Required Competencies: one per line, or separated by ; — Months fields are advisory and not enforced. Re-uploading a transition that already exists UPDATES it rather than adding a second copy. Delete the sample rows before uploading.';
+const TRANSITION_HEADERS = CT_COLUMNS.map(([, label]) => label);
+const TRANSITION_SAMPLE = [
+  ['Executive', '', 'Senior Executive', '', 1, 12, 18, 'Owns a workstream end to end\nCoaches one junior', 'Delete this sample row'],
+  ['Senior Executive', '', 'Team Lead', '', 1, 18, 24, 'Runs a small team\nAccountable for a delivery plan', 'Delete this sample row'],
+];
+
+// No :id route competes for these paths — /career/transitions/:id exists
+// only for PUT and DELETE — so the literal filenames are safe here. Worth
+// stating, because the KRA Library's equivalents DO have to be declared
+// before a GET :designation route and the reason is easy to mis-copy.
+router.get('/career/transitions/template.xlsx', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Career Transitions');
+    ws.addRow([TRANSITION_BANNER]);
+    ws.mergeCells(1, 1, 1, TRANSITION_HEADERS.length);
+    ws.getRow(1).font = { italic: true };
+    const header = ws.addRow(TRANSITION_HEADERS);
+    header.font = { bold: true };
+    header.alignment = { wrapText: true, vertical: 'middle' };
+    for (const row of TRANSITION_SAMPLE) ws.addRow(row);
+    ws.columns.forEach((col, i) => { col.width = [26, 16, 26, 16, 16, 18, 20, 44, 30][i] || 20; });
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="career_transitions_template.xlsx"');
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('career transitions template xlsx', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
+});
+
+router.get('/career/transitions/template.csv', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    // Newlines inside a cell are flattened to "; " for CSV — a literal
+    // newline would break the row, and ; is one of the separators the
+    // parser accepts back.
+    const cell = (v) => {
+      const t = String(v).replace(/\s*\n\s*/g, '; ');
+      return /[",]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const csv = [TRANSITION_HEADERS, ...TRANSITION_SAMPLE].map((r) => r.map(cell).join(',')).join('\n') + '\n';
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="career_transitions_template.csv"');
+    res.send(csv);
+  } catch (e) { logger.error('career transitions template csv', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
+});
+
+// Dry run by default, ?commit=1 to publish — the same two-step contract
+// as every other importer here, so Validate can never write.
+router.post('/career/transitions/upload', (req, res, next) => transitionUpload.single('file')(req, res, (err) => {
+  if (err) return res.status(400).json({ error: err.message });
+  next();
+}), async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    if (!req.file) return res.status(400).json({ error: 'file required (multipart field "file")' });
+
+    const format = detectFormat(req.file);
+    if (format === 'xls-legacy') {
+      return res.status(400).json({ error: 'Legacy .xls files are not supported — please re-save the file as .xlsx (File > Save As > Excel Workbook) and upload again.' });
+    }
+    // Every worksheet is read and concatenated, so a workbook split by
+    // department or job family publishes in one go — the same courtesy
+    // the KRA Library importer extends.
+    const rows = format === 'xlsx'
+      ? (await parseExcelSheets(req.file.buffer)).flatMap((sh) => sh.rows || [])
+      : parseCsv(req.file.buffer.toString('utf8'));
+
+    const known = new Set((await db.query(
+      `SELECT DISTINCT lower(btrim(designation)) AS d FROM core.employees
+        WHERE tenant_id=$1 AND status='active' AND coalesce(btrim(designation),'') <> ''`,
+      [T(req)])).rows.map((r) => r.d));
+
+    const report = validateCareerTransitionRows(rows, known);
+    if (report.fatal) return res.status(422).json({ error: report.fatal });
+
+    // Which of these already exist, so the dry run can say "12 new, 4
+    // updated" rather than leaving HR to guess whether Publish will
+    // duplicate the matrix they already built.
+    const existing = new Map((await db.query(
+      `SELECT id, from_role, from_level, to_role, to_level FROM people.career_transitions WHERE tenant_id=$1`,
+      [T(req)])).rows.map((r) => [ctRowKey(r), r.id]));
+    for (const r of report.rows) r.existing_id = existing.get(ctRowKey(r)) || null;
+    const willUpdate = report.rows.filter((r) => r.existing_id).length;
+    report.summary.create = report.rows.length - willUpdate;
+    report.summary.update = willUpdate;
+
+    const commit = req.query.commit === '1' || req.query.commit === 'true';
+    if (!commit || !report.ok) {
+      // A dry run, or a file with errors. Nothing is written either way —
+      // a partial publish of a file HR has not seen the verdict on is the
+      // thing this two-step exists to prevent.
+      return res.json({ ok: report.ok, committed: false, ...report });
+    }
+
+    let created = 0; let updated = 0;
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      for (const r of report.rows) {
+        if (r.existing_id) {
+          await client.query(
+            `UPDATE people.career_transitions SET
+               expected_level_change=$3, min_time_months=$4, typical_time_months=$5,
+               required_competencies=$6, notes=$7, active=true, updated_at=now()
+             WHERE id=$1 AND tenant_id=$2`,
+            [r.existing_id, T(req), r.expected_level_change, r.min_time_months,
+             r.typical_time_months, r.required_competencies, r.notes]);
+          updated += 1;
+        } else {
+          await client.query(
+            `INSERT INTO people.career_transitions
+               (tenant_id, from_role, from_level, to_role, to_level, expected_level_change,
+                min_time_months, typical_time_months, required_competencies, notes)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [T(req), r.from_role, r.from_level, r.to_role, r.to_level, r.expected_level_change,
+             r.min_time_months, r.typical_time_months, r.required_competencies, r.notes]);
+          created += 1;
+        }
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+
+    // A career matrix decides which moves the product will accept, so
+    // changing it in bulk is a configuration change worth a queryable
+    // record of who did it and how much moved.
+    await db.query(
+      `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details)
+       VALUES ($1,$2,'CAREER_TRANSITIONS_UPLOADED','career_transitions',$3)`,
+      [T(req), req.user.email, JSON.stringify({ created, updated, warnings: report.warnings.length })]);
+
+    res.json({ ok: true, committed: true, created, updated,
+      warnings: report.warnings, summary: { ...report.summary, create: created, update: updated } });
+  } catch (e) { logger.error('career transitions upload', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
 // Employee-facing career path (BR-3.1/3.2) — FOUND MISSING alongside

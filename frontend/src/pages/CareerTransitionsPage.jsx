@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Plus, Search, X, Trash2, Save } from 'lucide-react';
-import { api } from '../utils/api';
+import { api, API_BASE } from '../utils/api';
 
 // CR-11 (phase 1 of 2) — a richer transition matrix on top of the simpler
 // Career Framework band/level list, per a follow-up conversation with
@@ -18,6 +18,12 @@ export default function CareerTransitionsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [designations, setDesignations] = useState([]);
+  // Bulk upload. Deliberately the same three controls in the same order
+  // as the KRA Library screen — HR has learnt that shape once.
+  const [file, setFile] = useState(null);
+  const [report, setReport] = useState(null);
+  const [upErr, setUpErr] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   const load = () => {
     const params = new URLSearchParams();
@@ -29,6 +35,21 @@ export default function CareerTransitionsPage() {
   const [roleBands, setRoleBands] = useState([]);
   useEffect(() => { api('/people/designations').then(r => setDesignations(r.designations)).catch(() => setDesignations([])); }, []);
   useEffect(() => { api('/people/role-bands').then(r => setRoleBands(r.role_bands)).catch(() => setRoleBands([])); }, []);
+
+  // Validate writes nothing; Publish is the same request with ?commit=1.
+  // The two-step is the point: a career matrix decides which moves the
+  // product will accept, so HR sees the verdict on every row before any
+  // of it lands.
+  const send = async (commit) => {
+    setUpErr(null); setBusy(true);
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const r = await api(`/people/career/transitions/upload${commit ? '?commit=1' : ''}`, { method: 'POST', body: fd });
+      setReport(r);
+      if (commit && r.committed) { setFile(null); load(); }
+    } catch (e) { setUpErr(e.message); setReport(e.data && e.data.errors ? e.data : null); }
+    finally { setBusy(false); }
+  };
 
   const remove = async (t) => {
     if (!confirm(`Remove the transition ${t.from_role} → ${t.to_role}?`)) return;
@@ -55,6 +76,39 @@ export default function CareerTransitionsPage() {
         <button className="btn-pri" onClick={() => { setEditing(null); setShowForm(true); }}><Plus size={13} className="inline mr-1" />Add transition</button>
       </div>
 
+      <div className="card p-4 space-y-2">
+        <p className="lbl">Upload transitions — one row per step, dry run first</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <a className="btn-sec" href={`${API_BASE}/people/career/transitions/template.xlsx?token=${localStorage.getItem('apms_token')}`}>Download template (.xlsx)</a>
+          <a className="btn-sec" href={`${API_BASE}/people/career/transitions/template.csv?token=${localStorage.getItem('apms_token')}`}>.csv</a>
+          <input type="file" accept=".xlsx,.csv" className="text-xs"
+            onChange={(e) => { setFile(e.target.files[0] || null); setReport(null); setUpErr(null); }} />
+          <button className="btn-sec" disabled={!file || busy} onClick={() => send(false)}>Validate</button>
+          <button className="btn-pri" disabled={!file || busy || !(report && report.ok && !report.committed)}
+            title={!report ? 'Validate first' : ''} onClick={() => send(true)}>Publish</button>
+        </div>
+        <p className="text-[11px] text-navy-400">
+          Columns: From Role, From Level, To Role, To Level, Expected Level Change, Min Time In
+          Current Role (Months), Typical Time In Current Role (Months), Required Competencies,
+          Notes. Only <b>From Role</b> and <b>To Role</b> are required; blank From Level means
+          any level. Required Competencies go one per line, or separated by a semicolon.
+          {' '}<b>Re-uploading a transition that already exists updates it</b> rather than adding a
+          second copy, so a corrected file can be uploaded again safely. A role nobody holds yet is
+          allowed and only warned about — that is what a career path is for.
+        </p>
+        {upErr && <p className="text-xs text-rose-600">{upErr}</p>}
+        {report && (
+          <div className="text-xs space-y-1">
+            <p className="font-semibold">
+              {report.committed ? 'PUBLISHED' : report.ok ? 'VALID — publish to go live' : 'REJECTED'}
+              {report.summary && ` · ${report.summary.total_rows} transitions · ${report.summary.create} new · ${report.summary.update} updated · ${report.summary.errors} errors · ${report.summary.warnings} warnings`}
+            </p>
+            {(report.errors || []).map((e, i) => <p key={i} className="text-rose-600">row {e.line}: {e.error}</p>)}
+            {(report.warnings || []).map((w, i) => <p key={i} className="text-amber-700">row {w.line}: {w.warning}</p>)}
+          </div>
+        )}
+      </div>
+
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-300" />
@@ -67,7 +121,7 @@ export default function CareerTransitionsPage() {
 
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {!rows && <p className="text-sm text-navy-400">Loading…</p>}
-      {rows && !rows.length && <div className="card p-8 text-center text-sm text-navy-400">No transitions defined yet. Click "Add transition" to seed the matrix.</div>}
+      {rows && !rows.length && <div className="card p-8 text-center text-sm text-navy-400">No transitions defined yet. Upload a file above, or click "Add transition" to seed the matrix one at a time.</div>}
       {rows && rows.length > 0 && (
         <div className="space-y-2">
           {rows.map(t => (
