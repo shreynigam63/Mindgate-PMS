@@ -196,6 +196,10 @@ function DevPlanAiPanel({ onAdd }) {
             items={itemsOf(d)}
             selected={sel}
             onToggle={(k) => setSel((p) => ({ ...p, [k]: !p[k] }))}
+            // Requested directly. Replaces the whole selection rather than
+            // merging into it, so "Clear selection" is the same control
+            // going the other way and cannot leave a stale tick behind.
+            onSelectAll={(keys) => setSel(Object.fromEntries(keys.map((k) => [k, true])))}
             emptyNote="No goals suggested — there may be no approved KRAs to read yet."
           />
           {(d.uncovered_kras || []).length > 0 && <p className="text-amber-700">KRAs with no development goal yet: {d.uncovered_kras.join(' · ')}</p>}

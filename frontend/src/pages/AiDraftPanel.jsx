@@ -165,13 +165,26 @@ export function AiModal({ title, onClose, children, footer, wide = false, badge 
 // `items` are { key, group, title, teaser, meta, detail, added }.
 // Selection lives with the caller, because the caller is what acts on it;
 // expansion lives here, because nothing outside cares which rows are open.
-export function SuggestionList({ items, selected, onToggle, single = false, emptyNote = 'Nothing suggested.' }) {
+// onSelectAll is OPT-IN. A panel that wants a select-all passes it and is
+// handed the keys to select (or an empty array to clear); a panel that does
+// not pass it renders exactly as before. That is why this is a prop and not
+// a flag flipped on for everybody: `single` panels must never grow one, and
+// the appraisal-summary panel's tick list is a different kind of decision
+// (what goes on the record) where "all of them" is not a sensible default.
+export function SuggestionList({ items, selected, onToggle, onSelectAll, single = false, emptyNote = 'Nothing suggested.' }) {
   const [expanded, setExpanded] = useState({});
   const list = Array.isArray(items) ? items : [];
   if (!list.length) return <p className="text-navy-400">{emptyNote}</p>;
 
   const allOpen = list.every((i) => expanded[i.key]);
   const toggleAll = () => setExpanded(allOpen ? {} : Object.fromEntries(list.map((i) => [i.key, true])));
+
+  // Rows already added have lost their checkbox, so they are not part of
+  // "all" — counting them would make the button promise more than it can
+  // tick and never reach the all-selected state.
+  const selectable = list.filter((i) => !i.added);
+  const allPicked = selectable.length > 0 && selectable.every((i) => (selected || {})[i.key]);
+  const showSelectAll = !!onSelectAll && !single && selectable.length > 0;
 
   // Group headings are printed when the group CHANGES, in the order the
   // items arrive — the model is told to weight its attention by KRA
@@ -180,7 +193,13 @@ export function SuggestionList({ items, selected, onToggle, single = false, empt
 
   return (
     <div className="space-y-1">
-      <div className="flex justify-end">
+      <div className="flex justify-end items-center gap-3">
+        {showSelectAll && (
+          <button className="text-[11px] font-semibold text-teal-700 hover:text-teal-900"
+            onClick={() => onSelectAll(allPicked ? [] : selectable.map((i) => i.key))}>
+            {allPicked ? 'Clear selection' : `Select all ${selectable.length}`}
+          </button>
+        )}
         <button className="text-[11px] font-semibold text-navy-500 hover:text-navy-700" onClick={toggleAll}>
           {allOpen ? 'Collapse all' : 'Expand all'}
         </button>
