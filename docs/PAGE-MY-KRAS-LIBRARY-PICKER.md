@@ -14,18 +14,21 @@ manager. Everything added from it stays fully editable.
 
 ## 1. What is on screen, and where each piece comes from
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│ Start from the Executive KRA library                 [Choose from      │
-│ HR has published 8 KRAs for this role. Pick what…     library]         │
-│                                                                        │
-│ DEPARTMENT   [ All departments · 1,656 KRAs across 34 departments  ▾ ] │
-│ DESIGNATION  [ Executive · 8 KRAs ▾ ]  Your designation in Admin — …   │
-│                                                                        │
-│ These are the company-wide Executive KRAs. Admin has none of its own   │
-│ yet, so this is the list that applies to you.                          │
-└────────────────────────────────────────────────────────────────────────┘
-```
+**On load — "All departments" selected, no Designation row.**
+
+![My KRAs, the library banner on load](images/my-kras-01-all-departments.png)
+
+**After choosing a department — the Designation row appears.**
+
+![My KRAs, a department chosen](images/my-kras-02-department-chosen.png)
+
+**Choose from library — the pick list, grouped by Parameter.**
+
+![The KRA library pick list](images/my-kras-03-pick-list.png)
+
+> All three shots are the deployed build against a copy of the live
+> database, signed in as an Admin / Executive employee. Every number in
+> them is real.
 
 | Element | Rendered at | Value comes from |
 |---|---|---|

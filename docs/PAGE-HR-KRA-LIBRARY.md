@@ -17,6 +17,22 @@ row per KRA, keyed on **Designation** (and optionally **Department**).
 
 ## 1. The page, top to bottom
 
+**Default — every published shelf, 265 of them.**
+
+![HR KRA Library, the default view](images/hr-kra-library-01-overview.png)
+
+**View KRAs — one shelf expanded, grouped by Parameter with weights.**
+
+![A shelf expanded](images/hr-kra-library-05-shelf-expanded.png)
+
+**Designations with no shelf yet — the actionable to-do list, at the foot of
+the page.**
+
+![Designations with no shelf yet](images/hr-kra-library-04-uncovered.png)
+
+> All shots are the deployed build against a copy of the live database,
+> signed in as HR. Every number in them is real.
+
 | Section | Rendered at | Fed by |
 |---|---|---|
 | **Publish a shelf** — template links, file picker, Validate, Publish | `KraLibraryPage.jsx` 86–115 | `POST /pms/hr/kra-library/upload` |
@@ -90,6 +106,18 @@ That is deliberate. Filtering the flat list by department was the original
 implementation and it looked broken: with no department shelves published,
 every shelf is a fallback, so every department showed the identical 265 rows
 and the control appeared dead. Fixed in `05c1b12`.
+
+**Choosing Admin — the card is replaced by the department view.**
+
+![HR KRA Library, the department view](images/hr-kra-library-02-department-view.png)
+
+Every row here reads `company-wide`, and the footer says *0 of 10 titles have a
+shelf written for Admin*. That is the live state, not a fault: no library row
+carries a department yet.
+
+**The cascade — Designation narrows the department view to one title.**
+
+![The designation cascade](images/hr-kra-library-03-designation-cascade.png)
 
 The dropdown has three kinds of entry:
 
