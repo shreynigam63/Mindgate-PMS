@@ -300,13 +300,38 @@ async function midyearEntriesFor(tenantId, cycleId, employeeId) {
 
 // Attaches each KRA's mid-year self/manager rating to the KRA row itself,
 // so a consumer reads one list instead of joining two.
-function withMidyear(kras, midyear) {
+// Has HR actually published this employee's rating for this cycle?
+//
+// THE disclosure boundary for everything an employee sees about their own
+// appraisal. Asked for on 17 Sep: "only self rating should be visible to
+// employees before publish. all ratings should be visible only after
+// publish."
+//
+// Per EMPLOYEE, not per cycle: publish skips anyone whose manager
+// evaluation was never submitted, so a published cycle is not a published
+// rating for everybody in it. And not a phase check — a cycle can sit in
+// `publish` for days before HR presses the button, and `publish` is not
+// even the last phase.
+//
+// pms.employee_performance_history is the right source because it is
+// written by exactly one thing: POST /pms/publish, which requires
+// pms_admin. Nothing else can make a rating "published" by accident.
+async function publishedFor(tenantId, cycleId, employeeId) {
+  return (await db.query(
+    `SELECT 1 FROM pms.employee_performance_history
+      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 LIMIT 1`,
+    [tenantId, cycleId, employeeId])).rowCount > 0;
+}
+
+// `includeManager` false drops the manager's half of every KRA's mid-year
+// reading. The employee's own self rating stays: it is theirs.
+function withMidyear(kras, midyear, { includeManager = true } = {}) {
   if (!midyear) return kras.map((k) => ({ ...k, midyear: null }));
   return kras.map((k) => ({
     ...k,
     midyear: {
       self: midyear.self_entries[k.id] || null,
-      manager: midyear.manager_entries[k.id] || null,
+      manager: includeManager ? (midyear.manager_entries[k.id] || null) : null,
     },
   }));
 }
@@ -383,11 +408,20 @@ router.get('/my/kra-sheet', async (req, res) => {
     // scored on its own page, under its own phase gate — this is the same
     // number shown where the KRA it belongs to is.
     const midyear = await midyearEntriesFor(T(req), c.id, req.user.id);
+    // The manager's mid-year number rides along with each KRA here. It is
+    // still a rating somebody else gave, so it waits for publish like the
+    // rest. The STATUS stays visible — "your manager has submitted theirs"
+    // is not a rating, and hiding it would leave the employee unable to
+    // tell whether the halfway conversation had happened at all.
+    const published = await publishedFor(T(req), c.id, req.user.id);
     res.json({
       cycle: { id: c.id, name: c.name, phase: c.phase }, sheet: s,
-      kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
+      kras: withMidyear(kras, midyear, { includeManager: published }),
+      weights: pm.weightsValid(kras),
       known_categories: await knownKraCategories(T(req)),
-      midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+      manager_ratings_withheld: !published,
+      midyear: midyear ? { self_overall: midyear.self_overall,
+                           manager_overall: published ? midyear.manager_overall : null,
                            self_status: midyear.self_status, manager_status: midyear.manager_status } : null,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2832,7 +2866,16 @@ router.get('/my/midyear-review', async (req, res) => {
     // stop the two rules drifting apart.
     const editable = pm.phaseAllows(c.phase, 'midyear_self_edit') && row.self_status !== 'submitted';
     const kras = await midyearKras(T(req), c.id, req.user.id);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale }, checkin: row, editable,
+    // The manager's half of the check-in — their overall, their narrative
+    // and their per-KRA entries — is withheld until HR publishes, like
+    // every other rating the employee did not give. manager_status stays,
+    // so "your manager has completed theirs" is still answerable.
+    const published = await publishedFor(T(req), c.id, req.user.id);
+    const checkin = published ? row : {
+      ...row, manager_rating: null, manager_narrative: null, manager_entries: {},
+    };
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale },
+      checkin, editable, manager_ratings_withheld: !published,
       kras, scoring: midyearOverall(kras, row.self_entries) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3865,10 +3908,30 @@ router.delete('/increment-simulations/:id/overrides/:employeeId', async (req, re
 // Everywhere else the employee waits for publish (GET /my/rating reads
 // employee_performance_history, which only has rows once HR publishes).
 //
+// `includeManagerRatings` is the same rule applied to the rest of the
+// manager's judgement, asked for directly:
+//
+//   "Rating provided by Manager and upper management should not be
+//    visible to employees until it is published by HR or Super Admin as
+//    it is changed at HOD stage."
+//
+// That is the whole point: the manager's number is NOT final. The
+// Delivery Head can change it, calibration can change it again, and an
+// employee who saw the first version reads every later one as a demotion.
+// The parameter scores were already withheld for exactly this reason; the
+// per-KRA manager ratings and the manager's overall/strengths/improvement
+// text were not, which made the fix half a fix.
+//
+// PUBLISHED means a row in pms.employee_performance_history for this
+// cycle — the same source GET /my/rating reads, and the only thing HR's
+// publish writes. Not a phase: a cycle can sit in `publish` for days
+// before HR actually presses it.
+//
 // Withheld at the API, not just hidden in the page: a field the browser
 // receives is a field anyone can read, and "we do not render it" is not a
 // disclosure boundary.
-async function buildAnnualReviewSummary(tenantId, employeeId, cycleId, { includeParameterScores = true } = {}) {
+async function buildAnnualReviewSummary(tenantId, employeeId, cycleId,
+  { includeParameterScores = true, includeManagerRatings = true } = {}) {
   const kraSheet = (await db.query(`SELECT * FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
   const kras = kraSheet ? (await db.query(`SELECT id, title, description, weight, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [kraSheet.id])).rows : [];
   const selfAppraisal = (await db.query(`SELECT status, entries, went_well, could_improve FROM pms.self_appraisals WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
@@ -3917,10 +3980,23 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId, { include
 
   const superFlag = (await db.query(`SELECT super50_flag, super50_since FROM core.employees WHERE id=$1`, [employeeId])).rows[0];
 
+  // Stripped here rather than at the call site, so a future caller cannot
+  // forget. `manager` on each KRA outcome is the manager's per-KRA rating
+  // and comment; midyear.manager_overall is their halfway number.
+  const outcomes = includeManagerRatings
+    ? kraOutcomes
+    : kraOutcomes.map(({ manager, midyear: my, ...rest }) => ({
+      ...rest,
+      manager: null,
+      midyear: my ? { ...my, manager: null } : my,
+    }));
+
   return {
-    kra: { sheet: kraSheet || null, outcomes: kraOutcomes },
+    kra: { sheet: kraSheet || null, outcomes },
+    manager_ratings_withheld: !includeManagerRatings,
     midyear: midyear ? {
-      self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
+      self_overall: midyear.self_overall,
+      manager_overall: includeManagerRatings ? midyear.manager_overall : null,
       self_status: midyear.self_status, manager_status: midyear.manager_status,
     } : null,
     development_plan: { plan: devPlan || null, goals: devGoals, avg_progress: devAvgProgress },
@@ -3928,7 +4004,7 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId, { include
     ...(includeParameterScores
       ? { parameter_scores: { parameters: params, scores: scoreMap, weighted_rating: weighted.rating, complete: weighted.complete } }
       : {}),
-    manager_evaluation: managerEval || null,
+    manager_evaluation: includeManagerRatings ? (managerEval || null) : null,
     rating_history: history,
     super50: superFlag ? { flag: superFlag.super50_flag, since: superFlag.super50_since } : null,
   };
@@ -3938,8 +4014,14 @@ router.get('/my/annual-review', async (req, res) => {
   try {
     const c = await activeCycle(T(req), 'annual');
     if (!c) return res.json({ cycle: null });
-    const summary = await buildAnnualReviewSummary(T(req), req.user.id, c.id, { includeParameterScores: false });
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, ...summary });
+    // Published = HR has actually pressed publish for THIS employee on
+    // THIS cycle. Checked per employee, not per cycle: publish skips
+    // anyone whose manager evaluation was never submitted, so a published
+    // cycle does not mean a published rating for everybody in it.
+    const published = await publishedFor(T(req), c.id, req.user.id);
+    const summary = await buildAnnualReviewSummary(T(req), req.user.id, c.id,
+      { includeParameterScores: false, includeManagerRatings: published });
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, published, ...summary });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

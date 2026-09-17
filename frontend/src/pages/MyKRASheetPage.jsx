@@ -250,7 +250,7 @@ export default function MyKRASheetPage() {
               {(hasText(k.description) || k._showDesc) && (
                 <textarea className="inp" rows={2} placeholder="Description" value={k.description || ''} onChange={set(i, 'description')} disabled={!editable} />
               )}
-              <MidYearOnKra midyear={k.midyear} />
+              <MidYearOnKra midyear={k.midyear} withheld={data.manager_ratings_withheld} />
             </div>
           ))}
         </div>
@@ -285,8 +285,8 @@ export default function MyKRASheetPage() {
 // about how it was going. Read-only here on purpose: mid-year is still
 // scored on the Mid-Year Review page, under its own phase gate. This is
 // the same number, shown where it means something.
-export function MidYearOnKra({ midyear }) {
-  if (!midyear || (!midyear.self && !midyear.manager)) return null;
+export function MidYearOnKra({ midyear, withheld }) {
+  if (!midyear || (!midyear.self && !midyear.manager && !withheld)) return null;
   const cell = (label, entry) => (
     <span>
       {label} <b>{entry?.rating ?? '—'}</b>
@@ -297,7 +297,12 @@ export function MidYearOnKra({ midyear }) {
     <div className="flex flex-wrap gap-3 text-[11px] text-navy-500 bg-navy-50 rounded-md px-2 py-1">
       <span className="font-semibold text-navy-600">Mid-year:</span>
       {cell('self', midyear.self)}
-      {cell('manager', midyear.manager)}
+      {/* The manager's half waits for publish. Said, not blanked: a bare
+          dash reads as "your manager has not rated this", which is a
+          different and usually untrue statement. */}
+      {withheld
+        ? <span className="text-navy-400">manager <i>after publish</i></span>
+        : cell('manager', midyear.manager)}
     </div>
   );
 }

@@ -383,8 +383,21 @@ function MyMidYearCard() {
         </div>
         <div className="border border-navy-100 rounded-xl p-3 space-y-2">
           <p className="text-[10px] uppercase font-bold text-navy-400">From the manager</p>
-          <p className="text-xs"><b>Mid-year rating:</b> {overallLabel(data.checkin.manager_rating) ?? '—'}</p>
-          <p className="text-xs text-navy-500 whitespace-pre-wrap">{data.checkin.manager_narrative || 'Not written yet.'}</p>
+          {/* Withheld until HR publishes — the manager's number is not
+              final until the Delivery Head review and calibration have
+              been through it. manager_status above still says whether they
+              have completed their half. */}
+          {data.manager_ratings_withheld ? (
+            <p className="text-xs text-navy-500">
+              <b>Not shared yet.</b> Your manager's mid-year rating and comments appear here once
+              HR publishes the cycle.
+            </p>
+          ) : (
+            <>
+              <p className="text-xs"><b>Mid-year rating:</b> {overallLabel(data.checkin.manager_rating) ?? '—'}</p>
+              <p className="text-xs text-navy-500 whitespace-pre-wrap">{data.checkin.manager_narrative || 'Not written yet.'}</p>
+            </>
+          )}
         </div>
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}

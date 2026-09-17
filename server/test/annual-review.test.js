@@ -88,7 +88,15 @@ test('annual review summary: consolidates KRA outcomes, dev plan progress, and c
   assert.equal(r.body.kra.outcomes.length, 1);
   assert.equal(r.body.kra.outcomes[0].title, 'Ship the feature');
   assert.equal(r.body.kra.outcomes[0].self.self_rating, 4);
-  assert.equal(r.body.kra.outcomes[0].manager.rating, 4);
+  // CHANGED on 17 Sep at the client's instruction: "Rating provided by
+  // Manager and upper management should not be visible to employees until
+  // it is published by HR or Super Admin as it is changed at HOD stage."
+  // This used to assert the manager's rating was returned here. It is now
+  // withheld until publish — the same rule the parameter scores below
+  // already followed. Released to the employee once HR publishes; there is
+  // a test for that in manager-rating-visibility.test.js.
+  assert.equal(r.body.manager_ratings_withheld, true);
+  assert.equal(r.body.kra.outcomes[0].manager, null, 'withheld before publish');
 
   assert.equal(r.body.development_plan.goals.length, 1);
   assert.equal(r.body.development_plan.avg_progress, 60);
