@@ -58,10 +58,18 @@ const browser = await chromium.launch();
   await p.waitForTimeout(2500);
   await shot(p, 'my-kras-01-all-departments.png');
 
-  const dept = await p.locator('#shelf-dept option').nth(1).getAttribute('value');
-  await p.selectOption('#shelf-dept', dept);
-  await p.waitForTimeout(2200);
-  await shot(p, 'my-kras-02-department-chosen.png');
+  // The Department control only exists when kra_library_scope is
+  // 'department+designation'. On a tenant where it is off there is
+  // nothing to shoot, and dying here would stop the rest of the run — so
+  // it is skipped, loudly.
+  if (await p.locator('#shelf-dept option').count() > 1) {
+    const dept = await p.locator('#shelf-dept option').nth(1).getAttribute('value');
+    await p.selectOption('#shelf-dept', dept);
+    await p.waitForTimeout(2200);
+    await shot(p, 'my-kras-02-department-chosen.png');
+  } else {
+    console.log('  SKIPPED my-kras-02-department-chosen.png — department matching is off on this tenant');
+  }
 
   await p.locator('text=Choose from library').click();
   await p.waitForTimeout(1500);
@@ -106,6 +114,24 @@ const browser = await chromium.launch();
   await p.locator('text=Accounts Consultant').first().scrollIntoViewIfNeeded();
   await p.waitForTimeout(400);
   await shot(p, 'hr-kra-library-05-shelf-expanded.png');
+  await ctx.close();
+}
+
+// ---- HR Admin · Career Pathing Matrix (the upload card) ---------------
+//
+// Only the card itself is shot here. The rejected / valid / published
+// states need a filled-in file and a matrix to publish into, so they are
+// captured by hand against a scratch database — re-shoot those only when
+// the report layout changes, not on every run.
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 420 }, deviceScaleFactor: 2 });
+  const p = await ctx.newPage();
+  p.on('pageerror', (e) => errs.push(`career-transitions: ${e.message}`));
+  await p.goto(`${UI}/`, { waitUntil: 'domcontentloaded' });
+  await p.evaluate((t) => localStorage.setItem('apms_token', t), await tok(HR));
+  await p.goto(`${UI}/admin/career-transitions`, { waitUntil: 'networkidle' });
+  await p.waitForTimeout(2500);
+  await shot(p, 'career-matrix-01-upload-card.png');
   await ctx.close();
 }
 

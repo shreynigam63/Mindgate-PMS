@@ -3,7 +3,7 @@
 **Screen:** My KRAs (`/my/kras`) — the lagoon-coloured panel above *Add KRA*
 **Who sees it:** every employee, on their own sheet; managers and HR see the same
 component on a report's sheet
-**Deployed as of:** commit `528c2e9` on `main`, live on pms.agentichumans.in
+**Deployed as of:** commit `a2725d2` on `main`, live on pms.agentichumans.in
 
 This is the panel that offers an employee the KRAs HR published for their role.
 It is a **menu**, not an instruction: it deliberately offers more than 100

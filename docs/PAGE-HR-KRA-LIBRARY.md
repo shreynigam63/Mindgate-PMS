@@ -3,7 +3,7 @@
 **Screen:** KRA Library (`/admin/kra-library`) — sidebar, under HR ADMIN
 **Who sees it:** `admin` and `hr` roles only; every endpoint additionally
 requires the `pms_admin` permission
-**Deployed as of:** commit `528c2e9` on `main`, live on pms.agentichumans.in
+**Deployed as of:** commit `a2725d2` on `main`, live on pms.agentichumans.in
 
 This is where HR publishes the shelves that the *My KRAs* picker offers. One
 row per KRA, keyed on **Designation** (and optionally **Department**).
