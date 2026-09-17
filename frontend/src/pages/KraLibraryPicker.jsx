@@ -100,6 +100,10 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
 
   const available = state.entries.filter((e) => !e.already_added);
   const chosen = state.entries.filter((e) => picked[e.id] && !e.already_added);
+  // Entries already on the sheet have no checkbox, so they are not part of
+  // "all" — including them would make the button promise more than it can
+  // tick and never reach the all-selected state.
+  const allPicked = available.length > 0 && available.every((e) => picked[e.id]);
   const total = chosen.reduce((t, e) => t + (Number(e.suggested_weight) || 0), 0);
   const rounded = Math.round(total * 100) / 100;
 
@@ -240,9 +244,19 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                   sheet must reach exactly 100 to submit, so showing the
                   selection's weight here turns "pick some KRAs, then find
                   out" into one decision made with the number in view. */}
+              {/* Over-100 is called out since Select all made it one
+                  click away — a shelf is a menu and deliberately offers
+                  more than a hundred points, so this is a normal thing to
+                  do and then trim, not an error. Adding is still allowed:
+                  the weights are editable on the sheet, and the sheet's own
+                  submit check is what enforces exactly 100. */}
               <span className="text-[11px] text-navy-500">
                 <b>{chosen.length} selected</b>
-                {chosen.length > 0 && <> · <span className={rounded === 100 ? 'text-emerald-600 font-semibold' : 'text-navy-500'}>{rounded}%</span> of 100</>}
+                {chosen.length > 0 && (
+                  <> · <span className={rounded === 100 ? 'text-emerald-600 font-semibold'
+                    : rounded > 100 ? 'text-amber-600 font-semibold' : 'text-navy-500'}>{rounded}%</span> of 100
+                    {rounded > 100 && <span className="text-amber-600"> — trim the weights after adding</span>}</>
+                )}
               </span>
               <div className="flex gap-2">
                 <button className="btn-sec" onClick={() => setOpen(false)}>Cancel</button>
@@ -256,7 +270,11 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
             {state.designation} · everything you add stays fully editable.
           </p>
           <Shelf entries={state.entries} picked={picked}
-            toggle={(id) => setPicked((p) => ({ ...p, [id]: !p[id] }))} />
+            toggle={(id) => setPicked((p) => ({ ...p, [id]: !p[id] }))}
+            allPicked={allPicked}
+            onSelectAll={() => setPicked(allPicked
+              ? {}
+              : Object.fromEntries(available.map((e) => [e.id, true])))} />
         </AiModal>
       )}
     </>
@@ -266,7 +284,8 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
 // Grouped by Parameter, in the order HR published them — the same grouping
 // the KRA sheet itself uses, so the picker and the thing it fills read the
 // same way round. Order is first appearance, not alphabetical: HR chose it.
-function Shelf({ entries, picked, toggle }) {
+function Shelf({ entries, picked, toggle, allPicked, onSelectAll }) {
+  const selectable = entries.filter((e) => !e.already_added).length;
   const groups = [];
   const byCat = new Map();
   for (const e of entries) {
@@ -276,6 +295,14 @@ function Shelf({ entries, picked, toggle }) {
   }
   return (
     <div className="space-y-1">
+      {onSelectAll && selectable > 0 && (
+        <div className="flex justify-end">
+          <button className="text-[11px] font-semibold text-lagoon-700 hover:text-lagoon-900"
+            onClick={onSelectAll}>
+            {allPicked ? 'Clear selection' : `Select all ${selectable}`}
+          </button>
+        </div>
+      )}
       {groups.map((cat) => (
         <div key={cat}>
           <p className="text-lagoon-700 font-semibold mt-2 mb-1">{cat === '—' ? 'No parameter' : cat}</p>
