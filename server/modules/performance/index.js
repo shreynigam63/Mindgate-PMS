@@ -1654,6 +1654,86 @@ router.get('/hr/kra-library/:designation', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Edit one published KRA in place.
+//
+// Asked for on 17 Sep: "KRAs and weightage should be editable for HR and
+// admin login under KRA library." Until now the only way to fix a typo in
+// a published KRA, or nudge a suggested weight, was to re-upload the
+// whole designation — which HR will not do for one word, so the typo
+// stays.
+//
+// Scoped to ONE row on purpose rather than a whole-shelf PUT. Two people
+// tidying different KRAs on the same shelf must not overwrite each other,
+// and a row edit cannot accidentally delete the rows it did not send.
+//
+// WHAT THIS DOES NOT TOUCH: KRAs already picked onto somebody's sheet.
+// Those are copies, taken at the moment the employee chose them — see the
+// picker's header comment for why. Editing the shelf changes what the
+// NEXT person is offered, and nothing that is already on an appraisal.
+router.put('/hr/kra-library/entry/:id', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const b = req.body || {};
+
+    const title = String(b.title == null ? '' : b.title).trim();
+    if (!title) return res.status(422).json({ error: 'The KRA text cannot be empty' });
+
+    // Blank is a real answer — "no suggested weight" — and is stored as
+    // NULL rather than 0, because 0% and "not specified" are different
+    // things to the employee reading the shelf.
+    let weight = null;
+    if (b.suggested_weight != null && String(b.suggested_weight).trim() !== '') {
+      weight = Number(b.suggested_weight);
+      if (!Number.isFinite(weight)) return res.status(422).json({ error: `Weightage must be a number — got "${b.suggested_weight}"` });
+      // A single KRA over 100 cannot be part of any sheet that totals 100,
+      // and a negative one is always a typo.
+      if (weight < 0 || weight > 100) return res.status(422).json({ error: `Weightage must be between 0 and 100 — got ${weight}` });
+      weight = Math.round(weight * 100) / 100;   // the column is numeric(6,2)
+    }
+
+    const before = (await db.query(
+      `SELECT * FROM pms.kra_library WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!before) return res.status(404).json({ error: 'KRA not found' });
+
+    const txt = (v) => (v == null || String(v).trim() === '' ? null : String(v).trim());
+    const row = (await db.query(
+      `UPDATE pms.kra_library
+          SET title=$3, measures=$4, description=$5, category=$6, suggested_weight=$7
+        WHERE id=$1 AND tenant_id=$2 RETURNING *`,
+      [req.params.id, T(req), title, txt(b.measures), txt(b.description), txt(b.category), weight])).rows[0];
+
+    // A published shelf is configuration that shapes everybody's
+    // objectives, so an edit to one is audited with what it was before.
+    audit(req, 'KRA_LIBRARY_ENTRY_EDITED', null, null, {
+      id: row.id, designation: row.designation, department: row.department,
+      before: { title: before.title, measures: before.measures, description: before.description,
+                category: before.category, suggested_weight: before.suggested_weight },
+      after: { title: row.title, measures: row.measures, description: row.description,
+               category: row.category, suggested_weight: row.suggested_weight },
+    });
+    res.json({ ok: true, entry: row });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Remove one published KRA from a shelf.
+//
+// The companion to editing: HR fixing a shelf by hand needs to be able to
+// drop a line that should not be there, without re-uploading the whole
+// designation. Same copy rule — it does not touch KRAs already on
+// anybody's sheet.
+router.delete('/hr/kra-library/entry/:id', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const row = (await db.query(
+      `DELETE FROM pms.kra_library WHERE id=$1 AND tenant_id=$2 RETURNING *`,
+      [req.params.id, T(req)])).rows[0];
+    if (!row) return res.status(404).json({ error: 'KRA not found' });
+    audit(req, 'KRA_LIBRARY_ENTRY_REMOVED', null, null, {
+      id: row.id, designation: row.designation, department: row.department, title: row.title });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Clearing a shelf needs its own route: an upload only replaces the
 // designations PRESENT in the file, so there is otherwise no way to
 // retire a role's shelf short of editing the database.

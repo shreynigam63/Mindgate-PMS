@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Library } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Library, Pencil, Save, X } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 
 // KRA Library — HR publishes a shelf of suggested KRAs per designation,
@@ -205,7 +205,8 @@ export default function KraLibraryPage() {
                     {/* The shelf these people are actually served: their own
                         department's if it has one, otherwise the fallback. */}
                     <ShelfDetail designation={r.designation}
-                      department={r.source === 'own' ? data.department : null} />
+                      department={r.source === 'own' ? data.department : null}
+                      onChanged={() => load(dept)} />
                   </div>
                 )}
               </div>
@@ -255,7 +256,8 @@ export default function KraLibraryPage() {
               <button className="text-rose-500" title={`Remove the ${s.designation} shelf`}
                 onClick={() => clearShelf(s.designation, s.department)}><Trash2 size={14} /></button>
             </div>
-            {openShelf === key && <ShelfDetail designation={s.designation} department={s.department} />}
+            {openShelf === key && <ShelfDetail designation={s.designation} department={s.department}
+              onChanged={() => load(dept)} />}
           </div>
           );
         })}
@@ -283,35 +285,131 @@ export default function KraLibraryPage() {
   );
 }
 
-function ShelfDetail({ designation, department }) {
+// The expanded shelf — and, since 17 Sep, where HR fixes it.
+//
+// Asked for directly: "KRAs and weightage should be editable for HR and
+// admin login under KRA library." Before this the only way to correct a
+// typo in a published KRA was to re-upload the entire designation, which
+// nobody does for one word — so the typo stayed on every employee's
+// shelf.
+//
+// One row at a time, saved on its own. Two people tidying different KRAs
+// on the same shelf cannot overwrite each other, and a row edit cannot
+// delete the rows it did not send.
+function ShelfDetail({ designation, department, onChanged }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState(null);
-  useEffect(() => {
+  const [editing, setEditing] = useState(null);   // the row id being edited
+  const [draft, setDraft] = useState({});
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
     setRows(null);
     api(`/pms/hr/kra-library/${encodeURIComponent(designation)}?department=${encodeURIComponent(department || '')}`)
       .then((r) => setRows(r.entries)).catch((e) => setErr(e.message));
-  }, [designation, department]);
+  };
+  useEffect(load, [designation, department]);
 
-  if (err) return <p className="px-4 pb-3 text-xs text-rose-600">{err}</p>;
+  const open = (r) => {
+    setErr(null);
+    setEditing(r.id);
+    setDraft({
+      title: r.title || '', category: r.category || '',
+      suggested_weight: r.suggested_weight == null ? '' : String(Number(r.suggested_weight)),
+      measures: r.measures || '', description: r.description || '',
+    });
+  };
+  const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+
+  const save = async (id) => {
+    setErr(null); setBusy(true);
+    try {
+      const r = await api(`/pms/hr/kra-library/entry/${id}`, { method: 'PUT', body: JSON.stringify(draft) });
+      setRows((rs) => rs.map((x) => (x.id === id ? r.entry : x)));
+      setEditing(null);
+      // The chips above this panel count KRAs and total the weights, so
+      // they go stale the moment a weight changes here.
+      if (onChanged) onChanged();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async (r) => {
+    if (!window.confirm(`Remove "${r.title}" from the ${designation} shelf?\n\n`
+      + 'KRAs already copied onto people\'s sheets are not affected.')) return;
+    setErr(null); setBusy(true);
+    try {
+      await api(`/pms/hr/kra-library/entry/${r.id}`, { method: 'DELETE' });
+      setRows((rs) => rs.filter((x) => x.id !== r.id));
+      if (onChanged) onChanged();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  if (err && !rows) return <p className="px-4 pb-3 text-xs text-rose-600">{err}</p>;
   if (!rows) return <p className="px-4 pb-3 text-xs text-navy-400">Loading…</p>;
+
+  const total = rows.reduce((n, r) => n + (Number(r.suggested_weight) || 0), 0);
 
   return (
     <div className="bg-navy-50 px-4 py-3 space-y-1.5">
+      {err && <p className="text-xs text-rose-600">{err}</p>}
       {rows.map((r) => (
         <div key={r.id} className="bg-white rounded-lg p-2.5 text-xs space-y-1">
-          <div className="flex items-start justify-between gap-2">
-            <p className="font-semibold flex-1">{r.title}</p>
-            {r.category && <span className="chip bg-lagoon-50 text-lagoon-700 shrink-0">{r.category}</span>}
-            <span className="text-navy-500 font-medium shrink-0">{r.suggested_weight == null ? '—' : `${Number(r.suggested_weight)}%`}</span>
-          </div>
-          {r.measures && <p className="text-navy-400 whitespace-pre-line"><b>Measures:</b> {r.measures}</p>}
-          {r.description && <p className="text-navy-500">{r.description}</p>}
+          {editing === r.id ? (
+            <div className="space-y-1.5">
+              <input className="inp !text-xs" value={draft.title} onChange={set('title')}
+                placeholder="KRA (S.M.A.R.T goal) *" />
+              <div className="flex flex-wrap items-center gap-2">
+                <input className="inp !text-xs !w-44" value={draft.category} onChange={set('category')}
+                  placeholder="Parameter" />
+                <div className="flex items-center gap-1">
+                  <input className="inp !text-xs !w-24 text-right" type="number" min="0" max="100" step="0.01"
+                    value={draft.suggested_weight} onChange={set('suggested_weight')} placeholder="wt" />
+                  <span className="text-navy-400">%</span>
+                </div>
+                {/* Blank is a real answer, not a zero — the shelf is a
+                    menu and some KRAs carry no suggested weight. */}
+                <span className="text-[11px] text-navy-400">blank = no suggested weight</span>
+              </div>
+              <textarea className="inp !text-xs" rows={2} value={draft.measures} onChange={set('measures')}
+                placeholder="KPIs / measures" />
+              <textarea className="inp !text-xs" rows={2} value={draft.description} onChange={set('description')}
+                placeholder="Comments (optional)" />
+              <div className="flex items-center gap-2">
+                <button className="btn-pri !py-1 !text-xs" disabled={busy} onClick={() => save(r.id)}>
+                  <Save size={12} className="inline mr-1" />Save
+                </button>
+                <button className="btn-sec !py-1 !text-xs" disabled={busy} onClick={() => setEditing(null)}>
+                  <X size={12} className="inline mr-1" />Cancel
+                </button>
+                <button className="text-[11px] text-rose-500 hover:text-rose-700 ml-auto"
+                  disabled={busy} onClick={() => remove(r)}>
+                  <Trash2 size={12} className="inline mr-1" />Remove from shelf
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-semibold flex-1">{r.title}</p>
+                {r.category && <span className="chip bg-lagoon-50 text-lagoon-700 shrink-0">{r.category}</span>}
+                <span className="text-navy-500 font-medium shrink-0">{r.suggested_weight == null ? '—' : `${Number(r.suggested_weight)}%`}</span>
+                <button className="text-navy-400 hover:text-navy-700 shrink-0" title="Edit this KRA"
+                  onClick={() => open(r)}><Pencil size={12} /></button>
+              </div>
+              {r.measures && <p className="text-navy-400 whitespace-pre-line"><b>Measures:</b> {r.measures}</p>}
+              {r.description && <p className="text-navy-500">{r.description}</p>}
+            </>
+          )}
         </div>
       ))}
       <p className="text-[11px] text-navy-400 pt-1">
         <Library size={11} className="inline mr-1" />
-        Re-upload this designation to change the shelf. Employees who have already picked from it
-        keep what they added — those are copies.
+        {rows.length} KRA{rows.length === 1 ? '' : 's'} · {Math.round(total * 100) / 100}% on the shelf.
+        Edit a line with the pencil, or re-upload the designation to replace the whole shelf.
+        {' '}<b>Employees who have already picked from this shelf keep what they added</b> — those
+        are copies, and editing here changes only what the next person is offered.
       </p>
     </div>
   );
