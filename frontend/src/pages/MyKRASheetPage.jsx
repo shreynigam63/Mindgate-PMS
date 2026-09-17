@@ -144,10 +144,40 @@ export default function MyKRASheetPage() {
           because this is the first line the employee reads after an
           unexpected change. */}
       {data.sheet.status === 'returned' && data.sheet.manager_comment && (
-        <div className="card p-3 border-rose-200 bg-rose-50 text-sm text-rose-700">
-          <b>{data.sheet.reopened_reason === 'profile_change'
-            ? 'Reopened after a change to your role:'
-            : 'Returned by your manager:'}</b> {data.sheet.manager_comment}
+        <div className="card p-3 border-rose-200 bg-rose-50 text-sm text-rose-700 space-y-2">
+          <p>
+            <b>{data.sheet.reopened_reason === 'profile_change'
+              ? 'Reopened after a change to your role:'
+              : 'Returned by your manager:'}</b> {data.sheet.manager_comment}
+          </p>
+          {/* The KRAs on the sheet are still the OLD role's. They are kept
+              rather than deleted on reopen, because a reopen is not always a
+              reason to throw work away — a department move may leave the
+              objectives entirely valid. But when it IS a new job, clearing
+              them was eight separate deletes before the library became
+              usable at all: the weights already total 100, so nothing new
+              fits until something goes. This makes it one action.
+              Deliberately NOT automatic on reopen, and it asks first: it
+              destroys objectives the employee wrote. */}
+          {data.sheet.reopened_reason === 'profile_change' && kras.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="btn-sec !text-rose-700 !border-rose-300 !py-1 !text-xs"
+                disabled={busy}
+                onClick={() => {
+                  if (!window.confirm(
+                    `Remove all ${kras.length} KRA${kras.length === 1 ? '' : 's'} from this sheet?\n\n`
+                    + 'They were written for your previous role. You can then pick fresh ones from '
+                    + 'the library for the role you hold now.\n\nThis cannot be undone.')) return;
+                  setKras([]);
+                }}>
+                <Trash2 size={12} className="inline mr-1" />
+                Clear the {kras.length} KRA{kras.length === 1 ? '' : 's'} from my previous role
+              </button>
+              <span className="text-[11px] text-rose-600">
+                Then Save, and pick from the library below. Keep them instead if they still apply.
+              </span>
+            </div>
+          )}
         </div>
       )}
       {/* Only while KRAs are editable. Offering a shelf to someone who

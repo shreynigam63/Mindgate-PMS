@@ -311,6 +311,61 @@ function withMidyear(kras, midyear) {
   }));
 }
 
+// Write a sheet's KRAs, PRESERVING THE ID of every row that is being kept.
+//
+// This used to be DELETE-everything + INSERT-everything, which handed every
+// KRA a brand-new uuid on every save. Three things point AT those uuids:
+//
+//   pms.midyear_checkins.self_entries / .manager_entries   (keyed by kra_id)
+//   pms.development_goals.kra_id
+//   pms.evidence.kra_id, pms.connects.kra_ids
+//
+// so one save — even fixing a typo in one KRA — silently orphaned every
+// mid-year rating and narrative the employee had written, every development
+// goal's link to the KRA it serves, and every piece of attached evidence.
+// Reported from the client's own instance: after changing KRAs on My KRAs,
+// the Mid-Year page showed the new KRAs with no ratings against them and
+// reported every one as still to be rated.
+//
+// The client already sends `id` back for rows it loaded, so:
+//   - an incoming row WITH an id that belongs to this sheet  -> UPDATE it
+//   - an incoming row without one (or with a foreign id)     -> INSERT
+//   - an existing row that was not sent back                 -> DELETE
+//
+// A foreign or invented id is treated as "new" rather than trusted, so
+// nothing can be pointed at another employee's sheet.
+async function writeKras(client, tenantId, sheetId, kras) {
+  const existing = new Set((await client.query(
+    `SELECT id FROM pms.kras WHERE sheet_id=$1`, [sheetId])).rows.map((r) => r.id));
+
+  const kept = [];
+  let i = 0;
+  for (const k of kras) {
+    if (!k.title || !String(k.title).trim()) continue;
+    const vals = [
+      String(k.title).trim(), k.description || null, Number(k.weight) || 0, k.measures || null,
+      k.category && String(k.category).trim() ? String(k.category).trim() : null, (i += 10),
+    ];
+    const id = k.id && existing.has(k.id) ? k.id : null;
+    if (id) {
+      await client.query(
+        `UPDATE pms.kras SET title=$1, description=$2, weight=$3, measures=$4, category=$5, sort_order=$6
+          WHERE id=$7 AND sheet_id=$8`, [...vals, id, sheetId]);
+      kept.push(id);
+    } else {
+      const row = (await client.query(
+        `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, category, sort_order)
+         VALUES ($7,$8,$1,$2,$3,$4,$5,$6) RETURNING id`, [...vals, tenantId, sheetId])).rows[0];
+      kept.push(row.id);
+    }
+  }
+
+  // Only the rows the employee actually removed.
+  const gone = [...existing].filter((id) => !kept.includes(id));
+  if (gone.length) await client.query(`DELETE FROM pms.kras WHERE sheet_id=$1 AND id = ANY($2::uuid[])`, [sheetId, gone]);
+  return { kept, removed: gone.length };
+}
+
 router.get('/my/kra-sheet', async (req, res) => {
   try {
     const c = await activeCycle(T(req));
@@ -379,24 +434,18 @@ router.put('/my/kra-sheet/kras', async (req, res) => {
     const kras = Array.isArray(req.body && req.body.kras) ? req.body.kras : [];
     const client = await db.getClient();
     try {
+      // writeKras() keeps the id of every KRA that is being kept, so a save
+      // no longer orphans the mid-year ratings, development-goal links and
+      // evidence that point at those ids. See its header.
+      //
       // category (the sheet's "Parameters" column) is carried through the
-      // rewrite. These handlers DELETE every KRA and re-insert, and the
-      // insert used to omit category — so one Save draft silently wiped
-      // every Parameters value the bulk import had stored, on a save that
-      // changed nothing else, because the page never had the field to
+      // write. This handler used to omit it, so one Save draft silently
+      // wiped every Parameters value the bulk import had stored, on a save
+      // that changed nothing else, because the page never had the field to
       // send back. Only review-assist read it, and its grouping quietly
       // degraded to null after the first save.
       await client.query('BEGIN');
-      await client.query(`DELETE FROM pms.kras WHERE sheet_id=$1`, [s.id]);
-      let i = 0;
-      for (const k of kras) {
-        if (!k.title || !String(k.title).trim()) continue;
-        await client.query(
-          `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, category, sort_order)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [T(req), s.id, String(k.title).trim(), k.description || null, Number(k.weight) || 0, k.measures || null,
-           k.category && String(k.category).trim() ? String(k.category).trim() : null, (i += 10)]);
-      }
+      await writeKras(client, T(req), s.id, kras);
       await client.query(`UPDATE pms.kra_sheets SET status='draft', updated_at=now() WHERE id=$1`, [s.id]);
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
@@ -690,24 +739,18 @@ router.put('/hr/kra-sheet/:employeeId/kras', async (req, res) => {
     const kras = Array.isArray(req.body && req.body.kras) ? req.body.kras : [];
     const client = await db.getClient();
     try {
+      // writeKras() keeps the id of every KRA that is being kept, so a save
+      // no longer orphans the mid-year ratings, development-goal links and
+      // evidence that point at those ids. See its header.
+      //
       // category (the sheet's "Parameters" column) is carried through the
-      // rewrite. These handlers DELETE every KRA and re-insert, and the
-      // insert used to omit category — so one Save draft silently wiped
-      // every Parameters value the bulk import had stored, on a save that
-      // changed nothing else, because the page never had the field to
+      // write. This handler used to omit it, so one Save draft silently
+      // wiped every Parameters value the bulk import had stored, on a save
+      // that changed nothing else, because the page never had the field to
       // send back. Only review-assist read it, and its grouping quietly
       // degraded to null after the first save.
       await client.query('BEGIN');
-      await client.query(`DELETE FROM pms.kras WHERE sheet_id=$1`, [s.id]);
-      let i = 0;
-      for (const k of kras) {
-        if (!k.title || !String(k.title).trim()) continue;
-        await client.query(
-          `INSERT INTO pms.kras (tenant_id, sheet_id, title, description, weight, measures, category, sort_order)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [T(req), s.id, String(k.title).trim(), k.description || null, Number(k.weight) || 0, k.measures || null,
-           k.category && String(k.category).trim() ? String(k.category).trim() : null, (i += 10)]);
-      }
+      await writeKras(client, T(req), s.id, kras);
       await client.query(`UPDATE pms.kra_sheets SET status='draft', updated_at=now() WHERE id=$1`, [s.id]);
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
