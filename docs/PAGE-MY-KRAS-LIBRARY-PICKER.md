@@ -29,6 +29,11 @@ manager. Everything added from it stays fully editable.
 > All three shots are the deployed build against a copy of the live
 > database, signed in as an Admin / Executive employee. Every number in
 > them is real.
+>
+> Re-shoot them after any change to this page with
+> `node docs/capture-screenshots.mjs`, against a restored copy of the live
+> database — never against production. The captions quote counts that come
+> out of the images, so a stale image makes this document lie.
 
 | Element | Rendered at | Value comes from |
 |---|---|---|
