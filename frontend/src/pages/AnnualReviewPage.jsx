@@ -19,6 +19,17 @@ export default function AnnualReviewPage() {
         {data.super50?.flag && <span className="chip bg-amber-100 text-amber-700"><Award size={11} className="inline mr-1" />Super 50</span>}
       </div>
       <p className="text-xs text-navy-400">Consolidates your KRA outcomes, target achievement progress, and Aspiring Career status for the year — brings together what's already recorded elsewhere into one view.</p>
+      {/* Said once, at the top, rather than only beside each blank. The
+          reason matters: the manager's number is not final until the
+          Delivery Head review and calibration have been through it, and
+          seeing a draft you later "lose" is worse than waiting. */}
+      {data.manager_ratings_withheld && (
+        <p className="text-xs bg-navy-50 text-navy-600 rounded-lg p-2">
+          <b>Your manager's ratings are not shown yet.</b> They are still going through the
+          Delivery Head review and calibration, where they can change. Everything appears here,
+          and on <b>My Rating</b>, once HR publishes the cycle.
+        </p>
+      )}
 
       <Section icon={Target} title="KRA Outcomes">
         {!data.kra.outcomes.length && <Empty text="No KRAs recorded for this cycle." />}
@@ -33,7 +44,12 @@ export default function AnnualReviewPage() {
                 <span className="text-navy-500">Mid-year: self <b>{k.midyear.self?.rating ?? '—'}</b> · manager <b>{k.midyear.manager?.rating ?? '—'}</b></span>
               )}
               <span>Self: <b>{k.self?.self_rating ?? '—'}</b> {k.self?.narrative && <span className="text-navy-500">— {k.self.narrative}</span>}</span>
-              <span>Manager: <b>{k.manager?.rating ?? '—'}</b> {k.manager?.comment && <span className="text-navy-500">— {k.manager.comment}</span>}</span>
+              {/* Withheld, not missing. An em-dash with no explanation
+                  reads as "your manager has not rated this yet", which is
+                  a different and usually untrue statement. */}
+              {data.manager_ratings_withheld
+                ? <span className="text-navy-400">Manager: <i>not shared until published</i></span>
+                : <span>Manager: <b>{k.manager?.rating ?? '—'}</b> {k.manager?.comment && <span className="text-navy-500">— {k.manager.comment}</span>}</span>}
             </div>
           </div>
         ))}
@@ -42,7 +58,10 @@ export default function AnnualReviewPage() {
       {data.midyear && (
         <Section icon={Clock} title="Mid-Year checkpoint">
           <p className="text-xs">
-            Self <b>{data.midyear.self_overall ?? '—'}</b> ({data.midyear.self_status}) · Manager <b>{data.midyear.manager_overall ?? '—'}</b> ({data.midyear.manager_status})
+            Self <b>{data.midyear.self_overall ?? '—'}</b> ({data.midyear.self_status}) · Manager{' '}
+            {data.manager_ratings_withheld
+              ? <i className="text-navy-400">not shared until published</i>
+              : <b>{data.midyear.manager_overall ?? '—'}</b>} ({data.midyear.manager_status})
           </p>
           <p className="text-[11px] text-navy-400 mt-1">
             The halfway reading, per KRA above. It is a reference point for the conversation, not an input to the final rating.

@@ -153,8 +153,22 @@ test('the Annual Review carries mid-year as the mid-point, alongside self and ma
     [tenantId, cycleId, empId, mgrId, JSON.stringify({ [kraA]: { rating: 5, comment: 'Agreed' } })]);
 
   const token = await login('mkp-emp@x.com');
+
+  // The manager's half is withheld from the employee until HR publishes
+  // (17 Sep, client instruction — see manager-rating-visibility.test.js).
+  // This test is about the SHAPE of the year on one row, so publish first
+  // and then assert it, rather than weakening what it checks.
+  const before = await api('/pms/my/annual-review', token);
+  assert.equal(before.body.manager_ratings_withheld, true, 'hidden until published');
+  assert.equal(before.body.kra.outcomes.find((k) => k.id === kraA).manager, null);
+
+  await db.query(
+    `INSERT INTO pms.employee_performance_history (tenant_id, employee_id, cycle_id, final_rating, rating_label)
+     VALUES ($1,$2,$3,4.5,'Exceeds') ON CONFLICT DO NOTHING`, [tenantId, empId, cycleId]);
+
   const r = await api('/pms/my/annual-review', token);
   assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.manager_ratings_withheld, false, 'released once published');
   const a = r.body.kra.outcomes.find((k) => k.id === kraA);
 
   // The shape of the year on one row: 5 at mid-year, 5 now.
