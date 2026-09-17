@@ -27,7 +27,7 @@ export const api = async (path, opts = {}) => {
 };
 
 export const PHASES = ['draft', 'kra_open', 'mid_year_review', 'self_appraisal', 'manager_eval', 'hod_eval', 'calibration', 'publish', 'closed'];
-export const phaseLabel = (p) => ({ draft: 'Draft', kra_open: 'KRA Setting and Growth Planning', growth_planning: 'Growth Planning', mid_year_review: 'Mid-Year Review', self_appraisal: 'Self-Appraisal', manager_eval: 'Manager Evaluation', hod_eval: 'Delivery Head Review', calibration: 'Calibration', publish: 'Publish', closed: 'Closed', cancelled: 'Cancelled' }[p] || p);
+export const phaseLabel = (p) => ({ draft: 'Draft', kra_open: 'KRA Setting and Growth Planning', growth_planning: 'Growth Planning', mid_year_review: 'Mid-Year Review', self_appraisal: 'Annual Review', manager_eval: 'Manager Evaluation', hod_eval: 'Delivery Head Review', calibration: 'Calibration', publish: 'Publish', closed: 'Closed', cancelled: 'Cancelled' }[p] || p);
 export const phaseColor = (p) => ({ draft: 'bg-navy-50 text-navy-600', kra_open: 'bg-blue-100 text-blue-700', growth_planning: 'bg-teal-100 text-teal-700', mid_year_review: 'bg-fuchsia-100 text-fuchsia-700', self_appraisal: 'bg-cyan-100 text-cyan-700', manager_eval: 'bg-amber-100 text-amber-700', hod_eval: 'bg-orange-100 text-orange-700', calibration: 'bg-purple-100 text-purple-700', publish: 'bg-emerald-100 text-emerald-700', closed: 'bg-navy-100 text-navy-600', cancelled: 'bg-rose-100 text-rose-700' }[p] || 'bg-navy-50 text-navy-600');
 
 // The sheet status as the EMPLOYEE should read it. pms.kra_sheets.status holds

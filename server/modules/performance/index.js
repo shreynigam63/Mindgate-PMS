@@ -194,7 +194,10 @@ const PHASE_OPEN_NOTICES = {
     { audience: 'all', title: 'Mid-Year Review is now open', body: 'Your Mid-Year Review is open — add your reflection and self-rating.' },
     { audience: 'managers', title: 'Mid-Year Review is now open for your team', body: 'Mid-Year Review is open for your direct reports.' },
   ],
-  self_appraisal: [{ audience: 'all', title: 'Self-Appraisal is now open', body: 'Self-Appraisal is now open for this cycle.' }],
+  // Label renamed with the screen (see App.jsx). The stored phase key
+  // stays 'self_appraisal' — renaming it would rewrite every cycle row,
+  // audit entry and notification ever sent, to change a word.
+  self_appraisal: [{ audience: 'all', title: 'Annual Review is now open', body: 'Annual Review is now open for this cycle.' }],
   manager_eval: [{ audience: 'managers', title: 'Team Evaluation is now open', body: 'Team Evaluation is open for your direct reports.' }],
   hod_eval: [{ audience: 'delivery_heads', title: 'Delivery Head Review is now open', body: 'Delivery Head Review is now open for your department.' }],
   calibration: [{ audience: 'hr_admin', title: 'Calibration is now open', body: 'Calibration is now open for this cycle.' }],

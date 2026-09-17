@@ -14,7 +14,7 @@ export default function AnnualReviewPage() {
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Annual Review</h2>
+        <h2 className="text-lg font-bold">Final Rating</h2>
         <span className="chip bg-purple-100 text-purple-700">{data.cycle.name}</span>
         {data.super50?.flag && <span className="chip bg-amber-100 text-amber-700"><Award size={11} className="inline mr-1" />Super 50</span>}
       </div>

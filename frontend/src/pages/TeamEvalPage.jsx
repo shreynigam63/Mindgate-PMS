@@ -86,7 +86,7 @@ function EvalEditor({ t, phase, scale, cycleType, reload }) {
     <div className="border-t border-navy-100 p-4 space-y-3">
       {t.self_status === 'submitted' && (
         <div className="bg-navy-50 border border-navy-100 rounded-lg p-3 text-xs space-y-1">
-          <p className="font-bold text-navy-500 uppercase text-[10px]">Their self-appraisal</p>
+          <p className="font-bold text-navy-500 uppercase text-[10px]">Their annual review</p>
           {t.went_well && <p><b>Went well:</b> {t.went_well}</p>}
           {t.could_improve && <p><b>Could improve:</b> {t.could_improve}</p>}
         </div>

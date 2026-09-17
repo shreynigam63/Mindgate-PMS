@@ -82,7 +82,7 @@ export default function ParameterAnalysisPage() {
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <div>
-        <h2 className="text-lg font-bold">Annual Review — Parameter Analysis</h2>
+        <h2 className="text-lg font-bold">Final Rating — Parameter Analysis</h2>
         <p className="text-xs text-navy-400">
           What the annual review conversation showed against each of the seven organisational parameters, read from the
           meeting transcript.
@@ -188,7 +188,7 @@ function AnalysisDetail({ data, onRetract, onRefresh, busy }) {
             <p className="text-[11px] text-navy-500">
               {/* The employee's own self-score against each parameter was
                   shown here too. Employee self-scoring has been removed
-                  from the Self-Appraisal, so no cycle can have one from
+                  from the Annual Review, so no cycle can have one from
                   here on and a permanent em-dash would only read as "the
                   employee scored nothing". The manager's scoring is what
                   the official annual rating is built from anyway. */}
