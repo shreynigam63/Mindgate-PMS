@@ -34,16 +34,57 @@ router.use(authenticate, apiPermissionParity);
 guardUuidParams(router);
 
 const T = (req) => req.user.tenant_id;
-const audit = (req, action, cycleId, employeeId, details) =>
-  db.query(`INSERT INTO pms.audit_log (tenant_id, actor_email, action, cycle_id, employee_id, details)
+// A super admin may approve their own records at every level, which the
+// client asked for explicitly. That is a legitimate power and also exactly
+// the kind of action an auditor will come looking for, so it is MARKED —
+// `self_action: true` whenever the actor is the subject.
+//
+// Stamped here, in the one helper every action in this module already goes
+// through, rather than at each approval route: a rule applied in twenty
+// places is a rule that will be missed in the twenty-first. It costs one
+// comparison and makes "show me every rating somebody awarded themselves"
+// a single query:
+//
+//   SELECT * FROM pms.audit_log WHERE details->>'self_action' = 'true';
+const audit = (req, action, cycleId, employeeId, details) => {
+  const selfAction = !!(employeeId && req.user && employeeId === req.user.id);
+  const body = selfAction ? { ...(details || {}), self_action: true } : details;
+  return db.query(`INSERT INTO pms.audit_log (tenant_id, actor_email, action, cycle_id, employee_id, details)
             VALUES ($1,$2,$3,$4,$5,$6)`,
-    [T(req), req.user.email, action, cycleId || null, employeeId || null, details ? JSON.stringify(details) : null])
+    [T(req), req.user.email, action, cycleId || null, employeeId || null, body ? JSON.stringify(body) : null])
     .catch(e => logger.warn('pms audit failed', { error: e.message }));
+};
 
 // Both resolvers now live in active-cycle.js, once, for every module. See
 // that file's header: "most recently created" meant a brand-new DRAFT cycle
 // became "the" active cycle and shut KRAs for the whole company.
 const { activeCycle, activeCycleForMidyear } = require('./active-cycle');
+
+// SUPER ADMIN: the team lists show the whole company, including the admin
+// themselves.
+//
+// Asked for on 18 Sep: "there should be a super admin access where they
+// should be able to access all tabs and can be able to approve at all
+// levels for any employees including their own as well."
+//
+// Every ACT-on-a-record guard in this file already lets pms_admin through —
+// "Not your report" has always been `manager_id !== me && !pms_admin`. What
+// was missing was the ability to SEE the record: four list queries were
+// hard-scoped to `manager_id = req.user.id` with no widening, so an admin
+// opening Team KRA Sheets, Team Evaluation, Team Development Plans or Team
+// Overview saw only their own direct reports. Everybody else in the company
+// was reachable by the API and invisible in the UI.
+//
+// Their OWN row was the case that could never appear at all: nobody is
+// their own manager, so no team list could ever contain them, and the one
+// thing the client explicitly asked for — approving your own — had no
+// route through the product even though the API would have allowed it.
+//
+// This does NOT grant anything new. It shows an admin the rows they were
+// already permitted to act on. The write guards are untouched.
+async function seesWholeCompany(req) {
+  return hasPermission(req.user, 'pms_admin');
+}
 
 
 // BR-6.6: "For employees flagged under BR-6.5 [Super 50], proactively
@@ -530,6 +571,8 @@ router.get('/team/kra-sheets', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, sheets: [] });
+    // Super admin sees every employee here, themselves included.
+    const wide = await seesWholeCompany(req);
     // Found live: a manager's direct reports could be entirely missing
     // from this list even after submitting a KRA. Two compounding causes,
     // both fixed here:
@@ -552,8 +595,11 @@ router.get('/team/kra-sheets', async (req, res) => {
               COALESCE((SELECT SUM(k.weight) FROM pms.kras k WHERE k.sheet_id=s.id), 0) AS total_weight
          FROM core.employees e
          LEFT JOIN pms.kra_sheets s ON s.cycle_id=$1 AND s.employee_id=e.id
-        WHERE e.tenant_id=$2 AND e.manager_id=$3 AND e.status='active' ORDER BY e.name`, [c.id, T(req), req.user.id]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, sheets: r.rows.map((row) => ({ ...row, status: row.status || 'not_started' })) });
+        WHERE e.tenant_id=$2 AND e.status='active'
+          ${wide ? '' : 'AND e.manager_id=$3'} ORDER BY e.name`,
+      wide ? [c.id, T(req)] : [c.id, T(req), req.user.id]);
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, scope: wide ? 'all_employees' : 'my_reports',
+               sheets: r.rows.map((row) => ({ ...row, status: row.status || 'not_started' })) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2504,13 +2550,17 @@ router.get('/team/development-plans', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, plans: [] });
+    // Super admin sees every employee here, themselves included.
+    const wide = await seesWholeCompany(req);
     const r = await db.query(
       `SELECT p.*, e.name AS employee_name, e.email AS employee_email,
               (SELECT COUNT(*)::int FROM pms.development_goals g WHERE g.plan_id=p.id) AS goal_count,
               (SELECT COALESCE(AVG(g.progress_pct),0)::int FROM pms.development_goals g WHERE g.plan_id=p.id) AS avg_progress
          FROM pms.development_plans p JOIN core.employees e ON e.id=p.employee_id
-        WHERE p.cycle_id=$1 AND p.manager_id=$2 ORDER BY e.name`, [c.id, req.user.id]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, plans: r.rows });
+        WHERE p.cycle_id=$1 ${wide ? '' : 'AND p.manager_id=$2'} ORDER BY e.name`,
+      wide ? [c.id] : [c.id, req.user.id]);
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase },
+               scope: wide ? 'all_employees' : 'my_reports', plans: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3037,6 +3087,8 @@ router.get('/team/evaluations', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, team: [] });
+    // Super admin sees every employee here, themselves included.
+    const wide = await seesWholeCompany(req);
     const r = await db.query(
       `SELECT e.id AS employee_id, e.name, e.department,
               sa.status AS self_status, sa.entries AS self_entries, sa.overall_self_rating,
@@ -3046,9 +3098,11 @@ router.get('/team/evaluations', async (req, res) => {
          FROM core.employees e
          LEFT JOIN pms.self_appraisals sa ON sa.cycle_id=$1 AND sa.employee_id=e.id
          LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id
-        WHERE e.tenant_id=$2 AND e.manager_id=$3 AND e.status='active' ORDER BY e.name`,
-      [c.id, T(req), req.user.id]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale, cycle_type: c.cycle_type }, team: r.rows });
+        WHERE e.tenant_id=$2 AND e.status='active'
+          ${wide ? '' : 'AND e.manager_id=$3'} ORDER BY e.name`,
+      wide ? [c.id, T(req)] : [c.id, T(req), req.user.id]);
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale, cycle_type: c.cycle_type },
+               scope: wide ? 'all_employees' : 'my_reports', team: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -4720,6 +4774,8 @@ router.get('/team/overview', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, rows: [] });
+    // Super admin sees every employee here, themselves included.
+    const wide = await seesWholeCompany(req);
     const r = await db.query(
       `SELECT e.id AS employee_id, e.name, e.department,
               COALESCE(ks.status, 'not_started') AS kra_status,
@@ -4734,9 +4790,11 @@ router.get('/team/overview', async (req, res) => {
          LEFT JOIN people.career_paths cp ON cp.tenant_id=e.tenant_id AND cp.employee_id=e.id
          LEFT JOIN pms.self_appraisals sa ON sa.cycle_id=$3 AND sa.employee_id=e.id
          LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$3 AND me.employee_id=e.id
-        WHERE e.tenant_id=$2 AND e.manager_id=$4 AND e.status='active' ORDER BY e.name`,
-      [c.opens_at || null, T(req), c.id, req.user.id]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, rows: r.rows });
+        WHERE e.tenant_id=$2 AND e.status='active'
+          ${wide ? '' : 'AND e.manager_id=$4'} ORDER BY e.name`,
+      wide ? [c.opens_at || null, T(req), c.id] : [c.opens_at || null, T(req), c.id, req.user.id]);
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase },
+               scope: wide ? 'all_employees' : 'my_reports', rows: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
