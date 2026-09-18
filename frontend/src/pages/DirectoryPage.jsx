@@ -17,6 +17,93 @@ const SORT_FIELDS = {
   role: 'role',
 };
 
+// The KRA auto-assign half of the import report.
+//
+// Reads both vocabularies deliberately: the dry run reports what the commit
+// WOULD do, the commit reports what it DID, and HR reads the same block in
+// both places rather than learning a second layout on the second click.
+//
+// Three things are worth a chip, and they are not the same thing:
+//   - people who got KRAs                       (the feature worked)
+//   - people whose designation has no shelf     (HR must publish one)
+//   - shelves whose weights do not total 100    (those people cannot submit)
+// The last one is the quiet failure: the KRAs arrive and look fine, and the
+// employee only discovers the problem when the submit button refuses them.
+function ImportKraAssign({ report }) {
+  const done = !!report.committed;
+  const assigned = report.kras_to_auto_assign || report.kras_auto_assigned || [];
+  const skipped = report.kras_not_auto_assigned || [];
+  const noShelf = report.kras_with_no_shelf
+    || skipped.filter((x) => x.reason === 'no_shelf_for_designation');
+  // Everything else the assign declined to do — an existing sheet with KRAs
+  // already on it, no open cycle, an error. Never hidden: a new hire with an
+  // empty sheet looks identical whether the rule skipped them on purpose or
+  // the code broke.
+  const otherSkips = skipped.filter((x) => x.reason !== 'no_shelf_for_designation');
+  const badWeights = assigned.filter((x) => x.weights_ok === false);
+  if (!assigned.length && !noShelf.length && !otherSkips.length) return null;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap gap-1.5">
+        {assigned.length > 0 && (
+          <span className="chip bg-lagoon-50 text-lagoon-700">
+            {assigned.length} new hire{assigned.length === 1 ? '' : 's'} {done ? 'given' : 'will get'} KRAs from the library
+          </span>)}
+        {noShelf.length > 0 && (
+          <span className="chip bg-amber-100 text-amber-700">
+            {noShelf.length} {done ? 'got no KRAs' : 'will get none'} — no library shelf for their designation
+          </span>)}
+        {badWeights.length > 0 && (
+          <span className="chip bg-amber-100 text-amber-700">
+            {badWeights.length} shelf weight{badWeights.length === 1 ? '' : 's'} do not total 100% — they cannot submit until fixed
+          </span>)}
+        {otherSkips.length > 0 && (
+          <span className="chip bg-navy-50 text-navy-600">{otherSkips.length} skipped</span>)}
+      </div>
+      {!!noShelf.length && (
+        <details className="text-[11px]">
+          <summary className="cursor-pointer text-amber-700 font-semibold">
+            Designations with no KRA library shelf — publish one, then re-import or assign by hand
+          </summary>
+          <div className="pt-1 space-y-0.5">
+            {noShelf.map((p, i) => (
+              <p key={`${p.email}-${i}`} className="text-navy-500">
+                <b>{p.designation || 'no designation'}</b>
+                {p.department ? ` · ${p.department}` : ''} — {p.email}
+              </p>
+            ))}
+          </div>
+        </details>
+      )}
+      {!!badWeights.length && (
+        <details className="text-[11px]">
+          <summary className="cursor-pointer text-amber-700 font-semibold">
+            Shelves whose weights do not total 100% — fix them in the KRA Library
+          </summary>
+          <div className="pt-1 space-y-0.5">
+            {badWeights.map((p, i) => (
+              <p key={`${p.email}-w${i}`} className="text-navy-500">
+                <b>{p.designation}</b>{p.department ? ` · ${p.department}` : ''} — {p.kras} KRAs totalling {p.weight_total}%
+              </p>
+            ))}
+          </div>
+        </details>
+      )}
+      {!!otherSkips.length && (
+        <details className="text-[11px]">
+          <summary className="cursor-pointer text-navy-500 font-semibold">Why the rest were skipped</summary>
+          <div className="pt-1 space-y-0.5">
+            {otherSkips.map((p, i) => (
+              <p key={`${p.email}-s${i}`} className="text-navy-500">{p.email} — {p.reason}{p.error ? `: ${p.error}` : ''}</p>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export default function DirectoryPage() {
   const [rows, setRows] = useState(null);
   const [report, setReport] = useState(null);
@@ -171,6 +258,15 @@ export default function DirectoryPage() {
                 </div>
               </details>
             )}
+            {/* New hires are given their KRAs from the library shelf for
+                their department and designation. Reported on BOTH passes
+                under the same block: the dry run says what the commit
+                would do (kras_to_auto_assign), the commit says what it
+                did (kras_auto_assigned). HR should learn that a
+                designation has no shelf BEFORE those people are in the
+                system with empty sheets, which is the whole point of
+                showing it on the validate pass too. */}
+            <ImportKraAssign report={report} />
             {(report.errors || []).map((e, i) => <p key={i} className="text-rose-600">line {e.line}: {e.error}</p>)}
             {(report.warnings || []).map((w, i) => <p key={i} className="text-amber-700">line {w.line}: {w.warning}</p>)}
           </div>
