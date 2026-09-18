@@ -35,6 +35,10 @@ export default function TeamKraSheetsPage() {
     <div className="space-y-4 max-w-4xl mx-auto">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-bold">Team KRA Sheets</h2>
+        {data&&data.scope === 'all_employees' && (
+          <span className="chip bg-violet-50 text-violet-700" title="You hold super admin, so these lists show every employee — including yourself — and you can act at any level on any of them.">
+            all employees · super admin
+          </span>)}
         <span className="chip bg-navy-50 text-navy-600">{data.cycle.name}</span>
         {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting your review</span>}
       </div>
