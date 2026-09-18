@@ -35,6 +35,7 @@ const logger = require('../../core/logger');
 const { notify } = require('../../core/notifications');
 const pm = require('./phase-machine');
 const sched = require('./reminder-schedule');
+const { activeCycle } = require('./active-cycle');
 
 // The engine looks back over the current April–March year and the one
 // before it. Two years, because a quarter that ends in March is reminded
@@ -303,10 +304,10 @@ async function runChase(tenantId, cycle, today, kindName) {
 // rather than only ever on whatever today happens to be.
 async function runReminders(tenantId, now = new Date()) {
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const cycle = (await db.query(
-    `SELECT id, phase, opens_at FROM pms.cycles
-      WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled')
-      ORDER BY created_at DESC LIMIT 1`, [tenantId])).rows[0] || null;
+  // The shared resolver, not a local copy: a DRAFT cycle created for next
+  // year used to win here too, which would have pointed the whole nightly
+  // sweep at a cycle nobody was working in.
+  const cycle = await activeCycle(tenantId);
 
   // The replay floor. Without one, a first run in March would fire every
   // reminder scheduled since April at once. The cycle's own start is the

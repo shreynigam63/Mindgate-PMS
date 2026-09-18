@@ -40,20 +40,14 @@ const logger = require('../../core/logger');
 // objectives somebody is already being appraised against.
 const FILLABLE = ['draft', 'returned'];
 
-// The same filter activeCycle() uses in index.js, deliberately duplicated
-// rather than imported: index.js requires THIS file, so reaching back the
-// other way is a cycle. profile-change.js duplicates the same predicate for
-// the same reason. 'draft' is INCLUDED on purpose — it is what the
-// employee's own page resolves to, so KRAs assigned now are already waiting
-// on the sheet the day HR opens the cycle, rather than silently going to a
-// cycle nobody is looking at.
-const LIVE_PHASES = "phase NOT IN ('closed','cancelled')";
+// The shared resolver — the same one the employee's own page uses, so the
+// KRAs assigned here always land on the cycle they will actually see. This
+// file no longer carries its own copy of the predicate: that copy had the
+// draft-cycle bug too, and a new hire's KRAs going to an unstarted cycle
+// would have been invisible to everyone.
+const { activeCycle } = require('./active-cycle');
 
-async function activeCycleFor(tenantId) {
-  return (await db.query(
-    `SELECT id, phase FROM pms.cycles WHERE tenant_id=$1 AND ${LIVE_PHASES}
-      ORDER BY created_at DESC LIMIT 1`, [tenantId])).rows[0] || null;
-}
+const activeCycleFor = activeCycle;
 
 // Is department matching switched on for this tenant? Mirrors
 // kraLibraryScope() in index.js — same setting, same default.

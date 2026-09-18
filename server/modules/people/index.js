@@ -13,6 +13,7 @@ const { guardUuidParams } = require('../../core/http');
 const { apiPermissionParity, hasPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const pm = require('../performance/phase-machine');
+const { activeCycle } = require('../performance/active-cycle');
 // The spreadsheet readers live in core/employees because the employee
 // importer needed them first; they are format helpers, not employee
 // logic, and every importer since has reused them rather than carrying a
@@ -44,10 +45,11 @@ const adminOnly = async (req, res) => {
 // to gate Career Path editing to the growth_planning phase per the
 // explicit "lock KRA, then open Development Plan and Career Path" request.
 async function activeCyclePhase(tenantId) {
-  const r = await db.query(
-    `SELECT phase FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled') ORDER BY created_at DESC LIMIT 1`,
-    [tenantId]);
-  return r.rows[0] ? r.rows[0].phase : null;
+  // The shared resolver rather than a local copy of the query: a DRAFT
+  // cycle used to win here, which gated Aspiring Career on the phase of a
+  // cycle nobody was working in. See performance/active-cycle.js.
+  const c = await activeCycle(tenantId);
+  return c ? c.phase : null;
 }
 
 // Aspiring Career opens on the SAME trigger as the development plan — the
@@ -58,9 +60,7 @@ async function activeCyclePhase(tenantId) {
 // The rule itself lives in performance/phase-machine (pure, no db) so the
 // two modules cannot drift apart; this reads the one fact that file cannot.
 async function growthWindowFor(tenantId, employeeId) {
-  const c = (await db.query(
-    `SELECT id, phase FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled')
-      ORDER BY created_at DESC LIMIT 1`, [tenantId])).rows[0];
+  const c = await activeCycle(tenantId);
   if (!c) return { phase: null, window: pm.growthEditable(null, {}) };
   const sheet = (await db.query(
     `SELECT status FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
