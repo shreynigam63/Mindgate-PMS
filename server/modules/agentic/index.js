@@ -91,26 +91,12 @@ function renderKraBullets(byKra, key, crossCutting) {
   return blocks.join('\n\n');
 }
 
-async function activeCycle(tenantId) {
-  const r = await db.query(
-    `SELECT * FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled') ORDER BY created_at DESC LIMIT 1`, [tenantId]);
-  return r.rows[0] || null;
-}
-
-// Same reasoning as modules/performance/index.js's activeCycleForMidyear:
-// prefer a cycle actually at/past mid_year_review over blind "most
-// recently created," so the AI draft's KRA/connect lookups don't
-// silently scope against the wrong cycle when several non-closed test
-// cycles exist for one tenant.
-async function activeCycleForMidyear(tenantId) {
-  const passed = (await db.query(
-    `SELECT * FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled')
-       AND phase = ANY($2::text[])
-     ORDER BY (phase='mid_year_review') DESC, created_at DESC LIMIT 1`,
-    [tenantId, ['mid_year_review', 'self_appraisal', 'manager_eval', 'hod_eval', 'calibration', 'publish']])).rows[0];
-  if (passed) return passed;
-  return activeCycle(tenantId);
-}
+// Both of these used to be copies of the performance module's resolvers,
+// and carried the same bug: a brand-new DRAFT cycle became "the" active
+// cycle, so an AI draft would scope its KRA and connect lookups against a
+// cycle nobody was working in. One implementation now, in the leaf that
+// owns pms.cycles.
+const { activeCycle, activeCycleForMidyear } = require('../performance/active-cycle');
 
 // 1) Appraisal summary draft — for the MANAGER writing an evaluation.
 // Input: the employee's KRAs + their self-appraisal narratives. Output:
@@ -1374,7 +1360,7 @@ router.post('/parameter-analysis', async (req, res) => {
     await requireConsent(T(req), m.employee_id);
 
     const c = (await db.query(`SELECT * FROM pms.cycles WHERE id=$1 AND tenant_id=$2`, [m.cycle_id, T(req)])).rows[0]
-      || (await db.query(`SELECT * FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled') ORDER BY created_at DESC LIMIT 1`, [T(req)])).rows[0];
+      || await activeCycle(T(req));   // same resolver as everywhere else
     if (!c) return res.status(409).json({ error: 'No cycle to attach this analysis to' });
 
     const params = (await db.query(

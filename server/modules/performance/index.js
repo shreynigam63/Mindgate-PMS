@@ -40,33 +40,11 @@ const audit = (req, action, cycleId, employeeId, details) =>
     [T(req), req.user.email, action, cycleId || null, employeeId || null, details ? JSON.stringify(details) : null])
     .catch(e => logger.warn('pms audit failed', { error: e.message }));
 
-async function activeCycle(tenantId, type = null) {
-  const r = await db.query(
-    `SELECT * FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled')
-      ${type ? "AND cycle_type=$2" : ''} ORDER BY created_at DESC LIMIT 1`,
-    type ? [tenantId, type] : [tenantId]);
-  return r.rows[0] || null;
-}
+// Both resolvers now live in active-cycle.js, once, for every module. See
+// that file's header: "most recently created" meant a brand-new DRAFT cycle
+// became "the" active cycle and shut KRAs for the whole company.
+const { activeCycle, activeCycleForMidyear } = require('./active-cycle');
 
-// Found live: with several non-closed test cycles under one tenant (easy
-// to accumulate — draft cycles started and abandoned, etc.), plain
-// activeCycle()'s "most recently CREATED" heuristic can pick a newer,
-// earlier-phase cycle instead of the one HR actually just advanced to
-// mid_year_review — silently resolving Mid-Year Review (and its AI
-// draft's KRA/connect lookups) against the WRONG cycle, so the employee
-// sees "not editable" even though the right cycle is clearly open.
-// Prefers whichever non-closed cycle is CURRENTLY at, or has already
-// passed, mid_year_review; only falls back to plain activeCycle() (e.g.
-// showing "not open yet" correctly) when none has reached it yet.
-async function activeCycleForMidyear(tenantId) {
-  const passed = (await db.query(
-    `SELECT * FROM pms.cycles WHERE tenant_id=$1 AND phase NOT IN ('closed','cancelled')
-       AND phase = ANY($2::text[])
-     ORDER BY (phase='mid_year_review') DESC, created_at DESC LIMIT 1`,
-    [tenantId, ['mid_year_review', 'self_appraisal', 'manager_eval', 'hod_eval', 'calibration', 'publish']])).rows[0];
-  if (passed) return passed;
-  return activeCycle(tenantId);
-}
 
 // BR-6.6: "For employees flagged under BR-6.5 [Super 50], proactively
 // alert HR/Management to consider retention actions." Fans out an in-app
