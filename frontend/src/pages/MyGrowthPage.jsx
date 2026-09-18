@@ -55,6 +55,13 @@ function DevelopmentPlanCard() {
   // guess at the comment text (migration 039), matching the KRA sheet.
   const byRoleChange = data.plan.reopened_reason === 'profile_change';
   const byHr = data.plan.reopened_reason === 'hr_reopen';
+  // The fourth reason, and the one the client reported missing: the plan was
+  // reopened because the KRAs UNDER it changed. Distinct from
+  // 'profile_change' on purpose — that fires when HR edits somebody's job,
+  // this fires later, when the employee actually resubmits a different set
+  // of KRAs, which is the moment their goals stop matching. See
+  // server/modules/performance/kra-goal-sync.js.
+  const byKraChange = data.plan.reopened_reason === 'kra_changed';
 
   return (
     <div className="card p-4 space-y-3">
@@ -63,6 +70,7 @@ function DevelopmentPlanCard() {
         <span className={`chip ${STATUS_COLOR[data.plan.status]}`}>
           {data.plan.status !== 'returned' ? data.plan.status
             : byRoleChange ? 'reopened — role changed'
+            : byKraChange ? 'reopened — KRAs changed'
             : byHr ? 'reopened by HR'
             : 'returned by manager'}
         </span>
@@ -70,6 +78,7 @@ function DevelopmentPlanCard() {
       {data.plan.status === 'returned' && data.plan.manager_comment && (
         <p className="text-xs bg-rose-50 text-rose-700 rounded-lg p-2">
           <b>{byRoleChange ? 'Reopened after a change to your role:'
+            : byKraChange    ? 'Reopened because your KRAs changed:'
             : byHr           ? 'Reopened by HR:'
             : 'Returned by your manager:'}</b>
           {' '}{data.plan.manager_comment}
@@ -92,6 +101,11 @@ function DevelopmentPlanCard() {
             ? <>Your role changed, so this plan is <b>open for edits</b> again even though the
                 cycle has moved on to {phaseLabel(data.cycle.phase)}. Review the goals and your
                 career aspiration against the job you now hold, then submit again.</>
+            : byKraChange
+            ? <>Your KRAs changed, so this plan is <b>open for edits</b> again even though the
+                cycle has moved on to {phaseLabel(data.cycle.phase)}. The goals marked below no
+                longer serve a KRA on your sheet — point them at your current KRAs, then submit
+                again.</>
             : byHr
             ? <>HR reopened this plan, so it is <b>open for edits</b> even though the cycle has
                 moved on to {phaseLabel(data.cycle.phase)}. Make the changes they asked for, then
@@ -249,6 +263,22 @@ function GoalList({ goals: initial, editable, onSaved, kras = [] }) {
   const remove = (i) => setGoals(gs => gs.filter((_, j) => j !== i));
   const add = () => setGoals(gs => [...gs, { title: '', description: '', target_date: '', progress_pct: 0, kra_id: null, serves_kra: null }]);
 
+  // Which KRA titles are on the sheet RIGHT NOW. Hoisted out of the
+  // read-only branch because the editable view needs it just as much: a
+  // plan reopened because the KRAs changed opens straight into the editor,
+  // and it was the one view that showed no sign of which goals were the
+  // problem — so the employee was invited to fix something unmarked.
+  //
+  // Matching is on the title, not kra_id: a null id is the normal state for
+  // every goal written before the id-preserving save landed (see
+  // migration 041), so treating null as stale would flag almost everything.
+  const onSheetTitles = new Set((kras || []).map((k) => String(k.title || '').trim().toLowerCase()));
+  // An empty sheet means "nothing to compare against", not "all stale".
+  const isStaleServes = (name) => {
+    const n = String(name || '').trim().toLowerCase();
+    return !!n && onSheetTitles.size > 0 && !onSheetTitles.has(n);
+  };
+
   const saveAll = async () => {
     setErr(null);
     // Checked here as well as on the server so the employee is told which
@@ -288,9 +318,10 @@ function GoalList({ goals: initial, editable, onSaved, kras = [] }) {
     // were live is how a plan describing the old job gets resubmitted
     // without anyone noticing. Found on the client's instance: five goals
     // still headed by KRAs that had been replaced.
-    const onSheet = new Set((kras || []).map((k) => String(k.title || '').trim().toLowerCase()));
-    const isStale = (name) => name !== 'Not tied to a KRA'
-      && onSheet.size > 0 && !onSheet.has(name.toLowerCase());
+    // 'Not tied to a KRA' is this view's own heading for goals with no
+    // serves_kra at all, so it must be excluded before asking whether the
+    // name is on the sheet — it never is.
+    const isStale = (name) => name !== 'Not tied to a KRA' && isStaleServes(name);
     const staleCount = groups.filter((g) => isStale(g.name)).reduce((n, g) => n + g.goals.length, 0);
     return (
       <div className="space-y-2">
@@ -298,8 +329,9 @@ function GoalList({ goals: initial, editable, onSaved, kras = [] }) {
         {staleCount > 0 && (
           <p className="text-xs bg-amber-50 text-amber-800 rounded-lg p-2">
             <b>{staleCount} goal{staleCount === 1 ? '' : 's'} below still serve{staleCount === 1 ? 's' : ''} a KRA
-            that is no longer on your sheet.</b> Your KRAs changed after these were written. Ask your
-            manager or HR to reopen this plan if you need to point them at your current KRAs.
+            that is no longer on your sheet.</b> Your KRAs changed after these were written. This plan
+            reopens by itself the next time your KRAs are submitted — or ask HR to reopen it now if
+            you want to fix them sooner.
           </p>
         )}
         {groups.map(grp => (
@@ -414,6 +446,18 @@ function GoalList({ goals: initial, editable, onSaved, kras = [] }) {
               <option value="">Not tied to a KRA</option>
               {kras.map((k) => <option key={k.id} value={k.id}>{k.title}</option>)}
             </select>
+            {/* The goal named a KRA that has since left the sheet, so the
+                select above has fallen back to "Not tied to a KRA" and the
+                only record of what it used to serve is the frozen title.
+                Printing it here is what makes the reopen banner's "the goals
+                marked below" true, and what lets the employee re-point the
+                goal instead of guessing why it is unset. */}
+            {isStaleServes(g.serves_kra) && (
+              <p className="text-[11px] text-amber-700 mt-1">
+                Previously served <b>{g.serves_kra}</b>, which is no longer on your KRA sheet.
+                Pick the KRA it serves now.
+              </p>
+            )}
             {!kras.length && <p className="text-[11px] text-navy-400 mt-1">No approved KRAs on this cycle yet — goals can still be written.</p>}
           </div>
           <div>

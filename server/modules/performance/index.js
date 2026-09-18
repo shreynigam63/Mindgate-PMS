@@ -25,6 +25,7 @@ const { isConnectDue, shouldRemindAgain, computeCadenceProgress } = require('./c
 const { runReminders } = require('./reminders');
 const { parseCsv, parseExcelSheets, detectFormat } = require('../../core/employees');
 const pm = require('./phase-machine');
+const goalSync = require('./kra-goal-sync');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -511,10 +512,17 @@ router.post('/my/kra-sheet/submit', async (req, res) => {
               submitted_at=now(), updated_at=now() WHERE id=$1`, [s.id]);
     audit(req, 'KRA_SUBMITTED', c.id, req.user.id, { kras: kras.length });
     const n = await notifySheetSubmitted(req, T(req), req.user.id, req.user.name, false);
+    // THIS is the moment the employee's KRAs actually become different ones
+    // — not the profile change that sent them back to refill. Goals aimed at
+    // KRAs that are no longer here reopen the growth plan now; see
+    // kra-goal-sync.js for why the two moments are not the same.
+    const g = await goalSync.syncGoalsToKrasSafely(T(req), c.id, req.user.id, { actorEmail: req.user.email });
     // Surfaced rather than swallowed: a sheet that reaches nobody is the
     // flow quietly stalling, and the employee is the only one who can see
     // this response.
-    res.json({ ok: true, manager_notified: n.notified, ...(n.reason ? { warning: `Submitted, but no manager was notified — ${n.reason}. Ask HR to set your reporting manager.` } : {}) });
+    res.json({ ok: true, manager_notified: n.notified,
+      growth_plan_reopened: g.reopened, goals_relinked: g.relinked,
+      ...(n.reason ? { warning: `Submitted, but no manager was notified — ${n.reason}. Ask HR to set your reporting manager.` } : {}) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -819,7 +827,13 @@ router.post('/hr/kra-sheet/:employeeId/submit', async (req, res) => {
     // queue with nothing telling them it had arrived — the flow stalled
     // precisely for the people who most needed HR to step in.
     const n = await notifySheetSubmitted(req, T(req), req.params.employeeId, req.user.name, true);
-    res.json({ ok: true, manager_notified: n.notified, ...(n.reason ? { warning: `Submitted, but no manager was notified — ${n.reason}.` } : {}) });
+    // Same rule as the employee's own submit: HR entering somebody's KRAs
+    // for them changes those KRAs just as much, so a growth plan left
+    // pointing at the previous set has to come back to its owner.
+    const g = await goalSync.syncGoalsToKrasSafely(T(req), c.id, req.params.employeeId, { actorEmail: req.user.email });
+    res.json({ ok: true, manager_notified: n.notified,
+      growth_plan_reopened: g.reopened, goals_relinked: g.relinked,
+      ...(n.reason ? { warning: `Submitted, but no manager was notified — ${n.reason}.` } : {}) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
