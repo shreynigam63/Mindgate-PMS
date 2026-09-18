@@ -490,6 +490,42 @@ async function pendingManagerRoleGrants(tenantId, rows) {
   return candidates.filter((e) => !existing.includes(e));
 }
 
+// What the commit WOULD assign, without writing anything. Read-only by
+// construction: it only calls shelfFor(), which is a SELECT.
+//
+// "New" is decided the same way the commit decides it — not on file yet —
+// so the dry run and the commit can never disagree about who is a new hire.
+async function previewAutoAssign(tenantId, rows) {
+  const { shelfFor } = require('../modules/performance/kra-autoassign');
+  const emails = rows.map((r) => String(r.email || '').toLowerCase());
+  const known = new Set((await db.query(
+    `SELECT LOWER(email) AS email FROM core.employees
+      WHERE tenant_id=$1 AND LOWER(email) = ANY($2::text[])`, [tenantId, emails])).rows
+      .map((r) => r.email));
+
+  const willAssign = [];
+  const noShelf = [];
+  // One lookup per distinct department+designation pair, not per row: an
+  // HRMS export is the whole company and most people share a shelf.
+  const seen = new Map();
+  for (const r of rows) {
+    if (known.has(String(r.email || '').toLowerCase())) continue;
+    const key = `${String(r.department || '').trim().toLowerCase()}|${String(r.designation || '').trim().toLowerCase()}`;
+    if (!seen.has(key)) seen.set(key, await shelfFor(tenantId, r));
+    const shelf = seen.get(key);
+    if (shelf.rows.length) {
+      const total = Number(shelf.rows.reduce((s, k) => s + (Number(k.suggested_weight) || 0), 0).toFixed(2));
+      willAssign.push({ email: r.email, designation: r.designation, department: r.department,
+        kras: shelf.rows.length, matched_scope: shelf.scope, weight_total: total,
+        weights_ok: Math.abs(total - 100) < 0.01 });
+    } else {
+      noShelf.push({ email: r.email, designation: r.designation, department: r.department, reason: shelf.reason });
+    }
+  }
+  return { new_hires: willAssign.length + noShelf.length,
+           kras_to_auto_assign: willAssign, kras_with_no_shelf: noShelf };
+}
+
 async function loadEmployees(tenantId, rows, opts = {}) {
   // Required here rather than at the top of the file: see the header of
   // profile-change.js for why core reaches into the performance module for
@@ -505,6 +541,10 @@ async function loadEmployees(tenantId, rows, opts = {}) {
   const reopenAfterCommit = [];
   const reopenedPlans = [];
   const reopenedMidyear = [];
+  // New hires to give KRAs to, on the same after-the-commit rule and for
+  // the same reason. Collected as emails because their ids do not exist
+  // until pass 1 has run; resolved once, after the commit.
+  const newHireEmails = [];
   try {
     await client.query('BEGIN');
     // Pass 0: what these people looked like BEFORE the file landed, so
@@ -522,6 +562,11 @@ async function loadEmployees(tenantId, rows, opts = {}) {
 
     // Pass 1: upsert people without manager links.
     for (const r of rows) {
+      // Appearing for the first time: not in the pass-0 snapshot. The same
+      // signal pass 4 uses to tell a real designation change from a
+      // re-import — which is what keeps a re-import of the whole company
+      // from "onboarding" everyone in it.
+      if (!beforeByEmail.has(String(r.email || '').toLowerCase())) newHireEmails.push(r.email);
       await client.query(
         `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -667,10 +712,38 @@ async function loadEmployees(tenantId, rows, opts = {}) {
       }
     }
 
+    // New hires get their KRAs from the library shelf for their department
+    // and designation, landing in 'draft' so they review and submit them —
+    // manager approval still applies, and approval needs a submission a
+    // person actually made. Per employee, so one failure cannot lose the
+    // rest, and EVERY skip carries a reason: an employee quietly left with
+    // an empty sheet is indistinguishable from the feature not running.
+    const krasAssigned = [];
+    const krasNotAssigned = [];
+    if (newHireEmails.length) {
+      const { assignFromLibrarySafely } = require('../modules/performance/kra-autoassign');
+      const ids = (await db.query(
+        `SELECT id, email, name FROM core.employees
+          WHERE tenant_id=$1 AND LOWER(email) = ANY($2::text[])`,
+        [tenantId, newHireEmails.map((e) => String(e || '').toLowerCase())])).rows;
+      for (const emp of ids) {
+        const out = await assignFromLibrarySafely(tenantId, emp.id, { actorEmail: opts.actorEmail || null });
+        if (out.assigned) {
+          krasAssigned.push({ employee_id: emp.id, email: emp.email, kras: out.assigned,
+            matched_scope: out.matched_scope, weight_total: out.weight_total, weights_ok: out.weights_ok });
+        } else {
+          krasNotAssigned.push({ employee_id: emp.id, email: emp.email, reason: out.reason,
+            ...(out.error ? { error: out.error } : {}) });
+        }
+      }
+    }
+
     return { loaded: rows.length, manager_roles_granted: grants,
              department_heads_set: headsSet, hod_roles_granted: headGrants,
              kra_sheets_reopened: reopened, growth_plans_reopened: reopenedPlans,
-             midyear_reopened: reopenedMidyear, kra_reopen_failures: reopenFailures };
+             midyear_reopened: reopenedMidyear, kra_reopen_failures: reopenFailures,
+             new_hires: newHireEmails.length,
+             kras_auto_assigned: krasAssigned, kras_not_auto_assigned: krasNotAssigned };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     throw e;
@@ -1255,8 +1328,15 @@ router.post('/import', (req, res, next) => upload.single('file')(req, res, (err)
       const heads = new Set((report.department_heads || []).map((h) => h.email.toLowerCase()));
       const willGrant = (await pendingManagerRoleGrants(req.user.tenant_id, report.rows))
         .filter((e) => !heads.has(e));
+      // …and the KRAs the commit WOULD assign, on exactly the same
+      // reasoning. A 1,400-row file that silently writes eight objectives
+      // per new hire is the kind of surprise a dry run exists to prevent,
+      // and this is also where HR finds out a designation has no shelf
+      // BEFORE those people are sitting in the system with empty sheets.
+      const krasToAssign = await previewAutoAssign(req.user.tenant_id, report.rows);
       return res.json({ ok: true, committed: false, note: 'Dry run — pass ?commit=1 to load.',
-        manager_roles_to_grant: willGrant, hod_roles_to_grant: [...heads], ...report });
+        manager_roles_to_grant: willGrant, hod_roles_to_grant: [...heads],
+        ...krasToAssign, ...report });
     }
     const loaded = await loadEmployees(req.user.tenant_id, report.rows,
       { departmentHeads: report.department_heads, actorEmail: req.user.email });
