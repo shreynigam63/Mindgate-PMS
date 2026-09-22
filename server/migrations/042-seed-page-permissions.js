@@ -42,6 +42,7 @@ const PAGES = [
   ['delivery_head',      '/hod',                      'pms_hod'],
   ['improvement_plans',  '/pip',                      null],
 
+  ['all_approvals',      '/admin/approvals',          'pms_admin'],
   ['cycles',             '/admin/cycles',             'pms_admin'],
   ['employees',          '/admin/directory',          'people_admin'],
   ['department_heads',   '/admin/department-heads',   'people_admin'],

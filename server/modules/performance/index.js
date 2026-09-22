@@ -26,6 +26,7 @@ const { runReminders } = require('./reminders');
 const { parseCsv, parseExcelSheets, detectFormat } = require('../../core/employees');
 const pm = require('./phase-machine');
 const goalSync = require('./kra-goal-sync');
+const approvals = require('./approvals');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -608,25 +609,22 @@ router.post('/team/kra-sheets/:sheetId/decide', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const { decision, comment } = req.body || {};
     if (!['approved', 'returned'].includes(decision)) return res.status(400).json({ error: "decision must be 'approved' or 'returned'" });
-    const s = (await db.query(`SELECT * FROM pms.kra_sheets WHERE id=$1 AND tenant_id=$2`, [req.params.sheetId, T(req)])).rows[0];
-    if (!s) return res.status(404).json({ error: 'sheet not found' });
-    // Live check against core.employees, not the stored (possibly stale)
-    // kra_sheets.manager_id snapshot — see GET /team/kra-sheets above for
-    // why that snapshot can drift.
-    const decideEmp = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1`, [s.employee_id])).rows[0];
-    if ((!decideEmp || decideEmp.manager_id !== req.user.id) && !(await hasPermission(req.user, 'pms_admin')))
-      return res.status(403).json({ error: 'Not your report' });
-    if (s.status !== 'submitted') return res.status(409).json({ error: `sheet is ${s.status}, not submitted` });
-    if (decision === 'returned' && !(comment && comment.trim())) return res.status(422).json({ error: 'A return needs a comment — the employee must know why' });
-    // reopened_reason is cleared: this IS the manager deciding, so a sheet
-    // previously reopened by a profile change must stop being labelled as
-    // one the moment they touch it.
-    await db.query(
-      `UPDATE pms.kra_sheets SET status=$1, manager_comment=$2, reopened_reason=NULL,
-              decided_at=now(), updated_at=now() WHERE id=$3`,
-      [decision, comment || null, s.id]);
-    audit(req, `KRA_${decision.toUpperCase()}`, s.cycle_id, s.employee_id, { comment: comment || null });
-    await notify(T(req), s.employee_id, 'kra_decided', `Your KRA sheet was ${decision}`, comment || null, '/pms');
+    // The decision itself — the update, the audit row and the employee's
+    // notification — lives in approvals.js, shared with the bulk approve
+    // on the All Approvals queue. A second copy of it there is exactly how
+    // a bulk action ends up skipping an audit row.
+    const r = await approvals.decide({
+      kind: 'kra_sheet', id: req.params.sheetId, tenantId: T(req), decision, comment,
+      audit: (action, cycleId, employeeId, details) => audit(req, action, cycleId, employeeId, details),
+      // Live check against core.employees, not the stored (possibly stale)
+      // kra_sheets.manager_id snapshot — see GET /team/kra-sheets above for
+      // why that snapshot can drift.
+      canDecide: async (sheet) => {
+        const emp = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1`, [sheet.employee_id])).rows[0];
+        return (emp && emp.manager_id === req.user.id) || hasPermission(req.user, 'pms_admin');
+      },
+    });
+    if (r.error) return res.status(r.status).json({ error: r.error });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2585,28 +2583,57 @@ router.post('/team/development-plans/:planId/decide', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const { decision, comment } = req.body || {};
     if (!['approved', 'returned'].includes(decision)) return res.status(400).json({ error: "decision must be 'approved' or 'returned'" });
-    const p = (await db.query(`SELECT * FROM pms.development_plans WHERE id=$1 AND tenant_id=$2`, [req.params.planId, T(req)])).rows[0];
-    if (!p) return res.status(404).json({ error: 'plan not found' });
-    if (p.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin')))
-      return res.status(403).json({ error: 'Not your report' });
-    if (p.status !== 'submitted') return res.status(409).json({ error: `plan is ${p.status}, not submitted` });
-    if (decision === 'returned' && !(comment && comment.trim())) return res.status(422).json({ error: 'A return needs a comment — the employee must know why' });
-    // No phase gate here, and deliberately: a plan that could be SUBMITTED
-    // in kra_open has to be decidable there too, or it sits in the
-    // manager's queue until HR advances the cycle — which is the wait this
-    // whole change exists to remove.
-    // Cleared here too: this IS the manager deciding, so a plan previously
-    // reopened by a profile change must stop being labelled as one the
-    // moment they touch it. Saying "reopened — role changed" over a return
-    // the manager actually wrote credits a change nobody made.
-    await db.query(
-      `UPDATE pms.development_plans
-          SET status=$1, manager_comment=$2, reopened_reason=NULL, decided_at=now(), updated_at=now()
-        WHERE id=$3`,
-      [decision, comment || null, p.id]);
-    audit(req, `DEVPLAN_${decision.toUpperCase()}`, p.cycle_id, p.employee_id, { comment: comment || null });
-    await notify(T(req), p.employee_id, 'devplan_decided', `Your target achievements for the year were ${decision}`, comment || null, '/pms/my-growth');
+    const r = await approvals.decide({
+      kind: 'growth_plan', id: req.params.planId, tenantId: T(req), decision, comment,
+      audit: (action, cycleId, employeeId, details) => audit(req, action, cycleId, employeeId, details),
+      canDecide: async (plan) => plan.manager_id === req.user.id || hasPermission(req.user, 'pms_admin'),
+    });
+    if (r.error) return res.status(r.status).json({ error: r.error });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------- All Approvals (HR / super admin) --------------------------
+// Everything the cycle is waiting on, in one queue. See approvals.js for
+// why some rows can be bulk approved and others deliberately cannot.
+router.get('/approvals', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const c = await activeCycle(T(req));
+    if (!c) return res.json({ cycle: null, items: [], counts: {}, total: 0 });
+    const q = await approvals.pendingApprovals(T(req), c.id);
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, ...q });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Bulk approve. Per-row outcomes, never a single pass/fail: nineteen good
+// rows must not be lost to the twentieth, and the caller has to be able to
+// see WHICH one was refused and why. Same reporting shape as the CSV
+// importer, which is this repo's reference for batch operations.
+router.post('/approvals/bulk', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const { items, decision = 'approved', comment } = req.body || {};
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items must be a non-empty array of {kind, id}' });
+    if (items.length > 200) return res.status(413).json({ error: 'at most 200 items per request' });
+
+    const results = [];
+    for (const it of items) {
+      const r = await approvals.decide({
+        kind: it && it.kind, id: it && it.id, tenantId: T(req), decision, comment,
+        audit: (action, cycleId, employeeId, details) =>
+          audit(req, action, cycleId, employeeId, { ...(details || {}), bulk: true }),
+        // Super admin only reaches this route, and a super admin may decide
+        // at any level for anyone — including their own records, which the
+        // audit row stamps as self_action. That is the access this queue
+        // exists to give; the row-level check stays in decide() for the
+        // manager-facing routes that share it.
+        canDecide: async () => true,
+      });
+      results.push({ kind: it && it.kind, id: it && it.id, ...(r.error ? { error: r.error } : { ok: true }) });
+    }
+    const approved = results.filter(r => r.ok).length;
+    res.json({ decision, approved, refused: results.length - approved, results });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

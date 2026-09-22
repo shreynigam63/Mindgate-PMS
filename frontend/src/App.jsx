@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, ChevronDown, CheckCircle2 } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -32,6 +32,7 @@ import ClosureLettersPage from './pages/ClosureLettersPage';
 import IncrementSimulationPage from './pages/IncrementSimulationPage';
 import ParameterAnalysisPage from './pages/ParameterAnalysisPage';
 import SettingsPage from './pages/SettingsPage';
+import ApprovalsPage from './pages/ApprovalsPage';
 
 const NAV = [
   { group: 'My Performance', hue: 'navy', items: [
@@ -68,6 +69,7 @@ const NAV = [
     { to: '/pip', label: 'Improvement Plans', icon: ShieldAlert },
   ]},
   { group: 'HR Admin', hue: 'violet', items: [
+    { to: '/admin/approvals', label: 'All Approvals', icon: CheckCircle2 },
     { to: '/admin/cycles', label: 'Cycles', icon: BarChart3 },
     { to: '/admin/directory', label: 'Employees', icon: Upload },
     { to: '/admin/department-heads', label: 'Department Heads', icon: UserCog },
@@ -210,6 +212,7 @@ function Main({ user }) {
               <Route path="/admin/increments" element={<IncrementSimulationPage />} />
               <Route path="/admin/parameter-analysis" element={<ParameterAnalysisPage />} />
               <Route path="/admin/settings" element={<SettingsPage />} />
+              <Route path="/admin/approvals" element={<ApprovalsPage />} />
               <Route path="/my/self-appraisal" element={<SelfAppraisalPage />} />
               <Route path="/my/rating" element={<MyRatingPage />} />
               <Route path="/my/midyear" element={<MidYearReviewPage />} />

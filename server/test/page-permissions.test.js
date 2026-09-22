@@ -46,6 +46,7 @@ const PROBE = {
   '/team/eval': '/pms/team/evaluations',
   '/hod': '/pms/hod/queue',
   '/pip': '/pms/pip',
+  '/admin/approvals': '/pms/approvals',
   '/admin/kra-overview': '/pms/kra/org-overview',
   '/admin/kra-library': '/pms/hr/kra-library',
   '/admin/completion-report': '/pms/reports/completion',
