@@ -13,23 +13,32 @@ function loadChromium() {
   }
   console.error(
     'playwright-core not found. Install it anywhere and point PW at it:\n' +
-    '  npm i -g playwright-core && PW=playwright-core node docs/tools/e2e-topdf.js\n' +
+    '  npm i -g playwright-core && PW=playwright-core node docs/tools/topdf.js\n' +
     'CHROME= may also be needed if the browser is not at the default path.');
   process.exit(1);
 }
 const chromium = loadChromium();
-const SP = process.env.SP;
 const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// Input, output and the footer caption are all parameters: there is more
+// than one document in docs/ now, and a second copy of this script that
+// differed only in three strings would be the thing that goes stale.
+const IN = process.env.IN;
+const OUT = process.env.OUT;
+const FOOTER = process.env.FOOTER || '';
+if (!IN || !OUT) {
+  console.error('usage: IN=/abs/in.html OUT=/abs/out.pdf [FOOTER="left caption"] node docs/tools/topdf.js');
+  process.exit(1);
+}
 (async () => {
   const b = await chromium.launch({ executablePath: CHROME });
   const page = await (await b.newContext()).newPage();
   await page.emulateMedia({ media: 'print', colorScheme: 'light' });
-  await page.goto('file://' + SP + '/e2e-print.html', { waitUntil: 'networkidle' });
+  await page.goto('file://' + IN, { waitUntil: 'networkidle' });
   // Google Fonts must actually have landed, or the PDF ships in fallbacks.
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(800);
   await page.pdf({
-    path: SP + '/Agentic-PMS-E2E-Testing-Guide.pdf',
+    path: OUT,
     format: 'A4',
     printBackground: true,
     displayHeaderFooter: true,
@@ -37,7 +46,7 @@ const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linu
     footerTemplate:
       '<div style="width:100%;font:7.5pt Inter,sans-serif;color:#6d7d8e;' +
       'padding:0 14mm;display:flex;justify-content:space-between;">' +
-      '<span>Agentic PMS — End-to-End Testing Guide · 22 Sep 2026</span>' +
+      `<span>${FOOTER}</span>` +
       '<span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>',
     margin: { top: '13mm', bottom: '15mm', left: '13mm', right: '13mm' },
   });
