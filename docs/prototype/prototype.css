@@ -216,3 +216,35 @@ body{background:linear-gradient(180deg,#f3f6fc 0,#eaeff8 380px,var(--page) 700px
 .nb.warm{background:linear-gradient(135deg,var(--lagoon50),#d6f2f7);box-shadow:inset 0 0 0 1px #bde6ee}
 .nb.cold{background:linear-gradient(135deg,var(--brand50),#fbdde8);box-shadow:inset 0 0 0 1px #f4c6d7}
 .who-wrap{display:flex;align-items:center;gap:8px}
+
+/* ---- left-sidebar variant ----------------------------------------------
+   Used only by pms-ui-prototype-sidebar.html. Same screens, same role
+   gating; the whole difference is that every page this person may open is
+   listed at once instead of behind a role tab. */
+.vlink{color:#fff;font-weight:700}
+.shell{display:flex;align-items:stretch}
+.shell .wrap{flex:1;min-width:0}
+.side{width:248px;flex-shrink:0;background:#fff;padding:6px 12px 30px;
+  border-right:1px solid var(--navy100);min-height:calc(100vh - 118px)}
+.sglab{font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;font-weight:800;
+  color:var(--navy300);padding:16px 12px 7px}
+.side a{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;
+  font-size:13px;font-weight:600;color:var(--navy500);cursor:pointer;margin-bottom:2px}
+.side a:hover{background:var(--navy50)}
+.side a i{width:23px;height:23px;border-radius:7px;font-style:normal;font-size:11px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;background:var(--navy50);
+  color:var(--navy400);flex-shrink:0}
+.side a i.k-navy{background:var(--navy50);color:var(--navy)}
+.side a i.k-teal{background:var(--lagoon50);color:#0f6a7a}
+.side a i.k-leaf{background:var(--leaf50);color:#2f7a33}
+.side a i.k-amber{background:var(--amber50);color:#a35a0c}
+.side a i.k-pink{background:var(--brand50);color:var(--brand600)}
+.side a i.k-violet{background:var(--violet50);color:var(--violet700)}
+.side a.on{color:#fff}
+.side a.on i{background:rgba(255,255,255,.26);color:#fff}
+.side a.on:hover{filter:brightness(1.04)}
+.s-self a.on{background:linear-gradient(135deg,var(--navy),#2f6fae)}
+.s-mgr a.on{background:linear-gradient(135deg,#0d7183,var(--lagoon))}
+.s-hr a.on{background:linear-gradient(135deg,var(--violet700),var(--violet))}
+@media(max-width:900px){.shell{display:block}.side{width:auto;min-height:0;border-right:0;
+  border-bottom:1px solid var(--navy100)}}

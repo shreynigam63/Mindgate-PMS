@@ -1,7 +1,9 @@
 # docs/prototype — the proposed PMS UI, as a clickable prototype
 
 **Open `pms-ui-prototype.html` in any browser.** One self-contained file, no
-server, no build, works offline.
+server, no build, works offline. `pms-ui-prototype-sidebar.html` beside it is
+the same product with left-sidebar navigation instead of role tabs — see
+**Two navigation variants** below.
 
 ## What this is
 
@@ -24,8 +26,9 @@ will the whole PMS module look?" before committing to changing the real app.
 | **Manager** | Team Overview · Team KRA Sheets · Team Evaluation · Delivery Head Review · Improvement Plans |
 | **HR / Admin** | Dashboard · **All Approvals** · KRA Overview · KRA Library · Cycles · Employees · Calibration · 9-Box Grid · Completion Report |
 
-Click the role tabs and the menu beneath them. Rating chips and status tabs
-respond, so the screens feel live without any data behind them.
+Click the role tabs and the menu beneath them — or, in the sidebar variant,
+the menu on the left. Rating chips and status tabs respond, so the screens
+feel live without any data behind them.
 
 ## Each role sees only its own tabs
 
@@ -73,15 +76,38 @@ navigation, not the HRMS menu: Admin, Employee, Attendance, Leave, Payroll,
 Training, RMS, Analytics and Utilities are gone. Dashboard is home — it
 returns the signed-in person to their own landing screen.
 
-## The one structural decision this prototype makes
+## Two navigation variants, same screens
 
-A horizontal sub-nav cannot hold 29 screens — at 1360px it clips after about
-16. So this uses **role tabs (Self / Manager / HR), each with its own short
-sub-nav**. That solves the overflow *and* answers the separate request for
-role-based views with a single control.
+The structural question is how to reach 21 screens. Both answers are built:
 
-If you would rather keep all 29 in one list, the alternative is a left sidebar
-inside the PMS tab — say so and I will render that variant for comparison.
+| File | Navigation |
+|---|---|
+| `pms-ui-prototype.html` | **Role tabs** — Self / Manager / HR / Admin, each with its own short horizontal sub-nav |
+| `pms-ui-prototype-sidebar.html` | **Left sidebar** — every screen this person can open, listed at once under group headings |
+
+They are generated from one set of screen functions and one role map, so the
+content is identical to the character and only the navigation differs. Each
+one links to the other from its banner.
+
+What the difference actually costs, measured at 1440×900:
+
+| | Role tabs | Left sidebar |
+|---|---|---|
+| Clicks to reach a screen in another group | **2** (tab, then item) | **1** |
+| Screens visible in the menu at once (HR) | 9 of 21 | 21 of 21 |
+| Fits without scrolling (employee, 7) | yes | yes |
+| Fits without scrolling (manager, 12) | yes | yes |
+| Fits without scrolling (HR, 21) | yes | **no** — the list ends at 1137px of a 900px viewport, so HR scrolls the menu |
+| Horizontal space taken from the page | none | 248px |
+
+So: the sidebar is faster and shows the whole product at a glance, at the cost
+of a narrower page and a menu HR has to scroll. The tabs keep every menu short
+and the page full width, at the cost of one extra click and of hiding two
+thirds of the product behind a tab. Neither is obviously right — that is why
+both exist.
+
+The role gating is the same in both, and is not what is being compared: an
+employee sees only Self either way.
 
 ## What is drawn here but does not exist in the product yet
 
@@ -123,12 +149,13 @@ python3 docs/prototype/generate.py
 Needs `frontend/dist` built, because the prototype embeds Inter from the
 product's own build output rather than fetching a webfont.
 
-Two source files: `generate.py` holds the screens and the role map,
-`prototype.css` holds the styling. They are inlined into the single output
-file, so the published prototype stays one portable HTML document.
+One run writes both variants. Two source files: `generate.py` holds the
+screens, the role map and the two shells, `prototype.css` holds the styling.
+They are inlined into each output file, so both stay portable single HTML
+documents.
 
 ```bash
-node docs/prototype/check.mjs
+node docs/prototype/check.mjs      # walks BOTH variants
 ```
 
 Check it by **clicking it**, not by looking at it. A screenshot cannot tell

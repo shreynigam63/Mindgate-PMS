@@ -402,23 +402,41 @@ def s_employees():
 # ================================================================== assembly ===
 CSS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'prototype.css'), encoding='utf-8').read()
 
-TEMPLATE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+
+# Two layouts, one set of screens. The whole point of the second variant is
+# that it differs ONLY in navigation — if the content diverged, comparing
+# them would tell you nothing.
+LAYOUTS = {
+    'tabs': {'file': 'pms-ui-prototype.html', 'title': 'role tabs',
+             'other': 'pms-ui-prototype-sidebar.html', 'other_title': 'left sidebar'},
+    'sidebar': {'file': 'pms-ui-prototype-sidebar.html', 'title': 'left sidebar',
+                'other': 'pms-ui-prototype.html', 'other_title': 'role tabs'},
+}
+
+DOC_HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Agentic PMS &mdash; UI prototype</title>
+<title>Agentic PMS &mdash; UI prototype (__TITLE__)</title>
 <style>__FACES__</style>
 <style>
 __CSS__
 </style></head><body>
-<div class="banner"><b>VISUAL PROTOTYPE</b> &mdash; proposed UI only. Not connected to any data, and the live PMS is unchanged. Switch the person on the right to see what each role can open.</div>
+<div class="banner"><b>VISUAL PROTOTYPE &middot; __TITLE__</b> &mdash; proposed UI only. Not connected to any data, and the live PMS is unchanged. Switch the person on the right to see what each role can open. <a class="vlink" href="__OTHER__">Compare with the __OTHER_TITLE__ variant &rarr;</a></div>
 <div class="appbar">
   <div class="logo"><div class="logomark"></div><div class="logotext">Performance Management System</div></div>
   <div class="who-wrap">__PERSONA__ __WHO__</div>
 </div>
 <div class="topnav">__TOP__</div>
-__ROLEBARS__
+"""
+
+BODY_TABS = """__ROLEBARS__
 __SUBNAVS__
 <div class="wrap">__SCREENS__</div>
-<script>
+"""
+
+BODY_SIDE = """<div class="shell">__SIDENAVS__<div class="wrap">__SCREENS__</div></div>
+"""
+
+JS_TABS = """
 function show(id){
   document.querySelectorAll('.screen').forEach(s => s.hidden = s.id !== id);
   document.querySelectorAll('.subnav a').forEach(a => a.classList.toggle('on', a.dataset.go === id));
@@ -439,14 +457,35 @@ function showPersona(p){
   var tab = document.querySelector('.rolebar[data-persona="' + p + '"] .gt');
   if (tab) showGroup(tab.dataset.group);
 }
+document.querySelectorAll('.gt').forEach(b => b.onclick = () => showGroup(b.dataset.group));
+document.querySelectorAll('.subnav a').forEach(a => a.onclick = () => show(a.dataset.go));
+"""
+
+JS_SIDE = """
+function show(id){
+  document.querySelectorAll('.screen').forEach(s => s.hidden = s.id !== id);
+  document.querySelectorAll('.side a').forEach(a => a.classList.toggle('on', a.dataset.go === id));
+  window.scrollTo(0, 0);
+}
+// No groups to switch between: the sidebar shows everything this person can
+// open at once, which is the difference being compared.
+function showPersona(p){
+  document.querySelectorAll('.pb').forEach(b => b.classList.toggle('on', b.dataset.p === p));
+  document.querySelectorAll('.who').forEach(w => w.hidden = w.dataset.who !== p);
+  document.querySelectorAll('.sidenav').forEach(n => n.hidden = n.dataset.persona !== p);
+  var first = document.querySelector('.sidenav[data-persona="' + p + '"] a');
+  if (first) show(first.dataset.go);
+}
+document.querySelectorAll('.side a').forEach(a => a.onclick = () => show(a.dataset.go));
+"""
+
+JS_COMMON = """
 document.querySelectorAll('.pb').forEach(b => b.onclick = () => showPersona(b.dataset.p));
 // Dashboard is home: back to whatever the signed-in person's first screen is.
 document.querySelectorAll('.topnav a').forEach(a => a.onclick = () => {
   var on = document.querySelector('.pb.on');
   if (on) showPersona(on.dataset.p);
 });
-document.querySelectorAll('.gt').forEach(b => b.onclick = () => showGroup(b.dataset.group));
-document.querySelectorAll('.subnav a').forEach(a => a.onclick = () => show(a.dataset.go));
 // Rating chips and filter tabs respond, so the prototype feels alive without data.
 document.addEventListener('click', e => {
   var rb = e.target.closest('.rb');
@@ -497,7 +536,20 @@ PERSONAS = [
 TOP = ['Dashboard']
 
 
-def build():
+def render_screens():
+    """The 21 screens, identical in both layouts. Shared ids, shared markup."""
+    out = ''
+    for i, (gid, _, pages) in enumerate(GROUPS):
+        for j, (pid, _, fn, hue) in enumerate(pages):
+            # Every screen opens with one hero band; recolour it per page.
+            body = fn().replace('hero h-navy', f'hero h-{hue}', 1)
+            out += (f'<section class="screen" id="{gid}-{pid}"'
+                    f'{"" if (i == 0 and j == 0) else " hidden"}>{body}</section>')
+    return out
+
+
+def build(layout='tabs'):
+    meta = LAYOUTS[layout]
     topnav = ''.join(f'<a class="{"on" if i == 0 else ""}">{t}</a>' for i, t in enumerate(TOP))
 
     persona = ('<div class="persona"><span class="plab">Viewing as</span>' + ''.join(
@@ -509,34 +561,56 @@ def build():
         f'<span class="avatar">{init}</span></span>'
         for i, (pid, _, name, init, _) in enumerate(PERSONAS))
 
-    # One tab row per person, carrying only the groups that person may open.
-    rolebars = ''.join(
-        f'<div class="rolebar" data-persona="{pid}"{"" if i == 0 else " hidden"}>' + ''.join(
-            f'<button class="gt{" on" if j == 0 else ""}" data-group="{gid}">{glabel}</button>'
-            for j, (gid, glabel, _) in enumerate(g for g in GROUPS if g[0] in allowed)) + '</div>'
-        for i, (pid, _, _, _, allowed) in enumerate(PERSONAS))
+    if layout == 'tabs':
+        # One tab row per person, carrying only the groups that person may open.
+        rolebars = ''.join(
+            f'<div class="rolebar" data-persona="{pid}"{"" if i == 0 else " hidden"}>' + ''.join(
+                f'<button class="gt{" on" if j == 0 else ""}" data-group="{gid}">{glabel}</button>'
+                for j, (gid, glabel, _) in enumerate(g for g in GROUPS if g[0] in allowed)) + '</div>'
+            for i, (pid, _, _, _, allowed) in enumerate(PERSONAS))
+        subnavs = ''.join(
+            f'<nav class="subnav" data-for="{gid}"{"" if i == 0 else " hidden"}>' + ''.join(
+                f'<a class="{"on" if j == 0 else ""}" data-go="{gid}-{pid}">{pname}</a>'
+                for j, (pid, pname, _, _) in enumerate(pages)) + '</nav>'
+            for i, (gid, _, pages) in enumerate(GROUPS))
+        body = BODY_TABS.replace('__ROLEBARS__', rolebars).replace('__SUBNAVS__', subnavs)
+        js = JS_TABS
+    else:
+        # One sidebar per person: every screen they may open, grouped under a
+        # heading, all visible at once. No tab to switch first.
+        sidenavs = ''
+        for i, (pid, _, _, _, allowed) in enumerate(PERSONAS):
+            groups = ''
+            first = True
+            for gid, glabel, pages in GROUPS:
+                if gid not in allowed:
+                    continue
+                items = ''
+                for spid, pname, _, hue in pages:
+                    # The badge is tinted with the page's own hero colour, so the
+                    # menu and the page you land on agree.
+                    on = ' class="on"' if first else ''
+                    first = False
+                    items += (f'<a{on} data-go="{gid}-{spid}">'
+                              f'<i class="k-{hue}">{pname[0]}</i>{pname}</a>')
+                groups += f'<div class="sgroup s-{gid}"><div class="sglab">{glabel}</div>{items}</div>'
+            sidenavs += (f'<aside class="side sidenav" data-persona="{pid}"'
+                         f'{"" if i == 0 else " hidden"}>{groups}</aside>')
+        body = BODY_SIDE.replace('__SIDENAVS__', sidenavs)
+        js = JS_SIDE
 
-    # Screens and sub-navs are shared across people: Self means the same pages
-    # whether an employee or HR opens them.
-    subnavs, screens = '', ''
-    for i, (gid, _, pages) in enumerate(GROUPS):
-        subnavs += (f'<nav class="subnav" data-for="{gid}"{"" if i == 0 else " hidden"}>' + ''.join(
-            f'<a class="{"on" if j == 0 else ""}" data-go="{gid}-{pid}">{pname}</a>'
-            for j, (pid, pname, _, _) in enumerate(pages)) + '</nav>')
-        for j, (pid, _, fn, hue) in enumerate(pages):
-            # Every screen opens with one hero band; recolour it per page.
-            body = fn().replace('hero h-navy', f'hero h-{hue}', 1)
-            screens += (f'<section class="screen" id="{gid}-{pid}"'
-                        f'{"" if (i == 0 and j == 0) else " hidden"}>{body}</section>')
-
-    return (TEMPLATE.replace('__FACES__', faces()).replace('__CSS__', CSS)
+    doc = DOC_HEAD + body + '<script>' + js + JS_COMMON
+    return (doc.replace('__FACES__', faces()).replace('__CSS__', CSS)
+            .replace('__TITLE__', meta['title']).replace('__OTHER_TITLE__', meta['other_title'])
+            .replace('__OTHER__', meta['other'])
             .replace('__TOP__', topnav).replace('__PERSONA__', persona).replace('__WHO__', who)
-            .replace('__ROLEBARS__', rolebars).replace('__SUBNAVS__', subnavs)
-            .replace('__SCREENS__', screens))
+            .replace('__SCREENS__', render_screens()))
 
 
 if __name__ == '__main__':
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    html = build()
-    open(OUT, 'w', encoding='utf-8').write(html)
-    print(f'wrote {OUT}  ({len(html) // 1024} KB)')
+    for layout, meta in LAYOUTS.items():
+        html = build(layout)
+        path = os.path.join(os.path.dirname(OUT), meta['file'])
+        open(path, 'w', encoding='utf-8').write(html)
+        print(f'wrote {path}  ({len(html) // 1024} KB)')
