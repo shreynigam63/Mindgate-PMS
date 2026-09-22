@@ -24,7 +24,9 @@ if (!chromium) {
   process.exit(1);
 }
 const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const FILE = pathToFileURL(join(here, 'pms-ui-prototype.html')).href;
+// Shoots whichever layout is the current one; FILE= points it at the other.
+const SRC = process.env.FILE || 'pms-ui-prototype.html';
+const FILE = pathToFileURL(join(here, SRC)).href;
 const OUT = process.env.OUT || join(here, 'screens');
 const WORK = join(OUT, '.work');
 
@@ -87,13 +89,19 @@ for (const [role, meta] of Object.entries(ROLES)) {
   await p.click(`.pb[data-p="${role}"]`);
   await p.waitForTimeout(120);
   const shots = [];
+  // Tab layout hides a group's pages until its tab is opened; the sidebar
+  // lists them all. One walk covers both.
+  const sidebar = await p.$('.sidenav');
   for (const g of meta.groups) {
-    await p.click(`.rolebar[data-persona="${role}"] .gt[data-group="${g}"]`);
-    await p.waitForTimeout(90);
-    const links = await p.$$eval(`.subnav[data-for="${g}"] a`,
-      (as) => as.map((a) => [a.dataset.go, a.textContent.trim()]));
+    const sel = sidebar ? `.sidenav[data-persona="${role}"] .s-${g} a`
+                        : `.subnav[data-for="${g}"] a`;
+    if (!sidebar) {
+      await p.click(`.rolebar[data-persona="${role}"] .gt[data-group="${g}"]`);
+      await p.waitForTimeout(90);
+    }
+    const links = await p.$$eval(sel, (as) => as.map((a) => [a.dataset.go, a.textContent.trim()]));
     for (const [id, label] of links) {
-      await p.click(`.subnav[data-for="${g}"] a[data-go="${id}"]`);
+      await p.click(`${sel}[data-go="${id}"]`);
       await p.waitForTimeout(120);
       const n = String(shots.length + 1).padStart(2, '0');
       // JPEG, not PNG: these are photographs of gradients, and a 21-screen

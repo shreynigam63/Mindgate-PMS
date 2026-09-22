@@ -406,11 +406,14 @@ CSS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'prototype.c
 # Two layouts, one set of screens. The whole point of the second variant is
 # that it differs ONLY in navigation — if the content diverged, comparing
 # them would tell you nothing.
+# The left sidebar is the chosen direction, so it gets the plain filename.
+# Reversing to role tabs is swapping the two 'file' values below and running
+# this script — nothing else in here, and no screen, knows which shell it is in.
 LAYOUTS = {
-    'tabs': {'file': 'pms-ui-prototype.html', 'title': 'role tabs',
-             'other': 'pms-ui-prototype-sidebar.html', 'other_title': 'left sidebar'},
-    'sidebar': {'file': 'pms-ui-prototype-sidebar.html', 'title': 'left sidebar',
-                'other': 'pms-ui-prototype.html', 'other_title': 'role tabs'},
+    'sidebar': {'file': 'pms-ui-prototype.html', 'title': 'left sidebar',
+                'other': 'pms-ui-prototype-tabs.html', 'other_title': 'role tabs'},
+    'tabs': {'file': 'pms-ui-prototype-tabs.html', 'title': 'role tabs',
+             'other': 'pms-ui-prototype.html', 'other_title': 'left sidebar'},
 }
 
 DOC_HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">

@@ -36,13 +36,13 @@ const EXPECT = { employee: ['self'], manager: ['self', 'mgr'], hr: ['self', 'mgr
 // Both layouts get the same walk. They differ only in how you reach a screen,
 // so the checks are identical and only the selectors change.
 const LAYOUTS = [
-  { name: 'role tabs', file: 'pms-ui-prototype.html',
+  { name: 'role tabs', file: 'pms-ui-prototype-tabs.html',
     // The tab variant needs the group opened before its screens are listed.
     groupsOf: (person) => `.rolebar[data-persona="${person}"] .gt`,
     openGroup: (person, g) => `.rolebar[data-persona="${person}"] .gt[data-group="${g}"]`,
     linksIn: (g) => `.subnav[data-for="${g}"] a`,
     visibleNav: '.subnav:not([hidden]) a, .rolebar:not([hidden]) .gt' },
-  { name: 'left sidebar', file: 'pms-ui-prototype-sidebar.html',
+  { name: 'left sidebar', file: 'pms-ui-prototype.html',
     groupsOf: (person) => `.sidenav[data-persona="${person}"] .sgroup`,
     openGroup: null,
     linksIn: (g, person) => `.sidenav[data-persona="${person}"] .s-${g} a`,

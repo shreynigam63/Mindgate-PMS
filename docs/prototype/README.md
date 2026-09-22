@@ -1,9 +1,10 @@
 # docs/prototype — the proposed PMS UI, as a clickable prototype
 
 **Open `pms-ui-prototype.html` in any browser.** One self-contained file, no
-server, no build, works offline. `pms-ui-prototype-sidebar.html` beside it is
-the same product with left-sidebar navigation instead of role tabs — see
-**Two navigation variants** below.
+server, no build, works offline. That file is the **left sidebar**, which is
+the chosen direction. `pms-ui-prototype-tabs.html` beside it is the same
+product with role-tab navigation — kept so the choice can be revisited, and
+so the two can still be compared. See **Two navigation variants** below.
 
 ## What this is
 
@@ -18,25 +19,25 @@ will the whole PMS module look?" before committing to changing the real app.
 
 ## What it covers
 
-21 screens across three role tabs:
+21 screens in three groups:
 
-| Tab | Screens |
+| Group | Screens |
 |---|---|
 | **Self** | My KRAs · My Growth · Quarterly Connects · Mid-Year Review · Annual Review · Final Rating · My Rating |
 | **Manager** | Team Overview · Team KRA Sheets · Team Evaluation · Delivery Head Review · Improvement Plans |
 | **HR / Admin** | Dashboard · **All Approvals** · KRA Overview · KRA Library · Cycles · Employees · Calibration · 9-Box Grid · Completion Report |
 
-Click the role tabs and the menu beneath them — or, in the sidebar variant,
-the menu on the left. Rating chips and status tabs respond, so the screens
-feel live without any data behind them.
+Click through the menu on the left — or, in the tabs variant, the role tabs
+and the menu beneath them. Rating chips and status tabs respond, so the
+screens feel live without any data behind them.
 
-## Each role sees only its own tabs
+## Each role sees only its own groups
 
-The prototype models **access**, not a view switcher. The tabs a person cannot
-use are not rendered for them at all — they are not greyed out, and there is
-no control that reaches them:
+The prototype models **access**, not a view switcher. What a person cannot
+use is not rendered for them at all — nothing is greyed out, and no control
+reaches it:
 
-| Signed in as | Tabs available |
+| Signed in as | Available |
 |---|---|
 | Employee | Self |
 | Manager | Self + Manager |
@@ -78,16 +79,31 @@ returns the signed-in person to their own landing screen.
 
 ## Two navigation variants, same screens
 
-The structural question is how to reach 21 screens. Both answers are built:
+The structural question was how to reach 21 screens. Both answers are built,
+and **the left sidebar is the one chosen**:
 
-| File | Navigation |
-|---|---|
-| `pms-ui-prototype.html` | **Role tabs** — Self / Manager / HR / Admin, each with its own short horizontal sub-nav |
-| `pms-ui-prototype-sidebar.html` | **Left sidebar** — every screen this person can open, listed at once under group headings |
+| File | Navigation | |
+|---|---|---|
+| `pms-ui-prototype.html` | **Left sidebar** — every screen this person can open, listed at once under group headings | chosen |
+| `pms-ui-prototype-tabs.html` | **Role tabs** — Self / Manager / HR / Admin, each with its own short horizontal sub-nav | alternative |
 
 They are generated from one set of screen functions and one role map, so the
 content is identical to the character and only the navigation differs. Each
 one links to the other from its banner.
+
+### Going back to role tabs
+
+Nothing is one-way. No screen knows which shell it is in, so reversing is
+swapping the two `file` values in `LAYOUTS` at the top of the assembly section
+in `generate.py` and running it again — `pms-ui-prototype.html` then carries
+the tabs and the sidebar moves to the other filename. Both variants keep
+being generated and checked either way; the only thing the swap decides is
+which one gets the plain filename and which one the per-role PDFs are shot
+from.
+
+In the real app the same holds. The navigation is one component reading one
+role map; the pages, routes and permissions are untouched by this choice, so
+switching later is a nav change, not a rebuild.
 
 What the difference actually costs, measured at 1440×900:
 
@@ -123,7 +139,8 @@ These are **new features**, not re-skins, and need separate scoping:
 ## Screenshots of every screen, per role
 
 `screens/` holds one PDF per role, each with a contents page and then every
-screen that role can open, in menu order:
+screen that role can open, in menu order. They are shot from
+`pms-ui-prototype.html`, so they show the chosen layout:
 
 | File | Screens |
 |---|---|
@@ -135,8 +152,9 @@ screen that role can open, in menu order:
 node docs/prototype/screens.mjs
 ```
 
-The shots are JPEG rather than PNG on purpose: as PNG the HR deck comes out at
-16MB, which defeats the point of a file you can email. `KEEP=1` leaves the
+`FILE=pms-ui-prototype-tabs.html` shoots the other variant instead. The shots
+are JPEG rather than PNG on purpose: as PNG the HR deck comes out at 16MB,
+which defeats the point of a file you can email. `KEEP=1` leaves the
 per-screen images and the print HTML behind, which is how you check the PDF
 layout without a PDF rasteriser installed.
 
