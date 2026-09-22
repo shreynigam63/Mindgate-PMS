@@ -37,6 +37,16 @@ const NAV = [
   { group: 'My Performance', items: [
     { to: '/my/kras', label: 'My KRAs', icon: Target },
     { to: '/my/growth', label: 'My Growth', icon: TrendingUp },
+    // Asked for on 22 Sep: Quarterly Connects sits between My Growth and
+    // Mid-Year Review. It belongs here rather than under Team because the
+    // page is TWO-SIDED — GET /pms/connects returns rows where the caller
+    // is the employee OR the manager — and because it follows the year as
+    // people live it: set your KRAs, plan your growth, have your quarterly
+    // conversations, then review at the halfway point.
+    //
+    // The ROUTE stays /team/connects. It is in bookmarks and in links
+    // inside notifications already sent; only the menu position moves.
+    { to: '/team/connects', label: 'Quarterly Connects', icon: MessageCircle },
     { to: '/my/midyear', label: 'Mid-Year Review', icon: Clock },
     // RENAMED on request, as a pair. What was 'Self-Appraisal' is now
     // 'Annual Review', and what was 'Annual Review' is now 'Final Rating'
@@ -53,7 +63,6 @@ const NAV = [
   { group: 'Team', items: [
     { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard },
     { to: '/team/kra-sheets', label: 'Team KRA Sheets', icon: ClipboardList },
-    { to: '/team/connects', label: 'Quarterly Connects', icon: MessageCircle },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/hod', label: 'Delivery Head Review', icon: Landmark },
     { to: '/pip', label: 'Improvement Plans', icon: ShieldAlert },

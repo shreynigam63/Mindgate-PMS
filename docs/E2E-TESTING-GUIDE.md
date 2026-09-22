@@ -2,7 +2,8 @@
 
 **Product:** Agentic PMS · **Environment:** https://pms.agentichumans.in
 **Written for:** UAT testers, HR reviewers, and anyone signing off a release
-**As of:** 22 September 2026 · covers everything live through commit `6e4913b`
+**As of:** 22 September 2026 · covers everything through commit `6e4913b`,
+plus the Quarterly Connects menu move (pending deploy at the time of writing)
 
 This guide walks the product the way a real appraisal year runs, in order.
 Work top to bottom and each section leaves the data the next one needs.
@@ -35,9 +36,9 @@ impersonating** — permissions are the thing under test.
 | Role | Needed for | Minimum |
 |---|---|---|
 | `employee` | §3–§7, §11 | 2 (one reporting to your test manager) |
-| `manager` | §3.5, §5, §6, §8 | 1 (must be the manager of the employees above) |
-| `hod` | §7 | 1 (must be head of the test employee's department) |
-| `hr` | §2, §9, §10 | 1 |
+| `manager` | §3.5, §5, §6, §8, §9 | 1 (must be the manager of the employees above) |
+| `hod` | §8 | 1 (must be head of the test employee's department) |
+| `hr` | §2, §5, §9, §10 | 1 |
 | `admin` | §12 | 1 (already exists) |
 
 **To grant a role:** Employees tab → the person → **Role** dropdown → Save.
@@ -85,6 +86,8 @@ expectation is wrong** — it was changed on request. See `KRA-07`.
 | `SMK-03` | any | Open every nav item visible to you | No blank screens, no error banners |
 | `SMK-04` | employee | Sign in as a plain employee | **HR Admin** items (Employees, KRA Library, Settings, Increment Simulation, Review Analysis, Department Heads, Career Pathing Matrix, Completion Report) are **not visible** |
 | `SMK-05` | employee | Type `/admin/directory` directly in the URL bar | Blocked — not rendered. Hiding a link is not access control; this checks the guard |
+| `SMK-06` | any | Read the **My Performance** group top to bottom | Order is **My KRAs · My Growth · Quarterly Connects · Mid-Year Review · Annual Review · Final Rating · My Rating · Past Cycles**. Quarterly Connects is **no longer** under Team |
+| `SMK-07` | any | Open an old bookmark or notification link to `/team/connects` | Still opens Quarterly Connects. Only the menu position moved, not the URL |
 
 > **Expected, not a defect:** an employee's nav still lists **Cycles, KRA
 > Overview, Calibration, 9-Box Grid, Closure Letters and Super 50**. Those
@@ -213,7 +216,30 @@ Growth opens **per employee, on their own KRA submission** — not on a phase.
 
 ---
 
-## 5. Mid-Year Review (phase: `mid_year_review`)
+## 5. Quarterly Connects — through the year
+
+**Moved on request (22 Sep):** this tab now sits in the **My Performance**
+group, between **My Growth** and **Mid-Year Review** — in the menu and in
+this guide. It follows the year as people live it: set your KRAs, plan your
+growth, hold your quarterly conversations, then review at the halfway point.
+
+The page is two-sided: a manager logs and signs off connects with their
+reports, and an employee sees their own. The URL is unchanged
+(`/team/connects`), so existing bookmarks and notification links still work.
+
+| ID | Role | Steps | Expected |
+|---|---|---|---|
+| `CON-01` | manager | Quarterly Connects → log a connect with a report | Saved with date and notes |
+| `CON-02` | manager | Add a **meeting link and date** | Accepted here (this is the tab that owns scheduling) |
+| `CON-03` | manager | **AI assist** on connect notes | Draft summary, editable |
+| `CON-04` | manager | Sign off a connect | Recorded |
+| `CON-05` | hr | Review Analysis (HR) | 7-parameter meeting analysis. **HR/admin only** |
+| `CON-06` | employee | Try `/admin/parameter-analysis` by URL | Blocked |
+| `CON-07` | — | Email invitations for connects | **Not available** — no mail transport is configured. Links must be shared manually |
+
+---
+
+## 6. Mid-Year Review (phase: `mid_year_review`)
 
 | ID | Role | Steps | Expected |
 |---|---|---|---|
@@ -229,7 +255,7 @@ Growth opens **per employee, on their own KRA submission** — not on a phase.
 
 ---
 
-## 6. Annual Review — the employee's self-appraisal (phase: `self_appraisal`)
+## 7. Annual Review — the employee's self-appraisal (phase: `self_appraisal`)
 
 > **Naming:** the tab called **Annual Review** is the employee's own
 > self-appraisal. The tab called **Final Rating** shows consolidated ratings.
@@ -245,7 +271,7 @@ Growth opens **per employee, on their own KRA submission** — not on a phase.
 
 ---
 
-## 7. Manager evaluation → Delivery Head → Calibration
+## 8. Manager evaluation → Delivery Head → Calibration
 
 | ID | Role | Steps | Expected |
 |---|---|---|---|
@@ -267,7 +293,7 @@ Growth opens **per employee, on their own KRA submission** — not on a phase.
 
 ---
 
-## 8. Publish (phase: `publish`) — the rating visibility rule
+## 9. Publish (phase: `publish`) — the rating visibility rule
 
 **This is the single most important behaviour to verify.** Before publish an
 employee sees **only their own self-rating**. After publish they see
@@ -285,20 +311,6 @@ check the network response, not just the screen.
 | `PUB-07` | hr | Closure Letters | Letter per employee, downloadable |
 | `PUB-08` | hr | Advance to `closed` | Cycle closed; Past Cycles shows it |
 | `PUB-09` | employee | Past Cycles | Your published history |
-
----
-
-## 9. Quarterly Connects
-
-| ID | Role | Steps | Expected |
-|---|---|---|---|
-| `CON-01` | manager | Quarterly Connects → log a connect with a report | Saved with date and notes |
-| `CON-02` | manager | Add a **meeting link and date** | Accepted here (this is the tab that owns scheduling) |
-| `CON-03` | manager | **AI assist** on connect notes | Draft summary, editable |
-| `CON-04` | manager | Sign off a connect | Recorded |
-| `CON-05` | hr | Review Analysis (HR) | 7-parameter meeting analysis. **HR/admin only** |
-| `CON-06` | employee | Try `/admin/parameter-analysis` by URL | Blocked |
-| `CON-07` | — | Email invitations for connects | **Not available** — no mail transport is configured. Links must be shared manually |
 
 ---
 
@@ -448,7 +460,7 @@ spent establishing items 4 and 5.
 6. **A screenshot** showing the whole page, including the nav and any banner
 
 If a rating is missing, state **whether the cycle has been published** before
-raising it — withheld-before-publish is the designed behaviour (§8), and it is
+raising it — withheld-before-publish is the designed behaviour (§9), and it is
 the single most common false report.
 
 ---
@@ -457,19 +469,19 @@ the single most common false report.
 
 | Section | Cases | Tester | Date | Pass / Fail |
 |---|---|---|---|---|
-| 1 Smoke | 5 | | | |
+| 1 Smoke | 7 | | | |
 | 2 HR setup + auto-assign | 18 | | | |
 | 3 KRA setting | 37 | | | |
 | 4 My Growth | 10 | | | |
-| 5 Mid-Year | 9 | | | |
-| 6 Annual Review | 5 | | | |
-| 7 Evaluation → Calibration | 15 | | | |
-| 8 Publish + visibility | 9 | | | |
-| 9 Quarterly Connects | 7 | | | |
+| 5 Quarterly Connects | 7 | | | |
+| 6 Mid-Year | 9 | | | |
+| 7 Annual Review | 5 | | | |
+| 8 Evaluation → Calibration | 15 | | | |
+| 9 Publish + visibility | 9 | | | |
 | 10 HR reporting | 4 | | | |
 | 11 Employee self-service | 4 | | | |
 | 12 Super Admin | 9 | | | |
 | 13 Negative / security | 10 | | | |
 | 14 Automated suite | 586 | | | |
 
-**Total: 142 manual cases + 586 automated.**
+**Total: 144 manual cases + 586 automated.**
