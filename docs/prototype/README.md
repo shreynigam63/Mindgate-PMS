@@ -65,6 +65,14 @@ violet (`#7c4dbe`) reserved for super-admin surfaces — which the product
 already uses for its AI panels. Nothing here needs a colour the app cannot
 currently produce.
 
+## The header
+
+The product names itself in full — **Performance Management System** — and the
+strip beneath it carries **Dashboard** only. This is the PMS module's own
+navigation, not the HRMS menu: Admin, Employee, Attendance, Leave, Payroll,
+Training, RMS, Analytics and Utilities are gone. Dashboard is home — it
+returns the signed-in person to their own landing screen.
+
 ## The one structural decision this prototype makes
 
 A horizontal sub-nav cannot hold 29 screens — at 1360px it clips after about
@@ -85,6 +93,26 @@ These are **new features**, not re-skins, and need separate scoping:
   *sign-off*, which is a different thing)
 - the **potential rating** on the manager's evaluation — drawn on Team
   Evaluation and marked as new
+
+## Screenshots of every screen, per role
+
+`screens/` holds one PDF per role, each with a contents page and then every
+screen that role can open, in menu order:
+
+| File | Screens |
+|---|---|
+| `screens/PMS-screens-employee.pdf` | 7 |
+| `screens/PMS-screens-manager.pdf` | 12 |
+| `screens/PMS-screens-hr.pdf` | 21 |
+
+```bash
+node docs/prototype/screens.mjs
+```
+
+The shots are JPEG rather than PNG on purpose: as PNG the HR deck comes out at
+16MB, which defeats the point of a file you can email. `KEEP=1` leaves the
+per-screen images and the print HTML behind, which is how you check the PDF
+layout without a PDF rasteriser installed.
 
 ## Regenerating
 

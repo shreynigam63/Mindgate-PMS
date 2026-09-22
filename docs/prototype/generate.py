@@ -411,7 +411,7 @@ __CSS__
 </style></head><body>
 <div class="banner"><b>VISUAL PROTOTYPE</b> &mdash; proposed UI only. Not connected to any data, and the live PMS is unchanged. Switch the person on the right to see what each role can open.</div>
 <div class="appbar">
-  <div class="logo"><div class="logomark"></div><div class="logotext">PMS<span class="logosub">Performance &amp; Growth</span></div></div>
+  <div class="logo"><div class="logomark"></div><div class="logotext">Performance Management System</div></div>
   <div class="who-wrap">__PERSONA__ __WHO__</div>
 </div>
 <div class="topnav">__TOP__</div>
@@ -440,6 +440,11 @@ function showPersona(p){
   if (tab) showGroup(tab.dataset.group);
 }
 document.querySelectorAll('.pb').forEach(b => b.onclick = () => showPersona(b.dataset.p));
+// Dashboard is home: back to whatever the signed-in person's first screen is.
+document.querySelectorAll('.topnav a').forEach(a => a.onclick = () => {
+  var on = document.querySelector('.pb.on');
+  if (on) showPersona(on.dataset.p);
+});
 document.querySelectorAll('.gt').forEach(b => b.onclick = () => showGroup(b.dataset.group));
 document.querySelectorAll('.subnav a').forEach(a => a.onclick = () => show(a.dataset.go));
 // Rating chips and filter tabs respond, so the prototype feels alive without data.
@@ -489,12 +494,11 @@ PERSONAS = [
     ('hr', 'HR / Super Admin', 'Akshay Raut', 'A', ['self', 'mgr', 'hr']),
 ]
 
-TOP = ['DashBoard', 'Admin', 'Employee', 'Attendance', 'Leave', 'Payroll',
-       'Training', 'RMS', 'PMS', 'Analytics', 'Utilities']
+TOP = ['Dashboard']
 
 
 def build():
-    topnav = ''.join(f'<a class="{"on" if t == "PMS" else ""}">{t}</a>' for t in TOP)
+    topnav = ''.join(f'<a class="{"on" if i == 0 else ""}">{t}</a>' for i, t in enumerate(TOP))
 
     persona = ('<div class="persona"><span class="plab">Viewing as</span>' + ''.join(
         f'<button class="pb{" on" if i == 0 else ""}" data-p="{pid}">{label}</button>'

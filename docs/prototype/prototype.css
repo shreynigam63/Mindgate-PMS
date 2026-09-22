@@ -10,12 +10,11 @@ body{font-family:Inter,system-ui,sans-serif;background:var(--page);color:var(--n
 .appbar{background:#fff;padding:13px 28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--navy100)}
 .logo{display:flex;align-items:center;gap:10px}
 .logomark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--navy),var(--lagoon))}
-.logotext{font-size:20px;font-weight:800;letter-spacing:-.02em}
-.logosub{font-size:11px;color:var(--navy300);font-weight:500;margin-left:6px}
+.logotext{font-size:19px;font-weight:800;letter-spacing:-.02em}
 .who{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--navy500)}
 .avatar{width:29px;height:29px;border-radius:50%;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12.5px}
 .topnav{background:var(--navy);display:flex;padding:0 16px;overflow-x:auto}
-.topnav a{color:#c9d6ea;padding:14px 17px;font-size:13.5px;font-weight:500;white-space:nowrap;cursor:default}
+.topnav a{color:#c9d6ea;padding:14px 17px;font-size:13.5px;font-weight:500;white-space:nowrap;cursor:pointer}
 .topnav a.on{background:var(--brand);color:#fff;font-weight:600}
 .rolebar{background:#fff;border-bottom:1px solid var(--navy100);padding:9px 28px 0;display:flex;gap:7px}
 .rt{padding:8px 20px;border:1px solid var(--navy100);border-bottom:0;border-radius:9px 9px 0 0;background:var(--navy50);
