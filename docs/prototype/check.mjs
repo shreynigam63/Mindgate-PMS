@@ -44,9 +44,13 @@ const LAYOUTS = [
     visibleNav: '.subnav:not([hidden]) a, .rolebar:not([hidden]) .gt' },
   { name: 'left sidebar', file: 'pms-ui-prototype.html',
     groupsOf: (person) => `.sidenav[data-persona="${person}"] .sgroup`,
-    openGroup: null,
+    // Groups start collapsed except the one this person lands in, so the walk
+    // expands a shut group exactly the way a person would — by clicking it.
+    openGroup: (person, g) => `.sidenav[data-persona="${person}"] .s-${g}.closed .sglab`,
     linksIn: (g, person) => `.sidenav[data-persona="${person}"] .s-${g} a`,
-    visibleNav: '.sidenav:not([hidden]) a' },
+    visibleNav: '.sidenav:not([hidden]) a',
+    // The reason the groups collapse at all: HR's menu has to fit on screen.
+    fitCheck: (person) => `.sidenav[data-persona="${person}"]` },
 ];
 
 const b = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
@@ -80,8 +84,24 @@ for (const L of LAYOUTS) {
     if (strays) gate.push({ person, offLimitsControlsVisible: strays });
     console.log(`${person.padEnd(9)} groups: [${groups}] ${ok ? 'OK' : 'MISMATCH'}, off-limits controls visible: ${strays}`);
 
+    if (L.fitCheck) {
+      // Measured in the state the person is handed, before anything is opened.
+      const fit = await p.evaluate((sel) => {
+        const side = document.querySelector(sel);
+        return { needs: side.scrollHeight, has: window.innerHeight,
+                 scrollsItself: getComputedStyle(side).overflowY === 'auto' };
+      }, L.fitCheck(person));
+      const ok = fit.needs <= fit.has;
+      console.log(`${' '.repeat(10)}menu as handed over: ${fit.needs}px of ${fit.has}px viewport` +
+                  ` -> ${ok ? 'fits' : 'MUST SCROLL'}; scrolls independently: ${fit.scrollsItself}`);
+      if (!ok || !fit.scrollsItself) gate.push({ person, menuFits: ok, scrollsItself: fit.scrollsItself });
+    }
+
     for (const g of groups) {
-      if (L.openGroup) { await p.click(L.openGroup(person, g)); await p.waitForTimeout(80); }
+      if (L.openGroup) {
+        const el = await p.$(L.openGroup(person, g));
+        if (el) { await el.click(); await p.waitForTimeout(80); }
+      }
       const sel = L.linksIn(g, person);
       const links = await p.$$eval(sel, (as) => as.map((a) => a.dataset.go));
       for (const id of links) {

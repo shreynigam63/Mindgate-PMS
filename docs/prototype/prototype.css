@@ -222,12 +222,31 @@ body{background:linear-gradient(180deg,#f3f6fc 0,#eaeff8 380px,var(--page) 700px
    gating; the whole difference is that every page this person may open is
    listed at once instead of behind a role tab. */
 .vlink{color:#fff;font-weight:700}
-.shell{display:flex;align-items:stretch}
+.shell{display:flex;align-items:flex-start;
+  /* Paints the sidebar's white column down the whole page even though the
+     sidebar itself is only as tall as the viewport. */
+  background:linear-gradient(90deg,#fff 0 248px,transparent 248px)}
 .shell .wrap{flex:1;min-width:0}
-.side{width:248px;flex-shrink:0;background:#fff;padding:6px 12px 30px;
-  border-right:1px solid var(--navy100);min-height:calc(100vh - 118px)}
-.sglab{font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;font-weight:800;
-  color:var(--navy300);padding:16px 12px 7px}
+/* The sidebar scrolls on its own: it pins to the top of the viewport once the
+   header has scrolled away, and if the menu is taller than the screen it
+   scrolls inside itself rather than dragging the page. */
+.side{width:248px;flex-shrink:0;background:#fff;padding:6px 12px 24px;
+  border-right:1px solid var(--navy100);
+  position:sticky;top:0;align-self:flex-start;max-height:100vh;overflow-y:auto;
+  overscroll-behavior:contain;scrollbar-width:thin}
+.side::-webkit-scrollbar{width:7px}
+.side::-webkit-scrollbar-thumb{background:var(--navy100);border-radius:4px}
+/* Group headings fold their section away, so a 21-item menu still fits. */
+.sglab{display:flex;align-items:center;gap:7px;width:100%;font:inherit;
+  font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;font-weight:800;
+  color:var(--navy300);padding:16px 12px 7px;background:none;border:0;cursor:pointer;
+  text-align:left}
+.sglab:hover{color:var(--navy400)}
+.scount{margin-left:auto;font-size:9.5px;font-weight:800;letter-spacing:0;
+  background:var(--navy50);color:var(--navy400);border-radius:99px;padding:2px 7px}
+.chev{font-size:11px;line-height:1;transition:transform .15s}
+.sgroup.closed .sitems{display:none}
+.sgroup.closed .chev{transform:rotate(-90deg)}
 .side a{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;
   font-size:13px;font-weight:600;color:var(--navy500);cursor:pointer;margin-bottom:2px}
 .side a:hover{background:var(--navy50)}
@@ -246,5 +265,6 @@ body{background:linear-gradient(180deg,#f3f6fc 0,#eaeff8 380px,var(--page) 700px
 .s-self a.on{background:linear-gradient(135deg,var(--navy),#2f6fae)}
 .s-mgr a.on{background:linear-gradient(135deg,#0d7183,var(--lagoon))}
 .s-hr a.on{background:linear-gradient(135deg,var(--violet700),var(--violet))}
-@media(max-width:900px){.shell{display:block}.side{width:auto;min-height:0;border-right:0;
-  border-bottom:1px solid var(--navy100)}}
+@media(max-width:900px){.shell{display:block;background:none}
+  .side{width:auto;position:static;max-height:none;border-right:0;
+    border-bottom:1px solid var(--navy100)}}

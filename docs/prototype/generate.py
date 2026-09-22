@@ -457,8 +457,10 @@ function showPersona(p){
   document.querySelectorAll('.pb').forEach(b => b.classList.toggle('on', b.dataset.p === p));
   document.querySelectorAll('.who').forEach(w => w.hidden = w.dataset.who !== p);
   document.querySelectorAll('.rolebar').forEach(r => r.hidden = r.dataset.persona !== p);
-  var tab = document.querySelector('.rolebar[data-persona="' + p + '"] .gt');
-  if (tab) showGroup(tab.dataset.group);
+  // Same landing screen as the sidebar variant, so the two behave alike.
+  var home = document.querySelector('.pb[data-p="' + p + '"]').dataset.home;
+  showGroup(home.split('-')[0]);
+  show(home);
 }
 document.querySelectorAll('.gt').forEach(b => b.onclick = () => showGroup(b.dataset.group));
 document.querySelectorAll('.subnav a').forEach(a => a.onclick = () => show(a.dataset.go));
@@ -468,23 +470,30 @@ JS_SIDE = """
 function show(id){
   document.querySelectorAll('.screen').forEach(s => s.hidden = s.id !== id);
   document.querySelectorAll('.side a').forEach(a => a.classList.toggle('on', a.dataset.go === id));
+  // Never leave the current page inside a shut group.
+  var g = id.split('-')[0];
+  document.querySelectorAll('.sgroup[data-group="' + g + '"]').forEach(s => s.classList.remove('closed'));
   window.scrollTo(0, 0);
 }
-// No groups to switch between: the sidebar shows everything this person can
-// open at once, which is the difference being compared.
+// Groups collapse so a 21-item menu still fits on screen. Opening one does
+// not shut the others: HR working across Approvals and the Library keeps both.
+document.querySelectorAll('.sglab').forEach(b => b.onclick = () => b.parentElement.classList.toggle('closed'));
 function showPersona(p){
   document.querySelectorAll('.pb').forEach(b => b.classList.toggle('on', b.dataset.p === p));
   document.querySelectorAll('.who').forEach(w => w.hidden = w.dataset.who !== p);
   document.querySelectorAll('.sidenav').forEach(n => n.hidden = n.dataset.persona !== p);
-  var first = document.querySelector('.sidenav[data-persona="' + p + '"] a');
-  if (first) show(first.dataset.go);
+  var home = document.querySelector('.pb[data-p="' + p + '"]').dataset.home;
+  // Back to this person's default shape, not whatever the last one left open.
+  document.querySelectorAll('.sidenav[data-persona="' + p + '"] .sgroup').forEach(
+    s => s.classList.toggle('closed', s.dataset.group !== home.split('-')[0]));
+  show(home);
 }
 document.querySelectorAll('.side a').forEach(a => a.onclick = () => show(a.dataset.go));
 """
 
 JS_COMMON = """
 document.querySelectorAll('.pb').forEach(b => b.onclick = () => showPersona(b.dataset.p));
-// Dashboard is home: back to whatever the signed-in person's first screen is.
+// Dashboard is home: back to this person's landing screen.
 document.querySelectorAll('.topnav a').forEach(a => a.onclick = () => {
   var on = document.querySelector('.pb.on');
   if (on) showPersona(on.dataset.p);
@@ -527,13 +536,15 @@ HR_PAGES = [('dash', 'Dashboard', s_dash, 'violet'),
 
 GROUPS = [('self', 'Self', SELF_PAGES), ('mgr', 'Manager', MGR_PAGES), ('hr', 'HR / Admin', HR_PAGES)]
 
-# role id, label, person, initial, which groups they may open.
+# role id, label, person, initial, groups they may open, landing screen.
 # The "Viewing as" control exists only so all three can be reviewed in one
 # file; in the real app the signed-in role decides and there is no switcher.
+# The landing screen is where Dashboard takes them, and its group is the one
+# left open in the sidebar -- HR starts in HR / Admin, not in their own KRAs.
 PERSONAS = [
-    ('employee', 'Employee', 'Vishakha Rane', 'V', ['self']),
-    ('manager', 'Manager', 'Nida Vajid Momin', 'N', ['self', 'mgr']),
-    ('hr', 'HR / Super Admin', 'Akshay Raut', 'A', ['self', 'mgr', 'hr']),
+    ('employee', 'Employee', 'Vishakha Rane', 'V', ['self'], 'self-mykras'),
+    ('manager', 'Manager', 'Nida Vajid Momin', 'N', ['self', 'mgr'], 'mgr-teamover'),
+    ('hr', 'HR / Super Admin', 'Akshay Raut', 'A', ['self', 'mgr', 'hr'], 'hr-dash'),
 ]
 
 TOP = ['Dashboard']
@@ -556,13 +567,13 @@ def build(layout='tabs'):
     topnav = ''.join(f'<a class="{"on" if i == 0 else ""}">{t}</a>' for i, t in enumerate(TOP))
 
     persona = ('<div class="persona"><span class="plab">Viewing as</span>' + ''.join(
-        f'<button class="pb{" on" if i == 0 else ""}" data-p="{pid}">{label}</button>'
-        for i, (pid, label, _, _, _) in enumerate(PERSONAS)) + '</div>')
+        f'<button class="pb{" on" if i == 0 else ""}" data-p="{pid}" data-home="{home}">{label}</button>'
+        for i, (pid, label, _, _, _, home) in enumerate(PERSONAS)) + '</div>')
 
     who = ''.join(
         f'<span class="who" data-who="{pid}"{"" if i == 0 else " hidden"}>{name}'
         f'<span class="avatar">{init}</span></span>'
-        for i, (pid, _, name, init, _) in enumerate(PERSONAS))
+        for i, (pid, _, name, init, _, _) in enumerate(PERSONAS))
 
     if layout == 'tabs':
         # One tab row per person, carrying only the groups that person may open.
@@ -570,7 +581,7 @@ def build(layout='tabs'):
             f'<div class="rolebar" data-persona="{pid}"{"" if i == 0 else " hidden"}>' + ''.join(
                 f'<button class="gt{" on" if j == 0 else ""}" data-group="{gid}">{glabel}</button>'
                 for j, (gid, glabel, _) in enumerate(g for g in GROUPS if g[0] in allowed)) + '</div>'
-            for i, (pid, _, _, _, allowed) in enumerate(PERSONAS))
+            for i, (pid, _, _, _, allowed, _) in enumerate(PERSONAS))
         subnavs = ''.join(
             f'<nav class="subnav" data-for="{gid}"{"" if i == 0 else " hidden"}>' + ''.join(
                 f'<a class="{"on" if j == 0 else ""}" data-go="{gid}-{pid}">{pname}</a>'
@@ -582,9 +593,8 @@ def build(layout='tabs'):
         # One sidebar per person: every screen they may open, grouped under a
         # heading, all visible at once. No tab to switch first.
         sidenavs = ''
-        for i, (pid, _, _, _, allowed) in enumerate(PERSONAS):
+        for i, (pid, _, _, _, allowed, home) in enumerate(PERSONAS):
             groups = ''
-            first = True
             for gid, glabel, pages in GROUPS:
                 if gid not in allowed:
                     continue
@@ -592,11 +602,17 @@ def build(layout='tabs'):
                 for spid, pname, _, hue in pages:
                     # The badge is tinted with the page's own hero colour, so the
                     # menu and the page you land on agree.
-                    on = ' class="on"' if first else ''
-                    first = False
+                    on = ' class="on"' if f'{gid}-{spid}' == home else ''
                     items += (f'<a{on} data-go="{gid}-{spid}">'
                               f'<i class="k-{hue}">{pname[0]}</i>{pname}</a>')
-                groups += f'<div class="sgroup s-{gid}"><div class="sglab">{glabel}</div>{items}</div>'
+                # Only the group this person lands in starts open. For HR that
+                # is HR / Admin, which is what keeps a 21-item menu on screen.
+                shut = '' if gid == home.split('-')[0] else ' closed'
+                groups += (f'<div class="sgroup s-{gid}{shut}" data-group="{gid}">'
+                           f'<button class="sglab">{glabel}'
+                           f'<span class="scount">{len(pages)}</span>'
+                           f'<span class="chev">&#9662;</span></button>'
+                           f'<div class="sitems">{items}</div></div>')
             sidenavs += (f'<aside class="side sidenav" data-persona="{pid}"'
                          f'{"" if i == 0 else " hidden"}>{groups}</aside>')
         body = BODY_SIDE.replace('__SIDENAVS__', sidenavs)

@@ -91,6 +91,36 @@ They are generated from one set of screen functions and one role map, so the
 content is identical to the character and only the navigation differs. Each
 one links to the other from its banner.
 
+### How the sidebar handles 21 items
+
+Two things keep a long menu usable, both in the chosen file:
+
+- **It scrolls on its own.** The sidebar pins to the top of the viewport once
+  the header scrolls away, and if the menu is taller than the screen it
+  scrolls inside itself rather than dragging the page with it. Verified:
+  with every group expanded HR's menu needs 1047px in a 900px box, scrolls
+  to its end, and the page stays at scroll 0.
+- **Groups collapse, and only the one you land in starts open.** Each
+  heading carries its count and folds its section away. HR is handed
+  9 visible items (HR / Admin) with Self · 7 and Manager · 5 one click
+  below; a manager gets Manager open and Self folded. Opening one group does
+  not shut the others, because HR working across Approvals and the Library
+  needs both. Navigating to a page always opens its group, so nothing can
+  leave you on a screen whose menu entry is hidden.
+
+### Where each role lands
+
+Dashboard — and switching person — goes to that role's landing screen, not
+to the first item in the list:
+
+| Role | Lands on |
+|---|---|
+| Employee | My KRAs |
+| Manager | Team Overview |
+| HR / Super Admin | PMS Dashboard |
+
+Both variants use the same landing screens, so they behave alike.
+
 ### Going back to role tabs
 
 Nothing is one-way. No screen knows which shell it is in, so reversing is
@@ -109,18 +139,15 @@ What the difference actually costs, measured at 1440×900:
 
 | | Role tabs | Left sidebar |
 |---|---|---|
-| Clicks to reach a screen in another group | **2** (tab, then item) | **1** |
-| Screens visible in the menu at once (HR) | 9 of 21 | 21 of 21 |
-| Fits without scrolling (employee, 7) | yes | yes |
-| Fits without scrolling (manager, 12) | yes | yes |
-| Fits without scrolling (HR, 21) | yes | **no** — the list ends at 1137px of a 900px viewport, so HR scrolls the menu |
+| Clicks to reach a screen in another group | **2** (tab, then item) | 1, or 2 if its group is collapsed |
+| Screens listed at once, as handed over (HR) | 9 of 21 | 9 of 21, with the other 12 one click away |
+| Menu fits the screen at 1440×900 | yes | yes — 531px of 900px for HR |
+| Menu fits with every group expanded (HR) | n/a | no, 1047px — and it scrolls itself, not the page |
 | Horizontal space taken from the page | none | 248px |
 
-So: the sidebar is faster and shows the whole product at a glance, at the cost
-of a narrower page and a menu HR has to scroll. The tabs keep every menu short
-and the page full width, at the cost of one extra click and of hiding two
-thirds of the product behind a tab. Neither is obviously right — that is why
-both exist.
+So: the sidebar shows the whole product in one column and reaches most of it
+in a click, at the cost of 248px of page width. The tabs keep the page full
+width, at the cost of hiding two thirds of the product behind a tab.
 
 The role gating is the same in both, and is not what is being compared: an
 employee sees only Self either way.

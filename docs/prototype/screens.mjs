@@ -95,10 +95,11 @@ for (const [role, meta] of Object.entries(ROLES)) {
   for (const g of meta.groups) {
     const sel = sidebar ? `.sidenav[data-persona="${role}"] .s-${g} a`
                         : `.subnav[data-for="${g}"] a`;
-    if (!sidebar) {
-      await p.click(`.rolebar[data-persona="${role}"] .gt[data-group="${g}"]`);
-      await p.waitForTimeout(90);
-    }
+    // Tabs: open the group's tab. Sidebar: expand the group if it is shut.
+    const opener = sidebar ? `.sidenav[data-persona="${role}"] .s-${g}.closed .sglab`
+                           : `.rolebar[data-persona="${role}"] .gt[data-group="${g}"]`;
+    const el = await p.$(opener);
+    if (el) { await el.click(); await p.waitForTimeout(90); }
     const links = await p.$$eval(sel, (as) => as.map((a) => [a.dataset.go, a.textContent.trim()]));
     for (const [id, label] of links) {
       await p.click(`${sel}[data-go="${id}"]`);
