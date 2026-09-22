@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Upload, Plus, Trash2, Save, Calculator, AlertTriangle } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
+import PageHead from '../PageHead';
 
 // The Simulation Report: model increments from the cycle's final ratings
 // and a budget.
@@ -36,13 +37,11 @@ export default function IncrementSimulationPage() {
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
-      <div>
-        <h2 className="text-lg font-bold">Increment Simulation</h2>
-        <p className="text-xs text-navy-400">
-          Models what an increment round would cost, from this cycle's ratings and the salaries on record.
-          Nothing here changes anyone's pay.
-        </p>
-      </div>
+      <PageHead title="Increment Simulation" hue="violet"
+        sub={<>
+        Models what an increment round would cost, from this cycle's ratings and the salaries on record.
+        Nothing here changes anyone's pay.
+        </>} />
       <div className="flex gap-2">
         {[['scenarios', 'Scenarios'], ['matrix', 'Rating → increment'], ['salaries', 'Salaries on record']].map(([k, label]) => (
           <button key={k} className={tab === k ? 'btn-pri' : 'btn-sec'} onClick={() => setTab(k)}>{label}</button>

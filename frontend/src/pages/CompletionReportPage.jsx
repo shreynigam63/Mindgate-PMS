@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 const STATUS_COLOR = {
   approved: 'bg-emerald-100 text-emerald-700', submitted: 'bg-emerald-100 text-emerald-700',
@@ -71,8 +72,7 @@ export default function CompletionReportPage() {
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">PMS Completion Report</h2>
+      <PageHead title="PMS Completion Report" hue="teal">
         {cycles.length > 0 && (
           <select className="input py-1 text-xs w-auto" value={cycleId} onChange={e => setCycleId(e.target.value)}>
             {cycles.map(c => (
@@ -88,7 +88,7 @@ export default function CompletionReportPage() {
             <RefreshCw size={13} className="inline mr-1" />{reseeding ? 'Re-seeding…' : 'Re-seed HOD evaluations'}
           </button>
         )}
-      </div>
+      </PageHead>
       <p className="text-xs text-navy-400 -mt-2">
         "Complete" means KRA approved, target achievements approved, Annual Review submitted, and Manager Evaluation submitted.
         Delivery Head Review isn't counted here — it isn't the employee's own action to finish.

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, ArrowRight, RotateCcw, Rocket, Activity, BellRing, Trash2, Save, X, Info, History, ChevronDown, ChevronUp } from 'lucide-react';
 import { api, PHASES, phaseLabel, phaseColor } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
+import PageHead from '../PageHead';
 
 export default function CycleAdminPage() {
   const [cycles, setCycles] = useState(null);
@@ -98,12 +99,11 @@ export default function CycleAdminPage() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Appraisal Cycles</h2>
+      <PageHead title="Appraisal Cycles" hue="pink">
         <button className="btn-pri" onClick={() => setShowNew(true)}><Plus size={13} className="inline mr-1" />New cycle</button>
         <button className="btn-sec" disabled={busy} onClick={cycleHealth}><Activity size={13} className="inline mr-1" />{busy ? 'Working…' : 'Cycle health (agent)'}</button>
         <button className="btn-sec" disabled={busy} onClick={runReminders}><BellRing size={13} className="inline mr-1" />{busy ? 'Working…' : 'Run reminder sweep'}</button>
-      </div>
+      </PageHead>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {sweep && <p className="text-xs text-emerald-700">{sweep}</p>}
       {/* Over the page, not above the cycle list — this screen's job is

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 const PERF = ['high', 'mid', 'low']; // rows, top to bottom
 const POT = ['low', 'mid', 'high'];  // columns, left to right
@@ -21,10 +22,10 @@ export default function NineBoxPage() {
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      <div>
-        <h2 className="text-lg font-bold">9-Box Grid</h2>
-        <p className="text-xs text-navy-400">Performance vs potential, from the "9-box" values entered on the Calibration screen. Visible to HR and Delivery Head.</p>
-      </div>
+      <PageHead title="9-Box Grid" hue="leaf"
+        sub={<>
+        Performance vs potential, from the "9-box" values entered on the Calibration screen. Visible to HR and Delivery Head.
+        </>} />
       <div className="flex gap-1">
         {LEVELS.map(l => (
           <button key={l.value} onClick={() => setLevel(l.value)}

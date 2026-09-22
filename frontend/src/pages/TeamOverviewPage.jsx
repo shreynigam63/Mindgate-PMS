@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 const STATUS_COLOR = {
   approved: 'bg-emerald-100 text-emerald-700', submitted: 'bg-emerald-100 text-emerald-700',
@@ -28,14 +29,13 @@ export default function TeamOverviewPage() {
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Team Overview</h2>
+      <PageHead title="Team Overview" hue="teal">
         {data&&data.scope === 'all_employees' && (
           <span className="chip bg-violet-50 text-violet-700" title="You hold super admin, so these lists show every employee — including yourself — and you can act at any level on any of them.">
             all employees · super admin
           </span>)}
         <span className="chip bg-navy-50 text-navy-600">{data.cycle.name}</span>
-      </div>
+      </PageHead>
       {!data.rows.length && <div className="card p-8 text-center text-sm text-navy-400">No direct reports found.</div>}
       <div className="card overflow-x-auto">
         <table className="w-full text-xs">

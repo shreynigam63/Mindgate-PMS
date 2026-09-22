@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Sparkles, SlidersHorizontal } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
+import PageHead from '../PageHead';
 
 const NINE_BOX = ['low-low', 'low-mid', 'low-high', 'mid-low', 'mid-mid', 'mid-high', 'high-low', 'high-mid', 'high-high'];
 
@@ -31,11 +32,10 @@ export default function CalibrationPage() {
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Calibration</h2>
+      <PageHead title="Calibration" hue="amber">
         <span className="chip bg-purple-100 text-purple-700">{data.cycle.name}</span>
         <button className="btn-sec" disabled={busy} onClick={askBrief}><Sparkles size={13} className="inline mr-1 text-amber-500" />{busy ? 'Drafting…' : 'Session brief (agent)'}</button>
-      </div>
+      </PageHead>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {/* The brief opens over the page rather than pushing the
           distribution and the rating table down — those are what the

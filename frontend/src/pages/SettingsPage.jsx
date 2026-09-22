@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 // HR Admin → Settings.
 //
@@ -51,12 +52,10 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <div>
-        <h2 className="text-lg font-bold">Settings</h2>
-        <p className="text-xs text-navy-400">
-          Tenant-wide configuration. Changes take effect immediately for everyone.
-        </p>
-      </div>
+      <PageHead title="Settings" hue="navy"
+        sub={<>
+        Tenant-wide configuration. Changes take effect immediately for everyone.
+        </>} />
 
       {Object.entries(data.settings).map(([key, s]) => {
         const copy = COPY[key] || { title: key, blurb: '', options: {} };

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 export default function WatchlistPage() {
   const [rows, setRows] = useState(null);
@@ -8,10 +9,10 @@ export default function WatchlistPage() {
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
-      <div>
-        <h2 className="text-lg font-bold">Super 50 — High-Performer Watchlist</h2>
-        <p className="text-xs text-navy-400">Employees with 3 consecutive top-tier ratings, most recently rated the highest grade. Recomputed automatically each time a cycle publishes; a lapsed streak removes someone from this list.</p>
-      </div>
+      <PageHead title="Super 50 — High-Performer Watchlist" hue="violet"
+        sub={<>
+        Employees with 3 consecutive top-tier ratings, most recently rated the highest grade. Recomputed automatically each time a cycle publishes; a lapsed streak removes someone from this list.
+        </>} />
       {err && <p className="text-sm text-rose-600">{err}</p>}
       {!err && !rows && <p className="text-sm text-navy-400">Loading…</p>}
       {rows && !rows.length && <div className="card p-8 text-center text-sm text-navy-400">No one currently qualifies — this list updates as cycles publish.</div>}

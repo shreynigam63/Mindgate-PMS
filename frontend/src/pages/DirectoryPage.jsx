@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, Fragment } from 'react';
 import { Settings2, Trash2, Search, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
+import PageHead from '../PageHead';
 
 const ROLES = ['employee', 'manager', 'hod', 'hr', 'admin'];
 
@@ -194,7 +195,7 @@ export default function DirectoryPage() {
 
   return (
     <div className="space-y-4 max-w-7xl mx-auto">
-      <h2 className="text-lg font-bold">Employees</h2>
+      <PageHead title="Employees" hue="navy" />
       <div className="card p-4 space-y-2">
         <p className="lbl">Bulk import — CSV or Excel (.xlsx), synced from your HRMS, dry run first</p>
         <div className="flex flex-wrap items-center gap-2">

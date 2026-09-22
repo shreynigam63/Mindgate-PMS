@@ -4,6 +4,7 @@ import { api, phaseLabel, phaseColor, KraBullets, Bullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
+import PageHead from '../PageHead';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -16,7 +17,7 @@ import MeetingPanel from './MeetingPanel';
 export default function MidYearReviewPage() {
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <h2 className="text-lg font-bold">Mid-Year Review</h2>
+      <PageHead title="Mid-Year Review" hue="amber" />
       <MyMidYearCard />
       <TeamMidYearReviews />
     </div>

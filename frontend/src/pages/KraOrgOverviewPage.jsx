@@ -2,6 +2,7 @@ import { useEffect, useState, Fragment } from 'react';
 import { Search, UserCog, Plus, Trash2, Send, RotateCcw } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import KraLibraryPicker from './KraLibraryPicker';
+import PageHead from '../PageHead';
 
 const STATUS_COLOR = {
   not_started: 'bg-navy-50 text-navy-500',
@@ -62,10 +63,10 @@ export default function KraOrgOverviewPage() {
   return (
     <div className="space-y-4 max-w-7xl mx-auto">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h2 className="text-lg font-bold">Org-wide KRA Overview</h2>
-          <p className="text-xs text-navy-400">{data.cycle.name} · every active employee's KRA status, with search and the ability to enter KRAs on someone's behalf.</p>
-        </div>
+        <PageHead title="Org-wide KRA Overview" hue="navy"
+          sub={<>
+          {data.cycle.name} · every active employee's KRA status, with search and the ability to enter KRAs on someone's behalf.
+          </>} />
         <div className="text-right">
           <button className="btn-sec" disabled={cleaning} onClick={cleanTitles}>{cleaning ? 'Checking…' : 'Clean up KRA titles'}</button>
           {cleanMsg && <p className="text-[11px] text-emerald-600 mt-1">{cleanMsg}</p>}

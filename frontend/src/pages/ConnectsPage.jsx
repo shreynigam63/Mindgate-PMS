@@ -3,6 +3,7 @@ import { Plus, CheckCircle2, Clock, Sparkles } from 'lucide-react';
 import { api, Bullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import MeetingPanel from './MeetingPanel';
+import PageHead from '../PageHead';
 
 export default function ConnectsPage() {
   const [data, setData] = useState(null);
@@ -31,11 +32,10 @@ export default function ConnectsPage() {
 
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Quarterly Connects</h2>
+      <PageHead title="Quarterly Connects" hue="pink">
         {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting sign-off</span>}
         <button className="btn-pri" onClick={() => setShowNew(v => !v)}><Plus size={13} className="inline mr-1" />Log a connect</button>
-      </div>
+      </PageHead>
       {showNew && <NewConnectForm me={me} team={team} onSaved={() => { setShowNew(false); load(filterEmployeeId); }} />}
       {team && team.length > 0 && (
         <div className="flex items-center gap-2">

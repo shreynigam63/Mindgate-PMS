@@ -3,6 +3,7 @@ import { Send, Paperclip, Trash2, Download } from 'lucide-react';
 import { api, phaseLabel, phaseColor, API_BASE } from '../utils/api';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
+import PageHead from '../PageHead';
 
 // Requested: per-KRA rating uses letter grades (A+ down to C), but the
 // computed OVERALL average is shown with the older descriptive wording
@@ -85,12 +86,11 @@ export default function SelfAppraisalPage() {
 
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Annual Review</h2>
+      <PageHead title="Annual Review" hue="navy">
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
         {a.status === 'submitted' && <span className="chip bg-emerald-100 text-emerald-700">submitted — locked</span>}
         {badge && <span className={`text-[11px] font-medium ${badge[1]}`}>{badge[0]}</span>}
-      </div>
+      </PageHead>
       {err && <p className="text-xs text-rose-600">{err}</p>}
 
       {/* Same assist as the mid-year page, requested for both: the record

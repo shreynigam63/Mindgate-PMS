@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Target, ClipboardList, TrendingUp, Star, Award, Clock } from 'lucide-react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 export default function AnnualReviewPage() {
   const [data, setData] = useState(null);
@@ -13,11 +14,10 @@ export default function AnnualReviewPage() {
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Final Rating</h2>
+      <PageHead title="Final Rating" hue="teal">
         <span className="chip bg-purple-100 text-purple-700">{data.cycle.name}</span>
         {data.super50?.flag && <span className="chip bg-amber-100 text-amber-700"><Award size={11} className="inline mr-1" />Super 50</span>}
-      </div>
+      </PageHead>
       <p className="text-xs text-navy-400">Consolidates your KRA outcomes, target achievement progress, and Aspiring Career status for the year — brings together what's already recorded elsewhere into one view.</p>
       {/* Said once, at the top, rather than only beside each blank. The
           reason matters: the manager's number is not final until the

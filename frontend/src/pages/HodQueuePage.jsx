@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { api, phaseLabel, phaseColor } from '../utils/api';
+import PageHead from '../PageHead';
 
 // Matches Self-Appraisal/Team Evaluation's convention: per-KRA ratings in
 // letter grades, overall figures in descriptive wording — fixed local
@@ -29,11 +30,10 @@ export default function HodQueuePage() {
   const editable = data.cycle.phase === 'hod_eval';
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Delivery Head Review</h2>
+      <PageHead title="Delivery Head Review" hue="navy">
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
         {data.departments?.length > 0 && <span className="text-xs text-navy-400">departments: {data.departments.join(', ')}</span>}
-      </div>
+      </PageHead>
       {!data.queue.length && <div className="card p-8 text-center text-sm text-navy-400">Nothing awaiting Delivery Head review — manager evaluations feed this queue as they are submitted.</div>}
       {data.queue.map(q => (
         <div key={q.employee_id} className="card overflow-hidden">

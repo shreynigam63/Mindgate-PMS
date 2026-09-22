@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Sparkles, FileDown, CheckCircle2 } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
+import PageHead from '../PageHead';
 
 export default function ClosureLettersPage() {
   const [data, setData] = useState(null);
@@ -15,10 +16,10 @@ export default function ClosureLettersPage() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <div>
-        <h2 className="text-lg font-bold">Closure Letters</h2>
-        <p className="text-xs text-navy-400">{data.cycle.name} — draft with AI, review, then generate the branded PDF. Nothing is ever sent without your review.</p>
-      </div>
+      <PageHead title="Closure Letters" hue="violet"
+        sub={<>
+        {data.cycle.name} — draft with AI, review, then generate the branded PDF. Nothing is ever sent without your review.
+        </>} />
       {!data.letters.length && <div className="card p-8 text-center text-sm text-navy-400">No published ratings yet for this cycle — publish first.</div>}
       <div className="space-y-2">
         {data.letters.map(l => <LetterRow key={l.employee_id} l={l} reload={load} />)}

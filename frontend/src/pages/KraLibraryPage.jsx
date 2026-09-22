@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Trash2, Library, Pencil, Save, X } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
+import PageHead from '../PageHead';
 
 // KRA Library — HR publishes a shelf of suggested KRAs per designation,
 // and employees pick from their own role's shelf when writing their KRAs.
@@ -75,13 +76,11 @@ export default function KraLibraryPage() {
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      <div>
-        <h2 className="text-lg font-bold">KRA Library</h2>
-        <p className="text-xs text-navy-400">
-          Suggested KRAs published per designation. Employees pick from their own role's shelf
-          when writing their KRAs — everything they add stays fully editable.
-        </p>
-      </div>
+      <PageHead title="KRA Library" hue="teal"
+        sub={<>
+        Suggested KRAs published per designation. Employees pick from their own role's shelf
+        when writing their KRAs — everything they add stays fully editable.
+        </>} />
 
       <div className="card p-4 space-y-2">
         <p className="lbl">Publish a shelf — one row per KRA, keyed on Designation, dry run first</p>

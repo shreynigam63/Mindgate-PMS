@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 // "See past years" — an employee's own performance history across
 // published annual cycles, per a direct request. Reads the same table
@@ -15,10 +16,10 @@ export default function HistoryPage() {
 
   return (
     <div className="space-y-4 max-w-2xl mx-auto">
-      <div>
-        <h2 className="text-lg font-bold">Past Cycles</h2>
-        <p className="text-xs text-navy-400">Your rating history across published annual review cycles.</p>
-      </div>
+      <PageHead title="Past Cycles" hue="navy"
+        sub={<>
+        Your rating history across published annual review cycles.
+        </>} />
       {!history.length && <div className="card p-8 text-center text-sm text-navy-400">No published cycles yet — your history will appear here once an annual cycle you're part of is published.</div>}
       <div className="space-y-2">
         {history.map(h => (

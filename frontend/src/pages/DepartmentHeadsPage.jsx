@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 // Moved to its own HR Admin tab, per a direct request — was previously a
 // panel embedded inside the Employees page. Giving someone the "hod"
@@ -64,10 +65,10 @@ export default function DepartmentHeadsPage() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <div>
-        <h2 className="text-lg font-bold">Department Heads</h2>
-        <p className="text-xs text-navy-400">Who each department's Delivery Head Review queue belongs to. Giving someone the "hod" role only grants access to the screen; this is what actually scopes which department's evaluations they see.</p>
-      </div>
+      <PageHead title="Department Heads" hue="navy"
+        sub={<>
+        Who each department's Delivery Head Review queue belongs to. Giving someone the "hod" role only grants access to the screen; this is what actually scopes which department's evaluations they see.
+        </>} />
       <div className="card p-3">
         <p className="lbl mb-1">Add a department</p>
         <div className="flex flex-wrap items-center gap-2">

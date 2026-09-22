@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ShieldCheck, Sparkles, Trash2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { api, DraftBadge } from '../utils/api';
+import PageHead from '../PageHead';
 
 // HR-ONLY: the AI reading of an annual review meeting, against the seven
 // organisational parameters.
@@ -81,13 +82,11 @@ export default function ParameterAnalysisPage() {
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      <div>
-        <h2 className="text-lg font-bold">Final Rating — Parameter Analysis</h2>
-        <p className="text-xs text-navy-400">
-          What the annual review conversation showed against each of the seven organisational parameters, read from the
-          meeting transcript.
-        </p>
-      </div>
+      <PageHead title="Final Rating — Parameter Analysis" hue="violet"
+        sub={<>
+        What the annual review conversation showed against each of the seven organisational parameters, read from the
+        meeting transcript.
+        </>} />
 
       <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex gap-2">
         <ShieldCheck size={16} className="text-rose-600 shrink-0 mt-0.5" />

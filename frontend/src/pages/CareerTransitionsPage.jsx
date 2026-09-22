@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Search, X, Trash2, Save } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
+import PageHead from '../PageHead';
 
 // CR-11 (phase 1 of 2) — a richer transition matrix on top of the simpler
 // Career Framework band/level list, per a follow-up conversation with
@@ -66,13 +67,11 @@ export default function CareerTransitionsPage() {
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h2 className="text-lg font-bold">Career Pathing Matrix</h2>
-          <p className="text-xs text-navy-400 max-w-xl">
-            Define valid role-to-role transitions. Career paths are checked against this matrix (BR-3.2 / CR-11).
-            Minimum and typical time-in-role are shown for reference only — not yet enforced, since role start dates aren't tracked.
-          </p>
-        </div>
+        <PageHead title="Career Pathing Matrix" hue="leaf"
+          sub={<>
+          Define valid role-to-role transitions. Career paths are checked against this matrix (BR-3.2 / CR-11).
+          Minimum and typical time-in-role are shown for reference only — not yet enforced, since role start dates aren't tracked.
+          </>} />
         <button className="btn-pri" onClick={() => { setEditing(null); setShowForm(true); }}><Plus size={13} className="inline mr-1" />Add transition</button>
       </div>
 

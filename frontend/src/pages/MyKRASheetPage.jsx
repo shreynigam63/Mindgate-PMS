@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, Check, Send } from 'lucide-react';
 import { api, phaseLabel, phaseColor, sheetStatusLabel } from '../utils/api';
 import KraLibraryPicker from './KraLibraryPicker';
+import PageHead from '../PageHead';
 
 // Whitespace counts as empty. An imported cell can carry a stray space or
 // newline, and treating that as content would put the box back on exactly
@@ -130,12 +131,11 @@ export default function MyKRASheetPage() {
 
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">My KRAs</h2>
+      <PageHead title="My KRAs" hue="navy">
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
         <span className={`chip ${data.sheet.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : data.sheet.status === 'returned' ? 'bg-rose-100 text-rose-700' : 'bg-navy-50 text-navy-600'}`}>sheet: {sheetStatusLabel(data.sheet.status, data.sheet.reopened_reason)}</span>
         <span className={`chip ${Math.abs(total - 100) < 0.01 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>weights: {total}/100</span>
-      </div>
+      </PageHead>
       {/* Two different things land on 'returned', and attributing the
           wrong one to a manager is worse than saying nothing: a sheet
           reopened because HR changed somebody's designation was not a

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 export default function PeopleHubPage({ user }) {
   const [tab, setTab] = useState('events');
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <h2 className="text-lg font-bold">People Hub</h2>
+      <PageHead title="People Hub" hue="teal" />
       <div className="flex gap-1 bg-navy-50 rounded-xl p-1 w-fit flex-wrap">
         {[['events', 'Events'], ['awards', 'Awards'], ['csr', 'CSR'], ['queries', 'Appraisal Queries']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
+import PageHead from '../PageHead';
 
 const STATUS_LABEL = { open: 'Open', in_progress: 'In Progress', closed_successful: 'Closed — Successful', closed_unsuccessful: 'Closed — Unsuccessful' };
 const STATUS_COLOR = {
@@ -21,10 +22,10 @@ export default function PIPPage() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <div>
-        <h2 className="text-lg font-bold">Performance Improvement Plans</h2>
-        <p className="text-xs text-navy-400">Auto-opened when a published rating falls below the cycle's threshold. Weekly notes are added by the manager or HR; the employee has read-only visibility.</p>
-      </div>
+      <PageHead title="Performance Improvement Plans" hue="amber"
+        sub={<>
+        Auto-opened when a published rating falls below the cycle's threshold. Weekly notes are added by the manager or HR; the employee has read-only visibility.
+        </>} />
       {!pips.length && <div className="card p-8 text-center text-sm text-navy-400">No PIPs — either none has been triggered, or you have none to view.</div>}
       <div className="space-y-2">
         {pips.map(p => (

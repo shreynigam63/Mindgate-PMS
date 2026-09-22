@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, Send, CheckCircle2, RotateCcw } from 'lucide-react';
 import { api, phaseLabel, phaseColor, Bullets } from '../utils/api';
 import AiDraftPanel, { SuggestionList } from './AiDraftPanel';
+import PageHead from '../PageHead';
 
 const STATUS_COLOR = {
   draft: 'bg-slate-100 text-navy-600',
@@ -13,7 +14,7 @@ const STATUS_COLOR = {
 export default function MyGrowthPage() {
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
-      <h2 className="text-lg font-bold">My Growth</h2>
+      <PageHead title="My Growth" hue="leaf" />
       <div className="grid lg:grid-cols-2 gap-4">
         <DevelopmentPlanCard />
         <CareerPathCard />

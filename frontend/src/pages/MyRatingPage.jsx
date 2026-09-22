@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Download, FileText } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
+import PageHead from '../PageHead';
 
 export default function MyRatingPage() {
   const [rows, setRows] = useState(null); const [err, setErr] = useState(null);
@@ -13,7 +14,7 @@ export default function MyRatingPage() {
   const token = localStorage.getItem('apms_token');
   return (
     <div className="max-w-2xl mx-auto space-y-4">
-      <h2 className="text-lg font-bold">My Rating History</h2>
+      <PageHead title="My Rating History" hue="violet" />
       {!rows.length ? <div className="card p-8 text-center text-sm text-navy-400">No published ratings yet. Ratings appear here after HR publishes a cycle.</div> : (
         <div className="card divide-y divide-navy-100">
           {rows.map(r => (

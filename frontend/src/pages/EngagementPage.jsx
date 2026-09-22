@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Sparkles, Play, Square } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
+import PageHead from '../PageHead';
 
 export default function EngagementPage() {
   const [data, setData] = useState(null);
@@ -49,10 +50,9 @@ export default function EngagementPage() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-bold">Engagement</h2>
+      <PageHead title="Engagement" hue="leaf">
         {data.admin && <button className="btn-pri" onClick={createSurvey}><Plus size={13} className="inline mr-1" />New survey</button>}
-      </div>
+      </PageHead>
 
       {data.invitations.length > 0 && (
         <div className="card p-4">
