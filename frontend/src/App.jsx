@@ -69,28 +69,28 @@ const NAV = [
   ]},
   { group: 'HR Admin', hue: 'violet', items: [
     { to: '/admin/cycles', label: 'Cycles', icon: BarChart3 },
-    { to: '/admin/directory', label: 'Employees', icon: Upload, roles: ['admin', 'hr'] },
-    { to: '/admin/department-heads', label: 'Department Heads', icon: UserCog, roles: ['admin', 'hr'] },
-    { to: '/admin/career-transitions', label: 'Career Pathing Matrix', icon: GitBranch, roles: ['admin', 'hr'] },
+    { to: '/admin/directory', label: 'Employees', icon: Upload },
+    { to: '/admin/department-heads', label: 'Department Heads', icon: UserCog },
+    { to: '/admin/career-transitions', label: 'Career Pathing Matrix', icon: GitBranch },
     { to: '/admin/kra-overview', label: 'KRA Overview', icon: ClipboardList },
     // Next to KRA Overview because the two are easily confused and the
     // difference matters: Overview assigns KRAs to named people, this
     // publishes a shelf per job title that employees pick from.
-    { to: '/admin/kra-library', label: 'KRA Library', icon: Library, roles: ['admin', 'hr'] },
-    { to: '/admin/completion-report', label: 'PMS Completion Report', icon: FileText, roles: ['admin', 'hr'] },
+    { to: '/admin/kra-library', label: 'KRA Library', icon: Library },
+    { to: '/admin/completion-report', label: 'PMS Completion Report', icon: FileText },
     { to: '/admin/calibration', label: 'Calibration', icon: Sparkles },
     { to: '/admin/nine-box', label: '9-Box Grid', icon: Grid3x3 },
     { to: '/admin/closure-letters', label: 'Closure Letters', icon: FileText },
     // Salary sits behind its own permission, so this link is HR/admin only
     // — a manager must never see it, let alone open it.
-    { to: '/admin/increments', label: 'Increment Simulation', icon: Calculator, roles: ['admin', 'hr'] },
+    { to: '/admin/increments', label: 'Increment Simulation', icon: Calculator },
     // A confidential assessment the employee and their manager never see —
     // HR and admin only, both in the nav and on the server.
-    { to: '/admin/parameter-analysis', label: 'Review Analysis (HR)', icon: ShieldCheck, roles: ['admin', 'hr'] },
+    { to: '/admin/parameter-analysis', label: 'Review Analysis (HR)', icon: ShieldCheck },
     { to: '/admin/watchlist', label: 'Super 50', icon: Award },
     // Tenant-wide configuration. Last in the group because it is set once
     // and then left alone, unlike everything above it.
-    { to: '/admin/settings', label: 'Settings', icon: SlidersHorizontal, roles: ['admin', 'hr'] },
+    { to: '/admin/settings', label: 'Settings', icon: SlidersHorizontal },
   ]},
   { group: 'Engagement & People', hue: 'leaf', items: [
     { to: '/engagement', label: 'Engagement', icon: HeartHandshake },
@@ -100,15 +100,22 @@ const NAV = [
 
 const signOut = () => { localStorage.removeItem('apms_token'); location.href = '/'; };
 
+// What this person may open, from core.page_permission via /me. One row
+// there drives BOTH the sidebar and the direct-URL guard below, so a hidden
+// menu item and a typed URL can never disagree.
+//
+// `pages == null` means the tenant has no page rows — unconfigured, not "no
+// access" — and the menu falls back to showing everything, which is what it
+// did before this existed. The API enforces its own permissions either way,
+// so an unfiltered menu is a tidiness problem, never an access one.
+const mayOpen = (user, route) => !user.pages || user.pages.includes(route);
+
 function SideNav({ user }) {
   const { pathname } = useLocation();
-  // A nav item's `roles` array is opt-in — items without one stay visible to
-  // everyone (the current behaviour for every item other than the ones
-  // explicitly locked down). If a whole group ends up empty after filtering,
-  // drop the group heading too: an empty "HR Admin" band with nothing under
-  // it is just confusing.
+  // If a whole group ends up empty after filtering, drop the group heading
+  // too: an empty "HR Admin" band with nothing under it is just confusing.
   const groups = NAV
-    .map(g => ({ ...g, items: g.items.filter(it => !it.roles || it.roles.includes(user.role)) }))
+    .map(g => ({ ...g, items: g.items.filter(it => mayOpen(user, it.to)) }))
     .filter(g => g.items.length > 0);
 
   // 29 items is too long a list to hold open. Only the group you are working
@@ -167,13 +174,84 @@ function SideNav({ user }) {
   );
 }
 
+// The direct-URL guard. Hiding a menu item is tidiness; this is what
+// answers someone who pastes a link to a page they may not open. It reads
+// the SAME list as the sidebar, so the two cannot drift apart.
+//
+// A path with no page row — the "/" redirect, or a page added to the router
+// before it is registered in core.page_permission — is allowed through and
+// left to the API, which guards itself.
+function NoAccess() {
+  return (
+    <div className="card p-8 text-center max-w-lg mx-auto">
+      <p className="text-lg font-bold">This page is not part of your access</p>
+      <p className="text-sm text-navy-400 mt-2">
+        If you need it, ask HR to grant it — access is set per role, so they can
+        change it without a release.
+      </p>
+      <NavLink to="/my/kras" className="btn-pri inline-block mt-4">Back to My KRAs</NavLink>
+    </div>
+  );
+}
+
+function Main({ user }) {
+  const { pathname } = useLocation();
+  // Longest match, so /admin/kra-library is not answered by /admin/kra.
+  const known = NAV.flatMap(g => g.items.map(it => it.to))
+    .filter(to => pathname === to || pathname.startsWith(to + '/'))
+    .sort((a, b) => b.length - a.length)[0];
+  const blocked = known && !mayOpen(user, known);
+  return (
+    <main className="flex-1 min-w-0 p-4 lg:p-6">
+      {blocked ? <NoAccess /> : (
+            <Routes>
+              <Route path="/" element={<Navigate to="/my/kras" replace />} />
+              <Route path="/my/kras" element={<MyKRASheetPage />} />
+              <Route path="/admin/increments" element={<IncrementSimulationPage />} />
+              <Route path="/admin/parameter-analysis" element={<ParameterAnalysisPage />} />
+              <Route path="/admin/settings" element={<SettingsPage />} />
+              <Route path="/my/self-appraisal" element={<SelfAppraisalPage />} />
+              <Route path="/my/rating" element={<MyRatingPage />} />
+              <Route path="/my/midyear" element={<MidYearReviewPage />} />
+              <Route path="/my/growth" element={<MyGrowthPage />} />
+              <Route path="/my/annual-review" element={<AnnualReviewPage />} />
+              <Route path="/my/history" element={<HistoryPage />} />
+              <Route path="/team/overview" element={<TeamOverviewPage />} />
+              <Route path="/team/kra-sheets" element={<TeamKraSheetsPage />} />
+              <Route path="/team/eval" element={<TeamEvalPage user={user} />} />
+              <Route path="/team/connects" element={<ConnectsPage />} />
+              <Route path="/hod" element={<HodQueuePage />} />
+              <Route path="/pip" element={<PIPPage />} />
+              <Route path="/admin/cycles" element={<CycleAdminPage />} />
+              <Route path="/admin/calibration" element={<CalibrationPage />} />
+              <Route path="/admin/directory" element={<RequireRole user={user} roles={['admin', 'hr']}><DirectoryPage /></RequireRole>} />
+              <Route path="/admin/completion-report" element={<RequireRole user={user} roles={['admin', 'hr']}><CompletionReportPage /></RequireRole>} />
+              <Route path="/admin/career-transitions" element={<RequireRole user={user} roles={['admin', 'hr']}><CareerTransitionsPage /></RequireRole>} />
+              <Route path="/admin/department-heads" element={<RequireRole user={user} roles={['admin', 'hr']}><DepartmentHeadsPage /></RequireRole>} />
+              <Route path="/admin/kra-overview" element={<KraOrgOverviewPage />} />
+              <Route path="/admin/kra-library" element={<RequireRole user={user} roles={['admin', 'hr']}><KraLibraryPage /></RequireRole>} />
+              <Route path="/admin/closure-letters" element={<ClosureLettersPage />} />
+              <Route path="/admin/watchlist" element={<WatchlistPage />} />
+              <Route path="/admin/nine-box" element={<NineBoxPage />} />
+              <Route path="/engagement" element={<EngagementPage />} />
+              <Route path="/people" element={<PeopleHubPage user={user} />} />
+              <Route path="*" element={<Navigate to="/my/kras" replace />} />
+            </Routes>
+      )}
+    </main>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [checked, setChecked] = useState(false);
   useEffect(() => {
     const t = localStorage.getItem('apms_token');
     if (!t) { setChecked(true); return; }
-    api('/me').then(r => setUser(r.user)).catch(() => localStorage.removeItem('apms_token')).finally(() => setChecked(true));
+    api('/me')
+      .then(r => setUser({ ...r.user, pages: r.pages }))
+      .catch(() => localStorage.removeItem('apms_token'))
+      .finally(() => setChecked(true));
   }, []);
   if (!checked) return null;
   if (!user) return <Login onUser={setUser} />;
@@ -181,41 +259,7 @@ export default function App() {
     <BrowserRouter>
       <div className="min-h-screen lg:flex">
         <SideNav user={user} />
-        <main className="flex-1 min-w-0 p-4 lg:p-6">
-          <Routes>
-            <Route path="/" element={<Navigate to="/my/kras" replace />} />
-            <Route path="/my/kras" element={<MyKRASheetPage />} />
-            <Route path="/admin/increments" element={<IncrementSimulationPage />} />
-            <Route path="/admin/parameter-analysis" element={<ParameterAnalysisPage />} />
-            <Route path="/admin/settings" element={<SettingsPage />} />
-            <Route path="/my/self-appraisal" element={<SelfAppraisalPage />} />
-            <Route path="/my/rating" element={<MyRatingPage />} />
-            <Route path="/my/midyear" element={<MidYearReviewPage />} />
-            <Route path="/my/growth" element={<MyGrowthPage />} />
-            <Route path="/my/annual-review" element={<AnnualReviewPage />} />
-            <Route path="/my/history" element={<HistoryPage />} />
-            <Route path="/team/overview" element={<TeamOverviewPage />} />
-            <Route path="/team/kra-sheets" element={<TeamKraSheetsPage />} />
-            <Route path="/team/eval" element={<TeamEvalPage user={user} />} />
-            <Route path="/team/connects" element={<ConnectsPage />} />
-            <Route path="/hod" element={<HodQueuePage />} />
-            <Route path="/pip" element={<PIPPage />} />
-            <Route path="/admin/cycles" element={<CycleAdminPage />} />
-            <Route path="/admin/calibration" element={<CalibrationPage />} />
-            <Route path="/admin/directory" element={<RequireRole user={user} roles={['admin', 'hr']}><DirectoryPage /></RequireRole>} />
-            <Route path="/admin/completion-report" element={<RequireRole user={user} roles={['admin', 'hr']}><CompletionReportPage /></RequireRole>} />
-            <Route path="/admin/career-transitions" element={<RequireRole user={user} roles={['admin', 'hr']}><CareerTransitionsPage /></RequireRole>} />
-            <Route path="/admin/department-heads" element={<RequireRole user={user} roles={['admin', 'hr']}><DepartmentHeadsPage /></RequireRole>} />
-            <Route path="/admin/kra-overview" element={<KraOrgOverviewPage />} />
-            <Route path="/admin/kra-library" element={<RequireRole user={user} roles={['admin', 'hr']}><KraLibraryPage /></RequireRole>} />
-            <Route path="/admin/closure-letters" element={<ClosureLettersPage />} />
-            <Route path="/admin/watchlist" element={<WatchlistPage />} />
-            <Route path="/admin/nine-box" element={<NineBoxPage />} />
-            <Route path="/engagement" element={<EngagementPage />} />
-            <Route path="/people" element={<PeopleHubPage user={user} />} />
-            <Route path="*" element={<Navigate to="/my/kras" replace />} />
-          </Routes>
-        </main>
+        <Main user={user} />
       </div>
     </BrowserRouter>
   );

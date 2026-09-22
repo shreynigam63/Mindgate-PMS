@@ -10,6 +10,7 @@ const logger = require('./core/logger');
 const { runMigrations } = require('./core/migrate');
 const { authenticate, devLogin } = require('./core/auth');
 const employees = require('./core/employees');
+const { effectivePermissions } = require('./core/permissions');
 
 const REQUIRED_ENV = ['DATABASE_URL', 'JWT_SECRET', 'TENANT_SLUG'];
 
@@ -35,6 +36,10 @@ async function main() {
   // first time. Idempotent (ON CONFLICT DO NOTHING), safe on every boot.
   await require('./migrations/002-default-permission-bundles').ensureTenantSeeds(db, TENANT_ID);
   await require('./migrations/008-review-parameters').ensureDefaultParameters(db, TENANT_ID);
+  // Same reason as the bundles above: a tenant row created after migration
+  // 042 ran would have no page rows, and the sidebar would fall back to
+  // showing every page to everyone.
+  await require('./migrations/042-seed-page-permissions').ensurePageSeeds(db, TENANT_ID);
 
   const app = express();
   app.use(cors());
@@ -43,7 +48,36 @@ async function main() {
 
   app.get('/api/v1/health', (_req, res) => res.json({ ok: true, service: 'agentic-pms' }));
   app.post('/api/v1/auth/dev-login', devLogin);
-  app.get('/api/v1/me', authenticate, (req, res) => res.json({ user: req.user }));
+  // /me carries the pages this person may open. One row in
+  // core.page_permission drives both the sidebar and the direct-URL guard,
+  // so a hidden menu item and a typed URL can never disagree.
+  //
+  // `pages: null` means the tenant has no page rows at all — unconfigured,
+  // not "no access". The client then shows the full menu, which is what it
+  // did before this existed. Failing closed here would white-screen the app
+  // if a migration ever lagged a deploy, and it would buy nothing: the API
+  // enforces its own permissions regardless of what the menu shows.
+  app.get('/api/v1/me', authenticate, async (req, res) => {
+    let pages = null;
+    try {
+      const rows = (await db.query(
+        `SELECT route, required_permission FROM core.page_permission
+          WHERE tenant_id=$1 AND route IS NOT NULL`, [req.user.tenant_id])).rows;
+      if (rows.length) {
+        const { permissions, wildcard } = await effectivePermissions(req.user);
+        pages = rows
+          .filter(r => !r.required_permission || wildcard || permissions.has(r.required_permission))
+          .map(r => r.route);
+      } else {
+        logger.warn('no page_permission rows for tenant — sidebar unfiltered', { tenant: req.user.tenant_id });
+      }
+    } catch (e) {
+      // Same posture as the parity gate: a failure here must not sign
+      // people out. Log it and let the menu fall back to unfiltered.
+      logger.error('page permission lookup failed', { error: e.message });
+    }
+    res.json({ user: req.user, pages });
+  });
 
   app.use('/api/v1/employees', employees.router);
   app.use('/api/v1/setup', require('./core/setup').router);
