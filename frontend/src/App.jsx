@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal } from 'lucide-react';
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, ChevronDown } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -34,7 +34,7 @@ import ParameterAnalysisPage from './pages/ParameterAnalysisPage';
 import SettingsPage from './pages/SettingsPage';
 
 const NAV = [
-  { group: 'My Performance', items: [
+  { group: 'My Performance', hue: 'navy', items: [
     { to: '/my/kras', label: 'My KRAs', icon: Target },
     { to: '/my/growth', label: 'My Growth', icon: TrendingUp },
     // Asked for on 22 Sep: Quarterly Connects sits between My Growth and
@@ -60,14 +60,14 @@ const NAV = [
     { to: '/my/rating', label: 'My Rating', icon: Star },
     { to: '/my/history', label: 'Past Cycles', icon: History },
   ]},
-  { group: 'Team', items: [
+  { group: 'Team', hue: 'lagoon', items: [
     { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard },
     { to: '/team/kra-sheets', label: 'Team KRA Sheets', icon: ClipboardList },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/hod', label: 'Delivery Head Review', icon: Landmark },
     { to: '/pip', label: 'Improvement Plans', icon: ShieldAlert },
   ]},
-  { group: 'HR Admin', items: [
+  { group: 'HR Admin', hue: 'violet', items: [
     { to: '/admin/cycles', label: 'Cycles', icon: BarChart3 },
     { to: '/admin/directory', label: 'Employees', icon: Upload, roles: ['admin', 'hr'] },
     { to: '/admin/department-heads', label: 'Department Heads', icon: UserCog, roles: ['admin', 'hr'] },
@@ -92,11 +92,80 @@ const NAV = [
     // and then left alone, unlike everything above it.
     { to: '/admin/settings', label: 'Settings', icon: SlidersHorizontal, roles: ['admin', 'hr'] },
   ]},
-  { group: 'Engagement & People', items: [
+  { group: 'Engagement & People', hue: 'leaf', items: [
     { to: '/engagement', label: 'Engagement', icon: HeartHandshake },
     { to: '/people', label: 'People Hub', icon: User },
   ]},
 ];
+
+const signOut = () => { localStorage.removeItem('apms_token'); location.href = '/'; };
+
+function SideNav({ user }) {
+  const { pathname } = useLocation();
+  // A nav item's `roles` array is opt-in — items without one stay visible to
+  // everyone (the current behaviour for every item other than the ones
+  // explicitly locked down). If a whole group ends up empty after filtering,
+  // drop the group heading too: an empty "HR Admin" band with nothing under
+  // it is just confusing.
+  const groups = NAV
+    .map(g => ({ ...g, items: g.items.filter(it => !it.roles || it.roles.includes(user.role)) }))
+    .filter(g => g.items.length > 0);
+
+  // 29 items is too long a list to hold open. Only the group you are working
+  // in starts open; the rest fold away behind their heading, with a count so
+  // you can see what is in there without opening it.
+  const here = groups.find(g => g.items.some(it => pathname.startsWith(it.to)));
+  const [opened, setOpened] = useState({});
+  // The active group is always open — nothing may strand you on a page whose
+  // own menu entry is hidden.
+  const isOpen = g => g.group === here?.group || !!opened[g.group];
+
+  return (
+    <aside className="glass lg:w-60 lg:shrink-0 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto rounded-none lg:rounded-r-2xl">
+      <div className="px-4 py-4 flex items-start justify-between gap-2">
+        <h1 className="text-sm font-bold flex items-center gap-2 text-navy-900 leading-tight">
+          <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-navy-700 to-brand-500 flex items-center justify-center shadow-card shrink-0">
+            <Sparkles size={13} className="text-white" />
+          </span>
+          Performance Management System
+        </h1>
+        <div className="flex items-center gap-1 shrink-0">
+          <NotificationBell />
+          <button className="lg:hidden btn-sec" onClick={signOut}><LogOut size={12} /></button>
+        </div>
+      </div>
+      <nav className="px-2 pb-4 flex lg:block overflow-x-auto gap-1">
+        {groups.map(g => {
+          const open = isOpen(g);
+          return (
+            <div key={g.group} className="lg:mb-3 flex lg:block gap-1">
+              {/* Hidden on small screens, where the nav is a single scrolling
+                  row and there is nothing to collapse. */}
+              <button type="button" className="navgrp hidden lg:flex"
+                onClick={() => setOpened(o => ({ ...o, [g.group]: !open }))}>
+                {g.group}
+                <span className="navcount">{g.items.length}</span>
+                <ChevronDown size={11} className={`navchev ${open ? '' : 'navchev-shut'}`} />
+              </button>
+              <div className={`flex lg:block gap-1 ${open ? '' : 'lg:hidden'}`}>
+                {g.items.map(it => (
+                  <NavLink key={it.to} to={it.to}
+                    className={({ isActive }) => `flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-xl text-sm whitespace-nowrap transition-colors ${isActive ? `navon navon-${g.hue} text-white shadow-card` : 'text-navy-600 hover:bg-white/70'}`}>
+                    <span className={`navico navico-${g.hue}`}><it.icon size={13} /></span>{it.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </nav>
+      <div className="hidden lg:block px-4 py-3 border-t border-navy-100/60 text-xs text-navy-500">
+        {user.name} · {user.role}
+        <button className="block mt-1 text-brand-600 font-semibold" onClick={signOut}>Sign out</button>
+      </div>
+    </aside>
+  );
+}
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -111,49 +180,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <div className="min-h-screen lg:flex">
-        <aside className="glass lg:w-60 lg:shrink-0 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto rounded-none lg:rounded-r-2xl">
-          <div className="px-4 py-4 flex items-center justify-between">
-            <h1 className="text-base font-bold flex items-center gap-2 text-navy-900">
-              <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-navy-700 to-brand-500 flex items-center justify-center shadow-card shrink-0">
-                <Sparkles size={13} className="text-white" />
-              </span>
-              Agentic PMS
-            </h1>
-            <div className="flex items-center gap-1">
-              <NotificationBell />
-              <button className="lg:hidden btn-sec" onClick={() => { localStorage.removeItem('apms_token'); location.href = '/'; }}><LogOut size={12} /></button>
-            </div>
-          </div>
-          <nav className="px-2 pb-4 flex lg:block overflow-x-auto gap-1">
-            {NAV.map(g => {
-              // A nav item's `roles` array is opt-in — items without one stay
-              // visible to everyone (the current behaviour for every item
-              // other than the ones explicitly locked down). Items whose
-              // `roles` list doesn't include the current user's role get
-              // filtered out here. If a whole group ends up empty after
-              // filtering, drop the group heading too — showing an empty
-              // "HR Admin" band with nothing under it would just be visually
-              // confusing.
-              const visibleItems = g.items.filter(it => !it.roles || it.roles.includes(user.role));
-              if (visibleItems.length === 0) return null;
-              return (
-                <div key={g.group} className="lg:mb-3 flex lg:block gap-1">
-                  <p className="hidden lg:block px-2 text-[10px] font-bold text-navy-400 uppercase tracking-wide mb-1">{g.group}</p>
-                  {visibleItems.map(it => (
-                    <NavLink key={it.to} to={it.to}
-                      className={({ isActive }) => `flex items-center gap-2 px-3 py-2 rounded-xl text-sm whitespace-nowrap transition-colors ${isActive ? 'bg-brand-500 text-white shadow-card' : 'text-navy-600 hover:bg-white/70'}`}>
-                      <it.icon size={14} />{it.label}
-                    </NavLink>
-                  ))}
-                </div>
-              );
-            })}
-          </nav>
-          <div className="hidden lg:block px-4 py-3 border-t border-navy-100/60 text-xs text-navy-500">
-            {user.name} · {user.role}
-            <button className="block mt-1 text-brand-600 font-semibold" onClick={() => { localStorage.removeItem('apms_token'); location.href = '/'; }}>Sign out</button>
-          </div>
-        </aside>
+        <SideNav user={user} />
         <main className="flex-1 min-w-0 p-4 lg:p-6">
           <Routes>
             <Route path="/" element={<Navigate to="/my/kras" replace />} />

@@ -7,9 +7,15 @@ export default {
       // guessed) — navy/pink/teal/amber/green is the client's own existing
       // design language for this product, kept as the base rather than
       // replaced. "Brand" (pink) is used sparingly and deliberately, as the
-      // signature accent — reserved for the active-nav indicator, the logo
-      // mark, and a handful of "forward" actions — not spread across every
+      // signature accent — the logo mark, a handful of "forward" actions, and
+      // the hero band of the pages where it belongs — not spread across every
       // button, so it stays a genuine signature rather than becoming noise.
+      //
+      // It is NO LONGER the active-nav indicator. Since 22 Sep the sidebar
+      // colours the active item by its group (navy / lagoon / violet / leaf),
+      // which is what tells you where you are in a 29-item menu; pink as the
+      // one active colour could not carry that. Tailwind's own violet is used
+      // for HR and super-admin surfaces, as it already was for the AI panels.
       colors: {
         navy: { 50: '#eef2f8', 100: '#dbe3ef', 300: '#7d95bb', 400: '#3a5a8c', 500: '#2c4b7c', 600: '#24426e', 700: '#1b3b6f', 800: '#152f59', 900: '#101f3d' },
         brand: { 50: '#fdf0f5', 100: '#fbdce9', 300: '#f478a8', 500: '#ec407a', 600: '#d42f68', 700: '#ad2454' },

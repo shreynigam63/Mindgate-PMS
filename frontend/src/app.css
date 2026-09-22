@@ -30,3 +30,75 @@ body {
 .inp { @apply w-full text-sm px-3.5 py-2.5 bg-white/90 border border-navy-100 rounded-xl focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 placeholder:text-navy-400/50; }
 .lbl { @apply text-[11px] font-semibold text-navy-400 uppercase tracking-wide block mb-1; }
 .chip { @apply text-[10px] font-semibold px-2.5 py-1 rounded-full; }
+
+/* ---- page hero bands ----------------------------------------------------
+   Every page opens with one coloured band carrying its title. The gradients
+   are mixed from the five palette tokens above plus Tailwind's violet, which
+   the app already uses for its super-admin and AI surfaces — nothing here
+   needs a colour the product could not already produce. */
+.hero {
+  @apply w-full rounded-2xl px-5 py-4 flex items-center justify-between gap-4 text-white;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 8px 22px -12px rgba(16, 31, 61, 0.55);
+}
+/* The soft highlight that keeps a flat gradient from looking like a slab. */
+.hero::after {
+  content: '';
+  position: absolute;
+  right: -60px;
+  top: -80px;
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.13);
+}
+.hero > * { position: relative; z-index: 1; }
+.hero h2, .hero h1 { @apply text-white; }
+.hero-sub { @apply text-xs mt-1; color: rgba(255, 255, 255, 0.82); }
+.hero-navy { background: linear-gradient(115deg, #12294f, #1b3b6f 42%, #2f6fae 78%, #17a2b8); }
+.hero-teal { background: linear-gradient(115deg, #0d6070, #17a2b8 55%, #43a047); }
+.hero-violet { background: linear-gradient(115deg, #4a2170, #7c4dbe 52%, #ec407a); }
+.hero-pink { background: linear-gradient(115deg, #a81b52, #ec407a 58%, #f5821f); }
+.hero-amber { background: linear-gradient(115deg, #b85708, #f5821f 58%, #f2b705); }
+.hero-leaf { background: linear-gradient(115deg, #25682a, #43a047 55%, #17a2b8); }
+/* Buttons inside a band have to read on colour. Chips deliberately do NOT
+   get restyled: their colour carries meaning (approved, returned, overdue)
+   and a uniform translucent pill would throw that away. Pastel chips read
+   as light pills on a dark gradient, which is what they already are. */
+.hero .btn-sec { background: rgba(255, 255, 255, 0.16); color: #fff; border-color: rgba(255, 255, 255, 0.35); }
+.hero .btn-pri { background: #fff; color: theme('colors.brand.600'); }
+
+/* ---- stat tiles ---------------------------------------------------------
+   Filled rather than white, so a row of counts reads as a row of counts. */
+.tile { @apply rounded-xl px-4 py-3 flex items-center gap-3 text-white; box-shadow: 0 8px 20px -12px rgba(16, 31, 61, 0.6); }
+.tile-n { @apply text-xl font-extrabold leading-none; }
+.tile-l { @apply text-[9.5px] font-bold uppercase tracking-wider mt-0.5; color: rgba(255, 255, 255, 0.78); }
+.tile-b { @apply w-8 h-8 rounded-lg flex items-center justify-center shrink-0; background: rgba(255, 255, 255, 0.22); }
+.tile-navy { background: linear-gradient(135deg, #1b3b6f, #2f6fae); }
+.tile-lagoon { background: linear-gradient(135deg, #17a2b8, #0d7183); }
+.tile-leaf { background: linear-gradient(135deg, #43a047, #2c7a30); }
+.tile-amber { background: linear-gradient(135deg, #f5821f, #d2630a); }
+.tile-pink { background: linear-gradient(135deg, #ec407a, #c02760); }
+.tile-violet { background: linear-gradient(135deg, #7c4dbe, #5b2a86); }
+
+/* ---- sidebar ------------------------------------------------------------ */
+/* Group headings fold their section away: the menu is 29 items long and only
+   the group you are working in needs to be open. */
+.navgrp { @apply w-full flex items-center gap-2 px-2 mb-1 text-[10px] font-bold uppercase tracking-wide text-navy-400; }
+.navgrp:hover { @apply text-navy-500; }
+.navcount { @apply ml-auto text-[9.5px] font-bold rounded-full px-1.5 py-0.5 bg-navy-100/70 text-navy-500; letter-spacing: 0; }
+.navchev { @apply text-[9px] transition-transform; }
+.navchev-shut { transform: rotate(-90deg); }
+/* The icon square is tinted by the group, so the menu has structure at a
+   glance without every row shouting. */
+.navico { @apply w-6 h-6 rounded-lg flex items-center justify-center shrink-0; }
+.navico-navy { @apply bg-navy-50 text-navy-700; }
+.navico-lagoon { @apply bg-lagoon-50 text-lagoon-700; }
+.navico-violet { @apply bg-violet-50 text-violet-700; }
+.navico-leaf { @apply bg-leaf-50 text-leaf-600; }
+.navon .navico { background: rgba(255, 255, 255, 0.26); @apply text-white; }
+.navon-navy { background: linear-gradient(135deg, #1b3b6f, #2f6fae); }
+.navon-lagoon { background: linear-gradient(135deg, #0d7183, #17a2b8); }
+.navon-violet { background: linear-gradient(135deg, #5b2a86, #7c4dbe); }
+.navon-leaf { background: linear-gradient(135deg, #2c7a30, #43a047); }
