@@ -31,7 +31,7 @@ def card(title, body, accent='teal', badge=None, sub=None):
     return f'<div class="card t-{accent}"><div class="cb">{b}<div class="h2">{title}</div>{s}{body}</div></div>'
 
 def tiles(items):
-    t = ''.join(f'<div class="tile"><div class="tb b-{c}">{l}</div>'
+    t = ''.join(f'<div class="tile g-{c}"><div class="tb">{l}</div>'
                 f'<div><div class="tn">{n}</div><div class="tl">{lab}</div></div></div>'
                 for l, n, lab, c in items)
     return f'<div class="tiles">{t}</div>'
@@ -51,11 +51,11 @@ def btn(text, kind='gh'): return f'<button class="bt bt-{kind}">{text}</button>'
 def emp(name, desig): return f'<div class="nm">{name}</div><div class="dg">{desig}</div>'
 def search(ph): return f'<div class="srch"><span>&#128269;</span><input placeholder="{ph}" readonly></div>'
 def note(text, kind='amber'): return f'<div class="note n-{kind}">{text}</div>'
-def head(title, tag=None, sub=None, actions=''):
+def head(title, tag=None, sub=None, actions='', hue='navy'):
     t = f' <span class="tag">{tag}</span>' if tag else ''
     s = f'<p class="sub">{sub}</p>' if sub else ''
     a = f'<div class="hact">{actions}</div>' if actions else ''
-    return f'<div class="phead"><div><h1>{title}{t}</h1>{s}</div>{a}</div>'
+    return f'<div class="hero h-{hue}"><div><h1>{title}{t}</h1>{s}</div>{a}</div>'
 
 def steps(active):
     names = [('KRA Setting','Apr 2026'),('Quarterly Connects','Jul · Oct'),
@@ -69,6 +69,35 @@ def steps(active):
         else:            circ, st = f'<div class="sc todo">{i+1}</div>', 'Upcoming'
         out.append(f'<div class="step">{circ}<div class="sname">{n}</div><div class="sst">{st} · {when}</div></div>')
     return '<div class="card steps">' + ''.join(out) + '</div>'
+
+
+def s_approvals():
+    """Every approval in the product, in one queue. HR / super admin only."""
+    a = btn('Approve','teal') + ' ' + btn('Return','gh')
+    return (head('All Approvals','Super admin','Every pending decision across the whole company, in one place.',
+                 btn('Approve selected','pink'), 'violet')
+        + tiles([('K','4','KRA sheets','lagoon'),('G','3','Growth plans','violet'),
+                 ('M','2','Mid-Year sign-offs','amber'),('E','5','Evaluations','pink'),
+                 ('C','1','Connect confirmations','leaf')])
+        + tabs([('All pending','15'),('KRA sheets','4'),('Growth plans','3'),
+                ('Mid-Year','2'),('Evaluations','5'),('Connects','1')])
+        + search('Search across every approval queue…')
+        + '<div class="card" style="margin-top:12px"><div class="cb0">'
+        + table(['','Employee','Type','Waiting on','Submitted','Action'],
+            [['<input type="checkbox">', emp('Suraj Khairnar','Sales Manager'),
+              pill('KRA sheet','lagoon'),'Nida Vajid Momin','2 days', a],
+             ['<input type="checkbox">', emp('Abhedya Tembe','Cloud Engineer'),
+              pill('KRA sheet','lagoon'),'Rajiv Nair','5 days', a],
+             ['<input type="checkbox">', emp('Rekha Joshi','Presales Lead'),
+              pill('Growth plan','violet'),'Amit Shah','1 day', a],
+             ['<input type="checkbox">', emp('Manoj Surwade','Office Assistant'),
+              pill('Mid-Year','wait'),'Imtiyaz Mulla','8 days', a],
+             ['<input type="checkbox">', emp('Priya Nair','Sales Executive'),
+              pill('Evaluation','ret'),'Nida Vajid Momin','3 days', a],
+             ['<input type="checkbox">', emp('Vikas Patil','Support Engineer'),
+              pill('Connect','ok'),'Rajiv Nair','6 days', a]])
+        + '</div></div>'
+        + note('As <b>super admin</b> you can approve at any level for any employee — including your own records. Every self-approval is recorded in the audit log.','violet'))
 
 # ============================================================ SELF screens ===
 def s_mykras():
@@ -339,7 +368,12 @@ def s_ninebox():
     cells = [('Low','Low','12'),('Low','Med','31'),('Low','High','8'),
              ('Med','Low','44'),('Med','Med','188'),('Med','High','61'),
              ('High','Low','9'),('High','Med','74'),('High','High','23')]
-    grid = ''.join(f'<div class="nb"><b>{n}</b><span>{p} potential<br>{perf} performance</span></div>' for perf,p,n in cells)
+    RANK = {'Low': 0, 'Med': 1, 'High': 2}
+    # Warmth follows the box, so the grid reads at a glance: top-right is the
+    # talent pool, bottom-left is the risk corner.
+    heat = lambda perf, p: ('cold', 'cold', 'warm', 'hot', 'hot')[RANK[perf] + RANK[p]]
+    grid = ''.join(f'<div class="nb {heat(perf,p)}"><b>{n}</b>'
+                   f'<span>{p} potential<br>{perf} performance</span></div>' for perf, p, n in cells)
     return (head('9-Box Grid','HR','Performance against potential, for the published population.')
         + f'<div class="card"><div class="cb"><div class="ninebox">{grid}</div></div></div>')
 
@@ -364,53 +398,141 @@ def s_employees():
              [emp('Akshay Raut','HR Business Partner'),'MGS004','HR','&mdash;',pill('hr','ok'),btn('Edit')+' '+btn('Set password')]])
         + '</div></div>')
 
-TEMPLATE = '<!doctype html><html lang="en"><head><meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>Agentic PMS — UI prototype</title>\n<style>__FACES__</style>\n<style>\n:root{--navy:#1b3b6f;--navy900:#101f3d;--navy800:#152f59;--navy500:#2c4b7c;--navy400:#3a5a8c;\n--navy300:#7d95bb;--navy100:#dbe3ef;--navy50:#eef2f8;--brand:#ec407a;--brand600:#d42f68;\n--brand50:#fdf0f5;--lagoon:#17a2b8;--lagoon50:#eafbfd;--leaf:#43a047;--leaf50:#eef9ee;\n--amber:#f5821f;--amber50:#fff6ec;--page:#f1f4f9}\n*{box-sizing:border-box;margin:0;padding:0}\nbody{font-family:Inter,system-ui,sans-serif;background:var(--page);color:var(--navy900);font-size:14px;-webkit-font-smoothing:antialiased}\n[hidden]{display:none!important}\n.banner{background:var(--navy900);color:#c9d6ea;font-size:11.5px;padding:7px 28px;text-align:center;letter-spacing:.02em}\n.banner b{color:#fff}\n.appbar{background:#fff;padding:13px 28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--navy100)}\n.logo{display:flex;align-items:center;gap:10px}\n.logomark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--navy),var(--lagoon))}\n.logotext{font-size:20px;font-weight:800;letter-spacing:-.02em}\n.logosub{font-size:11px;color:var(--navy300);font-weight:500;margin-left:6px}\n.who{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--navy500)}\n.avatar{width:29px;height:29px;border-radius:50%;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12.5px}\n.topnav{background:var(--navy);display:flex;padding:0 16px;overflow-x:auto}\n.topnav a{color:#c9d6ea;padding:14px 17px;font-size:13.5px;font-weight:500;white-space:nowrap;cursor:default}\n.topnav a.on{background:var(--brand);color:#fff;font-weight:600}\n.rolebar{background:#fff;border-bottom:1px solid var(--navy100);padding:9px 28px 0;display:flex;gap:7px}\n.rt{padding:8px 20px;border:1px solid var(--navy100);border-bottom:0;border-radius:9px 9px 0 0;background:var(--navy50);\n  color:var(--navy400);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}\n.rt.on{background:var(--navy);color:#fff;border-color:var(--navy)}\n.subnav{background:#fff;border-bottom:1px solid var(--navy100);padding:0 28px;display:flex;gap:3px;overflow-x:auto}\n.subnav a{padding:12px 15px;font-size:12.5px;color:var(--navy400);white-space:nowrap;border-bottom:2.5px solid transparent;font-weight:500;cursor:pointer}\n.subnav a:hover{color:var(--navy)}\n.subnav a.on{color:var(--brand);border-bottom-color:var(--brand);font-weight:600}\n.wrap{padding:22px 28px 40px;max-width:1500px}\n.phead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}\n.hact{display:flex;gap:8px;flex-shrink:0}\nh1{font-size:24px;font-weight:800;letter-spacing:-.02em}\n.sub{color:var(--navy300);font-size:13px;margin-top:3px}\n.tag{display:inline-block;font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:99px;background:var(--lagoon50);color:#0f6a7a;vertical-align:middle;margin-left:6px}\n.card{background:#fff;border-radius:13px;box-shadow:0 1px 2px rgba(16,31,61,.05),0 6px 18px -9px rgba(16,31,61,.14);overflow:hidden;margin-bottom:16px}\n.card.t-teal{border-top:4px solid var(--lagoon)}.card.t-pink{border-top:4px solid var(--brand)}\n.card.t-navy{border-top:4px solid var(--navy)}.card.t-lagoon{border-top:4px solid var(--lagoon)}\n.cb{padding:18px 20px}.cb0{padding:0}\n.badge{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:16px;margin-bottom:11px}\n.b-teal,.b-lagoon{background:var(--lagoon)}.b-pink{background:var(--brand)}.b-navy{background:var(--navy)}\n.h2{font-size:16.5px;font-weight:700}\n.muted{color:var(--navy300);font-size:12.5px;margin-top:5px;line-height:1.55}\n.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}\n.two2{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:10px;font-size:12.5px}\n.three{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:13px}\n.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}\n.tile{background:#fff;border-radius:11px;padding:13px 15px;display:flex;align-items:center;gap:11px;box-shadow:0 1px 2px rgba(16,31,61,.05)}\n.tb{width:33px;height:33px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:13.5px;flex-shrink:0}\n.tb.b-amber{background:var(--amber)}.tb.b-leaf{background:var(--leaf)}\n.tn{font-size:20px;font-weight:800;line-height:1.1}\n.tl{font-size:9.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--navy300);font-weight:700;margin-top:2px}\n.srch{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--navy100);border-radius:10px;padding:11px 15px}\n.srch input{border:0;outline:0;flex:1;font:inherit;font-size:13px;color:var(--navy400);background:none}\ntable{width:100%;border-collapse:collapse}\nth{text-align:left;padding:12px 16px;font-size:9.8px;text-transform:uppercase;letter-spacing:.08em;color:var(--navy400);font-weight:700;background:var(--navy50)}\ntd{padding:12px 16px;border-top:1px solid var(--navy50);font-size:13px;vertical-align:middle}\n.nm{font-weight:700}.dg{font-size:11.5px;color:var(--navy300)}\n.pill{display:inline-block;font-size:10.5px;font-weight:700;padding:4px 11px;border-radius:99px;white-space:nowrap}\n.p-ok{background:var(--leaf50);color:#2f7a33}.p-wait{background:var(--amber50);color:#a35a0c}\n.p-none{background:var(--navy50);color:var(--navy300)}.p-ret{background:var(--brand50);color:var(--brand600)}\n.bt{font-size:12px;font-weight:600;padding:8px 14px;border-radius:8px;border:0;cursor:pointer;font-family:inherit;white-space:nowrap}\n.bt-pink{background:var(--brand);color:#fff}.bt-teal{background:var(--lagoon);color:#fff}\n.bt-gh{background:#fff;color:var(--navy500);border:1px solid var(--navy100)}\n.tabs{display:flex;gap:7px;margin:15px 0 12px;flex-wrap:wrap}\n.tab{padding:8px 16px;border-radius:99px;font-size:12.5px;font-weight:600;background:#fff;color:var(--navy400);border:1px solid var(--navy100);cursor:pointer;font-family:inherit}\n.tab.on{background:var(--navy);color:#fff;border-color:var(--navy)}\n.tab .c{opacity:.7;margin-left:6px;font-weight:700}\n.steps{display:flex;align-items:flex-start;padding:20px 22px 22px}\n.step{text-align:center;width:160px;flex-shrink:0}\n.sc{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;margin:0 auto}\n.sc.done{background:var(--leaf);color:#fff}.sc.now{background:var(--lagoon);color:#fff}\n.sc.todo{background:var(--navy100);color:var(--navy400)}\n.sname{font-size:12.5px;font-weight:700;margin-top:8px}.sst{font-size:10.5px;color:var(--navy300);margin-top:2px}\n.sline{flex:1;height:3px;background:var(--navy100);margin-top:20px;border-radius:2px;min-width:20px}\n.sline.done{background:var(--leaf)}\n.kra{border:1px solid var(--navy100);border-radius:10px;padding:12px 14px;margin-bottom:8px}\n.kt{font-weight:700;font-size:13.5px;display:flex;justify-content:space-between}\n.kw{color:var(--navy400)}.km{font-size:12px;color:var(--navy300);margin-top:3px}\n.wt{font-size:12.5px;color:var(--navy400);margin-top:10px}\n.row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}\n.libr label{display:flex;align-items:center;gap:9px;font-size:13px;padding:9px 0;border-bottom:1px solid var(--navy50)}\n.libr i{margin-left:auto;font-style:normal;color:var(--navy300);font-weight:600;font-size:12px}\n.note{border-radius:0 9px 9px 0;padding:11px 15px;font-size:12.5px;margin-bottom:14px;line-height:1.55}\n.note.n-amber{background:var(--amber50);border-left:3px solid var(--amber)}\n.note.n-navy{background:var(--navy50);border-left:3px solid var(--navy300)}\n.note.n-teal{background:var(--lagoon50);border-left:3px solid var(--lagoon)}\n.note.n-leaf{background:var(--leaf50);border-left:3px solid var(--leaf)}\n.cur{font-size:12.5px;color:var(--navy500);margin:10px 0}\n.prog{display:flex;align-items:center;gap:11px;font-size:12.5px;padding:7px 0}\n.prog span{flex:1}.prog b{width:42px;text-align:right}\n.bar{width:120px;height:6px;background:var(--navy50);border-radius:4px;overflow:hidden}\n.bar i{display:block;height:100%;border-radius:4px}\n.ladder{display:flex;gap:11px;padding:10px 0;border-bottom:1px solid var(--navy50);font-size:13px}\n.ln{width:22px;height:22px;border-radius:50%;background:var(--navy50);color:var(--navy400);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}\n.ladder em{color:var(--brand);font-style:normal;font-weight:700;font-size:12px}\n.cmeta{font-size:11.5px;color:var(--navy300)}\n.fb{border-radius:9px;padding:11px 13px;font-size:12.5px}\n.fb b{display:block;margin-bottom:4px;font-size:12px}\n.f-green{background:var(--leaf50)}.f-green b{color:#2f7a33}\n.f-amber{background:var(--amber50)}.f-amber b{color:#a35a0c}\n.f-blue{background:var(--lagoon50)}.f-blue b{color:#0f6a7a}\n.ai{background:#f6f1fd;border-radius:10px;padding:13px 15px;margin-top:13px}\n.aitag{font-size:9.5px;font-weight:800;letter-spacing:.08em;background:#7c4dbe;color:#fff;padding:3px 9px;border-radius:99px}\n.aiq{font-style:italic;color:var(--navy500);margin:9px 0;font-size:13px}\n.ai ul{margin:5px 0 0 16px;color:var(--navy400)}.ai li{margin-bottom:3px}\n.foot{display:flex;align-items:center;gap:7px;margin-top:14px;padding-top:12px;border-top:1px solid var(--navy50);flex-wrap:wrap}\n.right{margin-left:auto}\n.signoff{display:flex;align-items:center;background:#fff;border-radius:11px;padding:14px 20px;margin-bottom:14px;box-shadow:0 1px 2px rgba(16,31,61,.05)}\n.signoff .dg{display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:700}\n.so{flex:1;text-align:center;font-size:10px;letter-spacing:.1em;color:var(--navy300);font-weight:700}\n.rate{display:flex;gap:6px;align-items:center}\n.rl{font-size:9.5px;font-weight:700;color:var(--navy300);text-transform:uppercase;letter-spacing:.07em;margin-right:5px}\n.rb{min-width:33px;height:29px;padding:0 8px;border-radius:7px;border:1px solid var(--navy100);background:#fff;font-size:12px;font-weight:700;color:var(--navy400);display:flex;align-items:center;justify-content:center;cursor:pointer}\n.rb.on{background:var(--navy);color:#fff;border-color:var(--navy)}\n.ta{margin-top:12px;background:var(--navy50);border-radius:9px;padding:14px;font-size:12.5px;color:var(--navy300);min-height:64px}\n.am{color:var(--amber)}.pk{color:var(--brand)}\n.prm{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--navy50);font-size:12.5px}\n.prm.pot{border-top:2px solid var(--navy100);border-bottom:0;margin-top:8px;padding-top:12px}\n.prm i{display:block;font-style:normal;font-size:10.5px;color:var(--brand);font-weight:600}\n.calc{margin-top:11px;background:var(--lagoon50);border-radius:9px;padding:10px 13px;font-size:13px;color:#0f6a7a}\n.att{padding:9px 0;border-bottom:1px solid var(--navy50);font-size:12.5px}\n.att b{color:var(--brand);font-size:15px;margin-right:5px}\n.warn{color:var(--brand600);font-size:11.5px;font-weight:700;margin-right:6px}\n.ninebox{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}\n.nb{background:var(--navy50);border-radius:10px;padding:16px;text-align:center}\n.nb b{display:block;font-size:22px;font-weight:800}\n.nb span{font-size:10.5px;color:var(--navy300);line-height:1.5;display:block;margin-top:4px}\n.sel,.inp2{font:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--navy100);border-radius:7px;background:#fff;width:100%}\n@media(max-width:1000px){.two,.three,.two2{grid-template-columns:1fr}.steps{overflow-x:auto}}\n</style></head><body>\n<div class="banner"><b>VISUAL PROTOTYPE</b> — proposed UI only. Not connected to any data, and the live PMS is unchanged. Click the role tabs and the menu to move around.</div>\n<div class="appbar">\n  <div class="logo"><div class="logomark"></div><div class="logotext">PMS<span class="logosub">Performance &amp; Growth</span></div></div>\n  __WHO__\n</div>\n<div class="topnav">__TOP__</div>\n<div class="rolebar">__ROLETABS__</div>\n__SUBNAVS__\n<div class="wrap">__SCREENS__</div>\n<script>\nfunction show(id){\n  document.querySelectorAll(\'.screen\').forEach(s=>s.hidden = s.id!==id);\n  document.querySelectorAll(\'.subnav a\').forEach(a=>a.classList.toggle(\'on\', a.dataset.go===id));\n  window.scrollTo(0,0);\n}\ndocument.querySelectorAll(\'.subnav a\').forEach(a=>a.onclick=()=>show(a.dataset.go));\ndocument.querySelectorAll(\'.rt\').forEach(b=>b.onclick=()=>{\n  const r=b.dataset.role;\n  document.querySelectorAll(\'.rt\').forEach(x=>x.classList.toggle(\'on\',x===b));\n  document.querySelectorAll(\'.subnav\').forEach(n=>n.hidden = n.dataset.for!==r);\n  document.querySelectorAll(\'.who\').forEach(w=>w.hidden = w.dataset.who!==r);\n  const first=document.querySelector(\'.subnav[data-for="\'+r+\'"] a\');\n  if(first) show(first.dataset.go);\n});\n// Rating chips and tabs respond, so the prototype feels alive without data.\ndocument.addEventListener(\'click\',e=>{\n  const rb=e.target.closest(\'.rb\');\n  if(rb){ rb.parentElement.querySelectorAll(\'.rb\').forEach(x=>x.classList.toggle(\'on\',x===rb)); }\n  const tb=e.target.closest(\'.tab\');\n  if(tb){ tb.parentElement.querySelectorAll(\'.tab\').forEach(x=>x.classList.toggle(\'on\',x===tb)); }\n});\n</script></body></html>'
 
 # ================================================================== assembly ===
-# Option B from the assessment: a role tab row (Self / Manager / HR), each with
-# its own sub-nav. Solves BOTH the 29-item overflow and item 25's request for
-# role-based views, with one control.
-ROLES = [
-    ('self', 'Self', 'Vishakha Rane', 'V', [
-        ('mykras','My KRAs',s_mykras), ('growth','My Growth',s_growth),
-        ('connects','Quarterly Connects',s_connects), ('midyear','Mid-Year Review',s_midyear),
-        ('annual','Annual Review',s_annual), ('final','Final Rating',s_final),
-        ('myrating','My Rating',s_myrating)]),
-    ('mgr', 'Manager', 'Nida Vajid Momin', 'N', [
-        ('teamover','Team Overview',s_teamover), ('teamkras','Team KRA Sheets',s_teamkras),
-        ('teameval','Team Evaluation',s_teameval), ('hod','Delivery Head Review',s_hod),
-        ('pip','Improvement Plans',s_pip)]),
-    ('hr', 'HR', 'Akshay Raut', 'A', [
-        ('dash','Dashboard',s_dash), ('kraover','KRA Overview',s_kraover),
-        ('library','KRA Library',s_library), ('cycles','Cycles',s_cycles),
-        ('employees','Employees',s_employees), ('calib','Calibration',s_calib),
-        ('ninebox','9-Box Grid',s_ninebox), ('reports','Completion Report',s_reports)]),
+CSS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'prototype.css'), encoding='utf-8').read()
+
+TEMPLATE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agentic PMS &mdash; UI prototype</title>
+<style>__FACES__</style>
+<style>
+__CSS__
+</style></head><body>
+<div class="banner"><b>VISUAL PROTOTYPE</b> &mdash; proposed UI only. Not connected to any data, and the live PMS is unchanged. Switch the person on the right to see what each role can open.</div>
+<div class="appbar">
+  <div class="logo"><div class="logomark"></div><div class="logotext">PMS<span class="logosub">Performance &amp; Growth</span></div></div>
+  <div class="who-wrap">__PERSONA__ __WHO__</div>
+</div>
+<div class="topnav">__TOP__</div>
+__ROLEBARS__
+__SUBNAVS__
+<div class="wrap">__SCREENS__</div>
+<script>
+function show(id){
+  document.querySelectorAll('.screen').forEach(s => s.hidden = s.id !== id);
+  document.querySelectorAll('.subnav a').forEach(a => a.classList.toggle('on', a.dataset.go === id));
+  window.scrollTo(0, 0);
+}
+// A group = one role tab (Self / Manager / HR). Only groups the signed-in
+// person may open are rendered for them at all, so this never has to hide one.
+function showGroup(g){
+  document.querySelectorAll('.gt').forEach(b => b.classList.toggle('on', b.dataset.group === g));
+  document.querySelectorAll('.subnav').forEach(n => n.hidden = n.dataset.for !== g);
+  var first = document.querySelector('.subnav[data-for="' + g + '"] a');
+  if (first) show(first.dataset.go);
+}
+function showPersona(p){
+  document.querySelectorAll('.pb').forEach(b => b.classList.toggle('on', b.dataset.p === p));
+  document.querySelectorAll('.who').forEach(w => w.hidden = w.dataset.who !== p);
+  document.querySelectorAll('.rolebar').forEach(r => r.hidden = r.dataset.persona !== p);
+  var tab = document.querySelector('.rolebar[data-persona="' + p + '"] .gt');
+  if (tab) showGroup(tab.dataset.group);
+}
+document.querySelectorAll('.pb').forEach(b => b.onclick = () => showPersona(b.dataset.p));
+document.querySelectorAll('.gt').forEach(b => b.onclick = () => showGroup(b.dataset.group));
+document.querySelectorAll('.subnav a').forEach(a => a.onclick = () => show(a.dataset.go));
+// Rating chips and filter tabs respond, so the prototype feels alive without data.
+document.addEventListener('click', e => {
+  var rb = e.target.closest('.rb');
+  if (rb) rb.parentElement.querySelectorAll('.rb').forEach(x => x.classList.toggle('on', x === rb));
+  var tb = e.target.closest('.tab');
+  if (tb) tb.parentElement.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === tb));
+});
+</script></body></html>"""
+
+# WHO SEES WHAT. The prototype models real access, not a view switcher:
+#   employee -> Self only
+#   manager  -> Self + Manager
+#   hr/admin -> everything, plus the consolidated Approvals queue
+# Pages are (id, label, render fn, hero hue).
+SELF_PAGES = [('mykras', 'My KRAs', s_mykras, 'navy'),
+              ('growth', 'My Growth', s_growth, 'leaf'),
+              ('connects', 'Quarterly Connects', s_connects, 'pink'),
+              ('midyear', 'Mid-Year Review', s_midyear, 'amber'),
+              ('annual', 'Annual Review', s_annual, 'navy'),
+              ('final', 'Final Rating', s_final, 'teal'),
+              ('myrating', 'My Rating', s_myrating, 'violet')]
+MGR_PAGES = [('teamover', 'Team Overview', s_teamover, 'teal'),
+             ('teamkras', 'Team KRA Sheets', s_teamkras, 'navy'),
+             ('teameval', 'Team Evaluation', s_teameval, 'teal'),
+             ('hod', 'Delivery Head Review', s_hod, 'navy'),
+             ('pip', 'Improvement Plans', s_pip, 'amber')]
+HR_PAGES = [('dash', 'Dashboard', s_dash, 'violet'),
+            ('approvals', 'All Approvals', s_approvals, 'violet'),
+            ('kraover', 'KRA Overview', s_kraover, 'navy'),
+            ('library', 'KRA Library', s_library, 'teal'),
+            ('cycles', 'Cycles', s_cycles, 'pink'),
+            ('employees', 'Employees', s_employees, 'navy'),
+            ('calib', 'Calibration', s_calib, 'amber'),
+            ('ninebox', '9-Box Grid', s_ninebox, 'leaf'),
+            ('reports', 'Completion Report', s_reports, 'teal')]
+
+GROUPS = [('self', 'Self', SELF_PAGES), ('mgr', 'Manager', MGR_PAGES), ('hr', 'HR / Admin', HR_PAGES)]
+
+# role id, label, person, initial, which groups they may open.
+# The "Viewing as" control exists only so all three can be reviewed in one
+# file; in the real app the signed-in role decides and there is no switcher.
+PERSONAS = [
+    ('employee', 'Employee', 'Vishakha Rane', 'V', ['self']),
+    ('manager', 'Manager', 'Nida Vajid Momin', 'N', ['self', 'mgr']),
+    ('hr', 'HR / Super Admin', 'Akshay Raut', 'A', ['self', 'mgr', 'hr']),
 ]
 
-TOP = ['DashBoard','Admin','Employee','Attendance','Leave','Payroll','Training','RMS','PMS','Analytics','Utilities']
+TOP = ['DashBoard', 'Admin', 'Employee', 'Attendance', 'Leave', 'Payroll',
+       'Training', 'RMS', 'PMS', 'Analytics', 'Utilities']
+
 
 def build():
-    topnav = ''.join(f'<a class="{"on" if t=="PMS" else ""}">{t}</a>' for t in TOP)
-    roletabs = ''.join(f'<button class="rt{" on" if i==0 else ""}" data-role="{rid}">{label}</button>'
-                       for i,(rid,label,_,_,_) in enumerate(ROLES))
+    topnav = ''.join(f'<a class="{"on" if t == "PMS" else ""}">{t}</a>' for t in TOP)
+
+    persona = ('<div class="persona"><span class="plab">Viewing as</span>' + ''.join(
+        f'<button class="pb{" on" if i == 0 else ""}" data-p="{pid}">{label}</button>'
+        for i, (pid, label, _, _, _) in enumerate(PERSONAS)) + '</div>')
+
+    who = ''.join(
+        f'<span class="who" data-who="{pid}"{"" if i == 0 else " hidden"}>{name}'
+        f'<span class="avatar">{init}</span></span>'
+        for i, (pid, _, name, init, _) in enumerate(PERSONAS))
+
+    # One tab row per person, carrying only the groups that person may open.
+    rolebars = ''.join(
+        f'<div class="rolebar" data-persona="{pid}"{"" if i == 0 else " hidden"}>' + ''.join(
+            f'<button class="gt{" on" if j == 0 else ""}" data-group="{gid}">{glabel}</button>'
+            for j, (gid, glabel, _) in enumerate(g for g in GROUPS if g[0] in allowed)) + '</div>'
+        for i, (pid, _, _, _, allowed) in enumerate(PERSONAS))
+
+    # Screens and sub-navs are shared across people: Self means the same pages
+    # whether an employee or HR opens them.
     subnavs, screens = '', ''
-    for i,(rid,label,who,init,pages) in enumerate(ROLES):
-        links = ''.join(f'<a class="{"on" if j==0 else ""}" data-go="{rid}-{pid}">{pname}</a>'
-                        for j,(pid,pname,_) in enumerate(pages))
-        subnavs += f'<nav class="subnav" data-for="{rid}" {"" if i==0 else "hidden"}>{links}</nav>'
-        for j,(pid,pname,fn) in enumerate(pages):
-            screens += (f'<section class="screen" id="{rid}-{pid}" {"" if (i==0 and j==0) else "hidden"}>'
-                        + fn() + '</section>')
-    return TEMPLATE.replace('__FACES__', faces()).replace('__TOP__', topnav) \
-        .replace('__ROLETABS__', roletabs).replace('__SUBNAVS__', subnavs).replace('__SCREENS__', screens) \
-        .replace('__WHO__', ''.join(
-            f'<span class="who" data-who="{rid}" {"" if i==0 else "hidden"}>Welcome, {who}'
-            f'<span class="avatar">{init}</span></span>'
-            for i,(rid,_,who,init,_) in enumerate(ROLES)))
+    for i, (gid, _, pages) in enumerate(GROUPS):
+        subnavs += (f'<nav class="subnav" data-for="{gid}"{"" if i == 0 else " hidden"}>' + ''.join(
+            f'<a class="{"on" if j == 0 else ""}" data-go="{gid}-{pid}">{pname}</a>'
+            for j, (pid, pname, _, _) in enumerate(pages)) + '</nav>')
+        for j, (pid, _, fn, hue) in enumerate(pages):
+            # Every screen opens with one hero band; recolour it per page.
+            body = fn().replace('hero h-navy', f'hero h-{hue}', 1)
+            screens += (f'<section class="screen" id="{gid}-{pid}"'
+                        f'{"" if (i == 0 and j == 0) else " hidden"}>{body}</section>')
+
+    return (TEMPLATE.replace('__FACES__', faces()).replace('__CSS__', CSS)
+            .replace('__TOP__', topnav).replace('__PERSONA__', persona).replace('__WHO__', who)
+            .replace('__ROLEBARS__', rolebars).replace('__SUBNAVS__', subnavs)
+            .replace('__SCREENS__', screens))
 
 
 if __name__ == '__main__':
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     html = build()
     open(OUT, 'w', encoding='utf-8').write(html)
-    print(f'wrote {OUT}  ({len(html)//1024} KB)')
+    print(f'wrote {OUT}  ({len(html) // 1024} KB)')
