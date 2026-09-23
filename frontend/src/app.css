@@ -117,3 +117,49 @@ body {
 .navico-lagoon { @apply bg-lagoon-50 text-lagoon-700; }
 .navico-violet { @apply bg-violet-50 text-violet-700; }
 .navico-leaf { @apply bg-leaf-50 text-leaf-600; }
+
+/* ---- Dashboard: stat strip and desk tiles --------------------------------
+   Built to a reference the client sent (their Humanware HRMS dashboard): a
+   row of white stat cards each led by a big saturated icon square, then a
+   grid of SOLID colour blocks carrying one number each. The colour is the
+   index — you find "the orange one" before you have read a single word —
+   so each metric keeps its hue everywhere it appears on this page. */
+.stat { @apply bg-white/90 border border-navy-100/70 rounded-2xl shadow-card
+  p-3.5 flex items-center gap-3; }
+/* Label above, number below, both right-aligned against the icon — the
+   reference's arrangement, and it reads as one column of figures across
+   the strip instead of six ragged left edges. */
+.stat-t { @apply min-w-0 flex-1 text-right; }
+/* No truncate: six cards across 1440px left "Growth goals" reading
+   "Growth go…". A label that clips is a label that lies. It wraps, and
+   the grid stretches every card to match. */
+.stat-l { @apply block text-[11px] font-semibold text-navy-400 leading-tight; }
+.stat-n { @apply block text-[26px] font-extrabold leading-none text-navy-900 tabular-nums mt-1; }
+/* 52px, not the nav's 24px: at a glance from across a desk this row is the
+   thing people navigate by. */
+.stat-i { @apply w-[52px] h-[52px] rounded-2xl flex items-center justify-center
+  shrink-0 text-white; }
+.si-lagoon { background: linear-gradient(135deg, #17a2b8, #0d7183); }
+.si-amber  { background: linear-gradient(135deg, #f5821f, #d2630a); }
+.si-leaf   { background: linear-gradient(135deg, #43a047, #2c7a30); }
+.si-pink   { background: linear-gradient(135deg, #ec407a, #c02760); }
+.si-rose   { background: linear-gradient(135deg, #e11d48, #9f1239); }
+.si-navy   { background: linear-gradient(135deg, #2f6fae, #1b3b6f); }
+.si-violet { background: linear-gradient(135deg, #7c4dbe, #5b2a86); }
+
+/* The desk tile. A darker icon panel on the left, the count large on the
+   right, and a short rule under the number — straight from the reference. */
+.deskt { @apply rounded-xl overflow-hidden flex text-white text-left transition-transform; }
+.deskt:hover { transform: translateY(-2px); }
+.deskt-i { @apply w-[62px] shrink-0 flex items-center justify-center; background: rgba(0,0,0,0.16); }
+.deskt-b { @apply flex-1 px-4 py-3.5 min-w-0; }
+.deskt-l { @apply block text-[11px] font-bold uppercase tracking-wide truncate; color: rgba(255,255,255,0.92); }
+.deskt-n { @apply block text-[30px] font-extrabold leading-none mt-1 tabular-nums; }
+.deskt-r { @apply block h-[3px] w-14 mt-2 rounded-full; background: rgba(255,255,255,0.55); }
+.dk-navy   { background: #2f6fae; }
+.dk-amber  { background: #e5900f; }
+.dk-rose   { background: #c62828; }
+.dk-leaf   { background: #3d9142; }
+.dk-lagoon { background: #17a2b8; }
+.dk-violet { background: #7c4dbe; }
+.dk-pink   { background: #ec407a; }

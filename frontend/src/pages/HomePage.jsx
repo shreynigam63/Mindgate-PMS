@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import {
   Target, TrendingUp, MessageCircle, Clock, ClipboardList, Award, Star, History,
   LayoutDashboard, Users, CheckCircle2, Library, BarChart3, ArrowRight, Lock,
+  Percent, ListChecks, UserX, FileWarning,
 } from 'lucide-react';
 
 // The landing screen.
@@ -12,6 +13,13 @@ import {
 // whatever you owed. This leads with the one thing waiting on you and
 // offers everything else as links, so the product answers "what now?"
 // before it answers "where is X?".
+//
+// Laid out to a reference the client sent (their Humanware HRMS
+// dashboard): a strip of stat cards, then solid colour blocks for what is
+// pending, then the quick links. Every number on it is a real count from
+// the database — there is no filler tile. A dashboard that shows a number
+// nobody can trace is worse than one that shows nothing, because people
+// make decisions off it.
 //
 // Tiles are NOT hidden when their phase has not arrived — they say when
 // they open. A tile that vanishes makes people ask whether they have lost
@@ -23,6 +31,37 @@ const TONE = {
   todo:   'from-amber2-600 to-amber2-500',
   clear:  'from-leaf-600 to-leaf-500',
 };
+
+// A stat card: one number, one label, one saturated icon square.
+function Stat({ icon: Icon, hue, n, label, to }) {
+  const body = (
+    <>
+      <span className={`stat-i si-${hue}`}><Icon size={22} /></span>
+      <span className="stat-t">
+        <span className="stat-l">{label}</span>
+        <span className="stat-n">{n}</span>
+      </span>
+    </>
+  );
+  return to ? <NavLink to={to} className="stat hover:shadow-glass">{body}</NavLink>
+            : <div className="stat">{body}</div>;
+}
+
+// A desk tile: a solid colour block carrying one count. Only rendered for
+// things that are genuinely OUTSTANDING, so an empty desk means an empty
+// desk — the row is not padded out with zeroes to look busy.
+function Desk({ icon: Icon, hue, n, label, to }) {
+  return (
+    <NavLink to={to} className={`deskt dk-${hue}`}>
+      <span className="deskt-i"><Icon size={24} /></span>
+      <span className="deskt-b">
+        <span className="deskt-l">{label}</span>
+        <span className="deskt-n">{String(n).padStart(2, '0')}</span>
+        <span className="deskt-r" />
+      </span>
+    </NavLink>
+  );
+}
 
 function Tile({ to, icon: Icon, title, sub, hue = 'navy', locked }) {
   const body = (
@@ -69,6 +108,30 @@ export default function HomePage() {
   const phase = cycle ? cycle.phase : null;
   const kraStatus = me.kra ? me.kra.status : 'not started';
   const evalOpen = phase === 'manager_eval' || phase === 'hod_eval';
+  const goals = me.goals || {};
+  const connects = me.connects || {};
+
+  // What is OUTSTANDING, in the order it blocks people. Built as a list so
+  // a tile only exists when its count does — see Desk above.
+  const desk = [];
+  if (me.kra && me.kra.status === 'returned')
+    desk.push({ key: 'ret', icon: FileWarning, hue: 'rose', n: 1, label: 'KRA returned to you', to: '/my/kras' });
+  else if (!me.kra || ['draft', 'not_started'].includes(me.kra.status))
+    desk.push({ key: 'kra', icon: Target, hue: 'navy', n: 1, label: 'KRA sheet to submit', to: '/my/kras' });
+  if (phase === 'mid_year_review' && (!me.midyear || me.midyear.self_status !== 'submitted'))
+    desk.push({ key: 'mid', icon: Clock, hue: 'lagoon', n: 1, label: 'Mid-year pending', to: '/my/midyear' });
+  if (phase === 'self_appraisal' && (!me.appraisal || me.appraisal.status !== 'submitted'))
+    desk.push({ key: 'sa', icon: ClipboardList, hue: 'violet', n: 1, label: 'Self-appraisal pending', to: '/my/self-appraisal' });
+  if (connects.open_actions > 0)
+    desk.push({ key: 'act', icon: ListChecks, hue: 'pink', n: connects.open_actions, label: 'Connect actions open', to: '/team/connects' });
+  if (team && team.kra_pending > 0)
+    desk.push({ key: 'tk', icon: Users, hue: 'amber', n: team.kra_pending, label: 'KRA approvals pending', to: '/team/kra-sheets' });
+  if (team && evalOpen && team.reports > team.evals_done)
+    desk.push({ key: 'te', icon: ClipboardList, hue: 'rose', n: team.reports - team.evals_done, label: 'Evaluations to write', to: '/team/eval' });
+  if (team && team.no_connect > 0)
+    desk.push({ key: 'tc', icon: MessageCircle, hue: 'leaf', n: team.no_connect, label: 'No connect logged yet', to: '/team/connects' });
+  if (admin && admin.no_manager > 0)
+    desk.push({ key: 'nm', icon: UserX, hue: 'rose', n: admin.no_manager, label: 'Employees with no manager', to: '/admin/directory' });
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
@@ -84,6 +147,31 @@ export default function HomePage() {
           <span className="chip bg-amber2-50 text-amber2-600 ml-auto">{PHASE_LABEL[phase] || phase}</span>
         </div>
       )}
+
+      {/* The stat strip. Your own numbers first, then your team's, then the
+          company's — the same order of widening scope the rest of the page
+          uses, so the row does not change meaning halfway across. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <Stat icon={Target} hue="lagoon" to="/my/kras"
+          n={me.kra ? me.kra.kra_count : 0} label="My KRAs" />
+        <Stat icon={Percent} hue="amber" to="/my/kras"
+          n={`${me.kra ? me.kra.total_weight : 0}%`} label="Total weight" />
+        <Stat icon={TrendingUp} hue="leaf" to="/my/growth"
+          n={goals.total || 0} label="Goals" />
+        <Stat icon={MessageCircle} hue="pink" to="/team/connects"
+          n={connects.logged || 0} label="Connects" />
+        {/* Someone with no reports gets their open action items here
+            instead. The first cut put "Mid-year done" in this slot, which
+            rendered a yes/no as the number 0 sitting in a row of counts —
+            unreadable. Every card in this strip is a count of things. */}
+        {team
+          ? <Stat icon={Users} hue="navy" to="/team/overview" n={team.reports}
+              label={team.scope === 'all_employees' ? 'Employees' : 'My reports'} />
+          : <Stat icon={ListChecks} hue="navy" to="/team/connects"
+              n={connects.open_actions || 0} label="Open actions" />}
+        <Stat icon={Star} hue="violet" to="/my/rating"
+          n={me.published ? me.published.final_rating : '—'} label="My rating" />
+      </div>
 
       {/* The one thing waiting on this person. A list of five things you
           might do is a list nobody reads, so the server picks one. */}
@@ -103,13 +191,22 @@ export default function HomePage() {
         </div>
       </div>
 
+      {desk.length > 0 && (
+        <div className="space-y-2">
+          <p className="lbl mb-0">My desk · what is outstanding</p>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {desk.map(x => <Desk key={x.key} {...x} />)}
+          </div>
+        </div>
+      )}
+
       <Section label="My performance">
         <Tile to="/my/kras" icon={Target} title="My KRAs" hue="navy"
           sub={me.kra ? `${me.kra.kra_count} KRAs · ${me.kra.total_weight}% · ${kraStatus}` : 'Not started'} />
         <Tile to="/my/growth" icon={TrendingUp} title="My Growth" hue="leaf"
-          sub="Target achievements and aspiring career" />
+          sub={goals.total ? `${goals.done} of ${goals.total} goals complete · ${goals.status}` : 'Target achievements and aspiring career'} />
         <Tile to="/team/connects" icon={MessageCircle} title="Quarterly Connects" hue="navy"
-          sub="Your 1-on-1 log with your manager" />
+          sub={connects.logged ? `${connects.logged} logged · ${connects.open_actions || 0} actions open` : 'Your 1-on-1 log with your manager'} />
         <Tile to="/my/midyear" icon={Clock} title="Mid-Year Review" hue="navy"
           sub={me.midyear ? `Self: ${me.midyear.self_status.replace('_', ' ')} · manager: ${me.midyear.manager_status.replace('_', ' ')}` : 'Not started'} />
         <Tile to="/my/self-appraisal" icon={ClipboardList} title="Annual Review" hue="navy"
@@ -139,7 +236,7 @@ export default function HomePage() {
       {admin && (
         <Section label="Cycle administration">
           <Tile to="/admin/approvals" icon={CheckCircle2} title="All Approvals" hue="violet"
-            sub="Every pending decision in the company" />
+            sub={admin.kra_awaiting ? `${admin.kra_awaiting} KRA sheets awaiting a decision` : 'Every pending decision in the company'} />
           <Tile to="/admin/kra-overview" icon={ClipboardList} title="KRA Overview" hue="violet"
             sub={`${admin.kra_approved} of ${admin.kra_sheets} sheets approved`} />
           <Tile to="/admin/kra-library" icon={Library} title="KRA Library" hue="violet"
@@ -154,7 +251,8 @@ export default function HomePage() {
       )}
 
       {/* Stated, not hidden: these block real people from finishing, and
-          the person who can fix them is reading this page. */}
+          the person who can fix them is reading this page. Also a desk
+          tile above — this line carries the WHY, which a tile cannot. */}
       {admin && admin.no_manager > 0 && (
         <div className="card p-3 text-xs text-navy-500 border-l-4 border-brand-500">
           <b className="text-brand-600">{admin.no_manager}</b> active {admin.no_manager === 1 ? 'employee has' : 'employees have'} no

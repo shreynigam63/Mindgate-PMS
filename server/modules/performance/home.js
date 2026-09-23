@@ -96,6 +96,29 @@ async function home(user) {
     `SELECT final_rating, rating_label FROM pms.employee_performance_history
       WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [t, c.id, user.id]);
 
+  // The numbers behind the stat strip. All about THIS person, so no
+  // permission gate is needed — but they are still tenant-scoped, because
+  // every query in this file is.
+  const goals = await one(
+    `SELECT p.status,
+            (SELECT count(*)::int FROM pms.development_goals g WHERE g.plan_id = p.id) AS total,
+            (SELECT count(*)::int FROM pms.development_goals g
+              WHERE g.plan_id = p.id AND coalesce(g.progress_pct,0) >= 100) AS done
+       FROM pms.development_plans p
+      WHERE p.tenant_id=$1 AND p.cycle_id=$2 AND p.employee_id=$3`, [t, c.id, user.id]);
+
+  // Connects are NOT scoped to the cycle: pms.connects has no cycle_id, and
+  // this tenant's cycle has no opens_at/closes_at to filter held_at against.
+  // Counting them all and labelling them "logged" is the honest version;
+  // inventing a window would put a wrong number on the dashboard.
+  const connects = await one(
+    `SELECT count(*)::int AS logged,
+            max(held_at) AS last_held,
+            (SELECT count(*)::int FROM pms.connect_action_items a
+               JOIN pms.connects c2 ON c2.id = a.connect_id
+              WHERE c2.tenant_id=$1 AND c2.employee_id=$2 AND NOT a.done) AS open_actions
+       FROM pms.connects WHERE tenant_id=$1 AND employee_id=$2`, [t, user.id]);
+
   // The team block, only for someone who actually has reports — a manager
   // by title with nobody under them should not be shown an empty console.
   let team = null;
@@ -112,7 +135,18 @@ async function home(user) {
          LEFT JOIN pms.kra_sheets s ON s.cycle_id=$2 AND s.employee_id=e.id
          LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$2 AND me.employee_id=e.id
         WHERE e.tenant_id=$1 AND e.status='active' ${scope}`, params);
-    if (r && r.reports > 0) team = { ...r, scope: wide ? 'all_employees' : 'my_reports' };
+    if (r && r.reports > 0) {
+      // Reports nobody has had a single 1-on-1 with. A count of connects
+      // held says nothing; a count of people MISSED is the actionable half.
+      const miss = await one(
+        `SELECT count(*)::int AS no_connect FROM core.employees e
+          WHERE e.tenant_id=$1 AND e.status='active' ${wide ? '' : 'AND e.manager_id = $2'}
+            AND NOT EXISTS (SELECT 1 FROM pms.connects k
+                             WHERE k.tenant_id=$1 AND k.employee_id=e.id)`,
+        wide ? [t] : [t, user.id]);
+      team = { ...r, no_connect: miss ? miss.no_connect : 0,
+               scope: wide ? 'all_employees' : 'my_reports' };
+    }
   }
 
   // The admin block. Counts across the whole company, so pms_admin only.
@@ -122,6 +156,7 @@ async function home(user) {
       `SELECT (SELECT count(*)::int FROM core.employees WHERE tenant_id=$1 AND status='active') AS employees,
               (SELECT count(*)::int FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND status='approved') AS kra_approved,
               (SELECT count(*)::int FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2) AS kra_sheets,
+              (SELECT count(*)::int FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND status='submitted') AS kra_awaiting,
               (SELECT count(*)::int FROM pms.manager_evaluations WHERE tenant_id=$1 AND cycle_id=$2 AND status='submitted') AS evals_submitted,
               (SELECT count(*)::int FROM core.employees e WHERE e.tenant_id=$1 AND e.status='active'
                  AND e.manager_id IS NULL) AS no_manager`,
@@ -130,7 +165,7 @@ async function home(user) {
 
   return {
     cycle: { id: c.id, name: c.name, phase: c.phase, cycle_type: c.cycle_type, fiscal_year: c.fiscal_year },
-    me: { kra, midyear, appraisal, published },
+    me: { kra, midyear, appraisal, published, goals, connects },
     team, admin,
     action: nextAction({ phase: c.phase, kra, midyear, appraisal, team,
                          teamPending: team ? team.kra_pending : 0 }),

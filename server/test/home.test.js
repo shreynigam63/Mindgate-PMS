@@ -155,6 +155,45 @@ test('someone with no KRA sheet row at all is told to start, not told they are c
   assert.equal(nextAction({ phase: 'self_appraisal', kra: { status: 'approved' }, appraisal: null, teamPending: 0 }).kind, 'appraisal_due');
 });
 
+test('the dashboard numbers are real counts, and stay scoped to the caller', { skip }, async () => {
+  // The stat strip and the coloured desk tiles are all driven from this
+  // one response. A dashboard number nobody can trace is worse than no
+  // number, so each one is asserted against rows put in here.
+  const plan = (await db.query(
+    `INSERT INTO pms.development_plans (tenant_id,cycle_id,employee_id,manager_id,status)
+     VALUES ($1,$2,$3,$4,'approved') RETURNING id`, [tenantId, cycleId, empId, mgrId])).rows[0].id;
+  await db.query(
+    `INSERT INTO pms.development_goals (tenant_id,plan_id,title,progress_pct)
+     VALUES ($1,$2,'Ship the importer',100), ($1,$2,'Mentor a junior',40)`, [tenantId, plan]);
+  const con = (await db.query(
+    `INSERT INTO pms.connects (tenant_id,manager_id,employee_id,held_at,notes)
+     VALUES ($1,$2,$3,now(),'first 1-on-1') RETURNING id`, [tenantId, mgrId, empId])).rows[0].id;
+  await db.query(
+    `INSERT INTO pms.connect_action_items (tenant_id,connect_id,description,done)
+     VALUES ($1,$2,'Write the design note',false), ($1,$2,'Book the training',true)`, [tenantId, con]);
+
+  const { body } = await get('/pms/home', tok.employee);
+  assert.equal(body.me.goals.total, 2);
+  assert.equal(body.me.goals.done, 1, 'only the 100% one counts as done');
+  assert.equal(body.me.goals.status, 'approved');
+  assert.equal(body.me.connects.logged, 1);
+  assert.equal(body.me.connects.open_actions, 1, 'the completed action is not outstanding');
+
+  // The manager has one report and has now held a connect with them, so
+  // nobody is un-met. The admin sees the two people nobody has met.
+  const mgr = await get('/pms/home', tok.manager);
+  assert.equal(mgr.body.team.no_connect, 0);
+  const adm = await get('/pms/home', tok.admin);
+  assert.equal(adm.body.team.scope, 'all_employees');
+  assert.equal(adm.body.team.no_connect, 2, 'the admin and the manager have had none');
+  assert.equal(adm.body.admin.kra_awaiting, 1, 'one sheet is submitted and undecided');
+
+  // And none of it leaks: the employee gets no team or company numbers at
+  // all, however interesting the counts are.
+  assert.equal(body.team, null);
+  assert.equal(body.admin, null);
+});
+
 test('in evaluation season a manager is told about evaluations, not silence', { skip }, async () => {
   // The KRA queue is empty by manager_eval (sheets are approved), so the
   // team_pending branch cannot speak for this phase. Without its own
