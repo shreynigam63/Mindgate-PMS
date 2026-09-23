@@ -138,6 +138,17 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
                 ? ' Pick what applies, then adjust the wording and weights.'
                 : ' You already have all of them — open it to check the wording and weights against your new role.'}
             </p>
+            {/* This title's KRAs are published under more than one
+                department and none company-wide, so what is on screen is
+                all of them together. Said out loud: presenting a merged
+                list as if one department had written it would be a claim
+                the data does not support. */}
+            {state.served_across_departments && (
+              <p className="text-[11px] text-amber2-600 mt-1">
+                These are published under more than one department, so all of them are shown
+                together. Check which apply to your role before adding.
+              </p>
+            )}
             {/* Shown whenever department matching is switched on, because
                 from that moment "which department's shelf is this?" is a
                 real question even if the answer is still "the only one".

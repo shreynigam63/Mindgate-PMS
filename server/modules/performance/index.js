@@ -2207,6 +2207,37 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
           AND coalesce(btrim(department),'')=''
         ORDER BY sort_order, id`, [tenantId, designation])).rows;
   }
+  // LAST RESORT: the shelf exists, it just carries a department nobody
+  // asked about. Reported from the PoC as "after changing department and
+  // designation, new KRAs were not fetched", and reproduced: with the
+  // DEFAULT scope ('designation'), every query above either ignores the
+  // department dimension or demands the department be blank, so a library
+  // uploaded WITH departments filled in is invisible in its entirety. The
+  // picker then said "No KRA library has been published for Cloud
+  // Engineer" while two rows for Cloud Engineer sat in the table.
+  //
+  // That is a false empty state, which is worse than a missing one: it
+  // tells HR their upload did not land and sends them to re-upload it.
+  // Matching on designation alone is exactly what scope='designation'
+  // means, so serving those rows is the setting working, not a loophole.
+  // It fires only when everything above found nothing, so a tenant with
+  // company-wide rows — which is every tenant today — is unaffected.
+  let servedAcrossDepartments = false;
+  if (!entries.length) {
+    entries = (await db.query(
+      `SELECT id, designation, department, category, title, measures, description, suggested_weight
+         FROM pms.kra_library
+        WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
+        ORDER BY btrim(coalesce(department,'')), sort_order, id`, [tenantId, designation])).rows;
+    if (entries.length) {
+      const depts = [...new Set(entries.map((e) => (e.department || '').trim()).filter(Boolean))];
+      // Say where they came from when there is one honest answer. With
+      // rows from several departments there is no single answer, and
+      // naming one of them would be a claim the data does not support.
+      if (depts.length === 1) [matchedDepartment] = depts;
+      servedAcrossDepartments = depts.length > 1;
+    }
+  }
   // Every job title the employee's own department employs, so the picker
   // can show the roles around them. Read-only by design: the employee may
   // SEE that Admin also has Office Assistants and an Admin Manager, but
@@ -2266,6 +2297,10 @@ async function kraLibraryFor(tenantId, employee, sheetId, wanted) {
     // rather than leaving them to assume the shelf was written for them.
     matched_department: matchedDepartment,
     matched_scope: matchedDepartment ? 'department' : 'designation',
+    // True when the only rows for this title live under several different
+    // departments and were served together. The picker says so rather
+    // than presenting a merged list as one department's shelf.
+    served_across_departments: servedAcrossDepartments,
     // The department the viewer asked to look at, and whether it had a
     // shelf of its own or inherited the company-wide one.
     asked_department: askedDepartment,
