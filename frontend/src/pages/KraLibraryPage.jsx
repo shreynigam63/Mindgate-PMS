@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Trash2, Library, Pencil, Save, X } from 'luc
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import KraTable from '../KraTable';
 // The SAME grouping the employee's own KRA sheet uses. Asked for on
 // 23 Sep: on this page every KRA carried its parameter as a chip on its
 // own row, so a shelf with six "Project / Process" KRAs printed that
@@ -381,78 +382,69 @@ function ShelfDetail({ designation, department, onChanged }) {
   const groups = groupByCategory(rows.map((r) => ({ ...r, weight: r.suggested_weight })));
 
   return (
-    <div className="bg-navy-50 px-4 py-3 space-y-3">
-      {err && <p className="text-xs text-rose-600">{err}</p>}
-      {groups.map((g) => (
-        <div key={g.cat} className="space-y-1.5">
-          {/* The parameter, once, with what the group is worth — the
-              shape of the client's own KRA sheet. */}
-          <div className="flex items-baseline gap-2">
-            <p className={`text-[10px] font-bold uppercase tracking-wide ${g.cat === NO_CATEGORY ? 'text-navy-300' : 'text-lagoon-700'}`}>
-              {g.cat === NO_CATEGORY ? 'No parameter set' : g.cat}
-            </p>
-            <span className="text-[10px] text-navy-400">
-              {Math.round(g.weight * 100) / 100}% · {g.rows.length} KRA{g.rows.length === 1 ? '' : 's'}
-            </span>
+    <div className="bg-navy-50 px-4 py-3">
+      {err && <p className="text-xs text-rose-600 mb-2">{err}</p>}
+      {/* One table, the parameter merged across its KRAs — the shape of
+          the sheet HR already works from. See KraTable.jsx. */}
+      <KraTable
+        groups={groups}
+        kpiHeaderNote="(measuring metrics & data source)"
+        totalLabel={`Total on the shelf — ${rows.length} KRA${rows.length === 1 ? '' : 's'}`}
+        total={total}
+        totalOk={Math.abs(total - 100) < 0.01}
+        renderKra={({ k: r }) => (editing === r.id
+          ? <input className="inp !text-xs" value={draft.title} onChange={set('title')} placeholder="KRA (S.M.A.R.T goal) *" />
+          : <span>{r.title}</span>)}
+        renderKpi={({ k: r }) => (editing === r.id ? (
+          <div className="space-y-1.5">
+            <textarea className="inp !text-xs" rows={2} value={draft.measures} onChange={set('measures')}
+              placeholder="KPIs — measuring metrics & data source" />
+            <textarea className="inp !text-xs" rows={2} value={draft.description} onChange={set('description')}
+              placeholder="Comments (optional)" />
+            <input className="inp !text-xs !w-44" value={draft.category} onChange={set('category')} placeholder="Parameter" />
+            <div className="flex items-center gap-2">
+              <button className="btn-pri !py-1 !text-xs" disabled={busy} onClick={() => save(r.id)}>
+                <Save size={12} className="inline mr-1" />Save
+              </button>
+              <button className="btn-sec !py-1 !text-xs" disabled={busy} onClick={() => setEditing(null)}>
+                <X size={12} className="inline mr-1" />Cancel
+              </button>
+              <button className="text-[11px] text-rose-500 hover:text-rose-700 ml-auto"
+                disabled={busy} onClick={() => remove(r)}>
+                <Trash2 size={12} className="inline mr-1" />Remove from shelf
+              </button>
+            </div>
           </div>
-          {g.rows.map(({ k: r }) => (
-        <div key={r.id} className="bg-white rounded-lg p-2.5 text-xs space-y-1">
-          {editing === r.id ? (
-            <div className="space-y-1.5">
-              <input className="inp !text-xs" value={draft.title} onChange={set('title')}
-                placeholder="KRA (S.M.A.R.T goal) *" />
-              <div className="flex flex-wrap items-center gap-2">
-                <input className="inp !text-xs !w-44" value={draft.category} onChange={set('category')}
-                  placeholder="Parameter" />
-                <div className="flex items-center gap-1">
-                  <input className="inp !text-xs !w-24 text-right" type="number" min="0" max="100" step="0.01"
-                    value={draft.suggested_weight} onChange={set('suggested_weight')} placeholder="wt" />
-                  <span className="text-navy-400">%</span>
-                </div>
-                {/* Blank is a real answer, not a zero — the shelf is a
-                    menu and some KRAs carry no suggested weight. */}
-                <span className="text-[11px] text-navy-400">blank = no suggested weight</span>
-              </div>
-              <textarea className="inp !text-xs" rows={2} value={draft.measures} onChange={set('measures')}
-                placeholder="KPIs / measures" />
-              <textarea className="inp !text-xs" rows={2} value={draft.description} onChange={set('description')}
-                placeholder="Comments (optional)" />
-              <div className="flex items-center gap-2">
-                <button className="btn-pri !py-1 !text-xs" disabled={busy} onClick={() => save(r.id)}>
-                  <Save size={12} className="inline mr-1" />Save
-                </button>
-                <button className="btn-sec !py-1 !text-xs" disabled={busy} onClick={() => setEditing(null)}>
-                  <X size={12} className="inline mr-1" />Cancel
-                </button>
-                <button className="text-[11px] text-rose-500 hover:text-rose-700 ml-auto"
-                  disabled={busy} onClick={() => remove(r)}>
-                  <Trash2 size={12} className="inline mr-1" />Remove from shelf
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="flex items-start justify-between gap-2">
-                <p className="font-semibold flex-1">{r.title}</p>
-                <span className="text-navy-500 font-medium shrink-0">{r.suggested_weight == null ? '—' : `${Number(r.suggested_weight)}%`}</span>
-                <button className="text-navy-400 hover:text-navy-700 shrink-0" title="Edit this KRA"
-                  onClick={() => open(r)}><Pencil size={12} /></button>
-              </div>
-              {r.measures && <p className="text-navy-400 whitespace-pre-line"><b>Measures:</b> {r.measures}</p>}
-              {r.description && <p className="text-navy-500">{r.description}</p>}
-            </>
-          )}
-            </div>
-          ))}
-        </div>
-      ))}
-      <p className="text-[11px] text-navy-400 pt-1">
-        <Library size={11} className="inline mr-1" />
-        {rows.length} KRA{rows.length === 1 ? '' : 's'} · {Math.round(total * 100) / 100}% on the shelf.
-        Edit a line with the pencil, or re-upload the designation to replace the whole shelf.
-        {' '}<b>Employees who have already picked from this shelf keep what they added</b> — those
-        are copies, and editing here changes only what the next person is offered.
-      </p>
+        ) : (
+          <>
+            <span className="whitespace-pre-line">{r.measures || <i className="text-navy-300">no KPI recorded</i>}</span>
+            {r.description && <div className="text-navy-400 mt-1">{r.description}</div>}
+          </>
+        ))}
+        renderWeight={({ k: r }) => (editing === r.id ? (
+          <div className="flex items-center justify-end gap-1">
+            <input className="inp !text-xs !w-20 text-right" type="number" min="0" max="100" step="0.01"
+              value={draft.suggested_weight} onChange={set('suggested_weight')} placeholder="wt" />
+            <span className="text-navy-400 font-normal">%</span>
+          </div>
+        ) : (
+          <div className="flex items-center justify-end gap-2">
+            {/* Blank is a real answer, not a zero — the shelf is a menu
+                and some KRAs carry no suggested weight. */}
+            <span>{r.suggested_weight == null ? '—' : `${Number(r.suggested_weight)}%`}</span>
+            <button className="text-navy-300 hover:text-navy-700" title="Edit this KRA"
+              onClick={() => open(r)}><Pencil size={12} /></button>
+          </div>
+        ))}
+        legend={<>
+          <Library size={11} className="inline mr-1" />
+          A shelf is a <b>menu</b>, not an instruction — it may deliberately total more than 100,
+          and the employee picks what applies with their manager. Edit a line with the pencil, or
+          re-upload the designation to replace the whole shelf.
+          {' '}<b>Employees who have already picked from this shelf keep what they added</b> — those
+          are copies, and editing here changes only what the next person is offered.
+        </>}
+      />
     </div>
   );
 }

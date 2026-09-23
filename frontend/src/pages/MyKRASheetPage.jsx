@@ -3,6 +3,7 @@ import { Plus, Trash2, Check, Send } from 'lucide-react';
 import { api, phaseLabel, phaseColor, sheetStatusLabel } from '../utils/api';
 import KraLibraryPicker from './KraLibraryPicker';
 import PageHead from '../PageHead';
+import KraTable from '../KraTable';
 
 // Whitespace counts as empty. An imported cell can carry a stray space or
 // newline, and treating that as content would put the box back on exactly
@@ -47,7 +48,14 @@ export default function MyKRASheetPage() {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const load = () => api('/pms/my/kra-sheet').then(r => { setData(r); setKras(r.kras || []); setErr(null); }).catch(e => setErr(e.message));
+  // numeric(5,2) comes back as the string "10.00". Left as-is it fills the
+  // weight box with false precision on a field people type "10" into, and
+  // every KRA then reads 10.00 in a column of 5.00s. Trimmed on load only
+  // — never while typing, which would fight the cursor.
+  const trimWeight = (w) => (w == null || w === '' ? w : String(Number(w)));
+  const load = () => api('/pms/my/kra-sheet')
+    .then(r => { setData(r); setKras((r.kras || []).map(k => ({ ...k, weight: trimWeight(k.weight) }))); setErr(null); })
+    .catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
@@ -130,7 +138,7 @@ export default function MyKRASheetPage() {
   };
 
   return (
-    <div className="space-y-4 max-w-3xl mx-auto">
+    <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="My KRAs" hue="navy">
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
         <span className={`chip ${data.sheet.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : data.sheet.status === 'returned' ? 'bg-rose-100 text-rose-700' : 'bg-navy-50 text-navy-600'}`}>sheet: {sheetStatusLabel(data.sheet.status, data.sheet.reopened_reason)}</span>
@@ -186,78 +194,117 @@ export default function MyKRASheetPage() {
           cannot add anything from it is a dead control, and after the
           phase closes the sheet is a record rather than a form. */}
       {editable && <KraLibraryPicker source="/pms/my/kra-library" onAdd={addFromLibrary} />}
-      {groups.map((g) => (
-        <div key={g.cat} className="space-y-2">
-          {/* The Parameter heading, with that group's weight beside it.
-              The subtotal is the reason to group at all beyond looks: a
-              scorecard that is 70% Financial and 5% People is the sort of
-              thing nobody notices in a flat list of eight KRAs. */}
-          <div className="flex items-baseline gap-2 px-1">
-            <p className={`text-xs font-bold uppercase tracking-wide ${g.cat === NO_CATEGORY ? 'text-navy-300' : 'text-navy-500'}`}>
-              {g.cat === NO_CATEGORY ? 'No parameter set' : g.cat}
-            </p>
-            <span className="text-[11px] text-navy-400">{Math.round(g.weight * 100) / 100}%</span>
+      {/* ONE TABLE: Parameters · KRAs · KPIs · Weightage, the parameter
+          merged across its KRAs. Asked for on 23 Sep against the client's
+          own sheet, and the same component the KRA Library uses — the
+          two pages showing one thing two ways was the complaint. */}
+      <KraTable
+        groups={groups}
+        kpiHeaderNote="(measuring metrics & data source)"
+        totalLabel={editable
+          ? 'Total weight — must reach 100% before you can submit'
+          : 'Total weight'}
+        total={total}
+        totalOk={Math.abs(total - 100) < 0.01}
+        renderKra={({ k, i }) => (editable
+          ? <input className="inp !text-[12.5px]" placeholder="KRA title *" value={k.title || ''} onChange={set(i, 'title')} />
+          : <span>{k.title}</span>)}
+        renderKpi={({ k, i }) => (
+          <div className="space-y-1.5">
+            {editable
+              ? <textarea className="inp !text-[12.5px]" rows={2} placeholder="How it will be measured"
+                  value={k.measures || ''} onChange={set(i, 'measures')} />
+              : <span className="whitespace-pre-line">{k.measures || <i className="text-navy-300">no KPI recorded</i>}</span>}
+            {/* Description is optional and hidden until it has content or
+                is asked for — it read as an extra empty box on every KRA. */}
+            {(hasText(k.description) || k._showDesc) ? (
+              editable
+                ? <textarea className="inp !text-[12.5px]" rows={2} placeholder="Description"
+                    value={k.description || ''} onChange={set(i, 'description')} />
+                : <div className="text-navy-400">{k.description}</div>
+            ) : editable && (
+              <button type="button" className="text-[11px] text-navy-300 hover:text-navy-600"
+                onClick={() => openDesc(i)}>+ Add description</button>
+            )}
+            <MidYearOnKra midyear={k.midyear} withheld={data.manager_ratings_withheld} />
           </div>
-          {g.rows.map(({ k, i }) => (
-            <div key={i} className="card p-3 space-y-2">
-              <div className="flex gap-2">
-                <input className="inp font-semibold" placeholder="KRA title *" value={k.title || ''} onChange={set(i, 'title')} disabled={!editable} />
-                <input className="inp w-24 text-right" type="number" placeholder="wt %" value={k.weight ?? ''} onChange={set(i, 'weight')} disabled={!editable} />
-                {editable && <button className="text-rose-500" onClick={() => setKras(ks => ks.filter((_, j) => j !== i))}><Trash2 size={15} /></button>}
+        )}
+        renderWeight={({ k, i }) => (
+          <div className="space-y-1.5">
+            {editable
+              ? <input className="inp !w-20 !text-right !text-[12.5px] ml-auto" type="number" placeholder="wt"
+                  value={k.weight ?? ''} onChange={set(i, 'weight')} />
+              : <span>{k.weight == null || k.weight === '' ? '—' : `${Number(k.weight)}%`}</span>}
+            {editable && (
+              <div className="flex items-center justify-end gap-2">
+                {/* MOVE, not a parameter box per row. With the parameter
+                    merged, changing it physically moves the row to another
+                    group — so the control says what it does. It commits
+                    atomically for the reason the old select did: a
+                    free-text box re-grouped the sheet on every keystroke
+                    and the row jumped out from under the cursor. */}
+                {!k._newCat ? (
+                  // Always reads "Move to…", NEVER the current parameter:
+                  // the merged cell to the left already says which group
+                  // this row is in, and repeating it on every row is
+                  // exactly the duplication this format removed. The
+                  // current parameter is left out of the options for the
+                  // same reason — moving something to where it already is
+                  // is not a choice.
+                  <select className="inp !w-auto !py-1 !text-[11px] !font-bold !text-navy-400"
+                    title="Move this KRA to another parameter" value=""
+                    onChange={(e) => { if (e.target.value) setCategory(i, e.target.value); }}>
+                    <option value="">Move to…</option>
+                    {hasText(k.category) && <option value={NO_CATEGORY}>No parameter</option>}
+                    {categoryOptions
+                      .filter((c) => c !== (hasText(k.category) ? String(k.category).trim() : null))
+                      .map((c) => <option key={c} value={c}>{c}</option>)}
+                    <option value={NEW_CAT}>+ New parameter…</option>
+                  </select>
+                ) : (
+                  <input className="inp !w-40 !py-1 !text-[11px]" autoFocus placeholder="New parameter, then Enter"
+                    value={k._newCatText || ''}
+                    onChange={(e) => stageNewCategory(i, e.target.value)}
+                    onBlur={() => commitNewCategory(i)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(i); } }} />
+                )}
+                <button className="text-rose-500 hover:text-rose-700" title="Remove this KRA"
+                  onClick={() => setKras(ks => ks.filter((_, j) => j !== i))}><Trash2 size={13} /></button>
               </div>
-              {/* The two small controls share one line so a KRA does not
-                  grow a row per optional field. !w-auto because .inp is
-                  @apply w-full and a full-width dropdown for four short
-                  words dominates the card. */}
-              {editable && (
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* The picker is a select, not a text box — see
-                      setCategory for why. Options are what this tenant
-                      already uses, so a sheet does not split into
-                      "Project/Process" and "Project & Process" without
-                      anyone noticing. */}
-                  {!k._newCat ? (
-                    <select className="inp !w-auto !py-1.5 text-xs" value={hasText(k.category) ? String(k.category).trim() : NO_CATEGORY}
-                      onChange={(e) => setCategory(i, e.target.value)}>
-                      <option value={NO_CATEGORY}>Parameter — none</option>
-                      {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-                      <option value={NEW_CAT}>+ New parameter…</option>
-                    </select>
-                  ) : (
-                    <input className="inp !w-56 !py-1.5 text-xs" autoFocus placeholder="New parameter name, then Enter"
-                      value={k._newCatText || ''}
-                      onChange={(e) => stageNewCategory(i, e.target.value)}
-                      onBlur={() => commitNewCategory(i)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(i); } }} />
-                  )}
-                  {!hasText(k.description) && !k._showDesc && (
-                    <button type="button" className="text-[11px] text-navy-400 hover:text-navy-600" onClick={() => openDesc(i)}>
-                      + Add description
-                    </button>
-                  )}
-                </div>
-              )}
-              {/* Read-only view still needs to show the parameter, since
-                  the select above is gone once the phase closes. */}
-              {!editable && hasText(k.category) && (
-                <span className="chip bg-navy-50 text-navy-500 self-start">{String(k.category).trim()}</span>
-              )}
-              {/* Measures then description, matching the template's own
-                  column order (Parameters, KRA, KPIs, Comments) — the
-                  optional field goes last rather than splitting the two
-                  that are always filled. */}
-              <input className="inp" placeholder="How it will be measured" value={k.measures || ''} onChange={set(i, 'measures')} disabled={!editable} />
-              {(hasText(k.description) || k._showDesc) && (
-                <textarea className="inp" rows={2} placeholder="Description" value={k.description || ''} onChange={set(i, 'description')} disabled={!editable} />
-              )}
-              <MidYearOnKra midyear={k.midyear} withheld={data.manager_ratings_withheld} />
-            </div>
-          ))}
-        </div>
-      ))}
+            )}
+          </div>
+        )}
+        groupFooter={editable ? (g) => (
+          <button type="button" className="kt-addbtn"
+            onClick={() => setKras(ks => [...ks, { title: '', weight: '', category: g.cat === NO_CATEGORY ? '' : g.cat }])}>
+            <Plus size={12} className="inline mr-1" />
+            Add a KRA under {g.cat === NO_CATEGORY ? 'no parameter' : g.cat}
+          </button>
+        ) : null}
+        bodyFooter={editable ? (
+          <tr className="kt-add kt-last">
+            {/* kt-param for the styling, kt-param-add because it is NOT a
+                parameter — it is the control that makes one. Anything
+                counting the groups on this table would otherwise count
+                this cell as one. */}
+            <td className="kt-param kt-param-add">
+              <button type="button" className="kt-addbtn" onClick={() => setKras(ks => [...ks, { title: '', weight: '' }])}>
+                <Plus size={12} className="inline mr-1" />New parameter
+              </button>
+            </td>
+            <td colSpan={3} className="text-[11.5px] text-navy-300 pt-4">
+              Adds a KRA with no parameter yet — set it with <b>Move to…</b> on the row.
+            </td>
+          </tr>
+        ) : null}
+        legend={editable
+          ? <><b>Move to…</b> reassigns a KRA to another parameter; the row jumps to that group and
+             both subtotals update. Submit stays disabled until the total is exactly 100%.</>
+          : <>This sheet is a record now. Mid-year ratings, where they exist, sit with the KRA they
+             were given for.</>}
+      />
       {editable && (
         <div className="flex flex-wrap gap-2">
-          <button className="btn-sec" onClick={() => setKras(ks => [...ks, { title: '', weight: '' }])}><Plus size={13} className="inline mr-1" />Add KRA</button>
           <button className="btn-sec" disabled={busy} onClick={() => save(false)}><Check size={13} className="inline mr-1" />Save draft</button>
           <button className="btn-pri" disabled={busy || Math.abs(total - 100) >= 0.01 || !kras.length} onClick={() => save(true)}
             title={Math.abs(total - 100) >= 0.01 ? 'Weights must total exactly 100' : ''}>

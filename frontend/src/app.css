@@ -188,3 +188,66 @@ body {
 .sechead-i { @apply w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white; }
 .sechead-t { @apply text-[15px] font-extrabold text-navy-900 leading-none; }
 .sechead-s { @apply block text-[11px] font-medium text-navy-400 mt-1; }
+
+/* ---- The one KRA table: Parameters · KRAs · KPIs · Weightage -------------
+   Asked for on 23 Sep against the client's own sheet. The parameter is a
+   MERGED cell spanning its KRAs, so it is written once however many sit
+   under it. See KraTable.jsx for why this is one component. */
+.kratable { @apply w-full text-[13px]; border-collapse: collapse; }
+.kratable thead th { @apply bg-navy-50 text-navy-500 text-[10.5px] uppercase font-bold
+  text-left px-3.5 py-2.5 border-b border-navy-100; letter-spacing: .07em; }
+.kratable th.num, .kratable td.num { @apply text-right; }
+.kratable .kt-note { @apply font-medium normal-case text-navy-400; letter-spacing: 0; }
+.kratable td { @apply px-3.5 py-3 align-top border-b border-navy-50; }
+.kratable td.num { @apply font-bold whitespace-nowrap; font-variant-numeric: tabular-nums; }
+.kratable tr.kt-last > td { @apply border-b border-navy-100; }
+/* Column widths: the KPI column is the one that runs long, so it takes
+   whatever the other three do not. */
+.kratable th.kt-p, .kratable td.kt-param { width: 172px; }
+.kratable th.kt-k, .kratable td.kt-k { width: 31%; }
+.kratable th.kt-w, .kratable td.kt-w { width: 112px; }
+
+.kratable td.kt-param { @apply bg-navy-50 border-r border-navy-100 border-b border-navy-100 align-top; }
+.kt-pname { @apply text-[12.5px] font-extrabold text-navy-700 leading-tight; }
+.kt-pname.kt-none { @apply text-navy-300; }
+.kt-psub { @apply text-[11px] text-navy-400 mt-1.5; }
+.kt-bar { @apply h-1 rounded-full bg-navy-100 mt-2 overflow-hidden; }
+.kt-bar i { @apply block h-full bg-lagoon-500; }
+
+.kratable td.kt-k { @apply font-bold text-navy-900 leading-snug; }
+.kratable td.kt-kpi { @apply text-navy-500 text-[12.5px] leading-relaxed; }
+.kratable tr.kt-add > td { @apply bg-navy-50/40; }
+
+.kratable tfoot td { @apply bg-white font-extrabold px-3.5 py-3 border-t-2 border-navy-100; }
+.kratable tfoot td.num { @apply text-[15px]; }
+.kt-ok { @apply text-leaf-600; }
+.kt-bad { @apply text-rose-600; }
+.kt-legend { @apply text-[11.5px] text-navy-400 px-4 py-3 border-t border-navy-50 leading-relaxed; }
+/* Dashed, tinted, and inside the group it adds to — so "add" reads as
+   part of the parameter rather than a stray button under the table. */
+.kt-addbtn { @apply text-[11.5px] font-bold text-lagoon-700 bg-lagoon-50 rounded-lg px-3 py-1.5
+  border border-dashed border-lagoon-500 transition-colors; }
+.kt-addbtn:hover { @apply bg-lagoon-100; }
+
+/* A MERGED COLUMN CANNOT SURVIVE A PHONE. Below 720px the table becomes
+   blocks — which makes rowSpan inert, exactly what is wanted — so the
+   parameter renders as a full-width band ahead of its KRAs and the KPI
+   sits under its KRA. Same data, same order, nothing hidden and nothing
+   scrolling sideways. */
+@media (max-width: 720px) {
+  .kratable, .kratable tbody, .kratable tfoot, .kratable tr, .kratable td { display: block; width: auto; }
+  /* The fixed column widths are declared later in the file and would
+     otherwise still win here, leaving the KRA field about eight
+     characters wide on a phone. */
+  .kratable td.kt-param, .kratable td.kt-k, .kratable td.kt-w { width: auto; }
+  .kratable thead { display: none; }
+  .kratable td { @apply border-b-0 py-1.5; }
+  .kratable tr { @apply border-b border-navy-100 py-1; }
+  .kratable td.kt-param { @apply border-r-0 rounded-lg mb-1 py-2; }
+  .kratable td.kt-k { @apply pb-0; }
+  .kratable td.kt-kpi::before { content: 'KPI: '; @apply font-bold text-navy-400; }
+  .kratable td.kt-w { @apply text-left; }
+  .kratable td.kt-w::before { content: 'Weightage: '; @apply font-medium text-navy-400 text-[11.5px]; }
+  .kratable tfoot td { @apply border-t-0 py-1; }
+  .kratable tfoot tr { @apply border-t-2 border-navy-100 border-b-0; }
+}

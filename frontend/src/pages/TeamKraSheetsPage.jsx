@@ -5,6 +5,7 @@ import { MidYearOnKra, groupByCategory, NO_CATEGORY } from './MyKRASheetPage';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import StatusTabs, { statusTabs } from '../StatusTabs';
+import KraTable from '../KraTable';
 
 // Fix guide item #5 (BR-1.3): confirmed root cause was that no frontend
 // page anywhere called the existing, working GET /team/kra-sheets and
@@ -143,32 +144,31 @@ function SheetEditor({ sheet, reload }) {
               review. The per-group weight makes an unbalanced scorecard
               visible at approval time, which is when it can still be
               sent back. */}
-          {groupByCategory(detail.kras).map(g => (
-            <div key={g.cat} className="space-y-1.5">
-              <div className="flex items-baseline gap-2">
-                <p className={`text-[10px] font-bold uppercase tracking-wide ${g.cat === NO_CATEGORY ? 'text-navy-300' : 'text-navy-500'}`}>
-                  {g.cat === NO_CATEGORY ? 'No parameter set' : g.cat}
-                </p>
-                <span className="text-[10px] text-navy-400">{Math.round(g.weight * 100) / 100}%</span>
-              </div>
-              {g.rows.map(({ k }) => (
-                <div key={k.id} className="bg-navy-50 rounded-lg p-3 text-xs space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="font-semibold flex-1">{k.title}</p>
-                    <span className="text-navy-500 font-medium">{k.weight}%</span>
-                  </div>
-                  {/* Measures then description, the same order as the
-                      employee's own page and as the template's columns. */}
-                  {k.measures && <p className="text-navy-400"><b>Measures:</b> {k.measures}</p>}
-                  {k.description && <p className="text-navy-600">{k.description}</p>}
+          {/* THE SAME TABLE the employee filled in and the library
+              publishes. A manager reviewing a sheet should see the
+              structure the employee saw — a third rendering of one thing
+              is how the three drift apart. Read-only: the parameter is
+              set on the sheet, not in review. */}
+          {detail.kras.length > 0 && (
+            <KraTable
+              groups={groupByCategory(detail.kras)}
+              kpiHeaderNote="(measuring metrics & data source)"
+              totalLabel={detail.weights.ok
+                ? 'Total weight'
+                : 'Total weight — does not total 100, flag with the employee'}
+              total={detail.weights.total}
+              totalOk={detail.weights.ok}
+              renderKra={({ k }) => <span>{k.title}</span>}
+              renderKpi={({ k }) => (
+                <div className="space-y-1">
+                  <span className="whitespace-pre-line">{k.measures || <i className="text-navy-300">no KPI recorded</i>}</span>
+                  {k.description && <div className="text-navy-400">{k.description}</div>}
                   <MidYearOnKra midyear={k.midyear} />
                 </div>
-              ))}
-            </div>
-          ))}
-          <p className={`text-[11px] font-medium ${detail.weights.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
-            Total weight: {detail.weights.total}%{!detail.weights.ok && ' (does not total 100 — flag with the employee)'}
-          </p>
+              )}
+              renderWeight={({ k }) => <span>{k.weight == null ? '—' : `${Number(k.weight)}%`}</span>}
+            />
+          )}
         </div>
       )}
       {canDecide && (

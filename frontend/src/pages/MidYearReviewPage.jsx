@@ -114,7 +114,7 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
               <p className="text-sm font-semibold flex-1 min-w-[12ch]">{k.title}</p>
               <span className="chip bg-navy-50 text-navy-600">{Number(k.weight)}%</span>
             </div>
-            {k.measures && <p className="text-[11px] text-navy-400">Measures: {k.measures}</p>}
+            {k.measures && <p className="text-[11px] text-navy-400">KPI: {k.measures}</p>}
 
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="lbl mb-0">Rating</span>
