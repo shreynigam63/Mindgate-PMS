@@ -159,7 +159,7 @@ test('every page is registered, and every route is registered once', { skip }, a
   // be argued for here too.
   const publicRoutes = rows.filter(r => !r.required_permission).map(r => r.route).sort();
   assert.deepEqual(publicRoutes, [
-    '/engagement', '/my/annual-review', '/my/growth', '/my/history', '/my/kras',
+    '/engagement', '/home', '/my/annual-review', '/my/growth', '/my/history', '/my/kras',
     '/my/midyear', '/my/rating', '/my/self-appraisal', '/people', '/pip', '/team/connects',
   ]);
 });

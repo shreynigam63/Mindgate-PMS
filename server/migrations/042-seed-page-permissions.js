@@ -27,6 +27,7 @@
 // cycle console (create, advance phase, publish) and every one of those
 // writes is pms_admin. The row records what the page is FOR.
 const PAGES = [
+  ['home',               '/home',                     null],
   ['my_kras',            '/my/kras',                  null],
   ['my_growth',          '/my/growth',                null],
   ['quarterly_connects', '/team/connects',            null],

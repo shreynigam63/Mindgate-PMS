@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2 } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -33,9 +33,11 @@ import IncrementSimulationPage from './pages/IncrementSimulationPage';
 import ParameterAnalysisPage from './pages/ParameterAnalysisPage';
 import SettingsPage from './pages/SettingsPage';
 import ApprovalsPage from './pages/ApprovalsPage';
+import HomePage from './pages/HomePage';
 
 const NAV = [
   { group: 'My Performance', hue: 'navy', items: [
+    { to: '/home', label: 'Home', icon: Home },
     { to: '/my/kras', label: 'My KRAs', icon: Target },
     { to: '/my/growth', label: 'My Growth', icon: TrendingUp },
     // Asked for on 22 Sep: Quarterly Connects sits between My Growth and
@@ -187,7 +189,7 @@ function NoAccess() {
         If you need it, ask HR to grant it — access is set per role, so they can
         change it without a release.
       </p>
-      <NavLink to="/my/kras" className="btn-pri inline-block mt-4">Back to My KRAs</NavLink>
+      <NavLink to="/home" className="btn-pri inline-block mt-4">Back to Home</NavLink>
     </div>
   );
 }
@@ -203,7 +205,8 @@ function Main({ user }) {
     <main className="flex-1 min-w-0 p-4 lg:p-6 max-w-[1500px] w-full mx-auto">
       {blocked ? <NoAccess /> : (
             <Routes>
-              <Route path="/" element={<Navigate to="/my/kras" replace />} />
+              <Route path="/" element={<Navigate to="/home" replace />} />
+              <Route path="/home" element={<HomePage />} />
               <Route path="/my/kras" element={<MyKRASheetPage />} />
               <Route path="/admin/increments" element={<IncrementSimulationPage />} />
               <Route path="/admin/parameter-analysis" element={<ParameterAnalysisPage />} />
@@ -234,7 +237,7 @@ function Main({ user }) {
               <Route path="/admin/nine-box" element={<NineBoxPage />} />
               <Route path="/engagement" element={<EngagementPage />} />
               <Route path="/people" element={<PeopleHubPage user={user} />} />
-              <Route path="*" element={<Navigate to="/my/kras" replace />} />
+              <Route path="*" element={<Navigate to="/home" replace />} />
             </Routes>
       )}
     </main>

@@ -27,6 +27,7 @@ const { parseCsv, parseExcelSheets, detectFormat } = require('../../core/employe
 const pm = require('./phase-machine');
 const goalSync = require('./kra-goal-sync');
 const approvals = require('./approvals');
+const homeData = require('./home');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -2616,6 +2617,15 @@ router.post('/team/development-plans/:planId/decide', async (req, res) => {
     });
     if (r.error) return res.status(r.status).json({ error: r.error });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------- Home ------------------------------------------------------
+// What this person owes and where everything else is, in one request. See
+// home.js for why it is one endpoint and not six.
+router.get('/home', async (req, res) => {
+  try {
+    res.json(await homeData.home(req.user));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
