@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, ChevronDown, CheckCircle2 } from 'lucide-react';
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2 } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -112,67 +112,63 @@ const signOut = () => { localStorage.removeItem('apms_token'); location.href = '
 // so an unfiltered menu is a tidiness problem, never an access one.
 const mayOpen = (user, route) => !user.pages || user.pages.includes(route);
 
-function SideNav({ user }) {
+function TopNav({ user }) {
   const { pathname } = useLocation();
-  // If a whole group ends up empty after filtering, drop the group heading
-  // too: an empty "HR Admin" band with nothing under it is just confusing.
+  const nav = useNavigate();
+  // If a whole group ends up empty after filtering, drop the tab too: an
+  // empty "HR Admin" tab with nothing behind it is just confusing.
   const groups = NAV
     .map(g => ({ ...g, items: g.items.filter(it => mayOpen(user, it.to)) }))
     .filter(g => g.items.length > 0);
 
-  // 29 items is too long a list to hold open. Only the group you are working
-  // in starts open; the rest fold away behind their heading, with a count so
-  // you can see what is in there without opening it.
-  const here = groups.find(g => g.items.some(it => pathname.startsWith(it.to)));
-  const [opened, setOpened] = useState({});
-  // The active group is always open — nothing may strand you on a page whose
-  // own menu entry is hidden.
-  const isOpen = g => g.group === here?.group || !!opened[g.group];
+  // Which tab is open follows the page you are on, not a click you made —
+  // a link from a notification has to land on the right tab too.
+  const here = groups.find(g => g.items.some(it => pathname === it.to || pathname.startsWith(it.to + '/')))
+    || groups[0];
 
   return (
-    <aside className="glass lg:w-60 lg:shrink-0 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto rounded-none lg:rounded-r-2xl">
-      <div className="px-4 py-4 flex items-start justify-between gap-2">
-        <h1 className="text-sm font-bold flex items-center gap-2 text-navy-900 leading-tight">
+    <header className="glass rounded-none">
+      <div className="px-4 lg:px-6 py-3 flex items-center justify-between gap-3">
+        <h1 className="text-sm lg:text-base font-bold flex items-center gap-2 text-navy-900">
           <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-navy-700 to-brand-500 flex items-center justify-center shadow-card shrink-0">
             <Sparkles size={13} className="text-white" />
           </span>
           Performance Management System
         </h1>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <NotificationBell />
-          <button className="lg:hidden btn-sec" onClick={signOut}><LogOut size={12} /></button>
+          <span className="hidden sm:inline text-xs text-navy-500">{user.name} · {user.role}</span>
+          <button className="btn-sec" onClick={signOut}><LogOut size={12} className="inline mr-1" />Sign out</button>
         </div>
       </div>
-      <nav className="px-2 pb-4 flex lg:block overflow-x-auto gap-1">
-        {groups.map(g => {
-          const open = isOpen(g);
-          return (
-            <div key={g.group} className="lg:mb-3 flex lg:block gap-1">
-              {/* Hidden on small screens, where the nav is a single scrolling
-                  row and there is nothing to collapse. */}
-              <button type="button" className="navgrp hidden lg:flex"
-                onClick={() => setOpened(o => ({ ...o, [g.group]: !open }))}>
-                {g.group}
-                <span className="navcount">{g.items.length}</span>
-                <ChevronDown size={11} className={`navchev ${open ? '' : 'navchev-shut'}`} />
-              </button>
-              <div className={`flex lg:block gap-1 ${open ? '' : 'lg:hidden'}`}>
-                {g.items.map(it => (
-                  <NavLink key={it.to} to={it.to}
-                    className={({ isActive }) => `flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-xl text-sm whitespace-nowrap transition-colors ${isActive ? `navon navon-${g.hue} text-white shadow-card` : 'text-navy-600 hover:bg-white/70'}`}>
-                    <span className={`navico navico-${g.hue}`}><it.icon size={13} /></span>{it.label}
-                  </NavLink>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </nav>
-      <div className="hidden lg:block px-4 py-3 border-t border-navy-100/60 text-xs text-navy-500">
-        {user.name} · {user.role}
-        <button className="block mt-1 text-brand-600 font-semibold" onClick={signOut}>Sign out</button>
+
+      {/* Role tabs. Clicking one opens its first page: a tab is a place to
+          go, not just a filter, and landing on nothing would be a dead end. */}
+      <div className="px-4 lg:px-6 flex gap-1.5 overflow-x-auto">
+        {groups.map(g => (
+          <button key={g.group} type="button" onClick={() => nav(g.items[0].to)}
+            className={`roletab ${g === here ? `roletab-on roletab-${g.hue}` : ''}`}>
+            {g.group}
+            <span className={`navcount ${g === here ? 'navcount-on' : ''}`}>{g.items.length}</span>
+          </button>
+        ))}
       </div>
-    </aside>
+
+      {/* The open tab's pages. HR Admin has fifteen — 2286px of them at
+          1440px wide — so this WRAPS rather than scrolling sideways. A
+          scrolling row silently hid eight of HR's pages off the right edge
+          with no cue they existed, which would have been worse than the
+          sidebar this replaced, on exactly the axis the sidebar was good
+          at. Wrapping costs one extra row, and only for HR. */}
+      <nav className="subnav px-4 lg:px-6 flex flex-wrap gap-x-1">
+        {here && here.items.map(it => (
+          <NavLink key={it.to} to={it.to}
+            className={({ isActive }) => `subnav-item ${isActive ? `subnav-on subnav-on-${here.hue}` : ''}`}>
+            <span className={`navico navico-${here.hue}`}><it.icon size={13} /></span>{it.label}
+          </NavLink>
+        ))}
+      </nav>
+    </header>
   );
 }
 
@@ -204,7 +200,7 @@ function Main({ user }) {
     .sort((a, b) => b.length - a.length)[0];
   const blocked = known && !mayOpen(user, known);
   return (
-    <main className="flex-1 min-w-0 p-4 lg:p-6">
+    <main className="flex-1 min-w-0 p-4 lg:p-6 max-w-[1500px] w-full mx-auto">
       {blocked ? <NoAccess /> : (
             <Routes>
               <Route path="/" element={<Navigate to="/my/kras" replace />} />
@@ -260,8 +256,8 @@ export default function App() {
   if (!user) return <Login onUser={setUser} />;
   return (
     <BrowserRouter>
-      <div className="min-h-screen lg:flex">
-        <SideNav user={user} />
+      <div className="min-h-screen flex flex-col">
+        <TopNav user={user} />
         <Main user={user} />
       </div>
     </BrowserRouter>

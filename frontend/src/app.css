@@ -82,23 +82,38 @@ body {
 .tile-pink { background: linear-gradient(135deg, #ec407a, #c02760); }
 .tile-violet { background: linear-gradient(135deg, #7c4dbe, #5b2a86); }
 
-/* ---- sidebar ------------------------------------------------------------ */
-/* Group headings fold their section away: the menu is 29 items long and only
-   the group you are working in needs to be open. */
-.navgrp { @apply w-full flex items-center gap-2 px-2 mb-1 text-[10px] font-bold uppercase tracking-wide text-navy-400; }
-.navgrp:hover { @apply text-navy-500; }
-.navcount { @apply ml-auto text-[9.5px] font-bold rounded-full px-1.5 py-0.5 bg-navy-100/70 text-navy-500; letter-spacing: 0; }
-.navchev { @apply text-[9px] transition-transform; }
-.navchev-shut { transform: rotate(-90deg); }
-/* The icon square is tinted by the group, so the menu has structure at a
-   glance without every row shouting. */
+/* ---- role tabs + sub-nav -------------------------------------------------
+   One tab per area of the product, each with its own short row of pages.
+   Chosen over a single 30-item sidebar on 23 Sep: it keeps the page full
+   width and every menu short, at the cost of one extra click to reach
+   another area. */
+.roletab { @apply flex items-center gap-2 px-4 py-2 rounded-t-xl text-[13px] font-bold whitespace-nowrap
+  text-navy-500 bg-white/60 border-b-2 border-transparent transition-colors; }
+.roletab:hover { @apply bg-white/90; }
+.roletab-on { @apply text-white; }
+.roletab-navy { background: linear-gradient(135deg, #1b3b6f, #2f6fae); }
+.roletab-lagoon { background: linear-gradient(135deg, #0d7183, #17a2b8); }
+.roletab-violet { background: linear-gradient(135deg, #5b2a86, #7c4dbe); }
+.roletab-leaf { background: linear-gradient(135deg, #2c7a30, #43a047); }
+.navcount { @apply text-[9.5px] font-bold rounded-full px-1.5 py-0.5 bg-navy-100/70 text-navy-500; letter-spacing: 0; }
+.navcount-on { background: rgba(255, 255, 255, 0.26); @apply text-white; }
+/* The sub-nav WRAPS. HR Admin's fifteen pages need 2286px at 1440px wide,
+   and a sideways-scrolling row hid eight of them with no cue they were
+   there — measured, not guessed. Wrapping costs one extra row, for HR
+   only, and nothing is hidden. */
+.subnav { @apply bg-white/70 border-t border-navy-100/60; }
+.subnav-item { @apply flex items-center gap-2 px-3 py-2.5 text-[13px] whitespace-nowrap text-navy-600
+  border-b-2 border-transparent transition-colors; }
+.subnav-item:hover { @apply text-navy-900; }
+.subnav-on { @apply font-bold; }
+.subnav-on-navy { @apply text-navy-700 border-navy-700; }
+.subnav-on-lagoon { @apply text-lagoon-700 border-lagoon-500; }
+.subnav-on-violet { @apply text-violet-700 border-violet-600; }
+.subnav-on-leaf { @apply text-leaf-600 border-leaf-500; }
+/* The icon square is tinted by the group, so the row has structure at a
+   glance without every item shouting. */
 .navico { @apply w-6 h-6 rounded-lg flex items-center justify-center shrink-0; }
 .navico-navy { @apply bg-navy-50 text-navy-700; }
 .navico-lagoon { @apply bg-lagoon-50 text-lagoon-700; }
 .navico-violet { @apply bg-violet-50 text-violet-700; }
 .navico-leaf { @apply bg-leaf-50 text-leaf-600; }
-.navon .navico { background: rgba(255, 255, 255, 0.26); @apply text-white; }
-.navon-navy { background: linear-gradient(135deg, #1b3b6f, #2f6fae); }
-.navon-lagoon { background: linear-gradient(135deg, #0d7183, #17a2b8); }
-.navon-violet { background: linear-gradient(135deg, #5b2a86, #7c4dbe); }
-.navon-leaf { background: linear-gradient(135deg, #2c7a30, #43a047); }
