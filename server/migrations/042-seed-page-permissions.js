@@ -40,6 +40,12 @@ const PAGES = [
   ['team_overview',      '/team/overview',            'pms_team_eval'],
   ['team_kra_sheets',    '/team/kra-sheets',          'pms_team_eval'],
   ['team_eval',          '/team/eval',                'pms_team_eval'],
+  // Split out of /my/midyear on 23 Sep: the manager's list of everybody's
+  // mid-year reviews was rendering underneath the employee's OWN mid-year
+  // card, so "My Performance" showed 1,398 other people. The employee's
+  // page keeps its own record; the team list is a Manager-tab page with
+  // the same permission as every other team list.
+  ['team_midyear',       '/team/midyear',             'pms_team_eval'],
   ['delivery_head',      '/hod',                      'pms_hod'],
   ['improvement_plans',  '/pip',                      null],
 

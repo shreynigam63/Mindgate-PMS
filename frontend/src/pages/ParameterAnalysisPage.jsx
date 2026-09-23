@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ShieldCheck, Sparkles, Trash2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { api, DraftBadge } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 // HR-ONLY: the AI reading of an annual review meeting, against the seven
 // organisational parameters.
@@ -27,6 +28,7 @@ const SIGNAL = {
 
 export default function ParameterAnalysisPage() {
   const [index, setIndex] = useState(null);
+  const [idxQ, setIdxQ] = useState('');
   const [denied, setDenied] = useState(false);
   const [open, setOpen] = useState(null);
   const [meetings, setMeetings] = useState([]);
@@ -80,6 +82,8 @@ export default function ParameterAnalysisPage() {
     );
   }
 
+
+  const idxShown = (index || []).filter((a) => matches(idxQ, a.name, a.department, a.cycle_name, a.analysed_by));
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="Final Rating — Parameter Analysis" hue="violet"
@@ -123,8 +127,11 @@ export default function ParameterAnalysisPage() {
       {index && index.length > 0 && (
         <div className="card p-4">
           <p className="lbl">On record ({index.length})</p>
+          {/* One row per analysed employee, and HR analyses everybody. */}
+          <SearchBox value={idxQ} onChange={setIdxQ} placeholder="Search by name, department or cycle…"
+            shown={idxShown.length} total={index.length} />
           <div className="divide-y divide-navy-100">
-            {index.map(a => (
+            {idxShown.map(a => (
               <div key={`${a.employee_id}-${a.cycle_id}`} className="py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div>
                   <p className="font-semibold">{a.name} <span className="font-normal text-navy-400">· {a.department || '—'}</span></p>

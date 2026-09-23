@@ -496,6 +496,55 @@ function ProgressBar({ value, onChange, readOnly }) {
   );
 }
 
+// The eligibility verdict for the role the employee is aiming at.
+//
+// FOUR OUTCOMES, not two, and "cannot_assess" is a real one: with no
+// years and no skills typed in, the honest answer is that nobody can
+// say — printing "not ready" for an unanswered form would be a judgement
+// the input does not support.
+//
+// Everything here is ADVISORY. It is built from what the employee typed
+// about themselves and from the competencies HR listed on the
+// transition; it decides nothing, and no rating reads it.
+const VERDICT = {
+  ready:         { label: 'Looks ready',            cls: 'bg-leaf-50 text-leaf-600 border-leaf-500' },
+  nearly:        { label: 'Nearly there',           cls: 'bg-amber2-50 text-amber2-600 border-amber2-500' },
+  not_yet:       { label: 'Not yet',                cls: 'bg-brand-50 text-brand-600 border-brand-500' },
+  cannot_assess: { label: 'Not enough to go on',    cls: 'bg-navy-50 text-navy-500 border-navy-300' },
+};
+
+function Readiness({ r }) {
+  const v = VERDICT[r.verdict] || VERDICT.cannot_assess;
+  const List = ({ title, items, tone }) => (
+    (items || []).length > 0 && (
+      <div>
+        <p className={`text-[10px] font-bold uppercase tracking-wide ${tone}`}>{title}</p>
+        <ul className="list-disc pl-4">{items.map((x, i) => <li key={i}>{x}</li>)}</ul>
+      </div>
+    )
+  );
+  return (
+    <div className={`rounded-lg border-l-4 p-3 space-y-2 ${v.cls}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-extrabold uppercase tracking-wide">{v.label}</span>
+        {r.summary && <span className="text-xs font-normal text-navy-700">{r.summary}</span>}
+      </div>
+      {r.benchmark && (
+        <p className="text-xs text-navy-600"><b>Benchmark:</b> {r.benchmark}</p>
+      )}
+      <div className="grid sm:grid-cols-2 gap-3 text-xs text-navy-600">
+        <List title="You appear to have" items={r.have} tone="text-leaf-600" />
+        <List title="Gaps to close" items={r.gaps} tone="text-brand-600" />
+      </div>
+      <List title="Next steps" items={r.next_steps} tone="text-navy-500" />
+      <p className="text-[10.5px] text-navy-400">
+        Advisory only, and built partly from what you typed about yourself. It decides nothing and
+        no rating reads it — discuss it with your manager.
+      </p>
+    </div>
+  );
+}
+
 // ---------------- Aspiring Career (BR-3.1/3.2) ------------------------------
 // Displayed as "Aspiring Career"; the table, API fields and route all still
 // say career_path/people.career_paths. Renaming only the label was
@@ -572,6 +621,12 @@ function CareerAiPanel({ onUse }) {
       {(d) => (
         <div className="space-y-2">
           {d.no_path_configured && <p className="text-amber-700">No career path is configured from your current role yet — HR needs to define one in the Career Pathing Matrix.</p>}
+          {/* THE READINESS READ, from the two questions on the form.
+              Asked for on 23 Sep: benchmark, competencies, and whether
+              they are eligible. It leads, because it is the question the
+              employee actually came with — and the verdict is stated
+              plainly rather than buried in a paragraph. */}
+          {d.readiness && <Readiness r={d.readiness} />}
           <SuggestionList
             items={itemsOf(d)}
             selected={pickKey ? { [pickKey]: true } : {}}
@@ -634,13 +689,17 @@ function CareerPathGap({ d }) {
 
 function CareerPathCard() {
   const [data, setData] = useState(null);
-  const [form, setForm] = useState({ target_role: '', target_timeline: '', plan: '' });
+  const [form, setForm] = useState({ target_role: '', target_timeline: '', plan: '',
+    years_experience: '', skills_interests: '' });
   const [milestones, setMilestones] = useState([]);
   const [err, setErr] = useState(null);
   const [saved, setSaved] = useState(false);
   const load = () => api('/people/career/my-path').then(r => {
     setData(r);
-    setForm({ target_role: r.path?.target_role || '', target_timeline: r.path?.target_timeline || '', plan: r.path?.plan || '' });
+    setForm({ target_role: r.path?.target_role || '', target_timeline: r.path?.target_timeline || '',
+      plan: r.path?.plan || '',
+      years_experience: r.path?.years_experience ?? '',
+      skills_interests: r.path?.skills_interests || '' });
     setMilestones((r.milestones || []).map(m => ({ ...m, target_date: m.target_date ? String(m.target_date).slice(0, 10) : '' })));
   }).catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
@@ -686,6 +745,18 @@ function CareerPathCard() {
         <p className="font-bold text-sm flex-1">Aspiring Career</p>
         {data.cycle_phase && <span className={`chip ${phaseColor(data.cycle_phase)}`}>{phaseLabel(data.cycle_phase)}</span>}
       </div>
+      {/* WHERE YOU ARE, before where you want to go. Read from the
+          employee master, never typed — a designation somebody types is
+          a designation that stops matching the Career Pathing Matrix.
+          Asked for on 23 Sep. */}
+      {data.current && (
+        <div className="bg-navy-50 rounded-lg px-3 py-2 text-xs flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-navy-400">Current role</span>
+          <b className="text-navy-900">{data.current.designation || 'not set on your record'}</b>
+          {data.current.department && <span className="text-navy-500">· {data.current.department}</span>}
+          {data.current.role_band && <span className="chip bg-white text-navy-500">{data.current.role_band}</span>}
+        </div>
+      )}
       <CareerPathGap d={data.path_diagnostics} />
       {editable && <CareerAiPanel onUse={(a) => {
         setForm((fm) => ({
@@ -719,6 +790,31 @@ function CareerPathCard() {
       <div>
         <label className="lbl">Expected timeline</label>
         <input className="inp" value={form.target_timeline} disabled={!editable} onChange={e => setForm(f => ({ ...f, target_timeline: e.target.value }))} placeholder="e.g. 12-18 months" />
+      </div>
+      {/* THE TWO QUESTIONS, asked on 23 Sep so the readiness read has
+          something to work from. Both are self-reported and the AI is
+          told to treat them as claims, not facts. Total experience is
+          NOT tenure here: someone who joined last year may have fifteen
+          years behind them, so it cannot be derived and has to be
+          asked. */}
+      <div className="grid sm:grid-cols-2 gap-3">
+        <div>
+          <label className="lbl">Total years of experience</label>
+          <input className="inp" type="number" min="0" max="60" step="0.5" disabled={!editable}
+            value={form.years_experience}
+            onChange={e => setForm(f => ({ ...f, years_experience: e.target.value }))}
+            placeholder="e.g. 7.5" />
+          <p className="text-[11px] text-navy-400 mt-1">
+            Your whole career, not just time here.
+          </p>
+        </div>
+        <div>
+          <label className="lbl">Your skill sets and interests</label>
+          <textarea className="inp" rows={3} disabled={!editable}
+            value={form.skills_interests}
+            onChange={e => setForm(f => ({ ...f, skills_interests: e.target.value }))}
+            placeholder="What you are good at, and what you want to do more of" />
+        </div>
       </div>
       <div>
         <label className="lbl">Growth plan</label>

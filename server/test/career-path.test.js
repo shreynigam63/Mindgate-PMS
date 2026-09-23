@@ -95,6 +95,45 @@ test('career path: no transitions configured yet — any target_role is accepted
   assert.equal(after1.body.path.target_role, 'Staff Engineer');
 });
 
+test('the two questions round-trip, and the CURRENT role comes from the master', { skip }, async () => {
+  // Asked for on 23 Sep: the form should show the designation it already
+  // knows, and ask two things the readiness read needs — total years of
+  // experience, and the employee's own account of their skills.
+  const { token } = await login('cp-emp@x.com');
+  const before = await api('/people/career/my-path', token);
+  assert.ok(before.body.current, 'the current role block is always present');
+  assert.ok(before.body.current.designation,
+    'the designation is read from core.employees, never typed by the employee');
+
+  const set = await api('/people/career/my-path', token, { method: 'PUT',
+    body: JSON.stringify({ target_role: 'Staff Engineer', years_experience: '7.5',
+      skills_interests: 'Postgres, incident response; want more architecture work' }) });
+  assert.equal(set.status, 200);
+
+  const after = await api('/people/career/my-path', token);
+  assert.equal(Number(after.body.path.years_experience), 7.5);
+  assert.match(after.body.path.skills_interests, /incident response/);
+});
+
+test('blank years stays blank — it must not be recorded as zero', { skip }, async () => {
+  // "I have not answered" and "I have no experience" are different
+  // statements, and the readiness read is told to say what it could not
+  // assess rather than assume. A 0 here would make it assume.
+  const { token } = await login('cp-emp@x.com');
+  await api('/people/career/my-path', token, { method: 'PUT',
+    body: JSON.stringify({ target_role: 'Staff Engineer', years_experience: '' }) });
+  const r = await api('/people/career/my-path', token);
+  assert.equal(r.body.path.years_experience, null);
+});
+
+test('a nonsense number of years is refused, with a reason', { skip }, async () => {
+  const { token } = await login('cp-emp@x.com');
+  const bad = await api('/people/career/my-path', token, { method: 'PUT',
+    body: JSON.stringify({ target_role: 'Staff Engineer', years_experience: '400' }) });
+  assert.equal(bad.status, 422);
+  assert.match(bad.body.error, /between 0 and 60/);
+});
+
 test('career path: once HR configures a transition FROM the employee\'s own role, an unlisted target_role is rejected', { skip }, async () => {
   const empAuth = await login('cp-emp@x.com');
   // Seeded directly, as HR would via the Career Pathing Matrix screen —

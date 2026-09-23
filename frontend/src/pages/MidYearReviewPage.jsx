@@ -5,6 +5,7 @@ import { AiModal } from './AiDraftPanel';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -17,8 +18,27 @@ import PageHead from '../PageHead';
 export default function MidYearReviewPage() {
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <PageHead title="Mid-Year Review" hue="amber" />
+      <PageHead title="Mid-Year Review" hue="amber"
+        sub="Your own mid-year checkpoint against each KRA." />
       <MyMidYearCard />
+    </div>
+  );
+}
+
+// THE MANAGER'S HALF, SPLIT OUT on 23 Sep. It used to render directly
+// underneath the employee's own card on /my/midyear, so "My Performance"
+// showed a list of every person the viewer could see — 1,398 of them for
+// an admin. My Performance is about ME; anything about other people
+// belongs in the Manager tab, which is where this now lives as
+// /team/midyear.
+//
+// Nothing about the review itself changed: same list, same expand, same
+// detail component, same endpoints.
+export function TeamMidYearPage() {
+  return (
+    <div className="space-y-4 max-w-4xl mx-auto">
+      <PageHead title="Team Mid-Year Reviews" hue="lagoon"
+        sub="Sign off the mid-year checkpoint for each of your reports." />
       <TeamMidYearReviews />
     </div>
   );
@@ -414,14 +434,25 @@ function MyMidYearCard() {
 function TeamMidYearReviews() {
   const [team, setTeam] = useState(null);
   const [openId, setOpenId] = useState(null);
+  const [q, setQ] = useState('');
   useEffect(() => { api('/pms/team/evaluations').then((r) => setTeam(r.team || [])).catch(() => setTeam([])); }, []);
+  const shown = (team || []).filter((t) => matches(q, t.name, t.designation, t.department));
 
-  if (!team || !team.length) return null;
+  if (team && !team.length) {
+    // On its own page an empty list must SAY it is empty. Returning null
+    // was right when this sat at the bottom of the employee's own page
+    // and wrong the moment it became the whole page.
+    return <div className="card p-8 text-center text-sm text-navy-400">
+      No direct reports found, so there are no mid-year reviews to sign off.
+    </div>;
+  }
+  if (!team) return <p className="text-sm text-navy-400">Loading…</p>;
 
   return (
     <div className="space-y-2">
-      <p className="font-bold text-sm">Team Mid-Year Reviews</p>
-      {team.map((t) => (
+      <SearchBox value={q} onChange={setQ} placeholder="Search your team by name…"
+        shown={shown.length} total={team.length} />
+      {shown.map((t) => (
         <div key={t.employee_id} className="card overflow-hidden">
           <button className="w-full flex items-center gap-2 px-4 py-3 text-left" onClick={() => setOpenId((v) => (v === t.employee_id ? null : t.employee_id))}>
             {openId === t.employee_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

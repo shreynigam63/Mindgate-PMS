@@ -4,9 +4,11 @@ import { api, Bullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import MeetingPanel from './MeetingPanel';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 export default function ConnectsPage() {
   const [data, setData] = useState(null);
+  const [q, setQ] = useState('');
   const [err, setErr] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [me, setMe] = useState(null);
@@ -30,6 +32,8 @@ export default function ConnectsPage() {
   // visible at a glance instead of requiring a scroll through the whole list.
   const pendingCount = data.filter(cn => !cn.signed_off).length;
 
+
+  const shown = (data || []).filter((cn) => matches(q, cn.employee_name, cn.manager_name, cn.topic, cn.notes, cn.discussion_notes, cn.achievements, cn.blockers));
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
       <PageHead title="Quarterly Connects" hue="pink">
@@ -47,8 +51,13 @@ export default function ConnectsPage() {
         </div>
       )}
       {!data.length && <div className="card p-8 text-center text-sm text-navy-400">No connects logged yet.</div>}
+      {/* The log grows all year and a manager's covers their whole team,
+          so the "select report" dropdown above is not enough on its own —
+          it cannot find a connect by what was discussed. */}
+      <SearchBox value={q} onChange={setQ} placeholder="Search by person, topic or notes…"
+        shown={shown.length} total={data.length} />
       <div className="space-y-2">
-        {data.map(cn => <ConnectRow key={cn.id} cn={cn} me={me} reload={() => load(filterEmployeeId)} />)}
+        {shown.map(cn => <ConnectRow key={cn.id} cn={cn} me={me} reload={() => load(filterEmployeeId)} />)}
       </div>
     </div>
   );

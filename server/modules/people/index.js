@@ -728,7 +728,17 @@ async function careerPathDiagnostics(tenantId, employeeId) {
 
 router.get('/career/my-path', async (req, res) => {
   try {
-    const p = (await db.query(`SELECT id, target_role, target_timeline, plan, updated_at FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [T(req), req.user.id])).rows[0];
+    const p = (await db.query(
+      `SELECT id, target_role, target_timeline, plan, years_experience, skills_interests, updated_at
+         FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [T(req), req.user.id])).rows[0];
+    // The employee's CURRENT role, straight off the master. Asked for on
+    // 23 Sep: the form asked where you want to go without ever saying
+    // where you are, so "is this a step up?" was unanswerable on screen.
+    // Read here rather than typed, because a designation somebody types
+    // is a designation that stops matching the matrix.
+    const me = (await db.query(
+      `SELECT designation, department, role_band, date_of_joining
+         FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0] || {};
     const milestones = await milestonesFor(p ? p.id : null);
     const transitions = await eligibleTransitionsFor(T(req), req.user.id);
     const eligibleTargetRoles = [...new Set(transitions.map((t) => t.to_role))].sort();
@@ -739,6 +749,8 @@ router.get('/career/my-path', async (req, res) => {
     const diagnostics = eligibleTargetRoles.length ? null : await careerPathDiagnostics(T(req), req.user.id);
     const gw = await growthWindowFor(T(req), req.user.id);
     res.json({ path: p || null, milestones, progress_pct: careerProgress(milestones),
+      current: { designation: me.designation || null, department: me.department || null,
+                 role_band: me.role_band || null, date_of_joining: me.date_of_joining || null },
       eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
       editable: gw.window.ok, editable_via: gw.window.via || null,
       shut_because: gw.window.ok ? null : gw.window.reason,
@@ -750,17 +762,32 @@ router.put('/career/my-path', async (req, res) => {
   try {
     const gw = await growthWindowFor(T(req), req.user.id);
     if (!gw.window.ok) return res.status(409).json({ error: careerShutMessage(gw.phase, gw.window) });
-    const { target_role, target_timeline, plan } = req.body || {};
+    const { target_role, target_timeline, plan, years_experience, skills_interests } = req.body || {};
     if (!target_role || !String(target_role).trim()) return res.status(400).json({ error: 'target_role required' });
+    // Blank is a real answer — "I have not said yet" — and must not
+    // become 0.0 years, which would read as a fact nobody stated.
+    let years = null;
+    if (years_experience != null && String(years_experience).trim() !== '') {
+      years = Number(years_experience);
+      if (!Number.isFinite(years) || years < 0 || years > 60) {
+        return res.status(422).json({ error: 'Total years of experience must be a number between 0 and 60.' });
+      }
+    }
     const transitions = await eligibleTransitionsFor(T(req), req.user.id);
     const eligibleTargetRoles = [...new Set(transitions.map((t) => t.to_role))];
     if (eligibleTargetRoles.length && !eligibleTargetRoles.includes(target_role)) {
       return res.status(422).json({ error: `target_role must be one of the transitions configured from your current role in the Career Pathing Matrix: ${eligibleTargetRoles.join(', ')}` });
     }
     await db.query(
-      `INSERT INTO people.career_paths (tenant_id, employee_id, target_role, target_timeline, plan) VALUES ($1,$2,$3,$4,$5)
-       ON CONFLICT (tenant_id, employee_id) DO UPDATE SET target_role=EXCLUDED.target_role, target_timeline=EXCLUDED.target_timeline, plan=EXCLUDED.plan, updated_at=now()`,
-      [T(req), req.user.id, target_role.trim(), (target_timeline || '').trim() || null, plan || null]);
+      `INSERT INTO people.career_paths
+         (tenant_id, employee_id, target_role, target_timeline, plan, years_experience, skills_interests)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (tenant_id, employee_id) DO UPDATE SET
+         target_role=EXCLUDED.target_role, target_timeline=EXCLUDED.target_timeline,
+         plan=EXCLUDED.plan, years_experience=EXCLUDED.years_experience,
+         skills_interests=EXCLUDED.skills_interests, updated_at=now()`,
+      [T(req), req.user.id, target_role.trim(), (target_timeline || '').trim() || null, plan || null,
+       years, (skills_interests || '').trim() || null]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

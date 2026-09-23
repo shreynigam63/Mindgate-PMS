@@ -178,7 +178,11 @@ test('a manager adds the team pages and nothing else', { skip }, async () => {
   const emp = (await me(tok.employee)).pages;
   const mgr = (await me(tok.manager)).pages;
   const added = mgr.filter(p => !emp.includes(p)).sort();
-  assert.deepEqual(added, ['/team/eval', '/team/kra-sheets', '/team/overview']);
+  // /team/midyear joined the set on 23 Sep, when the manager's list of
+  // everybody's mid-year reviews was split out of /my/midyear — it was
+  // rendering under the employee's own card, so My Performance showed
+  // every person the viewer could see.
+  assert.deepEqual(added, ['/team/eval', '/team/kra-sheets', '/team/midyear', '/team/overview']);
   assert.ok(!mgr.includes('/admin/increments'), 'a manager never sees compensation');
 });
 

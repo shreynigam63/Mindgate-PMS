@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Upload, Plus, Trash2, Save, Calculator, AlertTriangle } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 // The Simulation Report: model increments from the cycle's final ratings
 // and a budget.
@@ -106,6 +107,7 @@ function Matrix() {
 
 function Salaries() {
   const [data, setData] = useState(null);
+  const [empQ, setEmpQ] = useState('');
   const [file, setFile] = useState(null);
   const [report, setReport] = useState(null);
   const [err, setErr] = useState(null);
@@ -120,6 +122,11 @@ function Salaries() {
       setReport(r); if (commit) load();
     } catch (e) { setErr(e.message); setReport(e.data?.errors ? e.data : null); }
   };
+
+  // Filtered in the browser: the salary list is already loaded to draw
+  // the totals above it, so a round trip per keystroke would buy nothing.
+  const empShown = ((data && data.employees) || [])
+    .filter((e) => matches(empQ, e.name, e.department));
 
   return (
     <div className="space-y-3">
@@ -153,11 +160,16 @@ function Salaries() {
               Anyone without a salary is left out of every scenario and reported there by name — they are not modelled at zero.
             </p>
           )}
+          {/* Every employee on the payroll is in this table — 1,398 of
+              them on the live tenant. Finding one by scrolling is not a
+              thing anybody can do. */}
+          <SearchBox value={empQ} onChange={setEmpQ} placeholder="Search by name or department…"
+            shown={empShown.length} total={(data.employees || []).length} />
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead><tr className="text-left text-navy-400"><th className="py-1">Employee</th><th>Department</th><th className="text-right">Annual CTC</th><th>Effective</th></tr></thead>
               <tbody>
-                {data.employees.map(e => (
+                {empShown.map(e => (
                   <tr key={e.employee_id} className="border-t border-navy-100">
                     <td className="py-1">{e.name}</td>
                     <td className="text-navy-500">{e.department || '—'}</td>

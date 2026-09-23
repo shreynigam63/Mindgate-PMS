@@ -697,12 +697,12 @@ router.post('/kra-suggest', async (req, res) => {
       return res.status(409).json({
         error: 'Your record has no designation set, so there is no role to suggest KRAs for. Ask HR to add it.' });
     }
-    if (!candidates.length) {
-      return res.status(409).json({
-        error: `No KRAs have been published for ${emp.designation}`
-          + (emp.department ? ` or anywhere in ${emp.department}` : '')
-          + '. Suggestions are drawn from the KRA Library, so there is nothing to draw from yet — write your KRAs below, or ask HR to publish a shelf.' });
-    }
+    // NO LONGER A REFUSAL when the library is empty for this role.
+    // Asked for on 23 Sep: "AI should be able to suggest KRAs based on
+    // department and designation mapped to employee", not only what the
+    // library happens to hold. The ~60 titles with no shelf were exactly
+    // the people the old refusal turned away.
+    const libraryEmpty = !candidates.length;
 
     // What they already have, so the model does not offer it back.
     const sheet = (await db.query(
@@ -739,31 +739,42 @@ router.post('/kra-suggest', async (req, res) => {
     const out = await ai.narrate({
       tenantId: T(req), kind: 'kra_suggest', ref: { cycle_id: c.id, employee_id: req.user.id },
       requestedBy: req.user.email, input, maxTokens: 1800,
-      system: `You help an employee assemble a KRA sheet for the role they hold, by
-SELECTING from a closed list of KRAs their HR team has already published.
+      system: `You help an employee assemble a KRA sheet for the DESIGNATION and
+DEPARTMENT they hold. You answer in two clearly separated parts, and the
+difference between them matters more than anything else you do.
 
-THE LIST IS CLOSED. Every suggestion must carry the "id" of a candidate
-from the input. You may sharpen a title or a KPI so it reads for THIS
-person's designation and department, but you may not introduce an
-objective that is not in the list. If the list does not cover something
-important for this role, say so in "gaps" — do not invent a KRA to fill it.
+PART 1 — "suggestions": chosen from the closed candidate list.
+Every entry MUST carry the "id" of a candidate from the input. These are
+KRAs the HR team has already published and approved. You may sharpen a
+title or a KPI so it reads for this person's role; you may not put an
+id in this list that was not given to you. Prefer ring "own_shelf"
+(published for this exact designation), then ring "department" (a
+neighbouring role in their own department) — and when you use one, say
+in "why" that it comes from another role.
 
-Prefer candidates with ring "own_shelf": those were published for this
-exact designation. Use ring "department" to fill what the own shelf does
-not cover, and say plainly in "why" that it comes from a neighbouring
-role. Never suggest something already in "already_on_my_sheet".
+PART 2 — "drafted": KRAs YOU write for this designation and department,
+because the library does not cover them. Use this where the candidate
+list is thin, absent, or silent on something the role plainly owns.
+These are DRAFTS FOR A HUMAN TO APPROVE, shown to the employee under a
+heading that says so, and they carry no weight until someone sets one.
+Write them for the department and designation given, in the same voice
+as the published KRAs you can see. Be specific and measurable; do not
+pad the list to look thorough, and do not restate a candidate from
+Part 1 in different words.
 
-Aim for a balanced scorecard across the "parameter" values present —
-a sheet that is all Financial and no People is the failure to avoid.
-Around 6 to 9 suggestions is right; fewer if the list is thin.
+NEVER suggest anything already in "already_on_my_sheet", in either part.
 
-Say NOTHING about weights, percentages, ratings or scores. You will not
-be shown any, and the weights are set from the library afterwards.
+Aim for a balanced scorecard across parameters — all Financial and no
+People is the failure to avoid. Around 6 to 9 entries across both parts.
+
+Say NOTHING about weights, percentages, ratings or scores anywhere. You
+are not shown any, and every weight is set outside this response.
 
 Respond ONLY with JSON:
 {"suggestions":[{"id":"the candidate id, exactly as given","title":"the title, adapted if it helps","kpi":"the KPI, adapted if it helps","why":"one short sentence: why this fits this role"}],
+ "drafted":[{"title":"short and specific","kpi":"how it will be measured","parameter":"which parameter it belongs under","why":"one short sentence: why this role needs it"}],
  "balance":"one short sentence on the spread across parameters",
- "gaps":["things this role plausibly needs that the library does not cover"]}`,
+ "gaps":["anything this role needs that you could neither find nor responsibly draft"]}`,
     });
 
     // The model returns ids; the SERVER builds the rows. An id it did not
@@ -796,16 +807,32 @@ Respond ONLY with JSON:
         dropped: invented, employee_id: req.user.id });
     }
 
+    // Part 2. AI-AUTHORED, and labelled as such at every layer: source
+    // 'ai' here, its own section in the picker, and NO WEIGHT. The one
+    // rule that did not move is that the model never sets a number that
+    // feeds a rating — a drafted KRA arrives weightless and the employee
+    // and their manager decide what it is worth.
+    const drafted = (draft.drafted || []).map((d) => ({
+      source: 'ai',
+      title: String(d.title || '').trim(),
+      kpi: String(d.kpi || '').trim(),
+      parameter: String(d.parameter || '').trim() || null,
+      why: String(d.why || '').trim(),
+      suggested_weight: null,
+    })).filter((d) => d.title);
+
     res.json({
       ok: true,
       designation: emp.designation,
       department: emp.department || null,
       rings,
-      suggestions,
+      library_empty: libraryEmpty,
+      suggestions: suggestions.map((x) => ({ ...x, source: 'library' })),
+      drafted,
       balance: draft.balance || null,
       gaps: draft.gaps || [],
       dropped_unknown_ids: invented,
-      note: 'Suggestions only, drawn from your KRA Library. Tick what applies — everything you add stays fully editable, and the weights are HR\'s suggested figures.',
+      note: 'Suggestions only. Library entries carry HR\'s suggested weight; drafted ones carry none until you set it. Everything you add stays fully editable.',
     });
   } catch (e) { fail(res, e); }
 });
@@ -840,12 +867,23 @@ router.post('/career-suggest', async (req, res) => {
     // be as accurate as its input, so the input now carries the reason.
     const diagnostics = transitions.length ? null : await careerPathDiagnostics(T(req), req.user.id);
     const current = (await db.query(
-      `SELECT target_role, target_timeline, plan FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`,
+      `SELECT target_role, target_timeline, plan, years_experience, skills_interests
+         FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`,
       [T(req), req.user.id])).rows[0];
 
     const input = {
       employee: { name: emp.name, designation: emp.designation, department: emp.department, role_band: emp.role_band, joined: emp.date_of_joining },
       current_aspiration: current || null,
+      // The two questions the form now asks (migration 046). TOTAL
+      // professional experience, which is not tenure here — someone who
+      // joined last year may have fifteen years behind them — and what
+      // the person says they are good at and drawn to. Both are
+      // self-reported, and the prompt is told to treat them that way.
+      self_reported: {
+        years_experience: current && current.years_experience != null
+          ? Number(current.years_experience) : null,
+        skills_and_interests: (current && current.skills_interests) || null,
+      },
       // The closed list. Empty means HR has configured no ladder from this
       // role — reported as such rather than filled in by the model.
       configured_transitions: transitions.map((t) => ({
@@ -861,7 +899,14 @@ router.post('/career-suggest', async (req, res) => {
       tenantId: T(req), kind: 'career_suggest', ref: { employee_id: req.user.id },
       requestedBy: req.user.email, input, maxTokens: 1400,
       system: `You help an employee think about the role they might aspire to over the
-next one to two years, given their current designation and department.
+next one to two years, given their current designation and department,
+and you give them a straight read on whether they are ready for it.
+
+self_reported carries two answers the employee typed: total years of
+professional experience, and their own account of their skills and
+interests. Treat both as CLAIMS, not verified facts — say "you have said
+you have N years" rather than "you have N years". Where either is
+missing, say what you could not assess rather than assuming a value.
 HARD CONSTRAINT: you may only propose roles that appear in
 configured_transitions. That list is the organisation's own career
 pathing matrix and the form will reject anything outside it. Never invent
@@ -894,7 +939,8 @@ order they would be done.
 Respond ONLY with JSON:
 {"aspirations":[{"target_role":"exactly as given in configured_transitions","fit":"1-2 sentences on why this follows from their current role and department","typical_time":"from the matrix, or null","competencies_to_build":["from the matrix, phrased as something to work on"],"first_steps":["what to start this cycle"],"suggested_milestones":[{"title":"short, datable, checkable","description":"one sentence on what done looks like"}]}],
  "no_path_configured":true or false,
- "notes":["anything the employee should discuss with their manager or HR"]}`,
+ "notes":["anything the employee should discuss with their manager or HR"],
+ "readiness":{"verdict":"ready | nearly | not_yet | cannot_assess","summary":"one short sentence, addressed to the employee","benchmark":"what the organisation typically expects for this move, from typical_time_months and required_competencies — say when the input gives you nothing","have":["competencies the required list asks for that their self-reported skills plausibly cover"],"gaps":["competencies the required list asks for that they have not evidenced"],"next_steps":["at most 3 concrete things that would close the biggest gap"]}}`,
     });
     res.json({ ok: true, ...out, note: 'Suggestions only — limited to the transitions HR has configured from your current role.' });
   } catch (e) { fail(res, e); }

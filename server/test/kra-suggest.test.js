@@ -178,13 +178,32 @@ test('the route refuses before calling the model when there is no designation', 
   assert.ok(!/ANTHROPIC/i.test(r.body.error), 'it never reached the AI call');
 });
 
-test('the route refuses when the library has nothing for this role', { skip }, async () => {
+test('an empty library no longer refuses — it drafts for the role instead', { skip }, async () => {
+  // CHANGED on 23 Sep at the client's request: "AI should be able to
+  // suggest KRAs based on department and designation mapped to
+  // employee", not only what the library holds. This used to 409. The
+  // ~60 job titles with no published shelf were precisely the people
+  // that refusal turned away, so now it proceeds and the model drafts.
   await db.query(`UPDATE core.employees SET designation='Nobody Holds This', department='Nowhere'
                    WHERE id=$1`, [nakedId]);
   const r = await post('/agentic/kra-suggest', tok.naked);
-  assert.equal(r.status, 409);
-  assert.match(r.body.error, /KRA Library/i);
-  assert.match(r.body.error, /Nobody Holds This/);
+  assert.equal(r.status, 503, 'it reaches the AI call rather than refusing early');
+  assert.match(r.body.error, /not configured|ANTHROPIC_API_KEY/i);
+});
+
+test('a DRAFTED KRA never carries a weight, whatever the model says', { skip }, async () => {
+  // The one rule that did not move when the closed list opened up. The
+  // model is told not to mention weights; this is what happens if it
+  // does anyway — asserted against the route's own mapping, because a
+  // drafted KRA with an invented weight would feed a rating.
+  const src = require('fs').readFileSync(require.resolve('../modules/agentic/index.js'), 'utf8');
+  const route = src.slice(src.indexOf("router.post('/kra-suggest'"), src.indexOf('11) Aspiring-career'));
+  const mapping = route.slice(route.indexOf('const drafted ='), route.indexOf('res.json('));
+  assert.match(mapping, /suggested_weight: null/,
+    'a drafted KRA must arrive weightless');
+  assert.ok(!/suggested_weight: d\./.test(mapping),
+    "the model's own weight, if it sends one, must never be read");
+  assert.match(mapping, /source: 'ai'/, 'and it must be labelled as drafted, not as library');
 });
 
 test('with candidates it proceeds as far as the AI call, and fails THERE', { skip }, async () => {

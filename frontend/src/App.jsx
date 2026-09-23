@@ -26,7 +26,7 @@ import MyGrowthPage from './pages/MyGrowthPage';
 import KraOrgOverviewPage from './pages/KraOrgOverviewPage';
 import KraLibraryPage from './pages/KraLibraryPage';
 import AnnualReviewPage from './pages/AnnualReviewPage';
-import MidYearReviewPage from './pages/MidYearReviewPage';
+import MidYearReviewPage, { TeamMidYearPage } from './pages/MidYearReviewPage';
 import ConnectsPage from './pages/ConnectsPage';
 import ClosureLettersPage from './pages/ClosureLettersPage';
 import IncrementSimulationPage from './pages/IncrementSimulationPage';
@@ -35,8 +35,21 @@ import SettingsPage from './pages/SettingsPage';
 import ApprovalsPage from './pages/ApprovalsPage';
 import HomePage from './pages/HomePage';
 
+// THE THREE ROLE TABS, named on 23 Sep to match the reference: SELF for
+// everyone, + MANAGER for people with reports, + HR for HR and super
+// admin. The names say whose data the tab is about, which is the rule
+// that decides where a page goes — and the rule the Mid-Year split came
+// from: a list of other people is never Self.
+//
+// Engagement and People Hub folded into Self rather than keeping a fourth
+// tab: taking a survey and reading the noticeboard are things you do as
+// yourself, and the reference shows three tabs.
+//
+// WHICH TABS YOU SEE is still decided by core.page_permission, not by
+// this list — a group whose pages you may not open disappears. The names
+// here only describe the grouping.
 const NAV = [
-  { group: 'My Performance', hue: 'navy', icon: User, items: [
+  { group: 'Self', hue: 'navy', icon: User, items: [
     { to: '/home', label: 'Home', icon: Home },
     { to: '/my/kras', label: 'My KRAs', icon: Target },
     { to: '/my/growth', label: 'My Growth', icon: TrendingUp },
@@ -71,14 +84,20 @@ const NAV = [
     // it moved instead. A manager still reaches their reports' plans
     // here; the page itself is unchanged.
     { to: '/pip', label: 'Improvement Plan', icon: ShieldAlert },
+    // Folded in from the old "Engagement & People" tab: both are things
+    // you do as yourself, and the reference has three tabs, not four.
+    { to: '/engagement', label: 'Engagement', icon: HeartHandshake },
+    { to: '/people', label: 'People Hub', icon: User },
   ]},
-  { group: 'Team', hue: 'lagoon', icon: Users, items: [
+  { group: 'Manager', hue: 'lagoon', icon: Users, items: [
     { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard },
     { to: '/team/kra-sheets', label: 'Team KRA Sheets', icon: ClipboardList },
+    // Split out of /my/midyear — see TeamMidYearPage for why.
+    { to: '/team/midyear', label: 'Team Mid-Year', icon: Clock },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/hod', label: 'Delivery Head Review', icon: Landmark },
   ]},
-  { group: 'HR Admin', hue: 'violet', icon: ShieldCheck, items: [
+  { group: 'HR', hue: 'violet', icon: ShieldCheck, items: [
     { to: '/admin/approvals', label: 'All Approvals', icon: CheckCircle2 },
     { to: '/admin/cycles', label: 'Cycles', icon: BarChart3 },
     { to: '/admin/directory', label: 'Employees', icon: Upload },
@@ -104,10 +123,7 @@ const NAV = [
     // and then left alone, unlike everything above it.
     { to: '/admin/settings', label: 'Settings', icon: SlidersHorizontal },
   ]},
-  { group: 'Engagement & People', hue: 'leaf', icon: HeartHandshake, items: [
-    { to: '/engagement', label: 'Engagement', icon: HeartHandshake },
-    { to: '/people', label: 'People Hub', icon: User },
-  ]},
+
 ];
 
 const signOut = () => { localStorage.removeItem('apms_token'); location.href = '/'; };
@@ -229,6 +245,7 @@ function Main({ user }) {
               <Route path="/my/self-appraisal" element={<SelfAppraisalPage />} />
               <Route path="/my/rating" element={<MyRatingPage />} />
               <Route path="/my/midyear" element={<MidYearReviewPage />} />
+              <Route path="/team/midyear" element={<TeamMidYearPage />} />
               <Route path="/my/growth" element={<MyGrowthPage />} />
               <Route path="/my/annual-review" element={<AnnualReviewPage />} />
               <Route path="/my/history" element={<HistoryPage />} />
