@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, Check, Send } from 'lucide-react';
 import { api, phaseLabel, phaseColor, sheetStatusLabel } from '../utils/api';
 import KraLibraryPicker from './KraLibraryPicker';
+import KraSuggestPanel from './KraSuggestPanel';
 import PageHead from '../PageHead';
 import KraTable from '../KraTable';
 
@@ -193,7 +194,15 @@ export default function MyKRASheetPage() {
       {/* Only while KRAs are editable. Offering a shelf to someone who
           cannot add anything from it is a dead control, and after the
           phase closes the sheet is a record rather than a form. */}
-      {editable && <KraLibraryPicker source="/pms/my/kra-library" onAdd={addFromLibrary} />}
+      {/* Two ways to start, side by side and deliberately identical in
+          shape: HR's shelf as a list you pick from, and the same shelf
+          read for you by the agent. Both add ordinary editable rows. */}
+      {editable && (
+        <>
+          <KraLibraryPicker source="/pms/my/kra-library" onAdd={addFromLibrary} />
+          <KraSuggestPanel onAdd={addFromLibrary} />
+        </>
+      )}
       {/* ONE TABLE: Parameters · KRAs · KPIs · Weightage, the parameter
           merged across its KRAs. Asked for on 23 Sep against the client's
           own sheet, and the same component the KRA Library uses — the

@@ -5016,4 +5016,71 @@ router.post('/hr/kra-sheet/clean-titles', async (req, res) => {
 // scores the Annual Review page shows. Building a second gatherer for the
 // model would mean the summary could describe a year that no screen
 // agrees with.
-module.exports = { router, checkAndSendConnectReminders, runReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader, buildAnnualReviewSummary, devplanEditable };
+
+// ---------------------------------------------------------------------------
+// CANDIDATES FOR AN AI KRA SUGGESTION.
+//
+// Exported for the agentic module, which must not read pms.kra_library
+// directly (house rule: modules go through each other's exported
+// interface). It is also what keeps the suggestions GROUNDED: the model
+// is handed a closed list of KRAs HR has already published and approved,
+// and picks from it, rather than inventing objectives nobody signed off.
+//
+// Three rings, widest last, each labelled so the employee can see where a
+// suggestion came from:
+//   1. own_shelf   — published for this exact designation. The real answer.
+//   2. department  — other designations in the SAME department. This is
+//                    the ring that makes the feature useful for the ~60
+//                    titles with no shelf of their own.
+//   3. company     — the same designations' company-wide shelves.
+//
+// ON THIS TENANT RING 2 IS CURRENTLY EMPTY, and that is data, not a bug:
+// all 2,155 library rows are company-wide with no department set, so
+// there is no departmental neighbour to find. Reported in `rings` so the
+// caller can say so rather than silently returning less.
+async function kraSuggestionCandidates(tenantId, employeeId, { limit = 60 } = {}) {
+  const emp = (await db.query(
+    `SELECT id, name, designation, department, role_band FROM core.employees
+      WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+  if (!emp) return { employee: null, candidates: [], rings: {} };
+  const desig = (emp.designation || '').trim();
+  const dept = (emp.department || '').trim();
+  if (!desig) return { employee: emp, candidates: [], rings: {}, reason: 'no_designation' };
+
+  const rows = (await db.query(
+    `SELECT id, designation, department, category, title, measures, description, suggested_weight,
+            CASE
+              WHEN lower(btrim(designation)) = lower(btrim($2)) THEN 'own_shelf'
+              WHEN $3 <> '' AND lower(btrim(coalesce(department,''))) = lower(btrim($3)) THEN 'department'
+              ELSE 'company'
+            END AS ring
+       FROM pms.kra_library
+      WHERE tenant_id=$1
+        AND (lower(btrim(designation)) = lower(btrim($2))
+             OR ($3 <> '' AND lower(btrim(coalesce(department,''))) = lower(btrim($3))))
+      -- Ordered inside each shelf here; the RING order is applied in JS
+      -- below, because a CASE expression cannot be referenced by position
+      -- and repeating it in ORDER BY would mean two copies of the rule.
+      ORDER BY designation, sort_order, id`, [tenantId, desig, dept])).rows;
+
+  // Ring order, then the shelf's own order inside each ring. Capped so a
+  // department with forty titles does not hand the model a thousand rows
+  // — the cap is applied AFTER ordering, so the closest ring survives it.
+  const order = { own_shelf: 0, department: 1, company: 2 };
+  rows.sort((a, b) => order[a.ring] - order[b.ring]);
+  const candidates = rows.slice(0, limit).map((r) => ({
+    id: r.id, ring: r.ring,
+    from_designation: r.designation,
+    from_department: r.department || null,
+    parameter: r.category || null,
+    title: r.title,
+    kpi: r.measures || null,
+    // The library's number, carried through untouched. The model never
+    // sees a weight it could "adjust" — see the agentic route.
+    suggested_weight: r.suggested_weight == null ? null : Number(r.suggested_weight),
+  }));
+  const rings = candidates.reduce((a, c) => ({ ...a, [c.ring]: (a[c.ring] || 0) + 1 }), {});
+  return { employee: emp, candidates, rings, total_before_cap: rows.length };
+}
+
+module.exports = { router, checkAndSendConnectReminders, runReminders, mergeMidyearEntries, midyearOverall, validateKraBulkRows, normKraHeader, buildAnnualReviewSummary, devplanEditable, kraSuggestionCandidates };

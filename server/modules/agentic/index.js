@@ -17,7 +17,7 @@ const { requireConsent } = require('../../core/consent');
 const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor } = require('../people');
 // Same house rule, the other direction: the appraisal summary narrates the
 // performance module's own consolidation rather than re-gathering it.
-const { buildAnnualReviewSummary } = require('../performance');
+const { buildAnnualReviewSummary, kraSuggestionCandidates } = require('../performance');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -658,6 +658,155 @@ Respond ONLY with JSON:
  "gaps":["anything the input lacked that you would have wanted"]}`,
     });
     res.json({ ok: true, ...out, note: 'Suggestions only — edit before adding to your plan.' });
+  } catch (e) { fail(res, e); }
+});
+
+
+// ---------------------------------------------------------------------------
+// KRA SUGGESTIONS for the employee, by designation and department.
+//
+// Asked for on 23 Sep: "can we have AI suggested KRAs in My KRAs as per
+// department and designation of employees."
+//
+// GROUNDED IN HR's OWN LIBRARY, NOT INVENTED. The model is handed a
+// CLOSED LIST of KRAs HR has already published — the employee's own
+// shelf first, then other designations in their department, then those
+// designations' company-wide shelves — and it SELECTS from that list by
+// id. It may sharpen wording for this person's role; it may not conjure
+// objectives nobody signed off. A performance system that invents what
+// someone will be measured on is not a feature.
+//
+// WEIGHTS ARE NEVER THE MODEL'S. The candidate list it sees carries no
+// weights at all, and the weight on every suggestion is looked up from
+// the library row afterwards. Ratings are computed from weights, so a
+// model that could nudge one could nudge a rating — the house rule is
+// that numbers are SQL and the AI narrates.
+//
+// Nothing is written. This returns a draft the employee ticks in the same
+// picker they already use for the library, and every KRA they add stays
+// fully editable — exactly like picking from the shelf by hand.
+router.post('/kra-suggest', async (req, res) => {
+  try {
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+
+    const { employee: emp, candidates, rings, reason } =
+      await kraSuggestionCandidates(T(req), req.user.id);
+    if (!emp) return res.status(404).json({ error: 'employee record not found' });
+    if (reason === 'no_designation') {
+      return res.status(409).json({
+        error: 'Your record has no designation set, so there is no role to suggest KRAs for. Ask HR to add it.' });
+    }
+    if (!candidates.length) {
+      return res.status(409).json({
+        error: `No KRAs have been published for ${emp.designation}`
+          + (emp.department ? ` or anywhere in ${emp.department}` : '')
+          + '. Suggestions are drawn from the KRA Library, so there is nothing to draw from yet — write your KRAs below, or ask HR to publish a shelf.' });
+    }
+
+    // What they already have, so the model does not offer it back.
+    const sheet = (await db.query(
+      `SELECT id FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, req.user.id])).rows[0];
+    const mine = sheet ? (await db.query(
+      `SELECT title, category FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [sheet.id])).rows : [];
+
+    // The manager's own KRAs, where they have any: a report's objectives
+    // should ladder up to them, and this is the only context in the
+    // input that is not a library row.
+    const mgrKras = (await db.query(
+      `SELECT k.title FROM pms.kras k
+         JOIN pms.kra_sheets s ON s.id = k.sheet_id
+         JOIN core.employees e ON e.id = s.employee_id
+        WHERE s.tenant_id=$1 AND s.cycle_id=$2
+          AND e.id = (SELECT manager_id FROM core.employees WHERE id=$3)
+        ORDER BY k.sort_order LIMIT 12`, [T(req), c.id, req.user.id])).rows.map((r) => r.title);
+
+    const byId = new Map(candidates.map((k) => [k.id, k]));
+    const input = {
+      employee: { designation: emp.designation, department: emp.department, role_band: emp.role_band },
+      cycle: c.name,
+      already_on_my_sheet: mine.map((k) => ({ title: k.title, parameter: k.category })),
+      my_managers_kras: mgrKras,
+      // Deliberately WITHOUT suggested_weight — see the header.
+      candidates: candidates.map((k) => ({
+        id: k.id, ring: k.ring, published_for: k.from_designation,
+        department: k.from_department, parameter: k.parameter,
+        title: k.title, kpi: k.kpi,
+      })),
+    };
+
+    const out = await ai.narrate({
+      tenantId: T(req), kind: 'kra_suggest', ref: { cycle_id: c.id, employee_id: req.user.id },
+      requestedBy: req.user.email, input, maxTokens: 1800,
+      system: `You help an employee assemble a KRA sheet for the role they hold, by
+SELECTING from a closed list of KRAs their HR team has already published.
+
+THE LIST IS CLOSED. Every suggestion must carry the "id" of a candidate
+from the input. You may sharpen a title or a KPI so it reads for THIS
+person's designation and department, but you may not introduce an
+objective that is not in the list. If the list does not cover something
+important for this role, say so in "gaps" — do not invent a KRA to fill it.
+
+Prefer candidates with ring "own_shelf": those were published for this
+exact designation. Use ring "department" to fill what the own shelf does
+not cover, and say plainly in "why" that it comes from a neighbouring
+role. Never suggest something already in "already_on_my_sheet".
+
+Aim for a balanced scorecard across the "parameter" values present —
+a sheet that is all Financial and no People is the failure to avoid.
+Around 6 to 9 suggestions is right; fewer if the list is thin.
+
+Say NOTHING about weights, percentages, ratings or scores. You will not
+be shown any, and the weights are set from the library afterwards.
+
+Respond ONLY with JSON:
+{"suggestions":[{"id":"the candidate id, exactly as given","title":"the title, adapted if it helps","kpi":"the KPI, adapted if it helps","why":"one short sentence: why this fits this role"}],
+ "balance":"one short sentence on the spread across parameters",
+ "gaps":["things this role plausibly needs that the library does not cover"]}`,
+    });
+
+    // The model returns ids; the SERVER builds the rows. An id it did not
+    // get from the list is dropped and counted, not trusted — that is the
+    // closed list actually being closed rather than merely requested.
+    const draft = out.draft || {};
+    let invented = 0;
+    const suggestions = (draft.suggestions || []).map((sug) => {
+      const src = byId.get(sug.id);
+      if (!src) { invented += 1; return null; }
+      return {
+        library_id: src.id,
+        title: String(sug.title || src.title).trim(),
+        kpi: String(sug.kpi || src.kpi || '').trim(),
+        parameter: src.parameter,
+        // From the library row, never from the model.
+        suggested_weight: src.suggested_weight,
+        why: String(sug.why || '').trim(),
+        // Provenance, shown on every row: an employee should be able to
+        // see that a suggestion came from another role's shelf.
+        ring: src.ring,
+        from_designation: src.from_designation,
+        from_department: src.from_department,
+        adapted: String(sug.title || src.title).trim() !== src.title,
+      };
+    }).filter(Boolean);
+
+    if (invented) {
+      logger.warn('kra-suggest: model returned ids not in the candidate list', {
+        dropped: invented, employee_id: req.user.id });
+    }
+
+    res.json({
+      ok: true,
+      designation: emp.designation,
+      department: emp.department || null,
+      rings,
+      suggestions,
+      balance: draft.balance || null,
+      gaps: draft.gaps || [],
+      dropped_unknown_ids: invented,
+      note: 'Suggestions only, drawn from your KRA Library. Tick what applies — everything you add stays fully editable, and the weights are HR\'s suggested figures.',
+    });
   } catch (e) { fail(res, e); }
 });
 
