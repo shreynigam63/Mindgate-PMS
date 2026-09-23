@@ -4,7 +4,7 @@ import { api } from '../utils/api';
 import {
   Target, TrendingUp, MessageCircle, Clock, ClipboardList, Award, Star, History,
   LayoutDashboard, Users, CheckCircle2, Library, BarChart3, ArrowRight, Lock,
-  Percent, ListChecks, UserX, FileWarning,
+  Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck,
 } from 'lucide-react';
 
 // The landing screen.
@@ -80,10 +80,25 @@ function Tile({ to, icon: Icon, title, sub, hue = 'navy', locked }) {
     : <NavLink to={to} className={`${cls} hover:shadow-glass`}>{body}</NavLink>;
 }
 
-function Section({ label, children }) {
+// A block heading: a filled icon badge, a real title, and a line of
+// context under it. The reference leads every block this way and it is
+// what gives the page its rhythm — a small grey caption does not.
+function SecHead({ icon: Icon, hue, title, sub }) {
   return (
-    <div className="space-y-2">
-      <p className="lbl mb-0">{label}</p>
+    <div className="sechead">
+      <span className={`sechead-i si-${hue}`}><Icon size={18} /></span>
+      <span className="min-w-0">
+        <span className="sechead-t">{title}</span>
+        <span className="sechead-s">{sub}</span>
+      </span>
+    </div>
+  );
+}
+
+function Section({ icon, hue, title, sub, children }) {
+  return (
+    <div>
+      <SecHead icon={icon} hue={hue} title={title} sub={sub} />
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{children}</div>
     </div>
   );
@@ -192,15 +207,17 @@ export default function HomePage() {
       </div>
 
       {desk.length > 0 && (
-        <div className="space-y-2">
-          <p className="lbl mb-0">My desk · what is outstanding</p>
+        <div>
+          <SecHead icon={Inbox} hue="rose" title="My desk"
+            sub={`${desk.length} ${desk.length === 1 ? 'thing is' : 'things are'} outstanding`} />
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {desk.map(x => <Desk key={x.key} {...x} />)}
           </div>
         </div>
       )}
 
-      <Section label="My performance">
+      <Section icon={Target} hue="lagoon" title="My performance"
+        sub="Your KRAs, growth, reviews and rating">
         <Tile to="/my/kras" icon={Target} title="My KRAs" hue="navy"
           sub={me.kra ? `${me.kra.kra_count} KRAs · ${me.kra.total_weight}% · ${kraStatus}` : 'Not started'} />
         <Tile to="/my/growth" icon={TrendingUp} title="My Growth" hue="leaf"
@@ -218,7 +235,9 @@ export default function HomePage() {
       </Section>
 
       {team && (
-        <Section label={team.scope === 'all_employees' ? 'My team · every employee' : 'My team'}>
+        <Section icon={Users} hue="navy"
+          title={team.scope === 'all_employees' ? 'My team · every employee' : 'My team'}
+          sub={`${team.reports} ${team.reports === 1 ? 'person' : 'people'} · ${team.kra_approved} KRA sheets approved`}>
           <Tile to="/team/overview" icon={LayoutDashboard} title="Team Overview" hue="lagoon"
             sub={`${team.reports} ${team.reports === 1 ? 'person' : 'people'} · all phases at a glance`} />
           <Tile to="/team/kra-sheets" icon={Users} title="Team KRA approvals" hue="lagoon"
@@ -234,7 +253,8 @@ export default function HomePage() {
       )}
 
       {admin && (
-        <Section label="Cycle administration">
+        <Section icon={ShieldCheck} hue="violet" title="Cycle administration"
+          sub={`${admin.employees} active employees · ${admin.kra_sheets} sheets in this cycle`}>
           <Tile to="/admin/approvals" icon={CheckCircle2} title="All Approvals" hue="violet"
             sub={admin.kra_awaiting ? `${admin.kra_awaiting} KRA sheets awaiting a decision` : 'Every pending decision in the company'} />
           <Tile to="/admin/kra-overview" icon={ClipboardList} title="KRA Overview" hue="violet"

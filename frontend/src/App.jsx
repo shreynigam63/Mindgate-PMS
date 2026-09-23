@@ -36,7 +36,7 @@ import ApprovalsPage from './pages/ApprovalsPage';
 import HomePage from './pages/HomePage';
 
 const NAV = [
-  { group: 'My Performance', hue: 'navy', items: [
+  { group: 'My Performance', hue: 'navy', icon: User, items: [
     { to: '/home', label: 'Home', icon: Home },
     { to: '/my/kras', label: 'My KRAs', icon: Target },
     { to: '/my/growth', label: 'My Growth', icon: TrendingUp },
@@ -63,14 +63,14 @@ const NAV = [
     { to: '/my/rating', label: 'My Rating', icon: Star },
     { to: '/my/history', label: 'Past Cycles', icon: History },
   ]},
-  { group: 'Team', hue: 'lagoon', items: [
+  { group: 'Team', hue: 'lagoon', icon: Users, items: [
     { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard },
     { to: '/team/kra-sheets', label: 'Team KRA Sheets', icon: ClipboardList },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/hod', label: 'Delivery Head Review', icon: Landmark },
     { to: '/pip', label: 'Improvement Plans', icon: ShieldAlert },
   ]},
-  { group: 'HR Admin', hue: 'violet', items: [
+  { group: 'HR Admin', hue: 'violet', icon: ShieldCheck, items: [
     { to: '/admin/approvals', label: 'All Approvals', icon: CheckCircle2 },
     { to: '/admin/cycles', label: 'Cycles', icon: BarChart3 },
     { to: '/admin/directory', label: 'Employees', icon: Upload },
@@ -96,7 +96,7 @@ const NAV = [
     // and then left alone, unlike everything above it.
     { to: '/admin/settings', label: 'Settings', icon: SlidersHorizontal },
   ]},
-  { group: 'Engagement & People', hue: 'leaf', items: [
+  { group: 'Engagement & People', hue: 'leaf', icon: HeartHandshake, items: [
     { to: '/engagement', label: 'Engagement', icon: HeartHandshake },
     { to: '/people', label: 'People Hub', icon: User },
   ]},
@@ -145,13 +145,19 @@ function TopNav({ user }) {
       </div>
 
       {/* Role tabs. Clicking one opens its first page: a tab is a place to
-          go, not just a filter, and landing on nothing would be a dead end. */}
+          go, not just a filter, and landing on nothing would be a dead end.
+          EVERY tab carries its group's colour, not only the open one: the
+          first cut left the three closed tabs plain white, so the row read
+          as one coloured tab and three disabled ones. Closed tabs are
+          tinted and open tabs are fully saturated, which says "here" and
+          "there" without saying "off". */}
       <div className="px-4 lg:px-6 flex gap-1.5 overflow-x-auto">
         {groups.map(g => (
           <button key={g.group} type="button" onClick={() => nav(g.items[0].to)}
-            className={`roletab ${g === here ? `roletab-on roletab-${g.hue}` : ''}`}>
+            className={`roletab roletab-${g === here ? 'on' : 'off'}-${g.hue} ${g === here ? 'roletab-on' : ''}`}>
+            <g.icon size={14} />
             {g.group}
-            <span className={`navcount ${g === here ? 'navcount-on' : ''}`}>{g.items.length}</span>
+            <span className={`navcount ${g === here ? 'navcount-on' : `navcount-${g.hue}`}`}>{g.items.length}</span>
           </button>
         ))}
       </div>

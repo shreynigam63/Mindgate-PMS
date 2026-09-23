@@ -87,16 +87,32 @@ body {
    Chosen over a single 30-item sidebar on 23 Sep: it keeps the page full
    width and every menu short, at the cost of one extra click to reach
    another area. */
-.roletab { @apply flex items-center gap-2 px-4 py-2 rounded-t-xl text-[13px] font-bold whitespace-nowrap
-  text-navy-500 bg-white/60 border-b-2 border-transparent transition-colors; }
-.roletab:hover { @apply bg-white/90; }
-.roletab-on { @apply text-white; }
-.roletab-navy { background: linear-gradient(135deg, #1b3b6f, #2f6fae); }
-.roletab-lagoon { background: linear-gradient(135deg, #0d7183, #17a2b8); }
-.roletab-violet { background: linear-gradient(135deg, #5b2a86, #7c4dbe); }
-.roletab-leaf { background: linear-gradient(135deg, #2c7a30, #43a047); }
-.navcount { @apply text-[9.5px] font-bold rounded-full px-1.5 py-0.5 bg-navy-100/70 text-navy-500; letter-spacing: 0; }
+.roletab { @apply flex items-center gap-2 px-4 py-2.5 rounded-t-xl text-[13px] font-bold whitespace-nowrap
+  border-b-[3px] transition-all; }
+.roletab-on { @apply text-white; box-shadow: 0 -2px 14px -6px rgba(16, 31, 61, 0.55); }
+/* The OPEN tab: full saturation. */
+.roletab-on-navy   { background: linear-gradient(135deg, #1b3b6f, #2f6fae); border-color: #1b3b6f; }
+.roletab-on-lagoon { background: linear-gradient(135deg, #0d7183, #17a2b8); border-color: #0d7183; }
+.roletab-on-violet { background: linear-gradient(135deg, #5b2a86, #7c4dbe); border-color: #5b2a86; }
+.roletab-on-leaf   { background: linear-gradient(135deg, #2c7a30, #43a047); border-color: #2c7a30; }
+/* A CLOSED tab keeps its colour, tinted. Closed is not disabled.
+   Shades limited to the ones this palette actually defines — navy, lagoon
+   and leaf have no 200, and Tailwind silently emits nothing for a colour
+   that does not exist, which would have left these borders transparent. */
+.roletab-off-navy   { @apply bg-navy-50 text-navy-700 border-navy-100; }
+.roletab-off-lagoon { @apply bg-lagoon-50 text-lagoon-700 border-lagoon-100; }
+.roletab-off-violet { @apply bg-violet-50 text-violet-700 border-violet-100; }
+.roletab-off-leaf   { @apply bg-leaf-50 text-leaf-600 border-leaf-100; }
+.roletab-off-navy:hover   { @apply bg-navy-100; }
+.roletab-off-lagoon:hover { @apply bg-lagoon-100; }
+.roletab-off-violet:hover { @apply bg-violet-100; }
+.roletab-off-leaf:hover   { @apply bg-leaf-100; }
+.navcount { @apply text-[9.5px] font-bold rounded-full px-1.5 py-0.5; letter-spacing: 0; }
 .navcount-on { background: rgba(255, 255, 255, 0.26); @apply text-white; }
+.navcount-navy   { @apply bg-navy-100 text-navy-700; }
+.navcount-lagoon { @apply bg-lagoon-100 text-lagoon-700; }
+.navcount-violet { @apply bg-violet-100 text-violet-700; }
+.navcount-leaf   { @apply bg-leaf-100 text-leaf-600; }
 /* The sub-nav WRAPS. HR Admin's fifteen pages need 2286px at 1440px wide,
    and a sideways-scrolling row hid eight of them with no cue they were
    there — measured, not guessed. Wrapping costs one extra row, for HR
@@ -163,3 +179,12 @@ body {
 .dk-lagoon { background: #17a2b8; }
 .dk-violet { background: #7c4dbe; }
 .dk-pink   { background: #ec407a; }
+
+/* Section headings on the dashboard. The reference leads each block with a
+   large colour-filled icon badge ("Spot Light", "Employee's Desk") rather
+   than a small grey caption, and it is what gives the page its rhythm at a
+   glance. Same idea here, in the group's own hue. */
+.sechead { @apply flex items-center gap-2.5 mb-2.5; }
+.sechead-i { @apply w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white; }
+.sechead-t { @apply text-[15px] font-extrabold text-navy-900 leading-none; }
+.sechead-s { @apply block text-[11px] font-medium text-navy-400 mt-1; }
