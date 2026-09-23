@@ -36,6 +36,8 @@ export default function CareerTransitionsPage() {
   const [roleBands, setRoleBands] = useState([]);
   useEffect(() => { api('/people/designations').then(r => setDesignations(r.designations)).catch(() => setDesignations([])); }, []);
   useEffect(() => { api('/people/role-bands').then(r => setRoleBands(r.role_bands)).catch(() => setRoleBands([])); }, []);
+  const [departments, setDepartments] = useState([]);
+  useEffect(() => { api('/people/departments').then(r => setDepartments(r.departments)).catch(() => setDepartments([])); }, []);
 
   // Validate writes nothing; Publish is the same request with ?commit=1.
   // The two-step is the point: a career matrix decides which moves the
@@ -87,10 +89,11 @@ export default function CareerTransitionsPage() {
             title={!report ? 'Validate first' : ''} onClick={() => send(true)}>Publish</button>
         </div>
         <p className="text-[11px] text-navy-400">
-          Columns: From Role, From Level, To Role, To Level, Expected Level Change, Min Time In
-          Current Role (Months), Typical Time In Current Role (Months), Required Competencies,
-          Notes. Only <b>From Role</b> and <b>To Role</b> are required; blank From Level means
-          any level. Required Competencies go one per line, or separated by a semicolon.
+          Columns: Department, From Role, From Level, To Role, To Level, Expected Level Change,
+          Min Time In Current Role (Months), Typical Time In Current Role (Months), Required
+          Competencies, Notes. Only <b>From Role</b> and <b>To Role</b> are required; blank From
+          Level means any level. <b>Blank Department means every department</b>; fill it in and
+          the rung applies only there, and beats a company-wide rung for the same move. Required Competencies go one per line, or separated by a semicolon.
           {' '}<b>Re-uploading a transition that already exists updates it</b> rather than adding a
           second copy, so a corrected file can be uploaded again safely. A role nobody holds yet is
           allowed and only warned about — that is what a career path is for.
@@ -111,7 +114,7 @@ export default function CareerTransitionsPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-300" />
-          <input className="inp pl-8" value={q} onChange={e => setQ(e.target.value)} placeholder="Search role / level…" />
+          <input className="inp pl-8" value={q} onChange={e => setQ(e.target.value)} placeholder="Search department / role / level…" />
         </div>
         <label className="flex items-center gap-1.5 text-xs text-navy-500">
           <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />Show inactive
@@ -127,10 +130,18 @@ export default function CareerTransitionsPage() {
             <div key={t.id} className={`card p-4 ${!t.active ? 'opacity-50' : ''}`}>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <p className="text-sm font-semibold">
+                  <p className="text-sm font-semibold flex flex-wrap items-center gap-2">
+                    {/* Which ladder this rung is on. A company-wide rung
+                        is labelled too — "no chip" would be ambiguous
+                        with "chip not loaded". */}
+                    <span className={`chip ${t.department ? 'bg-lagoon-50 text-lagoon-700' : 'bg-navy-50 text-navy-500'}`}>
+                      {t.department || 'Every department'}
+                    </span>
+                    <span>
                     {t.from_role}{t.from_level && <span className="text-navy-400 font-normal"> · {t.from_level}</span>}
                     <span className="text-navy-300 mx-2">→</span>
                     {t.to_role}{t.to_level && <span className="text-navy-400 font-normal"> · {t.to_level}</span>}
+                    </span>
                   </p>
                   <div className="flex flex-wrap gap-3 mt-1 text-[11px] text-navy-400">
                     {t.expected_level_change != null && <span>Level change: +{t.expected_level_change}</span>}
@@ -156,13 +167,14 @@ export default function CareerTransitionsPage() {
         </div>
       )}
 
-      {showForm && <TransitionForm designations={designations} roleBands={roleBands} initial={editing} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load(); }} />}
+      {showForm && <TransitionForm designations={designations} roleBands={roleBands} departments={departments} initial={editing} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load(); }} />}
     </div>
   );
 }
 
-function TransitionForm({ designations, roleBands, initial, onClose, onSaved }) {
+function TransitionForm({ designations, roleBands, departments, initial, onClose, onSaved }) {
   const [f, setF] = useState({
+    department: initial?.department || '',
     from_role: initial?.from_role || '', from_level: initial?.from_level || '',
     to_role: initial?.to_role || '', to_level: initial?.to_level || '',
     expected_level_change: initial?.expected_level_change ?? 1,
@@ -196,6 +208,7 @@ function TransitionForm({ designations, roleBands, initial, onClose, onSaved }) 
     setSaving(true);
     try {
       const body = {
+        department: f.department || null,
         from_role: f.from_role, from_level: f.from_level || null,
         to_role: f.to_role, to_level: f.to_level || null,
         expected_level_change: f.expected_level_change === '' ? null : Number(f.expected_level_change),
@@ -218,6 +231,24 @@ function TransitionForm({ designations, roleBands, initial, onClose, onSaved }) 
           <button className="text-navy-400 hover:text-navy-600" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="p-5 space-y-4">
+          {/* Department scopes everything below it, so it sits above
+              rather than beside From Role. Blank is a real answer and the
+              common one — it must not read as an unfilled field. */}
+          <div>
+            <label className="lbl">Department</label>
+            <select className="inp" value={f.department} onChange={set('department')}>
+              <option value="">— Every department —</option>
+              {departments.map(d => <option key={d} value={d}>{d}</option>)}
+              {f.department && !departments.includes(f.department) && (
+                <option value={f.department}>{f.department} (nobody is in this department)</option>
+              )}
+            </select>
+            <p className="text-[10px] text-navy-400 mt-1">
+              Leave blank and this rung applies company-wide. Pick one and it applies only there —
+              and it <b>wins over</b> a company-wide rung describing the same move, so a department
+              can override the ladder without anyone editing the shared one.
+            </p>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="lbl">From Role *</label>

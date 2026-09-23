@@ -165,9 +165,15 @@ test('THE APP\'S OWN TEMPLATE IMPORTS — no drift between the two', { skip }, a
   const out = await upload(Buffer.from(await r.arrayBuffer()));
   assert.equal(out.status, 200);
   assert.equal(out.body.ok, true, JSON.stringify(out.body.errors));
-  assert.equal(out.body.summary.total_rows, 2, 'the two sample rows');
+  // Three sample rows since the Department column landed (migration
+  // 044): two company-wide and one showing the same move scoped to a
+  // department, which is the one rule a column heading cannot explain.
+  assert.equal(out.body.summary.total_rows, 3, 'the three sample rows');
   // The sample's newline-separated competencies survive the round trip.
   assert.ok(out.body.rows[0].required_competencies.length >= 2);
+  // And the departmental sample must come back scoped, not flattened to
+  // company-wide — that would make the template teach the wrong rule.
+  assert.deepEqual(out.body.rows.map((x) => x.department), [null, null, 'Sales']);
 });
 
 test('VALIDATE WRITES NOTHING', { skip }, async () => {

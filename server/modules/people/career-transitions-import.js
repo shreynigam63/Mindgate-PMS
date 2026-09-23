@@ -16,6 +16,11 @@
 // match the New transition modal's field names so somebody filling the
 // sheet recognises them from the screen they already use.
 const COLUMNS = [
+  // Department leads the sheet, as the filled-in template sent on 23 Sep
+  // has it. BLANK means the rung applies to every department — the same
+  // company-wide-or-specific rule the KRA library already uses, so HR
+  // does not have to learn a second one.
+  ['department', 'Department'],
   ['from_role', 'From Role'],
   ['from_level', 'From Level'],
   ['to_role', 'To Role'],
@@ -35,6 +40,8 @@ const key = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]/g
 const ALIASES = new Map();
 for (const [field, label] of COLUMNS) ALIASES.set(key(label), field);
 for (const [alias, field] of [
+  ['dept', 'department'], ['function', 'department'], ['businessunit', 'department'],
+  ['departmentname', 'department'],
   ['fromdesignation', 'from_role'], ['currentrole', 'from_role'], ['role', 'from_role'],
   ['todesignation', 'to_role'], ['nextrole', 'to_role'], ['targetrole', 'to_role'],
   ['fromband', 'from_level'], ['currentlevel', 'from_level'],
@@ -78,7 +85,11 @@ function wholeNumber(cell, label, line, errors) {
 // arrows on the matrix.
 const norm = (v) => txt(v).toLowerCase().replace(/\s+/g, ' ');
 const rung = (role, level) => `${norm(role)}@${norm(level)}`;
-const rowKey = (r) => `${rung(r.from_role, r.from_level)} → ${rung(r.to_role, r.to_level)}`;
+// The department is PART OF the identity. "Executive → Senior Executive"
+// in Sales and the same pair in Infrastructure are two different rungs
+// with different competencies, so re-uploading one must not overwrite
+// the other. A blank department is its own key — the company-wide rung.
+const rowKey = (r) => `${norm(r.department)}|${rung(r.from_role, r.from_level)} → ${rung(r.to_role, r.to_level)}`;
 
 // rows: array of arrays, first non-empty row is the header.
 // knownRoles: lower-cased designations actually on file — used for
@@ -87,7 +98,7 @@ const rowKey = (r) => `${rung(r.from_role, r.from_level)} → ${rung(r.to_role, 
 // Returns { ok, fatal, rows, errors, warnings, summary }, the same shape
 // the KRA importers return, so the page can render the report with the
 // component it already has.
-function validateCareerTransitionRows(rows, knownRoles = new Set()) {
+function validateCareerTransitionRows(rows, knownRoles = new Set(), knownDepartments = new Set()) {
   const out = [];
   const errors = [];
   const warnings = [];
@@ -131,6 +142,7 @@ function validateCareerTransitionRows(rows, knownRoles = new Set()) {
 
     const rec = {
       line,
+      department: get('department') || null,
       from_role: fromRole,
       from_level: get('from_level') || null,
       to_role: toRole,
@@ -164,6 +176,14 @@ function validateCareerTransitionRows(rows, knownRoles = new Set()) {
       if (knownRoles.size && !knownRoles.has(role.trim().toLowerCase())) {
         warnings.push({ line, warning: `${which} "${role}" is not a designation any active employee holds` });
       }
+    }
+    // A department nobody works in is a WARNING, not an error, for the
+    // same reason an unheld role is: a matrix may legitimately describe a
+    // team that is being stood up. But a typo here silently narrows a
+    // rung to nobody, so it must be said out loud.
+    if (rec.department && knownDepartments.size
+        && !knownDepartments.has(rec.department.trim().toLowerCase())) {
+      warnings.push({ line, warning: `Department "${rec.department}" is not one any active employee belongs to — this rung will match nobody` });
     }
     if (rec.min_time_months != null && rec.typical_time_months != null
         && rec.typical_time_months < rec.min_time_months) {

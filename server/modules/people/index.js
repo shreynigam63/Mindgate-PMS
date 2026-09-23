@@ -330,6 +330,19 @@ router.get('/designations', async (req, res) => {
 // reference screenshots of a "New transition" form; built to the exact
 // fields shown, with min/typical time-in-role stored and displayed but
 // NOT enforced (see migration 022's comment for why).
+// The departments that actually exist, so the matrix's Department field
+// is a dropdown for the same reason From Role is one — a department
+// typed by hand that matches no employee is a rung nobody can ever see.
+router.get('/departments', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT DISTINCT btrim(department) AS department FROM core.employees
+        WHERE tenant_id=$1 AND coalesce(btrim(department),'') <> '' ORDER BY 1`,
+      [T(req)]);
+    res.json({ departments: r.rows.map((row) => row.department) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // The role_band values that actually exist, so From Level can be a
 // dropdown like From Role already is instead of a free-text box nobody
 // can spell consistently.
@@ -372,9 +385,13 @@ router.get('/career/transitions', async (req, res) => {
     let where = `tenant_id=$1 ${includeInactive ? '' : 'AND active=true'}`;
     if (q) {
       params.push(`%${q}%`);
-      where += ` AND (from_role ILIKE $${params.length} OR to_role ILIKE $${params.length} OR from_level ILIKE $${params.length} OR to_level ILIKE $${params.length})`;
+      where += ` AND (from_role ILIKE $${params.length} OR to_role ILIKE $${params.length} OR from_level ILIKE $${params.length} OR to_level ILIKE $${params.length} OR department ILIKE $${params.length})`;
     }
-    const r = await db.query(`SELECT * FROM people.career_transitions WHERE ${where} ORDER BY from_role, from_level NULLS FIRST, to_role`, params);
+    // Company-wide rungs first within a department grouping, so the list
+    // reads the way the matching rule works.
+    const r = await db.query(
+      `SELECT * FROM people.career_transitions WHERE ${where}
+        ORDER BY coalesce(btrim(department),'') , from_role, from_level NULLS FIRST, to_role`, params);
     res.json({ transitions: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -388,9 +405,9 @@ router.post('/career/transitions', async (req, res) => {
       : (typeof b.required_competencies === 'string' ? b.required_competencies.split('\n').map((s) => s.trim()).filter(Boolean) : []);
     const r = await db.query(
       `INSERT INTO people.career_transitions
-         (tenant_id, from_role, from_level, to_role, to_level, expected_level_change, min_time_months, typical_time_months, required_competencies, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [T(req), b.from_role, b.from_level || null, b.to_role, b.to_level || null,
+         (tenant_id, department, from_role, from_level, to_role, to_level, expected_level_change, min_time_months, typical_time_months, required_competencies, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [T(req), (b.department || '').trim() || null, b.from_role, b.from_level || null, b.to_role, b.to_level || null,
        b.expected_level_change ?? null, b.min_time_months ?? null, b.typical_time_months ?? null, competencies, b.notes || null]);
     res.json({ ok: true, transition: r.rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -407,11 +424,12 @@ router.put('/career/transitions/:id', async (req, res) => {
          from_role=COALESCE($3,from_role), from_level=$4, to_role=COALESCE($5,to_role), to_level=$6,
          expected_level_change=$7, min_time_months=$8, typical_time_months=$9,
          required_competencies=COALESCE($10,required_competencies), notes=$11,
-         active=COALESCE($12,active), updated_at=now()
+         active=COALESCE($12,active), department=$13, updated_at=now()
        WHERE id=$1 AND tenant_id=$2 RETURNING *`,
       [req.params.id, T(req), b.from_role || null, b.from_level ?? null, b.to_role || null, b.to_level ?? null,
        b.expected_level_change ?? null, b.min_time_months ?? null, b.typical_time_months ?? null,
-       competencies || null, b.notes ?? null, b.active ?? null]);
+       competencies || null, b.notes ?? null, b.active ?? null,
+       b.department === undefined ? null : ((b.department || '').trim() || null)]);
     if (!r.rows.length) return res.status(404).json({ error: 'transition not found' });
     res.json({ ok: true, transition: r.rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -439,11 +457,15 @@ router.delete('/career/transitions/:id', async (req, res) => {
 // that shape once; a second importer that behaves differently is a
 // second thing to learn and a new set of mistakes.
 
-const TRANSITION_BANNER = 'One row per transition. From Role and To Role are required and should match designations on the employee master exactly — a role nobody holds yet is allowed (that is what a career path is for) and only warned about. Leave From Level blank for "any level". Required Competencies: one per line, or separated by ; — Months fields are advisory and not enforced. Re-uploading a transition that already exists UPDATES it rather than adding a second copy. Delete the sample rows before uploading.';
+const TRANSITION_BANNER = 'One row per transition. From Role and To Role are required and should match designations on the employee master exactly — a role nobody holds yet is allowed (that is what a career path is for) and only warned about. Leave Department blank for a rung that applies to EVERY department; fill it in and the rung applies only to that department, and a department-specific rung wins over a blank one for the same move. Leave From Level blank for "any level". Required Competencies: one per line, or separated by ; — Months fields are advisory and not enforced. Re-uploading a transition that already exists UPDATES it rather than adding a second copy — Department is part of what makes a transition "the same one". Delete the sample rows before uploading.';
 const TRANSITION_HEADERS = CT_COLUMNS.map(([, label]) => label);
+// Three samples now, not two: the third shows the SAME move as the first
+// with a department filled in, which is the one rule about this sheet
+// that cannot be explained by a column heading alone.
 const TRANSITION_SAMPLE = [
-  ['Executive', '', 'Senior Executive', '', 1, 12, 18, 'Owns a workstream end to end\nCoaches one junior', 'Delete this sample row'],
-  ['Senior Executive', '', 'Team Lead', '', 1, 18, 24, 'Runs a small team\nAccountable for a delivery plan', 'Delete this sample row'],
+  ['', 'Executive', '', 'Senior Executive', '', 1, 12, 18, 'Owns a workstream end to end\nCoaches one junior', 'Blank Department = every department. Delete this sample row'],
+  ['', 'Senior Executive', '', 'Team Lead', '', 1, 18, 24, 'Runs a small team\nAccountable for a delivery plan', 'Delete this sample row'],
+  ['Sales', 'Executive', '', 'Senior Executive', '', 1, 9, 12, 'Carries a quota\nRuns a pipeline review', 'Same move, Sales only — this one wins for Sales. Delete this sample row'],
 ];
 
 // No :id route competes for these paths — /career/transitions/:id exists
@@ -462,7 +484,7 @@ router.get('/career/transitions/template.xlsx', async (req, res) => {
     header.font = { bold: true };
     header.alignment = { wrapText: true, vertical: 'middle' };
     for (const row of TRANSITION_SAMPLE) ws.addRow(row);
-    ws.columns.forEach((col, i) => { col.width = [26, 16, 26, 16, 16, 18, 20, 44, 30][i] || 20; });
+    ws.columns.forEach((col, i) => { col.width = [22, 26, 16, 26, 16, 16, 18, 20, 44, 34][i] || 20; });
     const buf = await wb.xlsx.writeBuffer();
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="career_transitions_template.xlsx"');
@@ -513,14 +535,22 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
         WHERE tenant_id=$1 AND status='active' AND coalesce(btrim(designation),'') <> ''`,
       [T(req)])).rows.map((r) => r.d));
 
-    const report = validateCareerTransitionRows(rows, known);
+    // Departments actually on the employee master, so a typo in the new
+    // column is reported rather than silently producing a rung that can
+    // never match anyone.
+    const knownDepts = new Set((await db.query(
+      `SELECT DISTINCT lower(btrim(department)) AS d FROM core.employees
+        WHERE tenant_id=$1 AND status='active' AND coalesce(btrim(department),'') <> ''`,
+      [T(req)])).rows.map((r) => r.d));
+
+    const report = validateCareerTransitionRows(rows, known, knownDepts);
     if (report.fatal) return res.status(422).json({ error: report.fatal });
 
     // Which of these already exist, so the dry run can say "12 new, 4
     // updated" rather than leaving HR to guess whether Publish will
     // duplicate the matrix they already built.
     const existing = new Map((await db.query(
-      `SELECT id, from_role, from_level, to_role, to_level FROM people.career_transitions WHERE tenant_id=$1`,
+      `SELECT id, department, from_role, from_level, to_role, to_level FROM people.career_transitions WHERE tenant_id=$1`,
       [T(req)])).rows.map((r) => [ctRowKey(r), r.id]));
     for (const r of report.rows) r.existing_id = existing.get(ctRowKey(r)) || null;
     const willUpdate = report.rows.filter((r) => r.existing_id).length;
@@ -548,14 +578,16 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
              WHERE id=$1 AND tenant_id=$2`,
             [r.existing_id, T(req), r.expected_level_change, r.min_time_months,
              r.typical_time_months, r.required_competencies, r.notes]);
+          // department is NOT in the SET list on purpose: it is part of
+          // the key that found this row, so it already matches.
           updated += 1;
         } else {
           await client.query(
             `INSERT INTO people.career_transitions
-               (tenant_id, from_role, from_level, to_role, to_level, expected_level_change,
+               (tenant_id, department, from_role, from_level, to_role, to_level, expected_level_change,
                 min_time_months, typical_time_months, required_competencies, notes)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-            [T(req), r.from_role, r.from_level, r.to_role, r.to_level, r.expected_level_change,
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+            [T(req), r.department, r.from_role, r.from_level, r.to_role, r.to_level, r.expected_level_change,
              r.min_time_months, r.typical_time_months, r.required_competencies, r.notes]);
           created += 1;
         }
@@ -606,18 +638,37 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
 // A level-specific transition still does NOT match an employee with no
 // role_band — that is a real mismatch, not a formatting one. It is now
 // REPORTED rather than silently dropped: see careerPathDiagnostics.
+// $4 is the employee's DEPARTMENT (migration 044). A rung with no
+// department is company-wide and applies to everyone — which is what
+// every row written before 044 is, so an existing matrix keeps working
+// untouched. A rung WITH a department applies only there.
 const TRANSITION_MATCH = `
   LOWER(TRIM(from_role)) = LOWER(TRIM($2))
   AND (NULLIF(TRIM(COALESCE(from_level, '')), '') IS NULL
-       OR LOWER(TRIM(from_level)) = LOWER(TRIM(COALESCE($3, ''))))`;
+       OR LOWER(TRIM(from_level)) = LOWER(TRIM(COALESCE($3, ''))))
+  AND (NULLIF(TRIM(COALESCE(department, '')), '') IS NULL
+       OR LOWER(TRIM(department)) = LOWER(TRIM(COALESCE($4, ''))))`;
+
+// The move a rung describes, ignoring which department wrote it. Two
+// rows with the same move are the same step offered twice, and the
+// employee must be shown ONE of them.
+const MOVE_KEY = `LOWER(BTRIM(from_role)), LOWER(BTRIM(COALESCE(from_level,''))),
+                  LOWER(BTRIM(to_role)),   LOWER(BTRIM(COALESCE(to_level,'')))`;
 
 async function eligibleTransitionsFor(tenantId, employeeId) {
-  const emp = (await db.query(`SELECT designation, role_band FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+  const emp = (await db.query(`SELECT designation, role_band, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp || !emp.designation) return [];
+  // MOST SPECIFIC WINS. Where a department has written its own version of
+  // a move AND a company-wide version exists, the employee sees their
+  // department's — with its competencies and its time-in-role figures,
+  // which is the whole reason the column was asked for. Showing both
+  // would offer the same step twice with contradictory requirements.
   const r = await db.query(
-    `SELECT * FROM people.career_transitions
-      WHERE tenant_id=$1 AND active=true AND ${TRANSITION_MATCH}`,
-    [tenantId, emp.designation, emp.role_band || null]);
+    `SELECT DISTINCT ON (${MOVE_KEY}) *
+       FROM people.career_transitions
+      WHERE tenant_id=$1 AND active=true AND ${TRANSITION_MATCH}
+      ORDER BY ${MOVE_KEY}, (COALESCE(BTRIM(department),'') <> '') DESC`,
+    [tenantId, emp.designation, emp.role_band || null, emp.department || null]);
   return r.rows;
 }
 
@@ -630,17 +681,18 @@ async function eligibleTransitionsFor(tenantId, employeeId) {
 // distinct causes and they need distinct answers.
 async function careerPathDiagnostics(tenantId, employeeId) {
   const emp = (await db.query(
-    `SELECT designation, role_band FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+    `SELECT designation, role_band, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp) return { reason: 'no_employee' };
   if (!emp.designation) {
     return { reason: 'no_designation', designation: null, role_band: emp.role_band || null, matched: 0 };
   }
-  const base = { designation: emp.designation, role_band: emp.role_band || null };
+  const base = { designation: emp.designation, role_band: emp.role_band || null,
+                 department: emp.department || null };
 
   // Everything configured FROM this role, ignoring level and active, so we
   // can tell "nothing exists" from "something exists but was filtered".
   const all = (await db.query(
-    `SELECT to_role, from_level, active FROM people.career_transitions
+    `SELECT to_role, from_level, department, active FROM people.career_transitions
       WHERE tenant_id=$1 AND LOWER(TRIM(from_role)) = LOWER(TRIM($2))`,
     [tenantId, emp.designation])).rows;
 
@@ -651,6 +703,17 @@ async function careerPathDiagnostics(tenantId, employeeId) {
 
   const active = all.filter((t) => t.active);
   if (!active.length) return { ...base, reason: 'all_inactive', matched: 0, inactive: all.length };
+
+  // Configured, active, and excluded because every rung belongs to a
+  // DIFFERENT department. Before 044 this could not happen; now it can,
+  // and "no career path is configured from your role" would send HR
+  // hunting for a row that exists and is simply filed elsewhere.
+  const mine = (d) => !String(d || '').trim()
+    || String(d).trim().toLowerCase() === String(emp.department || '').trim().toLowerCase();
+  if (!active.some((t) => mine(t.department))) {
+    return { ...base, reason: 'department_mismatch', matched: 0,
+      excluded_by_department: [...new Set(active.map((t) => t.department).filter(Boolean))] };
+  }
 
   // Configured and active, so the only thing left that can exclude them is
   // the level. Report both sides of the comparison — the whole failure was
