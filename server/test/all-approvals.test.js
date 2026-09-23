@@ -142,6 +142,23 @@ test('the queue lists every pending kind, and marks what can actually be decided
   assert.equal(byKind.kra_sheet.waiting_on, 'AP Manager', 'every row names who it waits on');
 });
 
+test('every row names a real employee and has a unique key', { skip }, async () => {
+  // The delivery-head and evaluation rows LEFT JOIN the record that may
+  // not exist yet, and employee_id was being read from that side — so a
+  // person whose evaluation had not been created came back with
+  // employee_id null, several rows shared the key "hod_evaluation:null",
+  // and the UI's type filter showed rows of the wrong type. Found by
+  // filtering the page, so it is pinned here.
+  const { body } = await req('GET', '/pms/approvals', adminTok);
+  for (const i of body.items) {
+    assert.ok(i.employee_id, `${i.kind} row for ${i.employee_name} has no employee_id`);
+    assert.ok(i.row_key, `${i.kind} row has no row_key`);
+    assert.ok(!i.row_key.includes('null'), `row_key "${i.row_key}" was built from a null`);
+  }
+  const keys = body.items.map((i) => i.row_key);
+  assert.equal(new Set(keys).size, keys.length, 'row keys must be unique');
+});
+
 test('bulk approve decides every row and writes an audit row for each', { skip }, async () => {
   const r = await req('POST', '/pms/approvals/bulk', adminTok, {
     items: [{ kind: 'kra_sheet', id: sheetA }, { kind: 'growth_plan', id: planA }],

@@ -129,7 +129,7 @@ async function pendingApprovals(tenantId, cycleId) {
   // is not. Joined on the self-appraisal rather than listing every pending
   // evaluation, or the queue would show the whole company on day one.
   const evals = await q(`
-    SELECT ev.id, ev.employee_id, sa.submitted_at AS since,
+    SELECT ev.id, sa.employee_id, sa.submitted_at AS since,
            e.name AS employee_name, e.designation, e.department,
            m.name AS waiting_on
       FROM pms.self_appraisals sa
@@ -142,7 +142,7 @@ async function pendingApprovals(tenantId, cycleId) {
 
   // And the delivery head's turn: the manager is done, the HOD is not.
   const hod = await q(`
-    SELECT h.id, h.employee_id, me.submitted_at AS since,
+    SELECT h.id, me.employee_id, me.submitted_at AS since,
            e.name AS employee_name, e.designation, e.department,
            dh.name AS waiting_on
       FROM pms.manager_evaluations me
@@ -155,7 +155,25 @@ async function pendingApprovals(tenantId, cycleId) {
      WHERE me.tenant_id=$1 AND me.cycle_id=$2 AND me.status='submitted'
        AND (h.id IS NULL OR h.status <> 'submitted')`);
 
-  const tag = (rows, kind, decidable) => rows.map((r) => ({ ...r, kind, decidable }));
+  // NOTE on employee_id above: it is taken from the row that always
+  // exists (sa, me), never from the LEFT JOINed one (ev, h). Taking it
+  // from the join produced NULL for every person whose evaluation had not
+  // been created yet — so the queue showed their name, from the employees
+  // table, beside an employee_id of null.
+  //
+  // Every row needs an id that is actually unique, and for three of these
+  // kinds the child record may not exist yet — the mid-year, evaluation and
+  // delivery-head queries LEFT JOIN it precisely so a row appears BEFORE
+  // anyone has written anything. `id` is then null, and null is not an
+  // identity: several rows shared the key "hod_evaluation:null", React
+  // reused the wrong nodes, and filtering the queue by type showed rows of
+  // the wrong type. Found by filtering the live page, not by reading this.
+  //
+  // So the key falls back to the employee, who is unique per kind here.
+  const tag = (rows, kind, decidable) => rows.map((r) => ({
+    ...r, kind, decidable,
+    row_key: `${kind}:${r.id || `emp-${r.employee_id}`}`,
+  }));
   const items = [
     ...tag(sheets, 'kra_sheet', true),
     ...tag(plans, 'growth_plan', true),

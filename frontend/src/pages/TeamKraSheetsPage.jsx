@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { MidYearOnKra, groupByCategory, NO_CATEGORY } from './MyKRASheetPage';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import StatusTabs, { statusTabs } from '../StatusTabs';
 
 // Fix guide item #5 (BR-1.3): confirmed root cause was that no frontend
 // page anywhere called the existing, working GET /team/kra-sheets and
@@ -21,6 +22,7 @@ const STATUS_COLOR = {
 
 export default function TeamKraSheetsPage() {
   const [q, setQ] = useState('');
+  const [tab, setTab] = useState('submitted');   // the manager's own queue first
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
@@ -34,13 +36,31 @@ export default function TeamKraSheetsPage() {
 
   const pendingCount = data.sheets.filter(s => s.status === 'submitted').length;
 
+  // Pending and approved are separate tabs now, not one list with a count
+  // in the header. An approved sheet used to look identical to one nobody
+  // had touched until you opened it.
+  const TABS = [
+    { key: 'submitted', label: 'Pending your review', tone: 'bg-amber2-500 text-white',
+      match: v => v === 'submitted' },
+    { key: 'approved', label: 'Approved', tone: 'bg-leaf-500 text-white',
+      match: v => v === 'approved' },
+    { key: 'returned', label: 'Returned', tone: 'bg-brand-500 text-white',
+      match: v => v === 'returned' },
+    { key: 'open', label: 'Not submitted', tone: 'bg-navy-700 text-white',
+      match: v => !v || v === 'draft' || v === 'not_started' },
+  ];
+  const tabs = statusTabs(data.sheets || [], 'status', TABS);
+  const active = TABS.find(t => t.key === tab);
+
   // Filtered in the browser: this list is one team or one
 
   // department, not the whole company, so there is nothing to gain
 
   // from a round trip per keystroke.
 
-  const sheetsShown = (data.sheets || []).filter(s => matches(q, s.employee_name, s.designation, s.department, s.status));
+  const sheetsShown = (data.sheets || [])
+    .filter(s => !active || active.match(s.status))
+    .filter(s => matches(q, s.employee_name, s.designation, s.department, s.status));
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
@@ -58,8 +78,9 @@ export default function TeamKraSheetsPage() {
           direct reports genuinely existed and simply hadn't touched their
           KRA yet. Now driven by core.employees directly (see the backend
           fix), so an empty list here means zero reports, for real. */}
+      <StatusTabs tabs={tabs} value={tab} onChange={setTab} />
       <SearchBox value={q} onChange={setQ} placeholder="Search your team by name, designation or status…"
-        shown={sheetsShown.length} total={(data.sheets || []).length} />
+        shown={sheetsShown.length} total={(data.sheets || []).filter(s => !active || active.match(s.status)).length} />
       {!data.sheets.length && <div className="card p-8 text-center text-sm text-navy-400">No direct reports found.</div>}
       {sheetsShown.map(s => (
         <div key={s.employee_id} className="card overflow-hidden">

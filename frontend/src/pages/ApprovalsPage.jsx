@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import StatusTabs from '../StatusTabs';
 import { CheckCircle2, Clock } from 'lucide-react';
 
 // Every pending decision in the company, in one queue.
@@ -51,7 +52,7 @@ export default function ApprovalsPage() {
     (filter === 'all' || i.kind === filter) &&
     (!q.trim() || `${i.employee_name} ${i.designation || ''} ${i.department || ''}`.toLowerCase().includes(q.toLowerCase())));
   const decidable = rows.filter(i => i.decidable);
-  const chosen = decidable.filter(i => picked[`${i.kind}:${i.id}`]);
+  const chosen = decidable.filter(i => picked[i.row_key]);
 
   const approveChosen = async () => {
     setBusy(true); setReport(null);
@@ -65,8 +66,12 @@ export default function ApprovalsPage() {
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
 
-  const TABS = [['all', 'All pending', data.total],
-    ...Object.entries(KIND).map(([k, v]) => [k, v.label, data.counts[k] || 0])].filter(t => t[0] === 'all' || t[2]);
+  // The same control the manager pages use, so a filter row means one
+  // thing across the product rather than three near-identical ones.
+  const TABS = [
+    { key: 'all', label: 'All pending', count: data.total },
+    ...Object.entries(KIND).map(([k, v]) => ({ key: k, label: v.label, count: data.counts[k] || 0 })),
+  ];
 
   return (
     <div className="space-y-4">
@@ -88,14 +93,7 @@ export default function ApprovalsPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        {TABS.map(([k, label, n]) => (
-          <button key={k} onClick={() => setFilter(k)}
-            className={`chip px-3 py-1.5 ${filter === k ? 'bg-navy-700 text-white' : 'bg-white text-navy-500 border border-navy-100'}`}>
-            {label} <b className="ml-1">{n}</b>
-          </button>
-        ))}
-      </div>
+      <StatusTabs tabs={TABS} value={filter} onChange={setFilter} />
 
       <input className="inp" placeholder="Search across every approval queue…" value={q} onChange={e => setQ(e.target.value)} />
 
@@ -117,7 +115,7 @@ export default function ApprovalsPage() {
             </thead>
             <tbody>
               {rows.map(i => {
-                const key = `${i.kind}:${i.id}`;
+                const key = i.row_key;
                 return (
                   <tr key={key} className="border-t border-navy-50">
                     <td className="p-3">

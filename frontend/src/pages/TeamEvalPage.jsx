@@ -5,6 +5,7 @@ import { AiModal } from './AiDraftPanel';
 import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import StatusTabs, { statusTabs } from '../StatusTabs';
 
 // Matches Self-Appraisal's convention: per-KRA picks in letter grades,
 // the one computed overall in descriptive wording — see that page for
@@ -23,6 +24,7 @@ function nearestWholeValue(value, scale) {
 
 export default function TeamEvalPage() {
   const [q, setQ] = useState('');
+  const [tab, setTab] = useState('pending');
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
@@ -40,7 +42,18 @@ export default function TeamEvalPage() {
 
   // from a round trip per keystroke.
 
-  const teamShown = (data.team || []).filter(t => matches(q, t.name, t.department, t.self_status, t.eval_status));
+  // Same split as Team KRA Sheets: what you still owe, and what is done.
+  const ETABS = [
+    { key: 'pending', label: 'Still to write', tone: 'bg-amber2-500 text-white',
+      match: v => v !== 'submitted' },
+    { key: 'submitted', label: 'Submitted', tone: 'bg-leaf-500 text-white',
+      match: v => v === 'submitted' },
+  ];
+  const etabs = statusTabs(data.team || [], 'eval_status', ETABS);
+  const eactive = ETABS.find(t => t.key === tab);
+  const teamShown = (data.team || [])
+    .filter(t => !eactive || eactive.match(t.eval_status))
+    .filter(t => matches(q, t.name, t.department, t.self_status, t.eval_status));
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
@@ -51,8 +64,9 @@ export default function TeamEvalPage() {
           </span>)}
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
       </PageHead>
+      <StatusTabs tabs={etabs} value={tab} onChange={setTab} />
       <SearchBox value={q} onChange={setQ} placeholder="Search your team by name, department or status…"
-        shown={teamShown.length} total={(data.team || []).length} />
+        shown={teamShown.length} total={(data.team || []).filter(t => !eactive || eactive.match(t.eval_status)).length} />
       {!data.team.length && <div className="card p-8 text-center text-sm text-navy-400">No direct reports found in the employee mirror.</div>}
       {teamShown.map(t => (
         <div key={t.employee_id} className="card overflow-hidden">
