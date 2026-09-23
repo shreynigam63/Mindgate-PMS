@@ -3121,7 +3121,7 @@ router.get('/team/evaluations', async (req, res) => {
               sa.status AS self_status, sa.entries AS self_entries, sa.overall_self_rating,
               sa.went_well, sa.could_improve,
               me.id AS eval_id, me.status AS eval_status, me.entries AS eval_entries,
-              me.overall_rating, me.strengths, me.improvement_areas
+              me.overall_rating, me.strengths, me.improvement_areas, me.potential_rating
          FROM core.employees e
          LEFT JOIN pms.self_appraisals sa ON sa.cycle_id=$1 AND sa.employee_id=e.id
          LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id
@@ -3183,17 +3183,29 @@ router.put('/team/evaluations/:employeeId', async (req, res) => {
         overallRating = b.overall_rating;
       }
     }
+    // Potential: the manager's own judgement of it, recorded with the
+    // review rather than only in the calibration room months later. It
+    // does NOT overwrite what calibration settles on — that stays on
+    // pms.top_talent. See migration 043 for why both are kept.
+    if (b.potential_rating !== undefined && b.potential_rating !== null
+        && !['low', 'mid', 'high'].includes(b.potential_rating)) {
+      return res.status(400).json({ error: "potential_rating must be 'low', 'mid' or 'high'" });
+    }
     await db.query(
-      `INSERT INTO pms.manager_evaluations (tenant_id, cycle_id, employee_id, manager_id, entries, overall_rating, strengths, improvement_areas, status)
-       VALUES ($1,$2,$3,$4,COALESCE($5,'{}'::jsonb),$6,$7,$8,'pending')
+      `INSERT INTO pms.manager_evaluations (tenant_id, cycle_id, employee_id, manager_id, entries, overall_rating, strengths, improvement_areas, potential_rating, status)
+       VALUES ($1,$2,$3,$4,COALESCE($5,'{}'::jsonb),$6,$7,$8,$9,'pending')
        ON CONFLICT (cycle_id, employee_id) DO UPDATE SET
          entries=COALESCE($5,pms.manager_evaluations.entries),
          overall_rating=COALESCE($6,pms.manager_evaluations.overall_rating),
          strengths=COALESCE($7,pms.manager_evaluations.strengths),
          improvement_areas=COALESCE($8,pms.manager_evaluations.improvement_areas),
+         potential_rating=COALESCE($9,pms.manager_evaluations.potential_rating),
          updated_at=now()`,
       [T(req), c.id, emp.id, req.user.id, b.entries ? JSON.stringify(b.entries) : null,
-       overallRating, b.strengths ?? null, b.improvement_areas ?? null]);
+       overallRating, b.strengths ?? null, b.improvement_areas ?? null, b.potential_rating ?? null]);
+    // Potential feeds the 9-box, so a change to it is a change a person
+    // can be asked about later.
+    if (b.potential_rating) audit(req, 'POTENTIAL_SET_BY_MANAGER', c.id, emp.id, { potential_rating: b.potential_rating });
     res.json({ ok: true, overall_rating: overallRating });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3452,7 +3464,10 @@ router.get('/calibration', async (req, res) => {
               me.overall_rating AS manager_rating, he.overall_rating AS hod_rating,
               COALESCE(adj.to_rating, he.overall_rating, me.overall_rating) AS proposed,
               adj.reason AS adjustment_reason, adj.adjusted_by, adj.at AS adjusted_at,
-              tt.nine_box_cell, tt.potential_rating
+              tt.nine_box_cell, tt.potential_rating,
+              -- The manager's own read on potential, so calibration starts
+              -- from a view rather than a blank (migration 043).
+              me.potential_rating AS manager_potential
          FROM core.employees e
          JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id AND me.status='submitted'
          LEFT JOIN pms.hod_evaluations he ON he.cycle_id=$1 AND he.employee_id=e.id AND he.status='submitted'
@@ -3501,6 +3516,11 @@ router.get('/nine-box', async (req, res) => {
     const level = ['org', 'department', 'manager'].includes(req.query.level) ? req.query.level : 'org';
     const c = await activeCycle(T(req));
     if (!c) return res.status(409).json({ error: 'No active cycle' });
+    // The grid stays on CALIBRATED cells only. A manager's potential
+    // (migration 043) is an input to calibration, not a placement: turning
+    // one into a cell would need performance-band thresholds, and this
+    // repo keeps thresholds in tables rather than inventing cut-offs in a
+    // query every tenant then inherits.
     const rows = (await db.query(
       `SELECT e.id, e.name, e.department, m.name AS manager_name, tt.nine_box_cell, tt.potential_rating
          FROM pms.top_talent tt JOIN core.employees e ON e.id=tt.employee_id

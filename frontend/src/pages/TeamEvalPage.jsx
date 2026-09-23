@@ -58,7 +58,7 @@ export default function TeamEvalPage() {
 }
 
 function EvalEditor({ t, phase, scale, cycleType, reload }) {
-  const [f, setF] = useState({ overall_rating: t.overall_rating ?? '', strengths: t.strengths || '', improvement_areas: t.improvement_areas || '' });
+  const [f, setF] = useState({ overall_rating: t.overall_rating ?? '', strengths: t.strengths || '', improvement_areas: t.improvement_areas || '', potential_rating: t.potential_rating || '' });
   const [state, setState] = useState('idle');
   const [err, setErr] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -154,6 +154,28 @@ function EvalEditor({ t, phase, scale, cycleType, reload }) {
         <textarea className="inp" rows={3} value={f.strengths} onChange={setText('strengths')} disabled={!editable} /></div>
       <div><label className="lbl">Improvement areas</label>
         <textarea className="inp" rows={3} value={f.improvement_areas} onChange={setText('improvement_areas')} disabled={!editable} /></div>
+      {/* Potential, recorded here as well as at calibration. This is the
+          MANAGER'S read, made with a year of context; calibration still
+          settles the final 9-box placement with the distribution on
+          screen, and sees this as its starting point. Neither overwrites
+          the other — see migration 043. */}
+      <div>
+        <label className="lbl">Potential</label>
+        <div className="flex gap-2">
+          {[['', 'Not set'], ['low', 'Low'], ['mid', 'Medium'], ['high', 'High']].map(([v, label]) => (
+            <button key={v} type="button" disabled={!editable}
+              onClick={() => { setF(x => ({ ...x, potential_rating: v })); persist({ potential_rating: v || null }); }}
+              className={`chip px-3 py-1.5 ${f.potential_rating === v
+                ? 'bg-violet-600 text-white' : 'bg-white text-navy-500 border border-navy-100'} ${editable ? '' : 'opacity-50'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-navy-400 mt-1">
+          Your read on how far this person could go. Calibration sees it and settles the final
+          9-box placement; this is not overwritten by that.
+        </p>
+      </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {editable && (
         <button className="btn-pri" onClick={async () => {

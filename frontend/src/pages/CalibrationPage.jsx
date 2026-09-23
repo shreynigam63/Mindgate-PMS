@@ -142,6 +142,16 @@ function CalRow({ r, reload }) {
           <select className="inp !py-1 !text-[11px] w-auto" value={box} onChange={e => saveBox(e.target.value)}>
             <option value="">—</option>{NINE_BOX.map(b => <option key={b}>{b}</option>)}
           </select>
+          {/* The manager's own read on potential, recorded with their
+              evaluation (migration 043). Shown as the starting point for
+              this conversation, not as the answer: calibration still sets
+              the cell, and the two are kept apart so "why did this change"
+              stays answerable. */}
+          {r.manager_potential && (
+            <div className="text-[10px] text-navy-400 mt-1">
+              manager: <b className="text-violet-700">{r.manager_potential}</b> potential
+            </div>
+          )}
         </td>
         <td className="px-3 py-2">
           <span className="inline-flex items-center gap-1">
