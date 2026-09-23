@@ -152,16 +152,22 @@ width, at the cost of hiding two thirds of the product behind a tab.
 The role gating is the same in both, and is not what is being compared: an
 employee sees only Self either way.
 
-## What is drawn here but does not exist in the product yet
+## What is drawn here that the product does not already do
 
-These are **new features**, not re-skins, and need separate scoping:
+Corrected on 23 Sep after going through each one in the running app. The
+first version of this list called all four new features; three of them are
+mostly or entirely built already, and saying otherwise would have had us
+rebuild what exists.
 
-- the **Career Path ladder** (Current → next → next, with target timelines)
-- **"Org IDP"** as a concept on the development plan
-- **"Confirmed by manager"** on a Quarterly Connect (the product has manager
-  *sign-off*, which is a different thing)
-- the **potential rating** on the manager's evaluation — drawn on Team
-  Evaluation and marked as new
+| Drawn | Already in the product | Actually missing |
+|---|---|---|
+| **Career Path ladder** (Current → next → next, with timelines) | Aspiring Career on My Growth: target role constrained by the Career Pathing Matrix, expected timeline, growth plan, milestones with target dates and progress, AI "Suggest a path" | only the read-only **ladder view** — the chain of transitions drawn as steps |
+| **"Org IDP"** on the development plan | the plan itself, as "Target achievements for the year", with goals, progress and manager approval | nothing but the **label** |
+| **"Confirmed by manager"** on a Quarterly Connect | manager sign-off, end to end: a Sign off action, Signed off / Pending sign-off chips, and an "N awaiting sign-off" count (migration 012, BR-4.3) | nothing — **this is the same feature**. What is missing is only that pending sign-offs are not listed in All Approvals |
+| **potential rating** on the manager's evaluation | potential is captured at **Calibration**, via the 9-box cell, and stored on `pms.top_talent` | moving or mirroring it onto the manager's evaluation, so potential is set when the manager writes the review rather than afterwards |
+
+So the genuinely new work is one read-only view, one label, one queue row,
+and one decision about where potential is captured — not four features.
 
 ## Screenshots of every screen, per role
 
