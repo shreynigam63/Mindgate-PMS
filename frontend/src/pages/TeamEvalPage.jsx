@@ -76,14 +76,14 @@ export default function TeamEvalPage() {
             <span className={`chip ${t.self_status === 'submitted' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>self: {t.self_status || 'not started'}</span>
             <span className={`chip ${t.eval_status === 'submitted' ? 'bg-emerald-100 text-emerald-700' : 'bg-navy-50 text-navy-600'}`}>eval: {t.eval_status || 'pending'}</span>
           </button>
-          {openId === t.employee_id && <EvalEditor t={t} phase={data.cycle.phase} scale={data.cycle.rating_scale} cycleType={data.cycle.cycle_type} reload={load} />}
+          {openId === t.employee_id && <EvalEditor t={t} phase={data.cycle.phase} scale={data.cycle.rating_scale} reload={load} />}
         </div>
       ))}
     </div>
   );
 }
 
-function EvalEditor({ t, phase, scale, cycleType, reload }) {
+function EvalEditor({ t, phase, scale, reload }) {
   const [f, setF] = useState({ overall_rating: t.overall_rating ?? '', strengths: t.strengths || '', improvement_areas: t.improvement_areas || '', potential_rating: t.potential_rating || '' });
   const [state, setState] = useState('idle');
   const [err, setErr] = useState(null);
@@ -121,28 +121,24 @@ function EvalEditor({ t, phase, scale, cycleType, reload }) {
           {t.could_improve && <p><b>Could improve:</b> {t.could_improve}</p>}
         </div>
       )}
-      {/* Requested: per-KRA A+-C ratings visible on Annual Manager
-          Evaluation too, not just Mid-Year — previously mutually
-          exclusive with the 7-parameter scoring. The 7 parameters remain
-          what officially drives the annual overall_rating (unchanged,
-          backend-enforced); PerKraRating's onOverallChange is a no-op on
-          annual specifically so it can't overwrite that value — it only
-          drives f.overall_rating on non-annual cycles, where it's the
-          sole source of the overall rating. */}
-      {cycleType === 'annual' && (
-        <ParameterScoring employeeId={t.employee_id} editable={editable} initialRating={t.overall_rating} />
-      )}
       {/* The pre-read comes BEFORE the rating controls: it is meant to be
           read while deciding, not checked afterwards. Gated on editable so
           it does not appear on an evaluation already submitted. */}
       {editable && <AppraisalSummaryPanel stage="pre_publish" employeeId={t.employee_id} onKeep={() => setKeptKey(k => k + 1)} />}
       <KeptRecommendations key={keptKey} employeeId={t.employee_id} kind="appraisal_pre_publish" title="Kept discussion points" />
 
-      <PerKraRating employeeId={t.employee_id} scale={scale} editable={editable} overallRating={cycleType === 'annual' ? null : f.overall_rating}
+      {/* THE RATING, on every cycle type. Annual used to be the exception:
+          the 7-parameter grid sat above this and governed the official
+          annual rating, while these per-KRA ratings were marked "for
+          reference" and their onOverallChange was a deliberate no-op.
+          The parameters came out on 23 Sep at the client's instruction,
+          so the special case came out with them — the overall is now the
+          weighted average of the KRA ratings here, the same way mid-year
+          has always worked, and the server computes it from the approved
+          KRA weights rather than trusting this number. */}
+      <PerKraRating employeeId={t.employee_id} scale={scale} editable={editable} overallRating={f.overall_rating}
         selfSubmitted={t.self_status === 'submitted'}
-        selfEntries={t.self_entries || {}} onOverallChange={cycleType === 'annual' ? () => {} : (v) => setF(s => ({ ...s, overall_rating: v }))}
-        hideOverallFooter={cycleType === 'annual'} />
-      {cycleType === 'annual' && <p className="text-[10px] text-navy-400 -mt-2">Per-KRA ratings here are for reference — the 7 parameters above govern the official annual rating.</p>}
+        selfEntries={t.self_entries || {}} onOverallChange={(v) => setF(s => ({ ...s, overall_rating: v }))} />
       <div className="flex flex-wrap items-center gap-2">
         {editable && (
           <button className="btn-sec" disabled={drafting} onClick={askDraft}>
@@ -251,7 +247,47 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
 
   if (err) return <p className="text-xs text-rose-600">{err}</p>;
   if (!kras) return <p className="text-xs text-navy-400">Loading KRAs…</p>;
-  if (!kras.length) return <p className="text-xs text-navy-400">No KRAs found for this employee this cycle.</p>;
+  // NO KRAs ON THE SHEET — and, since 23 Sep, this branch has to offer a
+  // rating rather than only explain itself.
+  //
+  // It used to be enough to say "no KRAs": on an annual cycle the 7
+  // parameters set the rating and the grid sat above this, so a manager
+  // could still rate somebody whose sheet was never filled in. With the
+  // parameters gone the per-KRA average is the only route, and an
+  // employee with no KRAs would have left their manager no control at
+  // all and a submit that fails with "overall_rating required".
+  //
+  // So the plain picker comes back for exactly this case. The server
+  // accepts a typed overall_rating only when no entries are sent, which
+  // is precisely here — a sheet WITH KRAs still has its overall computed
+  // from the approved weights and cannot be typed over.
+  if (!kras.length) {
+    const setOverall = async (value) => {
+      setSaveState('saving');
+      try {
+        await api(`/pms/team/evaluations/${employeeId}`, { method: 'PUT', body: JSON.stringify({ overall_rating: value }) });
+        setSaveState('saved'); onOverallChange(value);
+      } catch (e) { setSaveState('error'); setErr(e.message); }
+    };
+    return (
+      <div className="space-y-1.5">
+        <p className="text-xs text-navy-400">
+          No KRAs on this employee's sheet for this cycle, so there is nothing to rate
+          line by line. Set the overall rating directly.
+        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="lbl mb-0">Overall rating</span>
+          {(scale || []).map((sc) => (
+            <button key={sc.value} type="button" disabled={!editable}
+              className={`chip ${Number(overallRating) === sc.value ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
+              onClick={() => setOverall(sc.value)}>{KRA_GRADE_LABEL[sc.value] || sc.label}</button>
+          ))}
+          {saveState === 'saving' && <span className="text-[11px] text-amber-600">Saving…</span>}
+          {saveState === 'saved' && <span className="text-[11px] text-emerald-600">Saved ✓</span>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">
@@ -313,46 +349,15 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
   );
 }
 
-// BR-6.2/6.3: on an annual cycle the overall rating is computed from the 7
-// Organizational Driver parameters, not typed directly — this replaces the
-// plain rating <select> for annual cycles. Every parameter must be scored
-// before the weighted rating counts as complete (and only then does it
-// flow into overall_rating server-side, gating Submit evaluation below).
-function ParameterScoring({ employeeId, editable, initialRating }) {
-  const [data, setData] = useState(null);
-  const [err, setErr] = useState(null);
-  const load = () => api(`/pms/team/parameter-scores/${employeeId}`).then(setData).catch(e => setErr(e.message));
-  useEffect(() => { load(); }, [employeeId]);
-
-  const setScore = async (parameterId, value) => {
-    try {
-      const r = await api(`/pms/team/parameter-scores/${employeeId}`, { method: 'PUT', body: JSON.stringify({ scores: { [parameterId]: Number(value) } }) });
-      setData(d => d ? { ...d, scores: { ...d.scores, [parameterId]: Number(value) }, weighted_rating: r.weighted_rating, complete: r.complete, missing: r.missing } : d);
-    } catch (e) { setErr(e.message); }
-  };
-
-  if (err) return <p className="text-xs text-rose-600">{err}</p>;
-  if (!data) return <p className="text-xs text-navy-400">Loading parameters…</p>;
-
-  return (
-    <div className="space-y-2">
-      <p className="lbl mb-0">7 Organizational Parameters {!data.complete && <span className="text-amber-600 font-normal">— {data.missing.length} not yet scored</span>}</p>
-      <div className="grid sm:grid-cols-2 gap-2">
-        {data.parameters.map(p => (
-          <div key={p.id} className="flex items-center justify-between gap-2 bg-navy-50 rounded-lg px-2 py-1.5">
-            <span className="text-xs">{p.name} <span className="text-navy-400">({p.weight_pct}%)</span></span>
-            <select className="inp !py-1 w-16" value={data.scores[p.id] ?? ''} disabled={!editable} onChange={e => setScore(p.id, e.target.value)}>
-              <option value="">—</option>
-              {[1, 2, 3, 4, 5].map(v => <option key={v} value={v}>{v}</option>)}
-            </select>
-          </div>
-        ))}
-      </div>
-      <p className="text-sm">
-        <span className="font-semibold">Weighted overall rating: </span>
-        <span className={data.complete ? 'text-emerald-700 font-bold' : 'text-navy-400'}>{data.weighted_rating ?? '—'}</span>
-        {!data.complete && <span className="text-[11px] text-navy-400"> (updates live as parameters are scored; final once all 7 are)</span>}
-      </p>
-    </div>
-  );
-}
+// ParameterScoring — the 7 Organizational Driver grid that used to sit on
+// this card for annual cycles — was REMOVED on 23 Sep at the client's
+// instruction: "we don't need 7 parameters in PMS for now, please remove
+// from all tabs if available, in case it is needed in future we can
+// check."
+//
+// Kept out of the UI only. pms.review_parameters, pms.parameter_scores and
+// GET/PUT /pms/team/parameter-scores/:employeeId are untouched and still
+// work, so putting the grid back is a UI change, not a rebuild. What the
+// grid used to produce — the official annual overall_rating — now comes
+// from the per-KRA ratings above, through the same weighted engine every
+// other cycle type already used.

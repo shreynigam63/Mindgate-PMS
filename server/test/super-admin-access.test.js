@@ -226,10 +226,13 @@ test('SELF-APPROVAL IS MARKED IN THE AUDIT LOG — and only when it is one', { s
 });
 
 test('the admin can rate and submit their OWN manager evaluation', { skip }, async () => {
-  // The next approval level up, on themselves. On an ANNUAL cycle the
-  // overall rating is computed from the 7 organisational parameters —
-  // the route refuses a directly-set rating, which is correct and is why
-  // this scores the parameters instead.
+  // The next approval level up, on themselves. This scores the 7
+  // organisational parameters because that is one of the two ways an
+  // annual overall rating can be set, and it is the one that exercises
+  // the weighted engine. Until 23 Sep it was the ONLY way — the route
+  // refused a directly-set annual rating — and when the parameters came
+  // off every tab that refusal went with them. The route still works,
+  // which is what this keeps honest.
   await db.query(`UPDATE pms.cycles SET phase='manager_eval' WHERE id=$1`, [cycleId]);
   const params = (await db.query(
     `SELECT id FROM pms.review_parameters WHERE tenant_id=$1 AND active=true`, [tenantId])).rows;

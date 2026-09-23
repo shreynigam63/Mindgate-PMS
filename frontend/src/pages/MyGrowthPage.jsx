@@ -3,6 +3,7 @@ import { Plus, Trash2, Send, CheckCircle2, RotateCcw } from 'lucide-react';
 import { api, phaseLabel, phaseColor, Bullets } from '../utils/api';
 import AiDraftPanel, { SuggestionList } from './AiDraftPanel';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 const STATUS_COLOR = {
   draft: 'bg-slate-100 text-navy-600',
@@ -14,12 +15,29 @@ const STATUS_COLOR = {
 export default function MyGrowthPage() {
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
-      <PageHead title="My Growth" hue="leaf" />
+      <PageHead title="My Growth" hue="leaf"
+        sub="Your target achievements for the year, and the role you are aiming at." />
       <div className="grid lg:grid-cols-2 gap-4">
         <DevelopmentPlanCard />
         <CareerPathCard />
       </div>
-      <TeamDevelopmentPlans />
+    </div>
+  );
+}
+
+// SPLIT OUT on 23 Sep, the same fault as the Mid-Year one: the manager's
+// list of their reports' growth plans was rendering at the bottom of the
+// employee's OWN growth page, so "My Growth" showed other people. My
+// Performance is about me; a list of my reports is a Manager page.
+//
+// Nothing about the review itself changed — same list, same expand, same
+// approve/return, same endpoints.
+export function TeamGrowthPage() {
+  return (
+    <div className="space-y-4 max-w-4xl mx-auto">
+      <PageHead title="Team Target Achievements" hue="lagoon"
+        sub="Approve or return the growth plans your reports have submitted." />
+      <TeamDevelopmentPlans standalone />
     </div>
   );
 }
@@ -895,18 +913,32 @@ function CareerPathCard() {
 // ugly browser popup, not part of the page). Now mirrors
 // TeamKraSheetsPage.jsx's pattern: expand a report to see every goal in
 // full, with the comment box inline on the page itself.
-function TeamDevelopmentPlans() {
+function TeamDevelopmentPlans({ standalone = false }) {
   const [data, setData] = useState(null);
   const [openId, setOpenId] = useState(null);
+  const [q, setQ] = useState('');
   const load = () => api('/pms/team/development-plans').then(setData).catch(() => setData({ cycle: null, plans: [] }));
   useEffect(() => { load(); }, []);
 
-  if (!data || !data.plans?.length) return null;
+  // As a whole page an empty list has to SAY it is empty; as a trailing
+  // block on somebody else's page, returning null was right.
+  if (!data) return standalone ? <p className="text-sm text-navy-400">Loading…</p> : null;
+  if (!data.plans?.length) {
+    return standalone
+      ? <div className="card p-8 text-center text-sm text-navy-400">
+          No direct reports have submitted a growth plan yet.
+        </div>
+      : null;
+  }
+
+  const shown = data.plans.filter((p) => matches(q, p.employee_name, p.status));
 
   return (
     <div className="space-y-2">
-      <p className="font-bold text-sm">Team target achievements</p>
-      {data.plans.map(p => (
+      {!standalone && <p className="font-bold text-sm">Team target achievements</p>}
+      <SearchBox value={q} onChange={setQ} placeholder="Search your team by name or status…"
+        shown={shown.length} total={data.plans.length} />
+      {shown.map(p => (
         <div key={p.id} className="card overflow-hidden">
           <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpenId(v => v === p.id ? null : p.id)}>
             <span className="text-sm font-semibold flex-1">{p.employee_name}</span>

@@ -162,6 +162,8 @@ test('every page is registered, and every route is registered once', { skip }, a
     '/engagement', '/home', '/my/annual-review', '/my/growth', '/my/history', '/my/kras',
     '/my/midyear', '/my/rating', '/my/self-appraisal', '/people', '/pip', '/team/connects',
   ]);
+  // /admin/engagement is NOT in that list, and that is the point of the
+  // 23 Sep split: taking a survey stays public, running one does not.
 });
 
 test('an employee is offered only their own pages', { skip }, async () => {
@@ -182,7 +184,11 @@ test('a manager adds the team pages and nothing else', { skip }, async () => {
   // everybody's mid-year reviews was split out of /my/midyear — it was
   // rendering under the employee's own card, so My Performance showed
   // every person the viewer could see.
-  assert.deepEqual(added, ['/team/eval', '/team/kra-sheets', '/team/midyear', '/team/overview']);
+  // /team/growth joined on 23 Sep, when the manager's list of everybody's
+  // target achievements was split out of /my/growth for the same reason
+  // /team/midyear had been split out of /my/midyear the same day.
+  assert.deepEqual(added, ['/team/eval', '/team/growth', '/team/kra-sheets', '/team/midyear',
+                           '/team/overview']);
   assert.ok(!mgr.includes('/admin/increments'), 'a manager never sees compensation');
 });
 
@@ -193,9 +199,29 @@ test('a delivery head adds their own queue, HR adds the admin pages', { skip }, 
 
   const hr = (await me(tok.hr)).pages;
   for (const p of ['/admin/cycles', '/admin/directory', '/admin/increments',
-                   '/admin/closure-letters', '/admin/settings']) {
+                   '/admin/closure-letters', '/admin/settings', '/admin/engagement']) {
     assert.ok(hr.includes(p), `HR must be offered ${p}`);
   }
+  // The other half of the engagement split: a manager runs no surveys.
+  assert.ok(!mgr.includes('/admin/engagement'), 'running surveys is HR\'s, not a manager\'s');
+});
+
+test('the 7-parameter page is gone, and nobody is offered it', { skip }, async () => {
+  // Removed on 23 Sep: "we don't need 7 parameters in PMS for now,
+  // please remove from all tabs". The row is deleted by migration 047 for
+  // existing tenants and absent from 042's list for new ones; the route
+  // came out of App.jsx in the same change, which is what actually closes
+  // the page — an unregistered route is passed through by the client
+  // guard and left to the API.
+  for (const role of ROLES) {
+    const { pages } = await me(tok[role]);
+    assert.ok(!pages.includes('/admin/parameter-analysis'),
+      `${role} must not be offered the removed 7-parameter page`);
+  }
+  // The capability behind it is deliberately NOT deleted, so that turning
+  // it back on is re-adding a row and a route.
+  assert.ok((await db.query(`SELECT 1 FROM pms.review_parameters WHERE tenant_id=$1`,
+    [tenantId])).rowCount > 0, 'the parameters themselves survive the UI removal');
 });
 
 test('an admin is offered every page', { skip }, async () => {
@@ -227,4 +253,48 @@ test('index.js filters /me from the page table rather than trusting the client',
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.js'), 'utf8');
   assert.match(src, /FROM core\.page_permission/, 'index.js reads the page table');
   assert.match(src, /ensurePageSeeds/, 'index.js seeds pages for a tenant created after migration');
+});
+
+test('migration 047 moves an EXISTING tenant, which 042 alone cannot', { skip }, async () => {
+  // 042 seeds with ON CONFLICT DO NOTHING, deliberately: a tenant's rows
+  // are theirs to edit and a later boot must not stamp on them. The cost
+  // is that 042 can only ever add, so the 23 Sep moves needed 047 — and
+  // 047 runs against tenants that already exist, which this tenant (made
+  // after the migrations) is not. So it is set up to look like one.
+  const t = (await db.query(
+    `INSERT INTO core.tenants (name, slug) VALUES ($1,$1) RETURNING id`,
+    ['pp-old-' + Date.now()])).rows[0];
+  // The page set as it stood BEFORE the change: the removed page present,
+  // the two new ones absent.
+  for (const [page, route, perm] of [
+    ['my_growth', '/my/growth', null],
+    ['engagement', '/engagement', null],
+    ['review_analysis', '/admin/parameter-analysis', 'pms_admin'],
+  ]) {
+    await db.query(
+      `INSERT INTO core.page_permission (tenant_id, page, route, required_permission)
+       VALUES ($1,$2,$3,$4)`, [t.id, page, route, perm]);
+  }
+
+  await require('../migrations/047-page-moves-and-parameter-removal').up(db);
+
+  const after = (await db.query(
+    `SELECT route, required_permission FROM core.page_permission WHERE tenant_id=$1`,
+    [t.id])).rows;
+  const byRoute = Object.fromEntries(after.map((r) => [r.route, r.required_permission]));
+  assert.equal(byRoute['/admin/engagement'], 'engagement_admin', 'running surveys moved to HR');
+  assert.equal(byRoute['/team/growth'], 'pms_team_eval', 'the team growth list moved to Manager');
+  assert.ok(!('/admin/parameter-analysis' in byRoute), 'the 7-parameter page is gone');
+  assert.ok('/engagement' in byRoute, 'and taking a survey is still the employee\'s');
+
+  // RUNNING IT TWICE MUST BE A NO-OP. Migrations are re-run against
+  // restored backups often enough that a second run throwing is a real
+  // outage, not a theoretical one.
+  await require('../migrations/047-page-moves-and-parameter-removal').up(db);
+  assert.equal((await db.query(
+    `SELECT count(*)::int AS n FROM core.page_permission WHERE tenant_id=$1`, [t.id])).rows[0].n,
+    after.length, 'the second run changes nothing');
+
+  await db.query(`DELETE FROM core.page_permission WHERE tenant_id=$1`, [t.id]);
+  await db.query(`DELETE FROM core.tenants WHERE id=$1`, [t.id]);
 });

@@ -51,11 +51,10 @@ export function TeamMidYearPage() {
 // rather than trusting cycle.rating_scale's own .label field, since that
 // field differs per cycle and this pairing needs to hold regardless.
 const KRA_GRADE_LABEL = { 5: 'A+', 4: 'A', 3: 'B+', 2: 'B', 1: 'C' };
-const OVERALL_DESCRIPTIVE_LABEL = { 5: 'Outstanding', 4: 'Exceeds', 3: 'Meets Expectations', 2: 'Developing', 1: 'Needs Improvement' };
-function overallLabel(value) {
-  if (value == null) return null;
-  return OVERALL_DESCRIPTIVE_LABEL[Number(value)] || value;
-}
+// OVERALL_DESCRIPTIVE_LABEL/overallLabel went with the "From the manager"
+// column on 23 Sep — that panel was the only read-only rating display
+// left on this page. The KRA_GRADE_LABEL pairing above still holds for
+// every rating that is PICKED here.
 
 function StatusPill({ label, signed }) {
   return (
@@ -374,9 +373,21 @@ function MyMidYearCard() {
         </AiModal>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-3">
+      {/* ONE COLUMN, NOT TWO, since 23 Sep. The right-hand column was
+          "From the manager" — their mid-year rating and narrative,
+          withheld until HR published and shown after. Removed at the
+          client's instruction: "mid year under my performance still
+          shows Manager reviews also which should ideally not be visible
+          under self mid-year."
+          THE RECORD IS NOT DELETED: manager_rating and manager_narrative
+          are still written, still returned by GET /pms/my/midyear-review,
+          and still visible to the manager, the Delivery Head and HR. The
+          employee no longer sees them HERE. The status line at the top of
+          this card still says whether the manager has signed, so an
+          employee can still tell their half is done. */}
+      <div className="grid gap-3">
         <div className="border border-navy-100 rounded-xl p-3 space-y-2">
-          <p className="text-[10px] uppercase font-bold text-navy-400">From the employee (you)</p>
+          <p className="text-[10px] uppercase font-bold text-navy-400">Your mid-year</p>
           {hasKras ? (
             <>
               <KraScoringList kras={data.kras} entries={data.checkin.self_entries} scale={data.cycle.rating_scale}
@@ -401,24 +412,6 @@ function MyMidYearCard() {
             {editable && <button className="btn-pri" onClick={submit}><Send size={12} className="inline mr-1" />Save & sign</button>}
             {badge && <span className={`text-[11px] font-medium ${badge[1]}`}>{badge[0]}</span>}
           </div>
-        </div>
-        <div className="border border-navy-100 rounded-xl p-3 space-y-2">
-          <p className="text-[10px] uppercase font-bold text-navy-400">From the manager</p>
-          {/* Withheld until HR publishes — the manager's number is not
-              final until the Delivery Head review and calibration have
-              been through it. manager_status above still says whether they
-              have completed their half. */}
-          {data.manager_ratings_withheld ? (
-            <p className="text-xs text-navy-500">
-              <b>Not shared yet.</b> Your manager's mid-year rating and comments appear here once
-              HR publishes the cycle.
-            </p>
-          ) : (
-            <>
-              <p className="text-xs"><b>Mid-year rating:</b> {overallLabel(data.checkin.manager_rating) ?? '—'}</p>
-              <p className="text-xs text-navy-500 whitespace-pre-wrap">{data.checkin.manager_narrative || 'Not written yet.'}</p>
-            </>
-          )}
         </div>
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}

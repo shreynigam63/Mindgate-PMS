@@ -39,6 +39,11 @@ const PAGES = [
 
   ['team_overview',      '/team/overview',            'pms_team_eval'],
   ['team_kra_sheets',    '/team/kra-sheets',          'pms_team_eval'],
+  // Split out of /my/growth on 23 Sep for the same reason /team/midyear
+  // was split out of /my/midyear: the manager's list of everybody's
+  // target achievements was rendering under the employee's own growth
+  // card, so My Performance showed other people again.
+  ['team_growth',        '/team/growth',              'pms_team_eval'],
   ['team_eval',          '/team/eval',                'pms_team_eval'],
   // Split out of /my/midyear on 23 Sep: the manager's list of everybody's
   // mid-year reviews was rendering underneath the employee's OWN mid-year
@@ -61,11 +66,19 @@ const PAGES = [
   ['nine_box',           '/admin/nine-box',           'pms_hod'],
   ['closure_letters',    '/admin/closure-letters',    'letters_admin'],
   ['increments',         '/admin/increments',         'pms_compensation'],
-  ['review_analysis',    '/admin/parameter-analysis', 'pms_admin'],
+  // review_analysis ('/admin/parameter-analysis') was REMOVED on 23 Sep
+  // with the rest of the 7-parameter UI. Migration 047 deletes the row
+  // from tenants that already have it; this list is what a NEW tenant
+  // gets, and it no longer includes a page with no way in.
   ['super_50',           '/admin/watchlist',          'pms_admin'],
   ['settings',           '/admin/settings',           'pms_admin'],
 
+  // Engagement split in two on 23 Sep: taking a survey you were invited
+  // to stays public and stays in Self; running surveys — writing them,
+  // opening and closing them, reading results and themes — is HR's, and
+  // carries the permission the write endpoints already required.
   ['engagement',         '/engagement',               null],
+  ['engagement_admin',   '/admin/engagement',         'engagement_admin'],
   ['people_hub',         '/people',                   null],
 ];
 

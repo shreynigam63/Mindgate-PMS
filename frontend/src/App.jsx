@@ -10,7 +10,7 @@ import HodQueuePage from './pages/HodQueuePage';
 import CycleAdminPage from './pages/CycleAdminPage';
 import CalibrationPage from './pages/CalibrationPage';
 import MyRatingPage from './pages/MyRatingPage';
-import EngagementPage from './pages/EngagementPage';
+import MySurveysPage, { EngagementAdminPage } from './pages/EngagementPage';
 import PeopleHubPage from './pages/PeopleHubPage';
 import DirectoryPage from './pages/DirectoryPage';
 import DepartmentHeadsPage from './pages/DepartmentHeadsPage';
@@ -22,7 +22,7 @@ import PIPPage from './pages/PIPPage';
 import WatchlistPage from './pages/WatchlistPage';
 import NotificationBell from './pages/NotificationBell';
 import NineBoxPage from './pages/NineBoxPage';
-import MyGrowthPage from './pages/MyGrowthPage';
+import MyGrowthPage, { TeamGrowthPage } from './pages/MyGrowthPage';
 import KraOrgOverviewPage from './pages/KraOrgOverviewPage';
 import KraLibraryPage from './pages/KraLibraryPage';
 import AnnualReviewPage from './pages/AnnualReviewPage';
@@ -30,7 +30,6 @@ import MidYearReviewPage, { TeamMidYearPage } from './pages/MidYearReviewPage';
 import ConnectsPage from './pages/ConnectsPage';
 import ClosureLettersPage from './pages/ClosureLettersPage';
 import IncrementSimulationPage from './pages/IncrementSimulationPage';
-import ParameterAnalysisPage from './pages/ParameterAnalysisPage';
 import SettingsPage from './pages/SettingsPage';
 import ApprovalsPage from './pages/ApprovalsPage';
 import HomePage from './pages/HomePage';
@@ -84,14 +83,25 @@ const NAV = [
     // it moved instead. A manager still reaches their reports' plans
     // here; the page itself is unchanged.
     { to: '/pip', label: 'Improvement Plan', icon: ShieldAlert },
-    // Folded in from the old "Engagement & People" tab: both are things
-    // you do as yourself, and the reference has three tabs, not four.
-    { to: '/engagement', label: 'Engagement', icon: HeartHandshake },
+    // ENGAGEMENT WAS SPLIT on 23 Sep, asked for directly: "Engagement tab
+    // should be under HR tab and not my performance". The half that is
+    // genuinely yours stays — the surveys you have been invited to and
+    // the one you are filling in. Running surveys (writing them, opening
+    // and closing them, reading results and themes) moved to HR, where
+    // the person who does that work already lives. Splitting rather than
+    // moving wholesale is the difference between an employee still being
+    // able to answer a survey and being unable to.
+    { to: '/engagement', label: 'My Surveys', icon: HeartHandshake },
     { to: '/people', label: 'People Hub', icon: User },
   ]},
   { group: 'Manager', hue: 'lagoon', icon: Users, items: [
     { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard },
     { to: '/team/kra-sheets', label: 'Team KRA Sheets', icon: ClipboardList },
+    // Split out of /my/growth on 23 Sep for the same reason the Mid-Year
+    // split happened: "my growth still shows team target achievement …
+    // which should ideally be under Manager tab". A list of other
+    // people's plans is never Self, whatever page it grew up on.
+    { to: '/team/growth', label: 'Team Target Achievements', icon: TrendingUp },
     // Split out of /my/midyear — see TeamMidYearPage for why.
     { to: '/team/midyear', label: 'Team Mid-Year', icon: Clock },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
@@ -115,10 +125,14 @@ const NAV = [
     // Salary sits behind its own permission, so this link is HR/admin only
     // — a manager must never see it, let alone open it.
     { to: '/admin/increments', label: 'Increment Simulation', icon: Calculator },
-    // A confidential assessment the employee and their manager never see —
-    // HR and admin only, both in the nav and on the server.
-    { to: '/admin/parameter-analysis', label: 'Review Analysis (HR)', icon: ShieldCheck },
+    // 'Review Analysis (HR)' — the AI read of an annual review meeting
+    // against the 7 organisational parameters — was REMOVED from the menu
+    // on 23 Sep with the rest of the 7-parameter UI. Its page component,
+    // its /agentic/parameter-analysis routes and every analysis already
+    // stored are untouched; only the way in is gone.
     { to: '/admin/watchlist', label: 'Super 50', icon: Award },
+    // The admin half of Engagement — see the Self group for the split.
+    { to: '/admin/engagement', label: 'Engagement Surveys', icon: HeartHandshake },
     // Tenant-wide configuration. Last in the group because it is set once
     // and then left alone, unlike everything above it.
     { to: '/admin/settings', label: 'Settings', icon: SlidersHorizontal },
@@ -239,7 +253,6 @@ function Main({ user }) {
               <Route path="/home" element={<HomePage />} />
               <Route path="/my/kras" element={<MyKRASheetPage />} />
               <Route path="/admin/increments" element={<IncrementSimulationPage />} />
-              <Route path="/admin/parameter-analysis" element={<ParameterAnalysisPage />} />
               <Route path="/admin/settings" element={<SettingsPage />} />
               <Route path="/admin/approvals" element={<ApprovalsPage />} />
               <Route path="/my/self-appraisal" element={<SelfAppraisalPage />} />
@@ -247,6 +260,7 @@ function Main({ user }) {
               <Route path="/my/midyear" element={<MidYearReviewPage />} />
               <Route path="/team/midyear" element={<TeamMidYearPage />} />
               <Route path="/my/growth" element={<MyGrowthPage />} />
+              <Route path="/team/growth" element={<TeamGrowthPage />} />
               <Route path="/my/annual-review" element={<AnnualReviewPage />} />
               <Route path="/my/history" element={<HistoryPage />} />
               <Route path="/team/overview" element={<TeamOverviewPage />} />
@@ -266,7 +280,8 @@ function Main({ user }) {
               <Route path="/admin/closure-letters" element={<ClosureLettersPage />} />
               <Route path="/admin/watchlist" element={<WatchlistPage />} />
               <Route path="/admin/nine-box" element={<NineBoxPage />} />
-              <Route path="/engagement" element={<EngagementPage />} />
+              <Route path="/engagement" element={<MySurveysPage />} />
+              <Route path="/admin/engagement" element={<EngagementAdminPage />} />
               <Route path="/people" element={<PeopleHubPage user={user} />} />
               <Route path="*" element={<Navigate to="/home" replace />} />
             </Routes>

@@ -1,24 +1,80 @@
 import { useEffect, useState } from 'react';
-import { Plus, Sparkles, Play, Square } from 'lucide-react';
+import { Plus, Sparkles, Play, Square, Trash2 } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
 
-export default function EngagementPage() {
+// SPLIT IN TWO on 23 Sep. Asked for: "Engagement tab should be under HR
+// tab and not my performance."
+//
+// The page was doing two unrelated jobs behind one route: HR creates
+// surveys and reads results, and every employee responds to them. Moving
+// the whole thing to HR would have taken survey-taking away from 1,398
+// people, so the two jobs became two pages:
+//
+//   /engagement        — MY SURVEYS. Self tab. Respond to what is open.
+//   /admin/engagement  — ENGAGEMENT.  HR tab. Create, open, close, read.
+//
+// Same endpoints, same anonymity guarantees; only the route each half
+// lives at changed.
+export default function MySurveysPage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [taking, setTaking] = useState(null);
-  const [results, setResults] = useState(null);
-  const [themes, setThemes] = useState(null);
-  const [themesOpen, setThemesOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const load = () => Promise.all([api('/engagement/surveys'), api('/engagement/my/invitations')])
-    .then(([s, i]) => setData({ ...s, invitations: i.invitations })).catch(e => setErr(e.message));
+  const load = () => api('/engagement/my/invitations')
+    .then((i) => setData(i.invitations || [])).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
 
   if (err && !data) return <p className="text-sm text-rose-600">{err}</p>;
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
   if (taking) return <TakeSurvey survey={taking} done={() => { setTaking(null); load(); }} />;
+
+  const open = data.filter((i) => !i.completed_at);
+  return (
+    <div className="space-y-4 max-w-3xl mx-auto">
+      <PageHead title="My Surveys" hue="leaf"
+        sub="Engagement surveys HR has sent you. Anonymous ones never store your name against your answers." />
+      {!data.length && (
+        <div className="card p-8 text-center text-sm text-navy-400">
+          No surveys have been sent to you.
+        </div>
+      )}
+      {data.length > 0 && (
+        <div className="card divide-y divide-navy-50">
+          {data.map((i) => (
+            <div key={i.id} className="p-3 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold flex-1">{i.title}</span>
+              <span className="chip bg-navy-50 text-navy-500">{i.survey_type}</span>
+              {i.anonymity_default && <span className="chip bg-emerald-100 text-emerald-700">anonymous</span>}
+              {i.completed_at
+                ? <span className="text-xs text-emerald-600">completed ✓</span>
+                : <button className="btn-pri" onClick={() => setTaking(i)}>Take</button>}
+            </div>
+          ))}
+        </div>
+      )}
+      {open.length > 0 && (
+        <p className="text-[11px] text-navy-400">
+          {open.length} still open. Your answers go to HR in aggregate.
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function EngagementAdminPage() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [results, setResults] = useState(null);
+  const [themes, setThemes] = useState(null);
+  const [themesOpen, setThemesOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const load = () => api('/engagement/surveys').then(setData).catch(e => setErr(e.message));
+  useEffect(() => { load(); }, []);
+
+  if (err && !data) return <p className="text-sm text-rose-600">{err}</p>;
+  if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
 
   const openSurvey = async (s) => {
     try { const r = await api(`/engagement/surveys/${s.id}/open`, { method: 'POST' }); alert(`Opened — ${r.invited} invited.`); load(); }
@@ -35,38 +91,16 @@ export default function EngagementPage() {
     catch (e) { alert(e.message); }
     setBusy(false);
   };
-  const createSurvey = async () => {
-    const title = prompt('Survey title'); if (!title) return;
-    const qs = [];
-    let q; while ((q = prompt(`Question ${qs.length + 1} (blank to finish). Prefix "enps:" for the eNPS question, "text:" for open text.`))) {
-      if (q.startsWith('enps:')) qs.push({ qtype: 'enps', prompt: q.slice(5).trim() });
-      else if (q.startsWith('text:')) qs.push({ qtype: 'text', prompt: q.slice(5).trim(), required: false });
-      else qs.push({ qtype: 'scale', prompt: q.trim() });
-    }
-    if (!qs.length) return alert('A survey needs at least one question.');
-    try { await api('/engagement/surveys', { method: 'POST', body: JSON.stringify({ title, questions: qs }) }); load(); }
-    catch (e) { alert(e.message); }
-  };
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <PageHead title="Engagement" hue="leaf">
-        {data.admin && <button className="btn-pri" onClick={createSurvey}><Plus size={13} className="inline mr-1" />New survey</button>}
+      <PageHead title="Engagement" hue="leaf"
+        sub="Create surveys, open them to the company, and read the results.">
+        {data.admin && <button className="btn-pri" onClick={() => setBuilding(true)}>
+          <Plus size={13} className="inline mr-1" />New survey</button>}
       </PageHead>
-
-      {data.invitations.length > 0 && (
-        <div className="card p-4">
-          <p className="lbl">Your open surveys</p>
-          {data.invitations.map(i => (
-            <div key={i.id} className="flex items-center justify-between py-1.5">
-              <span className="text-sm">{i.title} <span className="chip bg-navy-50 text-navy-500 ml-1">{i.survey_type}</span>
-                {i.anonymity_default && <span className="chip bg-emerald-100 text-emerald-700 ml-1">anonymous</span>}</span>
-              {i.completed_at ? <span className="text-xs text-emerald-600">completed ✓</span>
-                : <button className="btn-pri" onClick={() => setTaking(i)}>Take</button>}
-            </div>
-          ))}
-        </div>
-      )}
+      {building && <SurveyBuilder onClose={() => setBuilding(false)}
+        onCreated={() => { setBuilding(false); load(); }} />}
 
       <div className="card divide-y divide-navy-100">
         {data.surveys.map(s => (
@@ -121,6 +155,131 @@ export default function EngagementPage() {
         </div>
       )}
     </div>
+  );
+}
+
+
+// THE SURVEY BUILDER, replacing a chain of browser prompt() boxes.
+//
+// The old flow asked for a title in one dialog, then asked for questions
+// one at a time in a loop, and the only way to say what KIND a question
+// was was to type "enps:" or "text:" as a prefix. You could not see what
+// you had written, could not go back, could not reorder, and a stray
+// Cancel threw the lot away. It also cannot be styled, and on the
+// client's own screenshot it renders as "pms.agentichumans.in says".
+//
+// This is the same three fields, on one form, visible at once.
+const QTYPES = [
+  { v: 'scale', label: '1–5 scale',  hint: 'Rated one to five. The default, and what the averages are built from.' },
+  { v: 'enps',  label: 'eNPS 0–10',  hint: 'The "how likely are you to recommend" question. Scored as eNPS.' },
+  { v: 'text',  label: 'Open text',  hint: 'Free text. Read as themes by the agent; individual answers stay in the data.' },
+];
+
+function SurveyBuilder({ onClose, onCreated }) {
+  const [title, setTitle] = useState('');
+  const [qs, setQs] = useState([{ qtype: 'scale', prompt: '' }]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const set = (i, k, v) => setQs((rows) => rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  const move = (i, d) => setQs((rows) => {
+    const j = i + d;
+    if (j < 0 || j >= rows.length) return rows;
+    const out = [...rows];
+    [out[i], out[j]] = [out[j], out[i]];
+    return out;
+  });
+
+  const filled = qs.filter((q) => q.prompt.trim());
+  const save = async () => {
+    setErr(null);
+    if (!title.trim()) { setErr('Give the survey a title.'); return; }
+    if (!filled.length) { setErr('A survey needs at least one question.'); return; }
+    setBusy(true);
+    try {
+      await api('/engagement/surveys', { method: 'POST', body: JSON.stringify({
+        title: title.trim(),
+        questions: filled.map((q) => ({
+          qtype: q.qtype, prompt: q.prompt.trim(),
+          ...(q.qtype === 'text' ? { required: false } : {}),
+        })),
+      }) });
+      onCreated();
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <AiModal wide badge={false} title="New survey" onClose={onClose}
+      footer={
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-navy-500">
+            {/* Counts the questions that actually HAVE text, since blank
+                ones are dropped on save — so this line and the survey
+                that gets created agree. "0 questions" next to a visible
+                empty Question 1 would otherwise read as a bug rather
+                than as the prompt to type something that it is. */}
+            {filled.length
+              ? <>{filled.length} question{filled.length === 1 ? '' : 's'} · saved as a <b>draft</b></>
+              : <>Nothing written yet — type a question to enable <b>Create survey</b></>}
+          </span>
+          <button className="btn-sec !py-1.5" onClick={onClose}>Cancel</button>
+          {/* Genuinely disabled, because the line to its left says it is.
+              save() still validates — the button is a courtesy, not the
+              guard, and a survey with no questions is refused either
+              way. */}
+          <button className="btn-pri !py-1.5" disabled={busy || !filled.length} onClick={save}>
+            {busy ? 'Creating…' : 'Create survey'}
+          </button>
+        </div>
+      }>
+      <div className="space-y-3">
+        <div>
+          <label className="lbl">Survey title</label>
+          <input className="inp" autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Employee Satisfaction — H1 FY26-27" />
+        </div>
+
+        {qs.map((q, i) => (
+          <div key={i} className="card p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-navy-400">Question {i + 1}</span>
+              <span className="ml-auto flex items-center gap-1">
+                <button className="text-navy-300 hover:text-navy-700 disabled:opacity-30"
+                  disabled={i === 0} title="Move up" onClick={() => move(i, -1)}>↑</button>
+                <button className="text-navy-300 hover:text-navy-700 disabled:opacity-30"
+                  disabled={i === qs.length - 1} title="Move down" onClick={() => move(i, 1)}>↓</button>
+                <button className="text-rose-500 hover:text-rose-700 disabled:opacity-30 ml-1"
+                  disabled={qs.length === 1} title="Remove"
+                  onClick={() => setQs((rows) => rows.filter((_, j) => j !== i))}>
+                  <Trash2 size={13} />
+                </button>
+              </span>
+            </div>
+            <input className="inp" value={q.prompt} onChange={(e) => set(i, 'prompt', e.target.value)}
+              placeholder="What do you want to ask?" />
+            <div className="flex flex-wrap gap-1.5">
+              {QTYPES.map((t) => (
+                <button key={t.v} type="button" title={t.hint}
+                  className={`chip ${q.qtype === t.v ? 'bg-leaf-500 text-white' : 'bg-navy-50 text-navy-500'}`}
+                  onClick={() => set(i, 'qtype', t.v)}>{t.label}</button>
+              ))}
+            </div>
+            <p className="text-[11px] text-navy-400">{(QTYPES.find((t) => t.v === q.qtype) || {}).hint}</p>
+          </div>
+        ))}
+
+        <button className="btn-sec" onClick={() => setQs((rows) => [...rows, { qtype: 'scale', prompt: '' }])}>
+          <Plus size={13} className="inline mr-1" />Add question
+        </button>
+
+        {err && <p className="text-xs text-rose-600">{err}</p>}
+        <p className="text-[11px] text-navy-400">
+          Created as a <b>draft</b> — nobody is invited until you press <b>Open</b> on it. Blank
+          questions are dropped rather than saved empty.
+        </p>
+      </div>
+    </AiModal>
   );
 }
 

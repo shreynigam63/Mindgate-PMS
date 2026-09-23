@@ -3237,32 +3237,39 @@ router.put('/team/evaluations/:employeeId', async (req, res) => {
     if (!emp) return res.status(404).json({ error: 'employee not found' });
     if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: 'Not your report' });
     const b = req.body || {};
-    // BR-6.2/6.3: on an ANNUAL cycle the overall rating must come from the
-    // 7-parameter weighted engine (PUT /team/parameter-scores/:id), not a
-    // directly typed number — otherwise the weighting requirement is just
-    // a UI suggestion nobody has to follow. Mid-Year's own, separate
-    // self+manager rating (BR-5.4) is unaffected; only annual is gated.
-    if (c.cycle_type === 'annual' && b.overall_rating !== undefined) {
-      return res.status(409).json({ error: 'On an annual cycle, overall_rating is computed from the 7 organisational parameters — use PUT /pms/team/parameter-scores/:employeeId instead' });
-    }
-    // Requested: a rating (+ comment) per KRA for the manager too, mirroring
-    // Self-Appraisal's per-KRA rating — with overall_rating auto-computed as
-    // the weighted average, same computeWeightedRating() reuse as there.
-    // Scoped to non-annual cycles only (annual's overall_rating is already
-    // exclusively governed by the 7-parameter engine above; per-KRA entries
-    // can still be saved there as supplementary detail, they just don't
-    // drive overall_rating on that cycle type).
+    // THE ANNUAL RATING NOW COMES FROM THE KRAs, on every cycle type.
+    //
+    // It used to be special. On an annual cycle the overall rating was
+    // computed from the 7 organisational parameters and a typed
+    // overall_rating was REFUSED with a 409, so that the weighting
+    // requirement in BR-6.2/6.3 was enforced rather than merely suggested.
+    //
+    // Removed on 23 Sep at the client's instruction — "we don't need 7
+    // parameters in PMS for now, please remove from all tabs" — and the
+    // gate had to go with the UI: with the parameter grid off the
+    // evaluation card there would be no way left to set an annual rating
+    // at all, and no manager could submit.
+    //
+    // What replaces it is not a typed number either. It is the SAME
+    // deterministic engine every other cycle type already used: each KRA
+    // is rated, computeWeightedRating() weights those ratings by the KRA
+    // weights the manager approved, and that is the overall. The rating
+    // stays derived from weights a human signed off, which is the
+    // property the 7-parameter gate existed to protect.
+    //
+    // NOTHING IS DELETED. pms.review_parameters, the scores table, and
+    // PUT /team/parameter-scores/:id are all still here and still work;
+    // only the UI and the annual gate are gone. Turning the parameters
+    // back on is putting the grid back on the card.
     let overallRating = null; // null = leave untouched (COALESCE keeps the existing value)
-    if (c.cycle_type !== 'annual') {
-      if (b.entries) {
-        const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, emp.id])).rows[0];
-        const kras = sheet ? (await db.query(`SELECT id, weight AS weight_pct FROM pms.kras WHERE sheet_id=$1`, [sheet.id])).rows : [];
-        const scores = new Map(kras.map((k) => [k.id, b.entries[k.id] ? b.entries[k.id].rating : null]));
-        const { rating } = computeWeightedRating(kras, scores);
-        if (rating != null) overallRating = rating;
-      } else if (b.overall_rating != null) {
-        overallRating = b.overall_rating;
-      }
+    if (b.entries) {
+      const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, emp.id])).rows[0];
+      const kras = sheet ? (await db.query(`SELECT id, weight AS weight_pct FROM pms.kras WHERE sheet_id=$1`, [sheet.id])).rows : [];
+      const scores = new Map(kras.map((k) => [k.id, b.entries[k.id] ? b.entries[k.id].rating : null]));
+      const { rating } = computeWeightedRating(kras, scores);
+      if (rating != null) overallRating = rating;
+    } else if (b.overall_rating != null) {
+      overallRating = b.overall_rating;
     }
     // Potential: the manager's own judgement of it, recorded with the
     // review rather than only in the calibration room months later. It

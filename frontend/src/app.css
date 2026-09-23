@@ -58,6 +58,16 @@ body {
 .hero-sub { @apply text-xs mt-1; color: rgba(255, 255, 255, 0.82); }
 .hero-navy { background: linear-gradient(115deg, #12294f, #1b3b6f 42%, #2f6fae 78%, #17a2b8); }
 .hero-teal { background: linear-gradient(115deg, #0d6070, #17a2b8 55%, #43a047); }
+/* .hero-lagoon was MISSING while nine components already asked for it,
+   and a missing hero-* class is silent: the band keeps .hero's white text
+   and loses only its background, so the title renders white on the page's
+   own near-white backdrop and reads as an empty strip. Found on Team
+   Target Achievements; Team Mid-Year had the same fault since 23 Sep.
+   `lagoon` is the Manager group's colour everywhere else in the UI
+   (navico-lagoon, si-lagoon, the nav tab), so the manager's page bands
+   get the teal gradient that was already standing in for it. PageHead
+   now also falls back rather than trusting the name. */
+.hero-lagoon { background: linear-gradient(115deg, #0d6070, #17a2b8 55%, #43a047); }
 .hero-violet { background: linear-gradient(115deg, #4a2170, #7c4dbe 52%, #ec407a); }
 .hero-pink { background: linear-gradient(115deg, #a81b52, #ec407a 58%, #f5821f); }
 .hero-amber { background: linear-gradient(115deg, #b85708, #f5821f 58%, #f2b705); }

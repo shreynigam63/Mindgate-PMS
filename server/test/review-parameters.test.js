@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const HAS_DB = !!process.env.DATABASE_URL;
 const skip = !HAS_DB && 'DATABASE_URL not set — see file header';
 
-let db, server, base, empId;
+let db, server, base, empId, tenantId;
 
 before(async () => {
   if (!HAS_DB) return;
@@ -23,6 +23,7 @@ before(async () => {
   await runMigrations();
 
   const t = (await db.query(`INSERT INTO core.tenants (name, slug) VALUES ($1,$1) RETURNING id`, [process.env.TENANT_SLUG])).rows[0];
+  tenantId = t.id;
   await require('../migrations/002-default-permission-bundles').ensureTenantSeeds(db, t.id);
   await require('../migrations/008-review-parameters').ensureDefaultParameters(db, t.id);
 
@@ -140,7 +141,21 @@ test('parameter-scores: rejects an unknown parameter_id and an out-of-range scor
   assert.equal(bad2.status, 400);
 });
 
-test('team/evaluations: directly setting overall_rating on an annual cycle is rejected — must go through parameter-scores', { skip }, async () => {
+test('team/evaluations on an annual cycle now takes a rating directly — the parameter gate is gone', { skip }, async () => {
+  // THIS TEST USED TO ASSERT THE OPPOSITE, and the reversal is the
+  // point of keeping it rather than deleting it.
+  //
+  // Until 23 Sep an annual PUT carrying overall_rating was refused with
+  // a 409 telling the caller to use PUT /team/parameter-scores instead,
+  // so that BR-6.2/6.3's weighting requirement was enforced and not
+  // merely suggested. The client then asked for the 7 parameters to come
+  // off every tab. The gate had to go with the grid: with no grid on the
+  // evaluation card, a 409 here would have left annual evaluations with
+  // no way to set a rating at all, and no manager able to submit.
+  //
+  // What replaces the gate is in the next test: the rating is still
+  // DERIVED from approved weights, just from the KRA weights rather than
+  // the parameter weights. This one only asserts the refusal is gone.
   const hrAuth = await login('param-hr@x.com');
   const mgrAuth = await login('param-mgr@x.com');
   const cycleR = await api('/pms/cycles', hrAuth.token, { method: 'POST', body: JSON.stringify({ name: 'Guard Cycle', fiscal_year: 'FYG', cycle_type: 'annual' }) });
@@ -149,9 +164,53 @@ test('team/evaluations: directly setting overall_rating on an annual cycle is re
     await api(`/pms/cycles/${cycleId}/phase`, hrAuth.token, { method: 'POST', body: JSON.stringify({ to: phase }) });
   }
   const direct = await api(`/pms/team/evaluations/${empId}`, mgrAuth.token, { method: 'PUT', body: JSON.stringify({ overall_rating: 5 }) });
-  assert.equal(direct.status, 409);
-  assert.match(direct.body.error, /7 organisational parameters/);
+  assert.equal(direct.status, 200, JSON.stringify(direct.body));
+  assert.equal(direct.body.overall_rating, 5);
   // Strengths/improvement_areas (no overall_rating) still work normally.
   const textOnly = await api(`/pms/team/evaluations/${empId}`, mgrAuth.token, { method: 'PUT', body: JSON.stringify({ strengths: 'fine' }) });
   assert.equal(textOnly.status, 200);
+
+  // AND THE PARAMETER ENGINE STILL WORKS, which is what "in case it is
+  // needed in future we can check" has to mean in practice: the route,
+  // the tables and the weighted computation are all still here, and
+  // scoring every parameter still writes the overall rating. Only the
+  // UI and the refusal were removed.
+  const plist = await api('/pms/review-parameters', hrAuth.token);
+  const scores = Object.fromEntries(plist.body.parameters.map((p) => [p.id, 3]));
+  const viaParams = await api(`/pms/team/parameter-scores/${empId}`, mgrAuth.token,
+    { method: 'PUT', body: JSON.stringify({ scores }) });
+  assert.equal(viaParams.status, 200, JSON.stringify(viaParams.body));
+  assert.equal(viaParams.body.complete, true);
+  assert.equal(Number(viaParams.body.weighted_rating), 3);
+});
+
+test('an annual manager rating is computed from the KRA weights, not typed', { skip }, async () => {
+  // The replacement for the 7-parameter gate. A PUT carrying per-KRA
+  // entries has its overall computed server-side from the weights on the
+  // approved sheet — exactly what mid-year already did, now on annual
+  // too. The manager cannot nudge the number by sending a different one
+  // alongside the entries: entries win.
+  const hrAuth = await login('param-hr@x.com');
+  const mgrAuth = await login('param-mgr@x.com');
+  const c = (await db.query(
+    `SELECT id FROM pms.cycles WHERE tenant_id=$1 AND name='Guard Cycle'`, [tenantId])).rows[0];
+  const sheet = (await db.query(
+    `INSERT INTO pms.kra_sheets (tenant_id, cycle_id, employee_id, status)
+     VALUES ($1,$2,$3,'approved')
+     ON CONFLICT (cycle_id, employee_id) DO UPDATE SET status='approved' RETURNING id`,
+    [tenantId, c.id, empId])).rows[0];
+  await db.query(`DELETE FROM pms.kras WHERE sheet_id=$1`, [sheet.id]);
+  const k = [];
+  for (const [title, w] of [['Heavy', 75], ['Light', 25]]) {
+    k.push((await db.query(
+      `INSERT INTO pms.kras (tenant_id, sheet_id, title, weight) VALUES ($1,$2,$3,$4) RETURNING id`,
+      [tenantId, sheet.id, title, w])).rows[0].id);
+  }
+  // 5 on the 75% KRA and 1 on the 25% one = 0.75*5 + 0.25*1 = 4.
+  const r = await api(`/pms/team/evaluations/${empId}`, mgrAuth.token, { method: 'PUT',
+    body: JSON.stringify({ entries: { [k[0]]: { rating: 5 }, [k[1]]: { rating: 1 } }, overall_rating: 2 }) });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(Number(r.body.overall_rating), 4,
+    'the weighted average of the KRA ratings, not the 2 the caller also sent');
+  assert.ok(hrAuth.token);
 });

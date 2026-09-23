@@ -164,12 +164,13 @@ export default function SelfAppraisalPage() {
 // gate that required all 7 to be scored went with it, on both sides —
 // keeping it would have made an annual self-appraisal unsubmittable.
 //
-// The 7 parameters are untouched everywhere else: the manager still
-// scores them on TeamEvalPage and that scoring is still the official
-// annual rating, HR still configures them on the Cycle Admin page, and
-// the HR-only AI analysis of the annual review meeting is still
-// categorised under them. This page's overall figure is, on every cycle
-// type, the weighted average of the employee's own per-KRA grades.
+// The rest of the 7-parameter UI followed on 23 Sep — the manager's grid
+// on TeamEvalPage, HR's editor on Cycle Admin, and the Review Analysis
+// page — so the parameters are now absent from every tab, which is what
+// the client asked for. The tables and routes behind them survive. This
+// page's overall figure is, as it already was on every cycle type, the
+// weighted average of the employee's own per-KRA grades; the manager's
+// is now the same thing on their side.
 
 function EvidenceSection({ editable }) {
   const [files, setFiles] = useState(null);
