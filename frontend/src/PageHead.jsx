@@ -18,7 +18,7 @@
 // 'lagoon' did on two Manager pages until 23 Sep — the class had never
 // been written. Adding a hue means adding BOTH the class in app.css and
 // the name here.
-const HUES = ['navy', 'teal', 'lagoon', 'violet', 'pink', 'amber', 'leaf'];
+const HUES = ['navy', 'teal', 'lagoon', 'violet', 'azure', 'amber', 'leaf'];
 
 export default function PageHead({ title, sub, hue = 'navy', children }) {
   const h = HUES.includes(hue) ? hue : 'navy';

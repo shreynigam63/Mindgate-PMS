@@ -99,7 +99,7 @@ export default function CycleAdminPage() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <PageHead title="Appraisal Cycles" hue="pink">
+      <PageHead title="Appraisal Cycles" hue="azure">
         <button className="btn-pri" onClick={() => setShowNew(true)}><Plus size={13} className="inline mr-1" />New cycle</button>
         <button className="btn-sec" disabled={busy} onClick={cycleHealth}><Activity size={13} className="inline mr-1" />{busy ? 'Working…' : 'Cycle health (agent)'}</button>
         <button className="btn-sec" disabled={busy} onClick={runReminders}><BellRing size={13} className="inline mr-1" />{busy ? 'Working…' : 'Run reminder sweep'}</button>

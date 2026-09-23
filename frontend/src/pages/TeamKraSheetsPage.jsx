@@ -45,7 +45,7 @@ export default function TeamKraSheetsPage() {
       match: v => v === 'submitted' },
     { key: 'approved', label: 'Approved', tone: 'bg-leaf-500 text-white',
       match: v => v === 'approved' },
-    { key: 'returned', label: 'Returned', tone: 'bg-brand-500 text-white',
+    { key: 'returned', label: 'Returned', tone: 'bg-rose-500 text-white',
       match: v => v === 'returned' },
     { key: 'open', label: 'Not submitted', tone: 'bg-navy-700 text-white',
       match: v => !v || v === 'draft' || v === 'not_started' },

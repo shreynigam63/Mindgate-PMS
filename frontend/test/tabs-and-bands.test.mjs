@@ -170,6 +170,37 @@ test('5 — the 7 parameters are on no tab, for any role', async (t) => {
   await ctx.close();
 });
 
+test('every coloured chip on Home has a real background, for every role', async (t) => {
+  if (needStack(t)) return;
+  // THE SAME FAULT AS THE PAGE BAND, one layer down. A hue name is
+  // pasted into a class — si-${hue}, dk-${hue}, navico-${hue} — and a
+  // name with no matching class produces no error, just a white square
+  // where a coloured icon should be. The page bands got a check on
+  // 23 Sep; this is the rest of the families, and it earned its place
+  // the same day: renaming the pink hue to azure left FIVE call sites
+  // still asking for 'pink', two of which no static grep of the CSS
+  // would have caught because they were in files nobody had touched.
+  //
+  // Home is the right page because it is the only one that uses all
+  // three families at once, and it varies by role.
+  const TRANSPARENT = ['rgba(0, 0, 0, 0)', 'transparent'];
+  for (const email of ['emp@shot.in', 'mgr@shot.in', 'hr@shot.in']) {
+    const { ctx, page } = await open(email, '/home');
+    const bad = await page.evaluate((blank) => {
+      const out = [];
+      for (const el of document.querySelectorAll('.stat-i, .deskt, .sechead-i, .navico')) {
+        const s = getComputedStyle(el);
+        const painted = s.backgroundImage !== 'none' || !blank.includes(s.backgroundColor);
+        if (!painted) out.push(el.className);
+      }
+      return out;
+    }, TRANSPARENT);
+    assert.deepEqual(bad, [],
+      `${email}: these carry a hue with no matching class, so they render blank`);
+    await ctx.close();
+  }
+});
+
 test('every page band actually has a background — an unstyled hue is invisible', async (t) => {
   if (needStack(t)) return;
   // Reads the COMPUTED background, so a hue whose class was never written

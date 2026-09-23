@@ -396,7 +396,7 @@ function FirstTimeSetup({ onUser }) {
       <input className="inp" placeholder="Your email" value={email} onChange={e => setEmail(e.target.value)} />
       <input className="inp" type="password" placeholder="Choose a password (min 8 characters)" value={password} onChange={e => setPassword(e.target.value)} />
       <input className="inp" type="password" placeholder="Confirm password" value={confirm} onChange={e => setConfirm(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} />
-      {err && <p className="text-xs text-brand-600">{err}</p>}
+      {err && <p className="text-xs text-rose-600">{err}</p>}
       <button className="btn-pri" disabled={busy} onClick={go}>{busy ? 'Creating account…' : 'Create admin account & sign in'}</button>
     </div>
   );
@@ -422,7 +422,7 @@ function SignIn({ onUser }) {
       </h1>
       <input className="inp" placeholder="email" value={email} onChange={e => setEmail(e.target.value)} />
       <input className="inp" type="password" placeholder="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} />
-      {err && <p className="text-xs text-brand-600">{err}</p>}
+      {err && <p className="text-xs text-rose-600">{err}</p>}
       <button className="btn-pri" onClick={go}>Sign in</button>
       <p className="text-[11px] text-navy-400">Production instances sign in with your organisation's identity provider.</p>
     </div>

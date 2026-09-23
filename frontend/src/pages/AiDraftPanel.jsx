@@ -35,7 +35,7 @@ const ACCENTS = {
   sky: { strip: 'bg-gradient-to-r from-teal-50 to-sky-50 border-teal-100', title: 'text-teal-700', btn: 'btn-pri !bg-teal-700' },
   indigo: { strip: 'bg-gradient-to-r from-indigo-50 to-violet-50 border-indigo-100', title: 'text-indigo-700', btn: 'btn-pri !bg-indigo-700' },
   amber: { strip: 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-100', title: 'text-amber-700', btn: 'btn-pri !bg-amber-600' },
-  violet: { strip: 'bg-gradient-to-r from-violet-50 to-fuchsia-50 border-violet-100', title: 'text-violet-700', btn: 'btn-pri !bg-violet-700' },
+  violet: { strip: 'bg-gradient-to-r from-violet-50 to-indigo-50 border-violet-100', title: 'text-violet-700', btn: 'btn-pri !bg-violet-700' },
 };
 
 export default function AiDraftPanel({

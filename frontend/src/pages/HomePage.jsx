@@ -146,7 +146,7 @@ export default function HomePage() {
   // a tile only exists when its count does — see Desk above.
   const desk = [];
   if (me.kra && me.kra.status === 'returned')
-    desk.push({ key: 'ret', icon: FileWarning, hue: 'rose', n: 1, label: 'KRA returned to you', to: '/my/kras' });
+    desk.push({ key: 'ret', icon: FileWarning, hue: 'red', n: 1, label: 'KRA returned to you', to: '/my/kras' });
   else if (!me.kra || ['draft', 'not_started'].includes(me.kra.status))
     desk.push({ key: 'kra', icon: Target, hue: 'navy', n: 1, label: 'KRA sheet to submit', to: '/my/kras' });
   if (phase === 'mid_year_review' && (!me.midyear || me.midyear.self_status !== 'submitted'))
@@ -154,18 +154,18 @@ export default function HomePage() {
   if (phase === 'self_appraisal' && (!me.appraisal || me.appraisal.status !== 'submitted'))
     desk.push({ key: 'sa', icon: ClipboardList, hue: 'violet', n: 1, label: 'Self-appraisal pending', to: '/my/self-appraisal' });
   if (connects.open_actions > 0)
-    desk.push({ key: 'act', icon: ListChecks, hue: 'pink', n: connects.open_actions, label: 'Connect actions open', to: '/team/connects' });
+    desk.push({ key: 'act', icon: ListChecks, hue: 'azure', n: connects.open_actions, label: 'Connect actions open', to: '/team/connects' });
   // Every kind of submission waiting on this person, in one figure. It
   // replaced a KRA-only tile: two tiles counting overlapping things made
   // "how many are waiting on me" a question with two answers.
   if (pending && pending.total > 0)
     desk.push({ key: 'req', icon: Hourglass, hue: 'amber', n: pending.total, label: 'Pending requests', to: queueLink });
   if (team && evalOpen && team.reports > team.evals_done)
-    desk.push({ key: 'te', icon: ClipboardList, hue: 'rose', n: team.reports - team.evals_done, label: 'Evaluations to write', to: '/team/eval' });
+    desk.push({ key: 'te', icon: ClipboardList, hue: 'red', n: team.reports - team.evals_done, label: 'Evaluations to write', to: '/team/eval' });
   if (team && team.no_connect > 0)
     desk.push({ key: 'tc', icon: MessageCircle, hue: 'leaf', n: team.no_connect, label: 'No connect logged yet', to: '/team/connects' });
   if (admin && admin.no_manager > 0)
-    desk.push({ key: 'nm', icon: UserX, hue: 'rose', n: admin.no_manager, label: 'Employees with no manager', to: '/admin/directory' });
+    desk.push({ key: 'nm', icon: UserX, hue: 'red', n: admin.no_manager, label: 'Employees with no manager', to: '/admin/directory' });
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
@@ -192,7 +192,7 @@ export default function HomePage() {
           n={`${me.kra ? me.kra.total_weight : 0}%`} label="Total weight" />
         <Stat icon={TrendingUp} hue="leaf" to="/my/growth"
           n={goals.total || 0} label="Goals" />
-        <Stat icon={MessageCircle} hue="pink" to="/team/connects"
+        <Stat icon={MessageCircle} hue="azure" to="/team/connects"
           n={connects.logged || 0} label="Connects" />
         {/* Someone with no reports gets their open action items here
             instead. The first cut put "Mid-year done" in this slot, which
@@ -249,7 +249,7 @@ export default function HomePage() {
 
       {desk.length > 0 && (
         <div>
-          <SecHead icon={Inbox} hue="rose" title="My desk"
+          <SecHead icon={Inbox} hue="red" title="My desk"
             sub={`${desk.length} ${desk.length === 1 ? 'thing is' : 'things are'} outstanding`} />
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {desk.map(x => <Desk key={x.key} {...x} />)}
@@ -332,10 +332,10 @@ export default function HomePage() {
           the person who can fix them is reading this page. Also a desk
           tile above — this line carries the WHY, which a tile cannot. */}
       {admin && admin.no_manager > 0 && (
-        <div className="card p-3 text-xs text-navy-500 border-l-4 border-brand-500">
-          <b className="text-brand-600">{admin.no_manager}</b> active {admin.no_manager === 1 ? 'employee has' : 'employees have'} no
+        <div className="card p-3 text-xs text-navy-500 border-l-4 border-rose-500">
+          <b className="text-rose-600">{admin.no_manager}</b> active {admin.no_manager === 1 ? 'employee has' : 'employees have'} no
           reporting manager, so their KRAs cannot be approved by anyone.{' '}
-          <NavLink to="/admin/directory" className="font-semibold text-brand-600">Fix in Employees →</NavLink>
+          <NavLink to="/admin/directory" className="font-semibold text-rose-600">Fix in Employees →</NavLink>
         </div>
       )}
     </div>

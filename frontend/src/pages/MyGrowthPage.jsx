@@ -527,7 +527,7 @@ function ProgressBar({ value, onChange, readOnly }) {
 const VERDICT = {
   ready:         { label: 'Looks ready',            cls: 'bg-leaf-50 text-leaf-600 border-leaf-500' },
   nearly:        { label: 'Nearly there',           cls: 'bg-amber2-50 text-amber2-600 border-amber2-500' },
-  not_yet:       { label: 'Not yet',                cls: 'bg-brand-50 text-brand-600 border-brand-500' },
+  not_yet:       { label: 'Not yet',                cls: 'bg-rose-50 text-rose-700 border-rose-500' },
   cannot_assess: { label: 'Not enough to go on',    cls: 'bg-navy-50 text-navy-500 border-navy-300' },
 };
 
@@ -552,7 +552,7 @@ function Readiness({ r }) {
       )}
       <div className="grid sm:grid-cols-2 gap-3 text-xs text-navy-600">
         <List title="You appear to have" items={r.have} tone="text-leaf-600" />
-        <List title="Gaps to close" items={r.gaps} tone="text-brand-600" />
+        <List title="Gaps to close" items={r.gaps} tone="text-amber2-600" />
       </div>
       <List title="Next steps" items={r.next_steps} tone="text-navy-500" />
       <p className="text-[10.5px] text-navy-400">

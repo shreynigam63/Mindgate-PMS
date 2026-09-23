@@ -342,12 +342,12 @@ function MyMidYearCard() {
       {editable && <MeetingPanel context="midyear" title="Mid-year discussion with your manager" />}
 
       {editable && (
-        <div className="bg-gradient-to-r from-fuchsia-50 to-rose-50 border border-fuchsia-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="bg-gradient-to-r from-violet-50 to-indigo-50 border border-violet-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-bold text-fuchsia-700">+ Start with an AI draft</p>
+            <p className="text-xs font-bold text-violet-700">+ Start with an AI draft</p>
             <p className="text-[11px] text-navy-500">Reads your KRAs and every 1-on-1 connect logged this cycle, then writes a balanced progress summary you can edit before submitting.</p>
           </div>
-          <button className="btn-pri !bg-fuchsia-700" disabled={drafting} onClick={askDraft}>
+          <button className="btn-pri !bg-violet-700" disabled={drafting} onClick={askDraft}>
             <Sparkles size={13} className="inline mr-1" />{drafting ? 'Drafting…' : 'Generate AI draft'}
           </button>
         </div>
@@ -537,9 +537,9 @@ function TeamMidYearDetail({ employeeId }) {
         {data.checkin.self_narrative ? <p className="whitespace-pre-wrap">{data.checkin.self_narrative}</p> : <p className="text-navy-400">Not written yet.</p>}
       </div>
       {editable && (
-        <div className="bg-gradient-to-r from-fuchsia-50 to-rose-50 border border-fuchsia-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="bg-gradient-to-r from-violet-50 to-indigo-50 border border-violet-100 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
           <p className="text-[11px] text-navy-500">Draft a narrative from their KRAs, your logged 1-on-1s this cycle, and their reflection above.</p>
-          <button className="btn-pri !bg-fuchsia-700" disabled={drafting} onClick={askDraft}>
+          <button className="btn-pri !bg-violet-700" disabled={drafting} onClick={askDraft}>
             <Sparkles size={13} className="inline mr-1" />{drafting ? 'Drafting…' : 'Generate AI draft'}
           </button>
         </div>

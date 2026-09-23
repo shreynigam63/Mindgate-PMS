@@ -36,7 +36,7 @@ export default function ConnectsPage() {
   const shown = (data || []).filter((cn) => matches(q, cn.employee_name, cn.manager_name, cn.topic, cn.notes, cn.discussion_notes, cn.achievements, cn.blockers));
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
-      <PageHead title="Quarterly Connects" hue="pink">
+      <PageHead title="Quarterly Connects" hue="azure">
         {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting sign-off</span>}
         <button className="btn-pri" onClick={() => setShowNew(v => !v)}><Plus size={13} className="inline mr-1" />Log a connect</button>
       </PageHead>

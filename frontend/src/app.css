@@ -68,8 +68,15 @@ body {
    get the teal gradient that was already standing in for it. PageHead
    now also falls back rather than trusting the name. */
 .hero-lagoon { background: linear-gradient(115deg, #0d6070, #17a2b8 55%, #43a047); }
-.hero-violet { background: linear-gradient(115deg, #4a2170, #7c4dbe 52%, #ec407a); }
-.hero-pink { background: linear-gradient(115deg, #a81b52, #ec407a 58%, #f5821f); }
+.hero-violet { background: linear-gradient(115deg, #4a2170, #7c4dbe 52%, #2f7fe8); }
+/* WAS .hero-pink, a magenta-to-orange band, until the client asked on
+   23 Sep for the pink to go: "please remove this pink colour from
+   everywhere and replace the same with blue color."
+   Renamed rather than recoloured in place, so that a page still asking
+   for hue="pink" shows up — PageHead falls back to navy for a hue it
+   does not know, which is visible, instead of silently rendering a blue
+   band under a name that says pink. */
+.hero-azure { background: linear-gradient(115deg, #0f3f8f, #2f7fe8 58%, #17a2b8); }
 .hero-amber { background: linear-gradient(115deg, #b85708, #f5821f 58%, #f2b705); }
 .hero-leaf { background: linear-gradient(115deg, #25682a, #43a047 55%, #17a2b8); }
 /* Buttons inside a band have to read on colour. Chips deliberately do NOT
@@ -89,7 +96,7 @@ body {
 .tile-lagoon { background: linear-gradient(135deg, #17a2b8, #0d7183); }
 .tile-leaf { background: linear-gradient(135deg, #43a047, #2c7a30); }
 .tile-amber { background: linear-gradient(135deg, #f5821f, #d2630a); }
-.tile-pink { background: linear-gradient(135deg, #ec407a, #c02760); }
+.tile-azure { background: linear-gradient(135deg, #2f7fe8, #1250a6); }
 .tile-violet { background: linear-gradient(135deg, #7c4dbe, #5b2a86); }
 
 /* ---- role tabs + sub-nav -------------------------------------------------
@@ -168,8 +175,14 @@ body {
 .si-lagoon { background: linear-gradient(135deg, #17a2b8, #0d7183); }
 .si-amber  { background: linear-gradient(135deg, #f5821f, #d2630a); }
 .si-leaf   { background: linear-gradient(135deg, #43a047, #2c7a30); }
-.si-pink   { background: linear-gradient(135deg, #ec407a, #c02760); }
-.si-rose   { background: linear-gradient(135deg, #e11d48, #9f1239); }
+.si-azure  { background: linear-gradient(135deg, #2f7fe8, #1250a6); }
+/* WAS .si-rose, a crimson (#e11d48) that carries a pink cast at this
+   size — a 52px saturated square. Shifted to a true red on 23 Sep with
+   the rest of the pink removal, keeping the meaning: this family marks
+   the things that are actually wrong (a returned sheet, an employee with
+   no manager, evaluations nobody has written). Renamed, not recoloured
+   in place, so a stale hue="rose" fails visibly rather than quietly. */
+.si-red    { background: linear-gradient(135deg, #dc2626, #991b1b); }
 .si-navy   { background: linear-gradient(135deg, #2f6fae, #1b3b6f); }
 .si-violet { background: linear-gradient(135deg, #7c4dbe, #5b2a86); }
 
@@ -184,11 +197,11 @@ body {
 .deskt-r { @apply block h-[3px] w-14 mt-2 rounded-full; background: rgba(255,255,255,0.55); }
 .dk-navy   { background: #2f6fae; }
 .dk-amber  { background: #e5900f; }
-.dk-rose   { background: #c62828; }
+.dk-red    { background: #c62828; }
 .dk-leaf   { background: #3d9142; }
 .dk-lagoon { background: #17a2b8; }
 .dk-violet { background: #7c4dbe; }
-.dk-pink   { background: #ec407a; }
+.dk-azure  { background: #2f7fe8; }
 
 /* Section headings on the dashboard. The reference leads each block with a
    large colour-filled icon badge ("Spot Light", "Employee's Desk") rather
