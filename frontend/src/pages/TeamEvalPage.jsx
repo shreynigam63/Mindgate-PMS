@@ -4,6 +4,7 @@ import { api, phaseLabel, phaseColor, KraBullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 // Matches Self-Appraisal's convention: per-KRA picks in letter grades,
 // the one computed overall in descriptive wording — see that page for
@@ -21,6 +22,7 @@ function nearestWholeValue(value, scale) {
 }
 
 export default function TeamEvalPage() {
+  const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
@@ -32,6 +34,14 @@ export default function TeamEvalPage() {
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
   if (!data.cycle) return <div className="card p-8 text-center text-sm text-navy-400">No active cycle.</div>;
 
+  // Filtered in the browser: this list is one team or one
+
+  // department, not the whole company, so there is nothing to gain
+
+  // from a round trip per keystroke.
+
+  const teamShown = (data.team || []).filter(t => matches(q, t.name, t.department, t.self_status, t.eval_status));
+
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Team Evaluation" hue="teal">
@@ -41,8 +51,10 @@ export default function TeamEvalPage() {
           </span>)}
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
       </PageHead>
+      <SearchBox value={q} onChange={setQ} placeholder="Search your team by name, department or status…"
+        shown={teamShown.length} total={(data.team || []).length} />
       {!data.team.length && <div className="card p-8 text-center text-sm text-navy-400">No direct reports found in the employee mirror.</div>}
-      {data.team.map(t => (
+      {teamShown.map(t => (
         <div key={t.employee_id} className="card overflow-hidden">
           <button className="w-full flex items-center gap-2 px-4 py-3 text-left" onClick={() => setOpenId(v => v === t.employee_id ? null : t.employee_id)}>
             {openId === t.employee_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

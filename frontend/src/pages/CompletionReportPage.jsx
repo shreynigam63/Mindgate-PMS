@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 const STATUS_COLOR = {
   approved: 'bg-emerald-100 text-emerald-700', submitted: 'bg-emerald-100 text-emerald-700',
@@ -20,6 +21,7 @@ const CLOSED_PHASES = ['closed', 'cancelled'];
 // exists (KRA/Dev Plan/Self-Appraisal/Manager Evaluation status per
 // employee). Any cycle is selectable, closed ones included.
 export default function CompletionReportPage() {
+  const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [cycles, setCycles] = useState(null);
   const [cycleId, setCycleId] = useState('');
@@ -70,6 +72,14 @@ export default function CompletionReportPage() {
   // button is meaningless — and misleading — while viewing a closed one.
   const isActive = selected && !CLOSED_PHASES.includes(selected.phase);
 
+  // Filtered in the browser: this list is one team or one
+
+  // department, not the whole company, so there is nothing to gain
+
+  // from a round trip per keystroke.
+
+  const rowsShown = (rows || []).filter(r => matches(q, r.name, r.department, r.kra_status, r.midyear_status, r.self_status, r.manager_status));
+
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="PMS Completion Report" hue="teal">
@@ -105,8 +115,10 @@ export default function CompletionReportPage() {
               <th className="px-3 py-2">HOD</th><th className="px-3 py-2">Overall</th>
             </tr>
           </thead>
+          <SearchBox value={q} onChange={setQ} placeholder="Search by employee, department or status…"
+            shown={rowsShown.length} total={(rows || []).length} />
           <tbody>
-            {rows.map(r => (
+            {rowsShown.map(r => (
               <tr key={r.employee_id} className="border-b border-navy-50">
                 <td className="px-3 py-2 font-semibold">{r.name}</td>
                 <td className="px-3 py-2 text-navy-400">{r.department || '—'}</td>

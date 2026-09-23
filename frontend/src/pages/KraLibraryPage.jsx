@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Trash2, Library, Pencil, Save, X } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 // KRA Library — HR publishes a shelf of suggested KRAs per designation,
 // and employees pick from their own role's shelf when writing their KRAs.
@@ -17,6 +18,7 @@ import PageHead from '../PageHead';
 //
 // Both exist because each does something the other cannot.
 export default function KraLibraryPage() {
+  const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [file, setFile] = useState(null);
@@ -37,9 +39,22 @@ export default function KraLibraryPage() {
   // filter: the server answers "what will people in this department see?",
   // which needs the employee master and cannot be derived from the shelf
   // list alone.
-  const load = (d = dept) => api(`/pms/hr/kra-library${d && d !== '__none' ? `?department=${encodeURIComponent(d)}` : ''}`)
-    .then(setData).catch((e) => setErr(e.message));
+  // This search goes to the SERVER, unlike every other list in the
+  // product: the library is 2,155 rows on the live tenant, and shipping
+  // all of them to filter in the browser is the wrong trade at that size.
+  // Debounced, so a round trip does not fire on every keystroke.
+  const load = (d = dept, query = q) => {
+    const p = new URLSearchParams();
+    if (d && d !== '__none') p.set('department', d);
+    if (query && query.trim()) p.set('q', query.trim());
+    const qs = p.toString();
+    return api(`/pms/hr/kra-library${qs ? `?${qs}` : ''}`).then(setData).catch((e) => setErr(e.message));
+  };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const t = setTimeout(() => load(dept, q), 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
   // Dry run first, then commit — the same two-step the employee importer
   // uses, so HR sees what a file will do before it does it.
@@ -138,6 +153,8 @@ export default function KraLibraryPage() {
         </div>
       )}
 
+      <SearchBox value={q} onChange={setQ} placeholder="Search shelves by designation, department or KRA text…"
+        shown={(data.shelves || []).length} total={data.total_shelves} />
       <div className="card divide-y divide-navy-50">
         <div className="p-3 flex flex-wrap items-end gap-3">
           <div>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 // Moved to its own HR Admin tab, per a direct request — was previously a
 // panel embedded inside the Employees page. Giving someone the "hod"
@@ -10,6 +11,7 @@ import PageHead from '../PageHead';
 // (core.department_heads), and nothing in this app had a UI for it
 // before an earlier round's fix.
 export default function DepartmentHeadsPage() {
+  const [q, setQ] = useState('');
   const [employees, setEmployees] = useState(null);
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -63,6 +65,8 @@ export default function DepartmentHeadsPage() {
   if (err && !data) return <p className="text-sm text-rose-600">{err}</p>;
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
 
+  const deptsShown = (data || []).filter(d => matches(q, d.department, d.head_name));
+
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Department Heads" hue="navy"
@@ -85,11 +89,13 @@ export default function DepartmentHeadsPage() {
         </div>
       </div>
 
+      <SearchBox value={q} onChange={setQ} placeholder="Search departments or heads…"
+        shown={deptsShown.length} total={(data || []).length} />
       {!data.length && <div className="card p-8 text-center text-sm text-navy-400">No departments yet — add one above, or import employees with a department set.</div>}
       {data.length > 0 && (
       <div className="card p-4">
         <div className="grid sm:grid-cols-2 gap-2">
-          {data.map(d => (
+          {deptsShown.map(d => (
             // STACKED, not side by side. The name gets the card's full
             // width on its own line; the head dropdown and the bin share the
             // line below it. Putting the name BESIDE a fixed-width select

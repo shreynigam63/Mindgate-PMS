@@ -3,10 +3,12 @@ import { Sparkles, SlidersHorizontal } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 const NINE_BOX = ['low-low', 'low-mid', 'low-high', 'mid-low', 'mid-mid', 'mid-high', 'high-low', 'high-mid', 'high-high'];
 
 export default function CalibrationPage() {
+  const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [brief, setBrief] = useState(null);
@@ -29,6 +31,16 @@ export default function CalibrationPage() {
   const dist = data.distribution || {};
   const targets = data.cycle.bell_curve || {};
   const total = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
+
+  // Filtered here rather than on the server: calibration is one
+
+  // cycle's population, already loaded to draw the distribution
+
+  // above, so a round trip per keystroke would buy nothing.
+
+  const rowsShown = (data && data.rows ? data.rows : [])
+
+    .filter(r => matches(q, r.name, r.department, r.adjustment_reason));
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
@@ -74,6 +86,8 @@ export default function CalibrationPage() {
           ))}
         </div>
       </div>
+      <SearchBox value={q} onChange={setQ} placeholder="Search by employee, department or adjustment reason…"
+        shown={rowsShown.length} total={(data && data.rows ? data.rows : []).length} />
       <div className="card overflow-x-auto">
         {/* table-fixed + explicit widths on the header row: with auto
             layout, the browser infers each column's width from ALL rows
@@ -95,7 +109,7 @@ export default function CalibrationPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-navy-100">
-            {data.rows.map(r => <CalRow key={r.employee_id} r={r} reload={load} />)}
+            {rowsShown.map(r => <CalRow key={r.employee_id} r={r} reload={load} />)}
           </tbody>
         </table>
       </div>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { api, phaseLabel, phaseColor } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 // Matches Self-Appraisal/Team Evaluation's convention: per-KRA ratings in
 // letter grades, overall figures in descriptive wording — fixed local
@@ -20,6 +21,7 @@ function overallLabel(value) {
 }
 
 export default function HodQueuePage() {
+  const [q, setQ] = useState('');
   const [data, setData] = useState(null); const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
   const load = () => api('/pms/hod/queue').then(setData).catch(e => setErr(e.message));
@@ -28,14 +30,20 @@ export default function HodQueuePage() {
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
   if (!data.cycle) return <div className="card p-8 text-center text-sm text-navy-400">No active cycle.</div>;
   const editable = data.cycle.phase === 'hod_eval';
+  // Filtered in the browser: this list is one team or one
+  // department, not the whole company, so there is nothing to gain
+  // from a round trip per keystroke.
+  const queueShown = (data.queue || []).filter(row => matches(q, row.name, row.department, row.manager_name));
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Delivery Head Review" hue="navy">
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
         {data.departments?.length > 0 && <span className="text-xs text-navy-400">departments: {data.departments.join(', ')}</span>}
       </PageHead>
+      <SearchBox value={q} onChange={setQ} placeholder="Search the queue by name, department or manager…"
+        shown={queueShown.length} total={(data.queue || []).length} />
       {!data.queue.length && <div className="card p-8 text-center text-sm text-navy-400">Nothing awaiting Delivery Head review — manager evaluations feed this queue as they are submitted.</div>}
-      {data.queue.map(q => (
+      {queueShown.map(q => (
         <div key={q.employee_id} className="card overflow-hidden">
           <button className="w-full flex items-center gap-2 px-4 py-3 text-left" onClick={() => setOpenId(v => v === q.employee_id ? null : q.employee_id)}>
             {openId === q.employee_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

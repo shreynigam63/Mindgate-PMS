@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 export default function WatchlistPage() {
+  const [q, setQ] = useState('');
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState(null);
   useEffect(() => { api('/pms/watchlist').then(r => setRows(r.watchlist)).catch(e => setErr(e.message)); }, []);
+
+  // Filtered in the browser: this list is one team or one
+
+  // department, not the whole company, so there is nothing to gain
+
+  // from a round trip per keystroke.
+
+  const rowsShown = (rows || []).filter(r => matches(q, r.name, r.department, r.designation));
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
@@ -28,8 +38,10 @@ export default function WatchlistPage() {
                 <th className="text-right px-3 py-2">On watchlist since</th>
               </tr>
             </thead>
+            <SearchBox value={q} onChange={setQ} placeholder="Search by name, department or designation…"
+              shown={rowsShown.length} total={(rows || []).length} />
             <tbody className="divide-y divide-navy-100">
-              {rows.map(r => (
+              {rowsShown.map(r => (
                 <tr key={r.id}>
                   <td className="px-3 py-2 font-semibold">{r.name}</td>
                   <td className="px-3 py-2">{r.department || '—'}</td>

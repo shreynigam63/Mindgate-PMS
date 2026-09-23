@@ -1681,6 +1681,24 @@ router.get('/hr/kra-library', async (req, res) => {
     // department shelf counts only that department's people; on a
     // department-blank shelf it counts everyone with the title, because
     // that is who the fallback reaches.
+    // Search runs in SQL here, unlike the small lists elsewhere, because
+    // the library is 2,155 rows on the live tenant — shipping all of them
+    // to the browser to filter would be the wrong trade at that size. It
+    // matches the designation, the department, or the text of any KRA on
+    // the shelf, so "retention" finds the shelves that talk about it.
+    const q = (req.query.q || '').trim();
+    const params = [T(req)];
+    let search = '';
+    if (q) {
+      params.push(`%${q}%`);
+      search = `AND (l.designation ILIKE $${params.length}
+                  OR coalesce(l.department,'') ILIKE $${params.length}
+                  OR EXISTS (SELECT 1 FROM pms.kra_library k
+                              WHERE k.tenant_id = l.tenant_id
+                                AND k.designation = l.designation
+                                AND coalesce(k.department,'') = coalesce(l.department,'')
+                                AND k.title ILIKE $${params.length}))`;
+    }
     const rows = (await db.query(
       `SELECT l.designation, l.department,
               count(*)::int AS kras, sum(coalesce(l.suggested_weight,0))::float AS total_weight,
@@ -1691,9 +1709,9 @@ router.get('/hr/kra-library', async (req, res) => {
                   AND (coalesce(btrim(l.department),'') = ''
                        OR lower(btrim(coalesce(e.department,''))) = lower(btrim(l.department)))) AS employees
          FROM pms.kra_library l
-        WHERE l.tenant_id = $1
+        WHERE l.tenant_id = $1 ${search}
         GROUP BY l.tenant_id, l.designation, l.department
-        ORDER BY l.designation, coalesce(l.department,'')`, [T(req)])).rows;
+        ORDER BY l.designation, coalesce(l.department,'')`, params)).rows;
     // The departments HR can choose from, taken from the employee master
     // rather than a list somebody has to keep up to date.
     const departments = (await db.query(
@@ -1753,7 +1771,15 @@ router.get('/hr/kra-library', async (req, res) => {
         kras: r.own_kras || r.fallback_kras,
       }));
     }
-    res.json({ shelves: rows, uncovered, departments, ambiguous, department_view: departmentView,
+    // The unfiltered shelf count, so a search can say "12 of 340" rather
+    // than leaving HR to wonder whether the rest were deleted.
+    const totalShelves = q
+      ? (await db.query(
+          `SELECT count(*)::int AS n FROM (
+             SELECT 1 FROM pms.kra_library WHERE tenant_id=$1
+              GROUP BY designation, coalesce(department,'')) t`, [T(req)])).rows[0].n
+      : rows.length;
+    res.json({ shelves: rows, total_shelves: totalShelves, q, uncovered, departments, ambiguous, department_view: departmentView,
       department: wanted || null, scope: await kraLibraryScope(T(req)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

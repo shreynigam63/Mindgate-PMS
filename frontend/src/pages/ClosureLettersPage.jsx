@@ -3,8 +3,10 @@ import { Sparkles, FileDown, CheckCircle2 } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 export default function ClosureLettersPage() {
+  const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const load = () => api('/pms/closure-letters').then(setData).catch(e => setErr(e.message));
@@ -14,6 +16,10 @@ export default function ClosureLettersPage() {
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
   if (!data.cycle) return <div className="card p-8 text-center text-sm text-navy-400">No active cycle.</div>;
 
+  const lettersShown = (data && data.letters ? data.letters : [])
+
+    .filter(l => matches(q, l.employee_name, l.name, l.department, l.rating_label));
+
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Closure Letters" hue="violet"
@@ -21,8 +27,10 @@ export default function ClosureLettersPage() {
         {data.cycle.name} — draft with AI, review, then generate the branded PDF. Nothing is ever sent without your review.
         </>} />
       {!data.letters.length && <div className="card p-8 text-center text-sm text-navy-400">No published ratings yet for this cycle — publish first.</div>}
+      <SearchBox value={q} onChange={setQ} placeholder="Search by employee, department or rating…"
+        shown={lettersShown.length} total={(data && data.letters ? data.letters : []).length} />
       <div className="space-y-2">
-        {data.letters.map(l => <LetterRow key={l.employee_id} l={l} reload={load} />)}
+        {lettersShown.map(l => <LetterRow key={l.employee_id} l={l} reload={load} />)}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 const STATUS_LABEL = { open: 'Open', in_progress: 'In Progress', closed_successful: 'Closed — Successful', closed_unsuccessful: 'Closed — Unsuccessful' };
 const STATUS_COLOR = {
@@ -11,6 +12,7 @@ const STATUS_COLOR = {
 };
 
 export default function PIPPage() {
+  const [q, setQ] = useState('');
   const [pips, setPips] = useState(null);
   const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
@@ -20,15 +22,25 @@ export default function PIPPage() {
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
   if (!pips) return <p className="text-sm text-navy-400">Loading…</p>;
 
+  // Filtered in the browser: this list is one team or one
+
+  // department, not the whole company, so there is nothing to gain
+
+  // from a round trip per keystroke.
+
+  const pipsShown = (pips || []).filter(p => matches(q, p.employee_name, p.cycle_name, p.status, p.department));
+
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Performance Improvement Plans" hue="amber"
         sub={<>
         Auto-opened when a published rating falls below the cycle's threshold. Weekly notes are added by the manager or HR; the employee has read-only visibility.
         </>} />
+      <SearchBox value={q} onChange={setQ} placeholder="Search plans by employee, cycle or status…"
+        shown={pipsShown.length} total={(pips || []).length} />
       {!pips.length && <div className="card p-8 text-center text-sm text-navy-400">No PIPs — either none has been triggered, or you have none to view.</div>}
       <div className="space-y-2">
-        {pips.map(p => (
+        {pipsShown.map(p => (
           <div key={p.id} className="card">
             <button className="w-full flex items-center justify-between p-4 text-left" onClick={() => setOpenId(openId === p.id ? null : p.id)}>
               <div>

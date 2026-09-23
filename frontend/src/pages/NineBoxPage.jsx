@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
 
 const PERF = ['high', 'mid', 'low']; // rows, top to bottom
 const POT = ['low', 'mid', 'high'];  // columns, left to right
@@ -11,6 +12,7 @@ const LEVELS = [
 ];
 
 export default function NineBoxPage() {
+  const [q, setQ] = useState('');
   const [level, setLevel] = useState('org');
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -34,15 +36,19 @@ export default function NineBoxPage() {
           </button>
         ))}
       </div>
+      <SearchBox value={q} onChange={setQ} placeholder="Find a person on the grid…" />
       {err && <p className="text-sm text-rose-600">{err}</p>}
       {!err && !data && <p className="text-sm text-navy-400">Loading…</p>}
       {data && !data.groups.length && <div className="card p-8 text-center text-sm text-navy-400">No employees have a 9-box cell recorded yet for {data.cycle?.name || 'the active cycle'} — enter them on the Calibration screen.</div>}
-      {data && data.groups.map(g => <Grid key={g.key} group={g} />)}
+      {data && data.groups.map(g => <Grid key={g.key} group={g} q={q} />)}
     </div>
   );
 }
 
-function Grid({ group }) {
+// A search here highlights rather than removes: the whole point of the
+// grid is the shape of the distribution, and dropping the people who do
+// not match would redraw it into something misleading.
+function Grid({ group, q }) {
   return (
     <div className="card p-4">
       <p className="font-semibold text-sm mb-2">{group.key} <span className="text-navy-400 font-normal">· {group.total} placed</span></p>
@@ -53,7 +59,14 @@ function Grid({ group }) {
           return (
             <div key={key} className="border border-navy-100 rounded-lg p-2 min-h-[64px] bg-navy-50">
               <p className="text-[9px] uppercase tracking-wide text-navy-400 mb-1">{perf} perf · {pot} pot</p>
-              {people.map(p => <p key={p.id} className="text-[11px] font-medium">{p.name}</p>)}
+              {people.map(p => {
+                const hit = q.trim() && matches(q, p.name);
+                return (
+                  <p key={p.id} className={`text-[11px] ${hit
+                    ? 'font-bold text-white bg-brand-500 rounded px-1 -mx-0.5'
+                    : q.trim() ? 'font-medium text-navy-300' : 'font-medium'}`}>{p.name}</p>
+                );
+              })}
             </div>
           );
         }))}
