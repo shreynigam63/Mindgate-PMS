@@ -31,7 +31,7 @@ const HAS_DB = !!process.env.DATABASE_URL;
 const skip = !HAS_DB && 'DATABASE_URL not set — see file header';
 
 let db, server, base, tenantId, cycleId;
-let adminTok, mgrTok;
+let adminTok, mgrTok, hrTok;
 let sheetA, sheetB, planA, empA, empB, mgrId;
 
 const req = async (method, path, tok, body) => {
@@ -67,16 +67,22 @@ before(async () => {
      VALUES ($1,$2,$3,'active','Executive','Delivery',$4) RETURNING id`,
     [t.id, name, email, managerId || null])).rows[0].id;
   const adminId = await mk('AP Admin', 'ap-admin@x.com', null);
+  await mk('AP HR', 'ap-hr@x.com', null);
   mgrId = await mk('AP Manager', 'ap-mgr@x.com', null);
   empA = await mk('AP Emp A', 'ap-a@x.com', mgrId);
   empB = await mk('AP Emp B', 'ap-b@x.com', mgrId);
 
-  for (const email of ['ap-admin@x.com', 'ap-mgr@x.com']) {
+  for (const email of ['ap-admin@x.com', 'ap-mgr@x.com', 'ap-hr@x.com']) {
     await db.query(`INSERT INTO core.local_credentials (tenant_id,email,password_hash) VALUES ($1,$2,$3)`,
       [t.id, email, await bcrypt.hash('pass', 10)]);
   }
   await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'ap-admin@x.com','admin')`, [t.id]);
   await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'ap-mgr@x.com','manager')`, [t.id]);
+  // A plain HR user, NOT a wildcard admin. The approvals panel reads the
+  // record through the manager-facing endpoints, so this is the account
+  // that proves those reads are actually open to the people who work
+  // this queue.
+  await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'ap-hr@x.com','hr')`, [t.id]);
 
   cycleId = (await db.query(
     `INSERT INTO pms.cycles (tenant_id,name,fiscal_year,cycle_type,phase)
@@ -110,6 +116,7 @@ before(async () => {
   })).json()).token;
   adminTok = await login('ap-admin@x.com');
   mgrTok = await login('ap-mgr@x.com');
+  hrTok = await login('ap-hr@x.com');
 });
 
 after(async () => {
@@ -252,4 +259,99 @@ test('a manager still cannot decide a sheet that is not theirs', { skip }, async
   const r = await req('POST', `/pms/team/kra-sheets/${s}/decide`, mgrTok, { decision: 'approved' });
   assert.equal(r.status, 403);
   assert.match(r.body.error, /Not your report/);
+});
+
+// ---- reading the record before deciding on it -----------------------------
+//
+// Asked for on 23 Sep: "return KRA option is missing, please add the same
+// / also KRA view option is not available." The queue could bulk-approve
+// and nothing else, so a reviewer approved scorecards sight unseen and
+// had no way to send one back.
+//
+// The page reads the record through the MANAGER-facing endpoints rather
+// than a new HR-only pair, so that All Approvals and Team KRA Sheets show
+// the same thing. That only holds if those endpoints are actually open to
+// whoever works this queue — which is what these two assert, as HR rather
+// than as a wildcard admin. Both guards read `pms_team_eval` first and
+// then allow pms_admin at the row; HR carries both, so the reads work.
+// A future bundle change that drops pms_team_eval from HR would blank the
+// View panel with a 403 and nothing else would notice.
+
+test('HR can read the KRA sheet behind a queue row, not just approve it blind', { skip }, async () => {
+  const r = await req('GET', `/pms/team/kra-sheets/${sheetA}/kras`, hrTok);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.ok(r.body.sheet, 'the sheet itself comes back');
+  assert.ok(Array.isArray(r.body.kras), 'and its KRAs');
+  assert.ok(r.body.weights, 'and the weight total the panel warns on');
+  // Super admin too, which is the account the page is written for.
+  assert.equal((await req('GET', `/pms/team/kra-sheets/${sheetA}/kras`, adminTok)).status, 200);
+});
+
+test('HR can read the growth plan behind a queue row', { skip }, async () => {
+  const r = await req('GET', `/pms/team/development-plans/${planA}/goals`, hrTok);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.ok(r.body.plan);
+  assert.ok(Array.isArray(r.body.goals));
+});
+
+test('an employee cannot read someone else\'s sheet through those endpoints', { skip }, async () => {
+  // The View panel is HR's; widening the read to build it must not have
+  // widened it for everybody.
+  const bcrypt = require('bcryptjs');
+  await db.query(`INSERT INTO core.local_credentials (tenant_id,email,password_hash) VALUES ($1,'ap-a@x.com',$2)`,
+    [tenantId, await bcrypt.hash('pass', 10)]);
+  const empTok = (await (await fetch(`${base}/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'ap-a@x.com', password: 'pass' }),
+  })).json()).token;
+  assert.equal((await req('GET', `/pms/team/kra-sheets/${sheetB}/kras`, empTok)).status, 403);
+  assert.equal((await req('GET', `/pms/team/development-plans/${planA}/goals`, empTok)).status, 403);
+});
+
+test('the queue can RETURN a sheet, with the comment reaching the employee', { skip }, async () => {
+  // The other half of what was asked for. The bulk route already took a
+  // decision and a comment; nothing in the UI ever sent 'returned', so
+  // this asserts the whole path the Return button now uses — including
+  // that the employee is told why, since a return is work landing back
+  // on them.
+  const empD = (await db.query(
+    `INSERT INTO core.employees (tenant_id,name,email,status,designation,department,manager_id)
+     VALUES ($1,'AP Emp D','ap-d@x.com','active','Executive','Delivery',$2) RETURNING id`,
+    [tenantId, mgrId])).rows[0].id;
+  const sheetD = (await db.query(
+    `INSERT INTO pms.kra_sheets (tenant_id,cycle_id,employee_id,manager_id,status,submitted_at)
+     VALUES ($1,$2,$3,$4,'submitted',now()) RETURNING id`,
+    [tenantId, cycleId, empD, mgrId])).rows[0].id;
+
+  const r = await req('POST', '/pms/approvals/bulk', adminTok, {
+    decision: 'returned', comment: 'Weights total 95, not 100 — fix and resubmit.',
+    items: [{ kind: 'kra_sheet', id: sheetD }],
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.approved, 1);
+  assert.equal(r.body.refused, 0);
+
+  const row = (await db.query(`SELECT status, manager_comment FROM pms.kra_sheets WHERE id=$1`, [sheetD])).rows[0];
+  assert.equal(row.status, 'returned');
+  assert.equal(row.manager_comment, 'Weights total 95, not 100 — fix and resubmit.');
+
+  const a = (await db.query(
+    `SELECT details FROM pms.audit_log WHERE tenant_id=$1 AND action='KRA_RETURNED' AND employee_id=$2`,
+    [tenantId, empD])).rows;
+  assert.equal(a.length, 1, 'the return is audited');
+  assert.equal(a[0].details.comment, 'Weights total 95, not 100 — fix and resubmit.');
+
+  // THE COMMENT HAS TO TRAVEL. A return with the reason left behind in
+  // the database is a sheet the employee finds reopened with no idea why.
+  await new Promise((res) => setTimeout(res, 250));
+  const n = (await db.query(
+    `SELECT title, body FROM core.notifications WHERE tenant_id=$1 AND employee_id=$2`,
+    [tenantId, empD])).rows;
+  assert.equal(n.length, 1, 'the employee is told');
+  assert.match(n[0].title, /returned/i);
+  assert.equal(n[0].body, 'Weights total 95, not 100 — fix and resubmit.');
+
+  // And it is out of the queue.
+  const q = await req('GET', '/pms/approvals', adminTok);
+  assert.ok(!q.body.items.some((i) => i.id === sheetD), 'a returned sheet is no longer pending');
 });

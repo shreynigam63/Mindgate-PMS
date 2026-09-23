@@ -226,3 +226,150 @@ test('an employee with no KRAs can still be rated — the gap the parameters use
   assert.deepEqual(errors, []);
   await ctx.close();
 });
+
+test('All Approvals opens the record and can return it, not just approve blind', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 23 Sep: "return KRA option is missing, please add the
+  // same / also KRA view option is not available."
+  //
+  // THE WHOLE ROUND TRIP, through the product's own transitions only:
+  // the employee submits, HR opens the row in the queue and reads the
+  // sheet, fails to return it without a reason, then returns it with
+  // one. No hand-patched rows.
+  //
+  // IT MUST NOT SILENTLY SKIP. The first version of this bailed with
+  // t.diagnostic() and a return when the demo sheet would not submit —
+  // its weights total 60, not 100 — and reported `ok` while testing
+  // nothing at all. Poisoning it (removing the table, renaming the
+  // Return button) changed no result, which is how that was caught. It
+  // now makes the sheet submittable itself, through the employee's own
+  // edit route, and puts the original weights back afterwards; anything
+  // that still goes wrong fails the test rather than passing it.
+  const tok = async (email) => (await (await fetch(`${API}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: PASS }),
+  })).json()).token;
+  const call = async (who, p, init) => {
+    const r = await fetch(`${API}/api/v1${p}`, {
+      ...init, headers: { Authorization: `Bearer ${who}`, 'Content-Type': 'application/json' },
+    });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  };
+  const emp = await tok('emp@shot.in');
+  const admin = await tok('admin@shot.in');
+
+  const mine = await call(emp, '/pms/my/kra-sheet');
+  assert.equal(mine.status, 200, JSON.stringify(mine.body));
+  const original = mine.body.kras;
+  const sheetId = mine.body.sheet.id;
+  assert.ok(original.length > 1, 'the demo employee has a sheet with KRAs to review');
+
+  // A submitted or approved sheet is locked to its owner, by design. The
+  // test has to start from a writable one and may well END on a locked
+  // one if it fails midway, so both the setup and the restore go through
+  // this — using the very route under test to unlock it, which is a real
+  // transition rather than a patched row.
+  //
+  // Without this the test was not repeatable: one run left the sheet
+  // submitted and the next failed in setup with a 409.
+  const makeWritable = async () => {
+    const st = (await call(emp, '/pms/my/kra-sheet')).body.sheet.status;
+    if (st === 'submitted' || st === 'approved') {
+      await call(admin, '/pms/approvals/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ decision: 'returned', comment: 'Unlocked by an automated check.',
+                               items: [{ kind: 'kra_sheet', id: sheetId }] }),
+      });
+    }
+  };
+
+  // Put the weights back exactly as found, whatever happens below — and
+  // CHECK that it worked.
+  //
+  // This test shares the demo employee's sheet with the KRA-table tests,
+  // which need it editable (they assert on the "+ New parameter" row that
+  // only a draft renders). A restore that quietly failed left the sheet
+  // submitted and broke an unrelated test on the NEXT run, which is a
+  // miserable thing to debug — so a failed restore fails here instead.
+  const restore = async () => {
+    await makeWritable();
+    await call(emp, '/pms/my/kra-sheet/kras', {
+      method: 'PUT',
+      body: JSON.stringify({ kras: original.map((k) => ({
+        id: k.id, title: k.title, description: k.description, measures: k.measures,
+        category: k.category, weight: k.weight, sort_order: k.sort_order })) }),
+    });
+    const back = (await call(emp, '/pms/my/kra-sheet')).body;
+    assert.equal(back.sheet.status, 'draft', 'the demo sheet was left editable for the other tests');
+    assert.deepEqual(back.kras.map((k) => Number(k.weight)), original.map((k) => Number(k.weight)),
+      'the demo sheet was left with the weights it started with');
+  };
+  await makeWritable();
+
+  let ctx;
+  try {
+    // Weights must total 100 to submit, and the demo sheet totals 60.
+    // Nudge the first KRA up by the difference — a real edit through the
+    // real route, not a patched row.
+    const total = original.reduce((n, k) => n + Number(k.weight || 0), 0);
+    const bumped = original.map((k, i) => ({
+      id: k.id, title: k.title, description: k.description, measures: k.measures,
+      category: k.category, sort_order: k.sort_order,
+      weight: i === 0 ? Number(k.weight || 0) + (100 - total) : Number(k.weight || 0),
+    }));
+    const saved = await call(emp, '/pms/my/kra-sheet/kras', { method: 'PUT', body: JSON.stringify({ kras: bumped }) });
+    assert.equal(saved.status, 200, `could not rebalance the sheet: ${JSON.stringify(saved.body)}`);
+
+    const sub = await call(emp, '/pms/my/kra-sheet/submit', { method: 'POST' });
+    assert.equal(sub.status, 200, `could not submit the sheet: ${JSON.stringify(sub.body)}`);
+
+    const opened = await open('admin@shot.in', '/admin/approvals');
+    ctx = opened.ctx;
+    const page = opened.page;
+    await page.locator('button:has-text("KRA sheet")').first().click();
+    await page.waitForTimeout(700);
+    const row = page.locator('tbody tr button').filter({ hasText: 'Arun Employee' });
+    assert.ok(await row.count(), 'the submitted sheet reaches the company-wide queue');
+    await row.first().click();
+    await page.waitForTimeout(1600);
+
+    // VIEW — the same four-column table the employee filled in, not a
+    // second rendering of it.
+    assert.equal(await page.locator('.kratable').count(), 1, 'the sheet itself is shown');
+    // textContent, not innerText: the header cells are uppercased by CSS,
+    // so innerText would compare the rendering rather than the markup and
+    // read PARAMETERS. kra-table.test.mjs compares the same way.
+    assert.deepEqual(
+      await page.evaluate(() =>
+        [...document.querySelectorAll('.kratable thead th')].map((th) => th.textContent.trim())),
+      ['Parameters', 'KRAs', 'KPIs (measuring metrics & data source)', 'Weightage']);
+    const spans = await page.evaluate(() =>
+      [...document.querySelectorAll('.kratable td.kt-param:not(.kt-param-add)')].map((td) => td.rowSpan));
+    assert.ok(spans.some((n) => n > 1), 'parameters are merged over their KRAs here too');
+
+    // RETURN — refused without a reason. This asserts the OUTCOME, not
+    // which layer produced it: the page refuses before sending, and the
+    // server refuses again if it ever did send. Deleting the client-side
+    // guard leaves this passing, which was checked by doing exactly that
+    // — and is correct, because the product still behaves the same. What
+    // must never pass is the sheet changing state.
+    await page.locator('button:has-text("Return for edits")').click();
+    await page.waitForTimeout(800);
+    assert.match(await page.locator('body').innerText(), /needs a comment/i);
+    assert.equal((await call(emp, '/pms/my/kra-sheet')).body.sheet.status, 'submitted',
+      'a refused return changed nothing');
+
+    // RETURN — with one. The comment is the point: it is what the
+    // employee is told.
+    await page.locator('textarea').first().fill('Returned by an automated check.');
+    await page.locator('button:has-text("Return for edits")').click();
+    await page.waitForTimeout(2500);
+    const after = await call(emp, '/pms/my/kra-sheet');
+    assert.equal(after.body.sheet.status, 'returned');
+    assert.equal(after.body.sheet.manager_comment, 'Returned by an automated check.');
+    assert.deepEqual(opened.errors, []);
+  } finally {
+    await restore();
+    if (ctx) await ctx.close();
+  }
+});
