@@ -62,13 +62,21 @@ const NAV = [
     { to: '/my/annual-review', label: 'Final Rating', icon: Award },
     { to: '/my/rating', label: 'My Rating', icon: Star },
     { to: '/my/history', label: 'Past Cycles', icon: History },
+    // MOVED OUT OF THE TEAM GROUP on 23 Sep, asked for directly: an
+    // employee should not see a Team tab at all. This page was the only
+    // thing left in it for them, because it is deliberately public — it
+    // is row-scoped in the handler, so an employee sees their OWN plan
+    // and a manager sees their reports'. Gating it would have taken an
+    // employee's own improvement plan away from them to tidy a tab, so
+    // it moved instead. A manager still reaches their reports' plans
+    // here; the page itself is unchanged.
+    { to: '/pip', label: 'Improvement Plan', icon: ShieldAlert },
   ]},
   { group: 'Team', hue: 'lagoon', icon: Users, items: [
     { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard },
     { to: '/team/kra-sheets', label: 'Team KRA Sheets', icon: ClipboardList },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/hod', label: 'Delivery Head Review', icon: Landmark },
-    { to: '/pip', label: 'Improvement Plans', icon: ShieldAlert },
   ]},
   { group: 'HR Admin', hue: 'violet', icon: ShieldCheck, items: [
     { to: '/admin/approvals', label: 'All Approvals', icon: CheckCircle2 },
@@ -253,16 +261,32 @@ function Main({ user }) {
 export default function App() {
   const [user, setUser] = useState(null);
   const [checked, setChecked] = useState(false);
+
+  // THE ONLY WAY A USER OBJECT IS BUILT, on a cold load and after a fresh
+  // sign-in alike.
+  //
+  // It used to be two ways, and the second one was wrong: sign-in stored
+  // `r.user` straight off the login response, which carries no `pages`
+  // field. mayOpen() reads a missing `pages` as "this tenant has not
+  // configured page permissions, so show everything" — the deliberate
+  // unconfigured-tenant fallback — so for the whole of that first session
+  // EVERY tab was shown to EVERY role. An employee signing in saw HR
+  // Admin. It corrected itself on the next page refresh, which is what
+  // kept it hidden: reloading was the first thing anybody did.
+  //
+  // /me is the only thing that knows what this person may open, so login
+  // now goes through it too. Nothing is rendered until it answers.
+  const loadMe = () => api('/me')
+    .then((r) => { setUser({ ...r.user, pages: r.pages }); return r; })
+    .catch((e) => { localStorage.removeItem('apms_token'); throw e; });
+
   useEffect(() => {
     const t = localStorage.getItem('apms_token');
     if (!t) { setChecked(true); return; }
-    api('/me')
-      .then(r => setUser({ ...r.user, pages: r.pages }))
-      .catch(() => localStorage.removeItem('apms_token'))
-      .finally(() => setChecked(true));
+    loadMe().catch(() => {}).finally(() => setChecked(true));
   }, []);
   if (!checked) return null;
-  if (!user) return <Login onUser={setUser} />;
+  if (!user) return <Login onUser={loadMe} />;
   return (
     <BrowserRouter>
       <div className="min-h-screen flex flex-col">
@@ -319,7 +343,8 @@ function FirstTimeSetup({ onUser }) {
       await api('/setup/bootstrap-admin', { method: 'POST', body: JSON.stringify({ name, email, password }) });
       try {
         const r = await api('/auth/dev-login', { method: 'POST', body: JSON.stringify({ email, password }) });
-        localStorage.setItem('apms_token', r.token); onUser(r.user);
+        localStorage.setItem('apms_token', r.token);
+        await onUser();
       } catch {
         setErr('Account created — but automatic sign-in is unavailable on this deployment yet (ask whoever manages it to set AUTH_DEV to true), then reload this page and sign in with the email/password you just chose.');
         setBusy(false);
@@ -351,7 +376,8 @@ function SignIn({ onUser }) {
     setErr(null);
     try {
       const r = await api('/auth/dev-login', { method: 'POST', body: JSON.stringify({ email, password }) });
-      localStorage.setItem('apms_token', r.token); onUser(r.user);
+      localStorage.setItem('apms_token', r.token);
+      await onUser();
     } catch (e) { setErr(e.message); }
   };
   return (

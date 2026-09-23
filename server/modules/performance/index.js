@@ -561,9 +561,12 @@ router.post('/my/kra-sheet/submit', async (req, res) => {
 async function notifySheetSubmitted(req, tenantId, employeeId, byName, onBehalf) {
   const emp = (await db.query(`SELECT manager_id, name FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp || !emp.manager_id) return { notified: false, reason: 'no manager set on the employee record' };
+  // { email: true } from here down: a submission is a REQUEST waiting on
+  // somebody, and the person it waits on may not open the product for a
+  // week. Asked for on 23 Sep. The in-app bell still fires either way.
   await notify(tenantId, emp.manager_id, 'kra_submitted',
     onBehalf ? `KRA sheet submitted for ${emp.name} by ${byName}` : `KRA sheet submitted by ${byName}`,
-    onBehalf ? 'Submitted on their behalf by HR.' : null, '/pms/team');
+    onBehalf ? 'Submitted on their behalf by HR.' : null, '/team/kra-sheets', { email: true });
   return { notified: true };
 }
 
@@ -905,7 +908,8 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
               decided_at=now(), updated_at=now() WHERE id=$2`,
       [String(comment).trim(), s.id]);
     audit(req, 'KRA_REOPENED', c.id, s.employee_id, { comment: String(comment).trim(), from: 'approved' });
-    await notify(T(req), s.employee_id, 'kra_reopened', 'Your approved KRA sheet was reopened for edits', String(comment).trim(), '/pms');
+    await notify(T(req), s.employee_id, 'kra_reopened', 'Your approved KRA sheet was reopened for edits',
+      String(comment).trim(), '/my/kras', { email: true });
     res.json({ ok: true, status: 'returned' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2576,7 +2580,9 @@ router.post('/my/development-plan/submit', async (req, res) => {
     // manager mid-cycle. Fixed here for the same reason it was fixed there.
     const empRow = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
     const mgrId = empRow && empRow.manager_id;
-    if (mgrId) await notify(T(req), mgrId, 'devplan_submitted', `Development plan submitted by ${req.user.name}`, null, '/pms/team');
+    if (mgrId) await notify(T(req), mgrId, 'devplan_submitted',
+      `Growth plan submitted by ${req.user.name}`, 'Target achievements and aspiring career, waiting on your approval.',
+      '/admin/approvals', { email: true });
     res.json({ ok: true, manager_notified: !!mgrId,
       ...(mgrId ? {} : { warning: 'Submitted, but no manager was notified — no reporting manager is set on your record.' }) });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2811,7 +2817,8 @@ router.post('/my/self-appraisal/submit', async (req, res) => {
     const mgr = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
     if (mgr && mgr.manager_id) {
       await notify(T(req), mgr.manager_id, 'self_appraisal_submitted',
-        `${req.user.name} submitted their self-appraisal`, null, '/pms/team');
+        `${req.user.name} submitted their self-appraisal`, 'Ready for your evaluation.',
+        '/team/eval', { email: true });
     }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -3089,7 +3096,9 @@ router.post('/my/midyear-review/submit', async (req, res) => {
     // on it heard nothing.
     const liveMgr = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
     const notifyMgr = (liveMgr && liveMgr.manager_id) || row.manager_id;
-    if (notifyMgr) await notify(T(req), notifyMgr, 'midyear_self_signed', `${req.user.name} signed their Mid-Year Review`, null, '/pms/team/midyear-review');
+    if (notifyMgr) await notify(T(req), notifyMgr, 'midyear_self_signed',
+      `${req.user.name} signed their Mid-Year Review`, 'Waiting on your sign-off.',
+      '/my/midyear', { email: true });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3174,7 +3183,8 @@ router.post('/team/midyear-review/:employeeId/submit', async (req, res) => {
               reopened_reason=NULL, reopened_note=NULL, updated_at=now()
         WHERE id=$1`, [row.id]);
     audit(req, 'MIDYEAR_MANAGER_SUBMITTED', c.id, emp.id, null);
-    await notify(T(req), emp.id, 'midyear_manager_signed', `${req.user.name} signed off your Mid-Year Review`, null, '/pms/my/midyear');
+    await notify(T(req), emp.id, 'midyear_manager_signed', `${req.user.name} signed off your Mid-Year Review`,
+      null, '/my/midyear', { email: true });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

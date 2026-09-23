@@ -3,6 +3,15 @@ import { ChevronDown, ChevronRight, Trash2, Library, Pencil, Save, X } from 'luc
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+// The SAME grouping the employee's own KRA sheet uses. Asked for on
+// 23 Sep: on this page every KRA carried its parameter as a chip on its
+// own row, so a shelf with six "Project / Process" KRAs printed that
+// label six times and the shelf read as a flat list. The client's own
+// sheet (and the sheet this library was built from) groups the rows
+// under the parameter, with the weight for the group — so this page now
+// does too. Two implementations of one grouping would drift apart, so
+// there is only the one.
+import { groupByCategory, NO_CATEGORY } from './MyKRASheetPage';
 
 // KRA Library — HR publishes a shelf of suggested KRAs per designation,
 // and employees pick from their own role's shelf when writing their KRAs.
@@ -366,11 +375,27 @@ function ShelfDetail({ designation, department, onChanged }) {
   if (!rows) return <p className="px-4 pb-3 text-xs text-navy-400">Loading…</p>;
 
   const total = rows.reduce((n, r) => n + (Number(r.suggested_weight) || 0), 0);
+  // groupByCategory reads `weight`; the library's column is
+  // suggested_weight, so it is mapped in rather than the grouping being
+  // taught a second field name.
+  const groups = groupByCategory(rows.map((r) => ({ ...r, weight: r.suggested_weight })));
 
   return (
-    <div className="bg-navy-50 px-4 py-3 space-y-1.5">
+    <div className="bg-navy-50 px-4 py-3 space-y-3">
       {err && <p className="text-xs text-rose-600">{err}</p>}
-      {rows.map((r) => (
+      {groups.map((g) => (
+        <div key={g.cat} className="space-y-1.5">
+          {/* The parameter, once, with what the group is worth — the
+              shape of the client's own KRA sheet. */}
+          <div className="flex items-baseline gap-2">
+            <p className={`text-[10px] font-bold uppercase tracking-wide ${g.cat === NO_CATEGORY ? 'text-navy-300' : 'text-lagoon-700'}`}>
+              {g.cat === NO_CATEGORY ? 'No parameter set' : g.cat}
+            </p>
+            <span className="text-[10px] text-navy-400">
+              {Math.round(g.weight * 100) / 100}% · {g.rows.length} KRA{g.rows.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          {g.rows.map(({ k: r }) => (
         <div key={r.id} className="bg-white rounded-lg p-2.5 text-xs space-y-1">
           {editing === r.id ? (
             <div className="space-y-1.5">
@@ -409,7 +434,6 @@ function ShelfDetail({ designation, department, onChanged }) {
             <>
               <div className="flex items-start justify-between gap-2">
                 <p className="font-semibold flex-1">{r.title}</p>
-                {r.category && <span className="chip bg-lagoon-50 text-lagoon-700 shrink-0">{r.category}</span>}
                 <span className="text-navy-500 font-medium shrink-0">{r.suggested_weight == null ? '—' : `${Number(r.suggested_weight)}%`}</span>
                 <button className="text-navy-400 hover:text-navy-700 shrink-0" title="Edit this KRA"
                   onClick={() => open(r)}><Pencil size={12} /></button>
@@ -418,6 +442,8 @@ function ShelfDetail({ designation, department, onChanged }) {
               {r.description && <p className="text-navy-500">{r.description}</p>}
             </>
           )}
+            </div>
+          ))}
         </div>
       ))}
       <p className="text-[11px] text-navy-400 pt-1">

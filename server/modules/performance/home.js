@@ -31,7 +31,7 @@ const { activeCycle, activeCycleForMidyear } = require('./active-cycle');
 // with no pms.kra_sheets row at all that nothing was waiting on them —
 // exactly the person who most needs to be told to start. Same for the
 // mid-year and self-appraisal rows, which are also created on first save.
-function nextAction({ phase, kra, midyear, appraisal, teamPending, team }) {
+function nextAction({ phase, kra, midyear, appraisal, teamPending, team, requested }) {
   if (kra && (kra.status === 'returned'))
     return { kind: 'kra_returned', title: 'Your KRA sheet was returned',
              detail: kra.manager_comment || 'Your manager asked for changes.',
@@ -57,12 +57,25 @@ function nextAction({ phase, kra, midyear, appraisal, teamPending, team }) {
              detail: 'Rate each report against their KRAs and submit.',
              cta: 'Evaluate my team', to: '/team/eval', tone: 'urgent' };
   }
+  if (team && team.pending_requests && team.pending_requests.total > 0 && !(teamPending > 0)) {
+    const n = team.pending_requests.total;
+    return { kind: 'requests_pending', title: `${n} ${n === 1 ? 'request is' : 'requests are'} waiting on you`,
+             detail: 'Submissions from your team that need an approve, a return or an evaluation.',
+             cta: 'Open All Approvals', to: '/admin/approvals', tone: 'todo' };
+  }
   if (teamPending > 0)
     return { kind: 'team_pending', title: `${teamPending} ${teamPending === 1 ? 'person is' : 'people are'} waiting on you`,
              detail: 'KRA sheets submitted by your reports need an approve or a return.',
              cta: 'Review team KRAs', to: '/team/kra-sheets', tone: 'todo' };
+  // "Nothing is waiting on you" printed directly above three outstanding
+  // submissions reads like a contradiction, even though both are true:
+  // nothing is waiting on THEM, and those are waiting on somebody else.
+  // The detail line says which, so the two agree on the page.
+  const out = (requested || []).length;
   return { kind: 'clear', title: 'Nothing is waiting on you',
-           detail: 'Everything assigned to you for this cycle is done.',
+           detail: out
+             ? `${out} ${out === 1 ? 'submission is' : 'submissions are'} with your manager — nothing is blocked on you.`
+             : 'Everything assigned to you for this cycle is done.',
            cta: null, to: null, tone: 'clear' };
 }
 
@@ -119,6 +132,42 @@ async function home(user) {
               WHERE c2.tenant_id=$1 AND c2.employee_id=$2 AND NOT a.done) AS open_actions
        FROM pms.connects WHERE tenant_id=$1 AND employee_id=$2`, [t, user.id]);
 
+  // WHAT THIS PERSON HAS ASKED SOMEBODY ELSE FOR.
+  //
+  // Asked for on 23 Sep: "all requests initiated should be visible on
+  // dashboard of everyone — 'requested to manager' in employees
+  // dashboard, 'pending requests' in manager and above dashboard."
+  //
+  // Same underlying fact told from both ends: a submission is one row
+  // that is a REQUEST to the person it waits on and a SENT REQUEST to the
+  // person who made it. Both sides read it from here so the two counts
+  // can never disagree.
+  const requested = (await db.query(
+    `SELECT 'kra_sheet' AS kind, 'KRA sheet' AS label, s.submitted_at AS since,
+            m.name AS waiting_on
+       FROM pms.kra_sheets s
+       LEFT JOIN core.employees m ON m.id = s.manager_id
+      WHERE s.tenant_id=$1 AND s.cycle_id=$2 AND s.employee_id=$3 AND s.status='submitted'
+      UNION ALL
+     SELECT 'growth_plan', 'Growth plan', p.submitted_at, m.name
+       FROM pms.development_plans p
+       LEFT JOIN core.employees m ON m.id = p.manager_id
+      WHERE p.tenant_id=$1 AND p.cycle_id=$2 AND p.employee_id=$3 AND p.status='submitted'
+      UNION ALL
+     SELECT 'self_appraisal', 'Self-appraisal', a.submitted_at, m.name
+       FROM pms.self_appraisals a
+       LEFT JOIN core.employees e ON e.id = a.employee_id
+       LEFT JOIN core.employees m ON m.id = e.manager_id
+      WHERE a.tenant_id=$1 AND a.cycle_id=$2 AND a.employee_id=$3 AND a.status='submitted'
+        -- The SAME exclusion the manager's pending count uses. Without it
+        -- the employee was told their self-appraisal was still waiting on
+        -- their manager after the manager had already evaluated it, while
+        -- the manager's own dashboard correctly showed nothing pending.
+        -- Two readings of one row that disagreed.
+        AND NOT EXISTS (SELECT 1 FROM pms.manager_evaluations me
+                         WHERE me.cycle_id=$2 AND me.employee_id=a.employee_id AND me.status='submitted')
+      ORDER BY since NULLS LAST`, [t, c.id, user.id])).rows;
+
   // The team block, only for someone who actually has reports — a manager
   // by title with nobody under them should not be shown an empty console.
   let team = null;
@@ -144,7 +193,24 @@ async function home(user) {
             AND NOT EXISTS (SELECT 1 FROM pms.connects k
                              WHERE k.tenant_id=$1 AND k.employee_id=e.id)`,
         wide ? [t] : [t, user.id]);
+      // The other end of `requested`: everything submitted by the people
+      // this person is responsible for and still undecided. Counted with
+      // the SAME status tests, so "3 requested" on three employees'
+      // dashboards is "3 pending" on their manager's.
+      const pend = await one(
+        `SELECT
+           (SELECT count(*)::int FROM pms.kra_sheets s JOIN core.employees e ON e.id=s.employee_id
+             WHERE s.tenant_id=$1 AND s.cycle_id=$2 AND s.status='submitted' AND e.status='active' ${wide ? '' : 'AND e.manager_id=$3'}) AS kra,
+           (SELECT count(*)::int FROM pms.development_plans p JOIN core.employees e ON e.id=p.employee_id
+             WHERE p.tenant_id=$1 AND p.cycle_id=$2 AND p.status='submitted' AND e.status='active' ${wide ? '' : 'AND e.manager_id=$3'}) AS growth,
+           (SELECT count(*)::int FROM pms.self_appraisals a JOIN core.employees e ON e.id=a.employee_id
+             WHERE a.tenant_id=$1 AND a.cycle_id=$2 AND a.status='submitted' AND e.status='active' ${wide ? '' : 'AND e.manager_id=$3'}
+               AND NOT EXISTS (SELECT 1 FROM pms.manager_evaluations me
+                                WHERE me.cycle_id=$2 AND me.employee_id=e.id AND me.status='submitted')) AS appraisal`,
+        wide ? [t, c.id] : [t, c.id, user.id]);
+      const pending = pend || { kra: 0, growth: 0, appraisal: 0 };
       team = { ...r, no_connect: miss ? miss.no_connect : 0,
+               pending_requests: { ...pending, total: pending.kra + pending.growth + pending.appraisal },
                scope: wide ? 'all_employees' : 'my_reports' };
     }
   }
@@ -165,9 +231,9 @@ async function home(user) {
 
   return {
     cycle: { id: c.id, name: c.name, phase: c.phase, cycle_type: c.cycle_type, fiscal_year: c.fiscal_year },
-    me: { kra, midyear, appraisal, published, goals, connects },
+    me: { kra, midyear, appraisal, published, goals, connects, requested },
     team, admin,
-    action: nextAction({ phase: c.phase, kra, midyear, appraisal, team,
+    action: nextAction({ phase: c.phase, kra, midyear, appraisal, team, requested,
                          teamPending: team ? team.kra_pending : 0 }),
   };
 }

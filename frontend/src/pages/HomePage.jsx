@@ -4,7 +4,7 @@ import { api } from '../utils/api';
 import {
   Target, TrendingUp, MessageCircle, Clock, ClipboardList, Award, Star, History,
   LayoutDashboard, Users, CheckCircle2, Library, BarChart3, ArrowRight, Lock,
-  Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck,
+  Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck, Send, Hourglass,
 } from 'lucide-react';
 
 // The landing screen.
@@ -104,6 +104,14 @@ function Section({ icon, hue, title, sub, children }) {
   );
 }
 
+// How long a request has been sitting. Days, because an approval four
+// hours old is not late and one nine days old is.
+const waited = (iso) => {
+  if (!iso) return 'just now';
+  const d = Math.floor((Date.now() - new Date(iso)) / 86400000);
+  return d <= 0 ? 'today' : d === 1 ? 'waiting 1 day' : `waiting ${d} days`;
+};
+
 const PHASE_LABEL = {
   draft: 'Draft', kra_open: 'KRA Setting', mid_year_review: 'Mid-Year Review',
   self_appraisal: 'Self-Appraisal', manager_eval: 'Manager Evaluation',
@@ -125,6 +133,14 @@ export default function HomePage() {
   const evalOpen = phase === 'manager_eval' || phase === 'hod_eval';
   const goals = me.goals || {};
   const connects = me.connects || {};
+  // The same submissions, from both ends. `requested` is what THIS person
+  // has sent upward and is waiting on; `pending` is what has been sent to
+  // them. One row in the database, two readings of it.
+  const requested = me.requested || [];
+  const pending = (team && team.pending_requests) || null;
+  // A manager reviews their own team; only an admin has All Approvals, so
+  // the link follows the permission rather than the role name.
+  const queueLink = team && team.scope === 'all_employees' ? '/admin/approvals' : '/team/kra-sheets';
 
   // What is OUTSTANDING, in the order it blocks people. Built as a list so
   // a tile only exists when its count does — see Desk above.
@@ -139,8 +155,11 @@ export default function HomePage() {
     desk.push({ key: 'sa', icon: ClipboardList, hue: 'violet', n: 1, label: 'Self-appraisal pending', to: '/my/self-appraisal' });
   if (connects.open_actions > 0)
     desk.push({ key: 'act', icon: ListChecks, hue: 'pink', n: connects.open_actions, label: 'Connect actions open', to: '/team/connects' });
-  if (team && team.kra_pending > 0)
-    desk.push({ key: 'tk', icon: Users, hue: 'amber', n: team.kra_pending, label: 'KRA approvals pending', to: '/team/kra-sheets' });
+  // Every kind of submission waiting on this person, in one figure. It
+  // replaced a KRA-only tile: two tiles counting overlapping things made
+  // "how many are waiting on me" a question with two answers.
+  if (pending && pending.total > 0)
+    desk.push({ key: 'req', icon: Hourglass, hue: 'amber', n: pending.total, label: 'Pending requests', to: queueLink });
   if (team && evalOpen && team.reports > team.evals_done)
     desk.push({ key: 'te', icon: ClipboardList, hue: 'rose', n: team.reports - team.evals_done, label: 'Evaluations to write', to: '/team/eval' });
   if (team && team.no_connect > 0)
@@ -206,12 +225,51 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* WHAT THIS PERSON HAS ASKED FOR AND IS WAITING ON. Listed rather
+          than counted: "2 requests" tells an employee nothing they can act
+          on, whereas "KRA sheet - with Priya Manager - 3 days" tells them
+          exactly who to chase. */}
+      {requested.length > 0 && (
+        <div>
+          <SecHead icon={Send} hue="lagoon" title="Requested to manager"
+            sub={`${requested.length} ${requested.length === 1 ? 'submission is' : 'submissions are'} waiting on someone else`} />
+          <div className="card divide-y divide-navy-50">
+            {requested.map((r, i) => (
+              <div key={i} className="p-3 flex flex-wrap items-center gap-2 text-sm">
+                <span className="chip bg-lagoon-50 text-lagoon-700">{r.label}</span>
+                <span className="text-navy-500">
+                  with <b className="text-navy-900">{r.waiting_on || 'no manager set'}</b>
+                </span>
+                <span className="ml-auto text-[11.5px] text-navy-400">{waited(r.since)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {desk.length > 0 && (
         <div>
           <SecHead icon={Inbox} hue="rose" title="My desk"
             sub={`${desk.length} ${desk.length === 1 ? 'thing is' : 'things are'} outstanding`} />
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {desk.map(x => <Desk key={x.key} {...x} />)}
+          </div>
+        </div>
+      )}
+
+      {pending && pending.total > 0 && (
+        <div>
+          <SecHead icon={Hourglass} hue="amber" title="Pending requests"
+            sub={team.scope === 'all_employees'
+              ? 'Submitted across the company and not yet decided'
+              : 'Submitted by your reports and not yet decided'} />
+          <div className="grid sm:grid-cols-3 gap-3">
+            <Tile to={queueLink} icon={Target} title="KRA sheets" hue="lagoon"
+              sub={`${pending.kra} awaiting an approve or a return`} />
+            <Tile to={queueLink} icon={TrendingUp} title="Growth plans" hue="leaf"
+              sub={`${pending.growth} awaiting an approve or a return`} />
+            <Tile to="/team/eval" icon={ClipboardList} title="Self-appraisals" hue="violet"
+              sub={`${pending.appraisal} awaiting your evaluation`} />
           </div>
         </div>
       )}
