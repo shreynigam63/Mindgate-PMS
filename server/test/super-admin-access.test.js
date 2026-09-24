@@ -119,28 +119,64 @@ after(async () => {
   await db.pool.end();
 });
 
+// CHANGED ON 24 SEP, and the change is a default, not a permission.
+//
+// These lists used to open on the whole company for an admin. The client
+// then asked for the opposite — "Team KRA sheets, Team Evaluation and
+// Team Mid-Year in Manager tab should have only names of reportees
+// reporting to him and not all employees" — so the Manager tab now opens
+// on the caller's own reports and widens with ?scope=all.
+//
+// The 18 Sep ask this test was written for is still met: an admin can
+// still see and act on everyone, their own row included. It just takes a
+// click. The assertions below are the same ones, with the parameter.
 test('SUPER ADMIN SEES EVERY EMPLOYEE IN EVERY TEAM LIST — THEMSELVES INCLUDED', { skip }, async () => {
-  const sheets = await req('GET', '/pms/team/kra-sheets', adminTok);
+  const sheets = await req('GET', '/pms/team/kra-sheets?scope=all', adminTok);
   assert.equal(sheets.status, 200, JSON.stringify(sheets.body));
   assert.equal(sheets.body.scope, 'all_employees');
   for (const id of [adminId, mgrId, reportId, strangerId]) {
     assert.ok(idsIn(sheets.body.sheets).includes(id), `kra-sheets is missing ${id}`);
   }
 
-  const evals = await req('GET', '/pms/team/evaluations', adminTok);
+  const evals = await req('GET', '/pms/team/evaluations?scope=all', adminTok);
   assert.equal(evals.body.scope, 'all_employees');
   assert.ok(idsIn(evals.body.team).includes(adminId), 'the admin can see their OWN evaluation row');
   assert.ok(idsIn(evals.body.team).includes(reportId), "…and somebody else's report");
 
-  const overview = await req('GET', '/pms/team/overview', adminTok);
+  const overview = await req('GET', '/pms/team/overview?scope=all', adminTok);
   assert.equal(overview.body.scope, 'all_employees');
   assert.ok(idsIn(overview.body.rows).includes(adminId));
   assert.ok(idsIn(overview.body.rows).includes(reportId));
 
-  const plans = await req('GET', '/pms/team/development-plans', adminTok);
+  const plans = await req('GET', '/pms/team/development-plans?scope=all', adminTok);
   assert.equal(plans.body.scope, 'all_employees');
   assert.ok(plans.body.plans.some((p) => p.employee_id === adminId), 'their own growth plan');
   assert.ok(plans.body.plans.some((p) => p.employee_id === reportId), "and somebody else's");
+});
+
+test('…but the Manager tab OPENS on the admin\'s own reports, not the company', { skip }, async () => {
+  // The other half of the 24 Sep change. Without this, reverting the
+  // default would leave every assertion above still passing.
+  for (const [path, key] of [['/pms/team/kra-sheets', 'sheets'],
+                             ['/pms/team/evaluations', 'team'],
+                             ['/pms/team/overview', 'rows'],
+                             ['/pms/team/development-plans', 'plans']]) {
+    const r = await req('GET', path, adminTok);
+    assert.equal(r.status, 200, path);
+    assert.equal(r.body.scope, 'my_reports', `${path} must default to my reports`);
+    const ids = idsIn(r.body[key]);
+    // SA Stranger reports to the admin, so they belong here; SA Report
+    // reports to the manager and must not appear until asked. (The first
+    // draft of this asserted the opposite about Stranger — the fixture
+    // comment "reports to nobody relevant" means nobody relevant to the
+    // MANAGER, and the admin is their manager.)
+    assert.ok(ids.includes(strangerId), `${path} shows the admin's own report`);
+    assert.ok(!ids.includes(reportId),
+      `${path} must not show somebody else's report until asked`);
+    assert.ok(!ids.includes(adminId),
+      `${path} does not contain the admin — nobody is their own manager`);
+    assert.equal(r.body.can_see_all, true, 'while still offering the wider view');
+  }
 });
 
 test('A PLAIN MANAGER STILL SEES ONLY THEIR OWN REPORTS — all four lists', { skip }, async () => {
@@ -183,9 +219,16 @@ test('THE ADMIN CAN APPROVE THEIR OWN KRA SHEET, END TO END', { skip }, async ()
   assert.equal(put.status, 200, JSON.stringify(put.body));
   assert.equal((await req('POST', '/pms/my/kra-sheet/submit', adminTok)).status, 200);
 
-  // It now appears in their own team list, which is the UI path that did
-  // not exist before.
-  const list = await req('GET', '/pms/team/kra-sheets', adminTok);
+  // It appears in their own team list, which is the UI path that did not
+  // exist before 18 Sep.
+  //
+  // ?scope=all since 24 Sep, and this is a real consequence worth naming:
+  // nobody is their own manager, so an admin's own row can only ever
+  // appear in the whole-company view. Now that the Manager tab opens on
+  // "My reports", approving your own sheet takes one extra click on
+  // "All employees" first. The power is unchanged; the route to it is
+  // one step longer.
+  const list = await req('GET', '/pms/team/kra-sheets?scope=all', adminTok);
   const mine = list.body.sheets.find((r) => r.employee_id === adminId);
   assert.ok(mine, 'their own row is in the list they approve from');
   assert.equal(mine.status, 'submitted');

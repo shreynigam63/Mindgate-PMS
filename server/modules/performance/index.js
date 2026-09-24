@@ -88,6 +88,28 @@ async function seesWholeCompany(req) {
   return hasPermission(req.user, 'pms_admin');
 }
 
+// ...BUT THE MANAGER TAB NOW MEANS "MY REPORTS" BY DEFAULT, for everyone.
+//
+// Asked for on 24 Sep: "Team KRA sheets, Team Evaluation and Team Mid-Year
+// in Manager tab should have only names of reportees reporting to him and
+// not all employees."
+//
+// The whole-company view above was itself asked for, on 18 Sep, and it is
+// not being taken away — an admin can still reach anyone, which is the
+// only way to approve for somebody who does not report to them. What
+// changes is the DEFAULT: these four lists open on the caller's own
+// reports and widen only when explicitly asked, with ?scope=all.
+//
+// Nothing changed for a plain manager, who never saw anyone else's rows
+// and still cannot: seesWholeCompany() is the gate, and it needs
+// pms_admin. What changed is that an admin opening the Manager tab now
+// sees their team there, and finds the whole company on the HR tab (KRA
+// Overview, All Approvals, Completion Report) where org-wide work lives.
+async function wantsWholeCompany(req) {
+  if (String(req.query.scope || '') !== 'all') return false;
+  return seesWholeCompany(req);
+}
+
 
 // BR-6.6: "For employees flagged under BR-6.5 [Super 50], proactively
 // alert HR/Management to consider retention actions." Fans out an in-app
@@ -577,7 +599,7 @@ router.get('/team/kra-sheets', async (req, res) => {
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, sheets: [] });
     // Super admin sees every employee here, themselves included.
-    const wide = await seesWholeCompany(req);
+    const wide = await wantsWholeCompany(req);
     // Found live: a manager's direct reports could be entirely missing
     // from this list even after submitting a KRA. Two compounding causes,
     // both fixed here:
@@ -603,7 +625,7 @@ router.get('/team/kra-sheets', async (req, res) => {
         WHERE e.tenant_id=$2 AND e.status='active'
           ${wide ? '' : 'AND e.manager_id=$3'} ORDER BY e.name`,
       wide ? [c.id, T(req)] : [c.id, T(req), req.user.id]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, scope: wide ? 'all_employees' : 'my_reports',
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, scope: wide ? 'all_employees' : 'my_reports', can_see_all: await seesWholeCompany(req),
                sheets: r.rows.map((row) => ({ ...row, status: row.status || 'not_started' })) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2617,7 +2639,7 @@ router.get('/team/development-plans', async (req, res) => {
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, plans: [] });
     // Super admin sees every employee here, themselves included.
-    const wide = await seesWholeCompany(req);
+    const wide = await wantsWholeCompany(req);
     const r = await db.query(
       `SELECT p.*, e.name AS employee_name, e.email AS employee_email,
               (SELECT COUNT(*)::int FROM pms.development_goals g WHERE g.plan_id=p.id) AS goal_count,
@@ -2626,7 +2648,7 @@ router.get('/team/development-plans', async (req, res) => {
         WHERE p.cycle_id=$1 ${wide ? '' : 'AND p.manager_id=$2'} ORDER BY e.name`,
       wide ? [c.id] : [c.id, req.user.id]);
     res.json({ cycle: { id: c.id, name: c.name, phase: c.phase },
-               scope: wide ? 'all_employees' : 'my_reports', plans: r.rows });
+               scope: wide ? 'all_employees' : 'my_reports', can_see_all: await seesWholeCompany(req), plans: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3196,7 +3218,7 @@ router.get('/team/evaluations', async (req, res) => {
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, team: [] });
     // Super admin sees every employee here, themselves included.
-    const wide = await seesWholeCompany(req);
+    const wide = await wantsWholeCompany(req);
     const r = await db.query(
       `SELECT e.id AS employee_id, e.name, e.department,
               sa.status AS self_status, sa.entries AS self_entries, sa.overall_self_rating,
@@ -3210,7 +3232,7 @@ router.get('/team/evaluations', async (req, res) => {
           ${wide ? '' : 'AND e.manager_id=$3'} ORDER BY e.name`,
       wide ? [c.id, T(req)] : [c.id, T(req), req.user.id]);
     res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale, cycle_type: c.cycle_type },
-               scope: wide ? 'all_employees' : 'my_reports', team: r.rows });
+               scope: wide ? 'all_employees' : 'my_reports', can_see_all: await seesWholeCompany(req), team: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -4820,55 +4842,132 @@ router.get('/closure-letters/:employeeId/:cycleId/download', async (req, res) =>
 // (KRA, Dev Plan, Self-Appraisal, Manager Evaluation). HOD review is
 // intentionally excluded from "employee complete" — it isn't the
 // employee's own action to finish.
+// One definition of the completion report, shared by the page and by the
+// two export endpoints below. It was inline in the handler until the
+// exports arrived; a second copy of the "complete" rule is exactly the
+// kind of thing that drifts until a file and a screen disagree about who
+// has finished their appraisal.
+//
+// Returns {error, status} instead of throwing, so each caller can answer
+// in its own content type rather than a JSON error landing in a download.
+async function completionRows(req) {
+  // The moment HR most wants this report is as a cycle closes or just
+  // after — but activeCycle() filters out closed/cancelled, so the page
+  // went blank exactly then. An explicit cycle_id names ANY cycle of this
+  // tenant regardless of phase; without it, behaviour is unchanged and we
+  // still default to whatever is active.
+  let c;
+  if (req.query.cycle_id) {
+    // Check the id's shape first: an unparseable value would otherwise
+    // fail on the uuid cast and surface as a 500 with a raw driver
+    // message rather than a clean 404.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.query.cycle_id)) {
+      return { error: 'Cycle not found', status: 404 };
+    }
+    // Scoped by tenant_id as well as id, so one tenant can't read
+    // another's cycle by guessing an id.
+    c = (await db.query(`SELECT * FROM pms.cycles WHERE id=$1 AND tenant_id=$2`,
+      [req.query.cycle_id, T(req)])).rows[0];
+    if (!c) return { error: 'Cycle not found', status: 404 };
+  } else {
+    c = await activeCycle(T(req));
+  }
+  if (!c) return { cycle: null, rows: [] };
+  const r = await db.query(
+    `SELECT e.id AS employee_id, e.name, e.department,
+            COALESCE(ks.status, 'not_started') AS kra_status,
+            COALESCE(dp.status, 'not_started') AS devplan_status,
+            COALESCE(sa.status, 'not_started') AS self_appraisal_status,
+            COALESCE(me.status, 'pending') AS manager_eval_status,
+            COALESCE(he.status, 'pending') AS hod_status
+       FROM core.employees e
+       LEFT JOIN pms.kra_sheets ks ON ks.cycle_id=$1 AND ks.employee_id=e.id
+       LEFT JOIN pms.development_plans dp ON dp.cycle_id=$1 AND dp.employee_id=e.id
+       LEFT JOIN pms.self_appraisals sa ON sa.cycle_id=$1 AND sa.employee_id=e.id
+       LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id
+       LEFT JOIN pms.hod_evaluations he ON he.cycle_id=$1 AND he.employee_id=e.id
+      WHERE e.tenant_id=$2 AND e.status='active' ORDER BY e.department, e.name`,
+    [c.id, T(req)]);
+  const rows = r.rows.map((row) => ({
+    ...row,
+    complete: ['approved'].includes(row.kra_status) &&
+      ['approved'].includes(row.devplan_status) &&
+      row.self_appraisal_status === 'submitted' &&
+      row.manager_eval_status === 'submitted',
+  }));
+  return { cycle: { id: c.id, name: c.name, phase: c.phase }, rows };
+}
+
 router.get('/reports/completion', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
-    // The moment HR most wants this report is as a cycle closes or just
-    // after — but activeCycle() filters out closed/cancelled, so the page
-    // went blank exactly then. An explicit cycle_id names ANY cycle of
-    // this tenant regardless of phase; without it, behaviour is
-    // unchanged and we still default to whatever is active.
-    let c;
-    if (req.query.cycle_id) {
-      // Check the id's shape first: an unparseable value would otherwise
-      // fail on the uuid cast and surface as a 500 with a raw driver
-      // message rather than a clean 404.
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.query.cycle_id)) {
-        return res.status(404).json({ error: 'Cycle not found' });
-      }
-      // Scoped by tenant_id as well as id, so one tenant can't read
-      // another's cycle by guessing an id.
-      c = (await db.query(`SELECT * FROM pms.cycles WHERE id=$1 AND tenant_id=$2`,
-        [req.query.cycle_id, T(req)])).rows[0];
-      if (!c) return res.status(404).json({ error: 'Cycle not found' });
-    } else {
-      c = await activeCycle(T(req));
-    }
-    if (!c) return res.json({ cycle: null, rows: [] });
-    const r = await db.query(
-      `SELECT e.id AS employee_id, e.name, e.department,
-              COALESCE(ks.status, 'not_started') AS kra_status,
-              COALESCE(dp.status, 'not_started') AS devplan_status,
-              COALESCE(sa.status, 'not_started') AS self_appraisal_status,
-              COALESCE(me.status, 'pending') AS manager_eval_status,
-              COALESCE(he.status, 'pending') AS hod_status
-         FROM core.employees e
-         LEFT JOIN pms.kra_sheets ks ON ks.cycle_id=$1 AND ks.employee_id=e.id
-         LEFT JOIN pms.development_plans dp ON dp.cycle_id=$1 AND dp.employee_id=e.id
-         LEFT JOIN pms.self_appraisals sa ON sa.cycle_id=$1 AND sa.employee_id=e.id
-         LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id
-         LEFT JOIN pms.hod_evaluations he ON he.cycle_id=$1 AND he.employee_id=e.id
-        WHERE e.tenant_id=$2 AND e.status='active' ORDER BY e.department, e.name`,
-      [c.id, T(req)]);
-    const rows = r.rows.map((row) => ({
-      ...row,
-      complete: ['approved'].includes(row.kra_status) &&
-        ['approved'].includes(row.devplan_status) &&
-        row.self_appraisal_status === 'submitted' &&
-        row.manager_eval_status === 'submitted',
-    }));
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, rows });
+    const built = await completionRows(req);
+    if (built.error) return res.status(built.status).json({ error: built.error });
+    res.json({ cycle: built.cycle, rows: built.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Export the completion report.
+//
+// Asked for on 24 Sep alongside the employee export. It reuses
+// completionRows() rather than re-querying, so the file and the page can
+// never disagree about who is complete — that judgement is made in one
+// place and this reads it.
+//
+// It takes the same optional cycle_id as the page, because the moment HR
+// most wants this on paper is as a cycle closes.
+const COMPLETION_COLUMNS = [
+  ['Employee', 'name', 28],
+  ['Department', 'department', 22],
+  ['KRA', 'kra_status', 16],
+  ['Target achievements', 'devplan_status', 20],
+  ['Annual Review', 'self_appraisal_status', 18],
+  ['Manager evaluation', 'manager_eval_status', 20],
+  ['Delivery Head', 'hod_status', 16],
+  ['Overall', 'overall', 14],
+];
+
+router.get('/reports/completion/export.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const built = await completionRows(req);
+    if (built.error) return res.status(built.status).json({ error: built.error });
+    if (!built.cycle) return res.status(409).json({ error: 'No cycle to report on' });
+    const rows = built.rows.map((r) => ({ ...r, overall: r.complete ? 'Complete' : 'Pending' }));
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Completion');
+    ws.addRow([`${built.cycle.name} · ${rows.filter((r) => r.complete).length} of ${rows.length} complete`]).font = { italic: true };
+    ws.mergeCells(1, 1, 1, COMPLETION_COLUMNS.length);
+    const header = ws.addRow(COMPLETION_COLUMNS.map(([label]) => label));
+    header.font = { bold: true };
+    for (const row of rows) ws.addRow(COMPLETION_COLUMNS.map(([, k]) => (row[k] == null ? '' : row[k])));
+    ws.columns.forEach((col, i) => { col.width = COMPLETION_COLUMNS[i][2]; });
+    ws.views = [{ state: 'frozen', ySplit: 2 }];
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="pms-completion-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('completion export xlsx', { error: e.message }); res.status(500).json({ error: 'Could not build the export' }); }
+});
+
+router.get('/reports/completion/export.csv', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const built = await completionRows(req);
+    if (built.error) return res.status(built.status).json({ error: built.error });
+    if (!built.cycle) return res.status(409).json({ error: 'No cycle to report on' });
+    const cell = (v) => {
+      const t = String(v == null ? '' : v).replace(/\s*\n\s*/g, ' ');
+      return /[",]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const csv = [COMPLETION_COLUMNS.map(([label]) => label),
+      ...built.rows.map((r) => COMPLETION_COLUMNS.map(([, k]) =>
+        (k === 'overall' ? (r.complete ? 'Complete' : 'Pending') : r[k])))]
+      .map((r) => r.map(cell).join(',')).join('\n') + '\n';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="pms-completion-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send('\uFEFF' + csv);   // BOM, so Excel reads it as UTF-8
+  } catch (e) { logger.error('completion export csv', { error: e.message }); res.status(500).json({ error: 'Could not build the export' }); }
 });
 
 // "See past years" — an employee's own rating history across published
@@ -4910,7 +5009,7 @@ router.get('/team/overview', async (req, res) => {
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, rows: [] });
     // Super admin sees every employee here, themselves included.
-    const wide = await seesWholeCompany(req);
+    const wide = await wantsWholeCompany(req);
     const r = await db.query(
       `SELECT e.id AS employee_id, e.name, e.department,
               COALESCE(ks.status, 'not_started') AS kra_status,
@@ -4929,7 +5028,7 @@ router.get('/team/overview', async (req, res) => {
           ${wide ? '' : 'AND e.manager_id=$4'} ORDER BY e.name`,
       wide ? [c.opens_at || null, T(req), c.id] : [c.opens_at || null, T(req), c.id, req.user.id]);
     res.json({ cycle: { id: c.id, name: c.name, phase: c.phase },
-               scope: wide ? 'all_employees' : 'my_reports', rows: r.rows });
+               scope: wide ? 'all_employees' : 'my_reports', can_see_all: await seesWholeCompany(req), rows: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

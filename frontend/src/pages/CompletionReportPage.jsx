@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { api } from '../utils/api';
+import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+
+// Download links, not fetch(): the browser handles the file, and the
+// token rides in the query because a plain <a> cannot send a header.
+// Same pattern as every other download in this app.
+const dl = (path) => `${API_BASE}${path}${path.includes('?') ? '&' : '?'}token=${localStorage.getItem('apms_token')}`;
 
 const STATUS_COLOR = {
   approved: 'bg-emerald-100 text-emerald-700', submitted: 'bg-emerald-100 text-emerald-700',
@@ -93,6 +98,12 @@ export default function CompletionReportPage() {
           </select>
         )}
         {data?.cycle && <span className="chip bg-emerald-100 text-emerald-700">{completeCount} / {rows.length} complete</span>}
+        {data?.cycle && (
+          <>
+            <a className="btn-sec" href={dl(`/pms/reports/completion/export.xlsx?cycle_id=${cycleId}`)}>Export (.xlsx)</a>
+            <a className="btn-sec" href={dl(`/pms/reports/completion/export.csv?cycle_id=${cycleId}`)}>.csv</a>
+          </>
+        )}
         {isActive && (
           <button className="btn-sec ml-auto" disabled={reseeding} onClick={reseed}>
             <RefreshCw size={13} className="inline mr-1" />{reseeding ? 'Re-seeding…' : 'Re-seed HOD evaluations'}

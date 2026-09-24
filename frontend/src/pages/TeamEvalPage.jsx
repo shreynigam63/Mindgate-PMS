@@ -6,6 +6,7 @@ import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPa
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import StatusTabs, { statusTabs } from '../StatusTabs';
+import ScopeToggle, { scopeParam } from '../ScopeToggle';
 
 // Matches Self-Appraisal's convention: per-KRA picks in letter grades,
 // the one computed overall in descriptive wording — see that page for
@@ -29,7 +30,10 @@ export default function TeamEvalPage() {
   const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
 
-  const load = () => api('/pms/team/evaluations').then(r => { setData(r); setErr(null); }).catch(e => setErr(e.message));
+  const [scope, setScope] = useState('mine');
+  const load = (sc = scope) => api('/pms/team/evaluations' + scopeParam(sc))
+    .then(r => { setData(r); setErr(null); }).catch(e => setErr(e.message));
+  const changeScope = (sc) => { setScope(sc); setData(null); load(sc); };
   useEffect(() => { load(); }, []);
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
@@ -58,10 +62,7 @@ export default function TeamEvalPage() {
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Team Evaluation" hue="teal">
-        {data&&data.scope === 'all_employees' && (
-          <span className="chip bg-violet-50 text-violet-700" title="You hold super admin, so these lists show every employee — including yourself — and you can act at any level on any of them.">
-            all employees · super admin
-          </span>)}
+        <ScopeToggle data={data} value={scope} onChange={changeScope} />
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
       </PageHead>
       <StatusTabs tabs={etabs} value={tab} onChange={setTab} />

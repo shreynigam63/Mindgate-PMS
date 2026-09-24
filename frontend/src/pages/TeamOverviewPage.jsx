@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import SearchBox, { matches } from '../SearchBox';
+import ScopeToggle, { scopeParam } from '../ScopeToggle';
 
 const STATUS_COLOR = {
   approved: 'bg-emerald-100 text-emerald-700', submitted: 'bg-emerald-100 text-emerald-700',
@@ -20,23 +22,35 @@ function StatusChip({ value }) {
 export default function TeamOverviewPage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
+  const [scope, setScope] = useState('mine');
+  const [q, setQ] = useState('');
 
-  useEffect(() => { api('/pms/team/overview').then(setData).catch(e => setErr(e.message)); }, []);
+  useEffect(() => {
+    setData(null);
+    api('/pms/team/overview' + scopeParam(scope)).then(setData).catch(e => setErr(e.message));
+  }, [scope]);
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
   if (!data.cycle) return <div className="card p-8 text-center text-sm text-navy-400">No active cycle.</div>;
 
+  const shown = data.rows.filter(r => matches(q, r.name, r.department));
+
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="Team Overview" hue="teal">
-        {data&&data.scope === 'all_employees' && (
-          <span className="chip bg-violet-50 text-violet-700" title="You hold super admin, so these lists show every employee — including yourself — and you can act at any level on any of them.">
-            all employees · super admin
-          </span>)}
+        <ScopeToggle data={data} value={scope} onChange={setScope} />
         <span className="chip bg-navy-50 text-navy-600">{data.cycle.name}</span>
       </PageHead>
-      {!data.rows.length && <div className="card p-8 text-center text-sm text-navy-400">No direct reports found.</div>}
+      {!!data.rows.length && (
+        <SearchBox value={q} onChange={setQ} placeholder="Search by name or department…"
+          shown={shown.length} total={data.rows.length} />
+      )}
+      {!data.rows.length && (
+        <div className="card p-8 text-center text-sm text-navy-400">
+          {scope === 'all' ? 'No employees found.' : 'No direct reports found.'}
+        </div>
+      )}
       <div className="card overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -49,7 +63,7 @@ export default function TeamOverviewPage() {
             </tr>
           </thead>
           <tbody>
-            {data.rows.map(r => (
+            {shown.map(r => (
               <tr key={r.employee_id} className="border-b border-navy-50">
                 <td className="px-3 py-2 font-semibold">{r.name}</td>
                 <td className="px-3 py-2 text-navy-400">{r.department || '—'}</td>

@@ -404,3 +404,101 @@ test('All Approvals opens the record and can return it, not just approve blind',
     if (ctx) await ctx.close();
   }
 });
+
+test('the Manager tab opens on my reports, and only an admin can widen it', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 24 Sep: "Team KRA sheets, Team Evaluation and Team
+  // Mid-Year in Manager tab should have only names of reportees
+  // reporting to him and not all employees."
+  //
+  // The server test covers who CAN see what. This covers the control: a
+  // manager must not be shown a toggle they cannot use, and an admin
+  // must be able to get the old whole-company view back.
+  const PAGES = ['/team/kra-sheets', '/team/eval', '/team/midyear',
+                 '/team/overview', '/team/growth'];
+
+  for (const path of PAGES) {
+    const { ctx, page } = await open('mgr@shot.in', path);
+    assert.equal(await page.locator('button:has-text("All employees")').count(), 0,
+      `${path}: a plain manager is offered no scope control`);
+    assert.ok(!/all employees · super admin/i.test(await page.locator('body').innerText()),
+      `${path}: and is not told they are seeing everyone`);
+    await ctx.close();
+  }
+
+  for (const path of PAGES) {
+    const { ctx, page } = await open('admin@shot.in', path);
+    assert.equal(await page.locator('button:has-text("My reports")').count(), 1,
+      `${path}: an admin gets the toggle`);
+    assert.equal(await page.locator('button:has-text("All employees")').count(), 1);
+    assert.equal(await page.locator('button[aria-pressed="true"]:has-text("My reports")').count(), 1,
+      `${path}: and it opens on My reports, which is the change`);
+    await ctx.close();
+  }
+
+  // Widening actually widens. Team KRA Sheets shows a count, so the
+  // change is visible without counting cards.
+  const { ctx, page, errors } = await open('admin@shot.in', '/team/kra-sheets');
+  await page.locator('button:has-text("All employees")').click();
+  await page.waitForTimeout(1800);
+  assert.match(await page.locator('body').innerText(), /All\s+\d+/,
+    'the whole-company view comes back for an admin who asks for it');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('the two HR reports can be exported, and the counts on KRA Overview filter', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 24 Sep: export on Employees and the Completion Report,
+  // and "clickable option" for the KRA Overview counts.
+  for (const [path, label, expected] of [
+    ['/admin/directory', 'Export all (.xlsx)', /^employees-\d{4}-\d{2}-\d{2}\.xlsx$/],
+    ['/admin/completion-report', 'Export (.xlsx)', /^pms-completion-\d{4}-\d{2}-\d{2}\.xlsx$/],
+  ]) {
+    const { ctx, page } = await open('admin@shot.in', path);
+    const link = page.locator(`a:has-text("${label}")`).first();
+    assert.equal(await link.count(), 1, `${path}: the export button is there`);
+    // Prove it downloads something, not just that a link exists.
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), link.click()]);
+    assert.match(dl.suggestedFilename(), expected);
+    await ctx.close();
+  }
+
+  const { ctx, page, errors } = await open('admin@shot.in', '/admin/kra-overview');
+  const counters = page.locator('button[aria-pressed]');
+  assert.equal(await counters.count(), 5, 'every count is a button');
+  const all = await page.locator('tbody tr').count();
+  const approved = counters.filter({ hasText: 'approved' }).first();
+  await approved.click();
+  await page.waitForTimeout(600);
+  const filtered = await page.locator('tbody tr').count();
+  assert.ok(filtered < all, `clicking a count filters the table (${all} -> ${filtered})`);
+  assert.equal(await page.locator('button:has-text("Clear filter")').count(), 1);
+  // Clicking the same one again is the way back.
+  await approved.click();
+  await page.waitForTimeout(600);
+  assert.equal(await page.locator('tbody tr').count(), all, 'and clicking it again clears');
+  // A count of zero is not a live control — it would filter to nothing.
+  for (const key of ['not started', 'draft', 'submitted', 'returned', 'approved']) {
+    const b = counters.filter({ hasText: key }).first();
+    const n = Number((await b.innerText()).split('\n')[0]);
+    assert.equal(await b.isDisabled(), n === 0, `"${key}" (${n}) disabled state`);
+  }
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('Team Overview can be searched', async (t) => {
+  if (needStack(t)) return;
+  const { ctx, page, errors } = await open('mgr@shot.in', '/team/overview');
+  const box = page.locator('input[placeholder*="Search"]');
+  assert.equal(await box.count(), 1);
+  const before = await page.locator('tbody tr').count();
+  assert.ok(before > 1, 'the demo manager has a team to search');
+  await box.fill('Arun');
+  await page.waitForTimeout(600);
+  const after = await page.locator('tbody tr').count();
+  assert.ok(after > 0 && after < before, `search narrows the list (${before} -> ${after})`);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});

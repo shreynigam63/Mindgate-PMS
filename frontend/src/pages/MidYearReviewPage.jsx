@@ -6,6 +6,7 @@ import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import ScopeToggle, { scopeParam } from '../ScopeToggle';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -35,11 +36,17 @@ export default function MidYearReviewPage() {
 // Nothing about the review itself changed: same list, same expand, same
 // detail component, same endpoints.
 export function TeamMidYearPage() {
+  // The scope control lives on the page rather than inside the list, so
+  // it sits in the page band with every other page's controls.
+  const [scope, setScope] = useState('mine');
+  const [meta, setMeta] = useState(null);
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Team Mid-Year Reviews" hue="lagoon"
-        sub="Sign off the mid-year checkpoint for each of your reports." />
-      <TeamMidYearReviews />
+        sub="Sign off the mid-year checkpoint for each of your reports.">
+        <ScopeToggle data={meta} value={scope} onChange={setScope} />
+      </PageHead>
+      <TeamMidYearReviews scope={scope} onMeta={setMeta} />
     </div>
   );
 }
@@ -424,11 +431,16 @@ function MyMidYearCard() {
 // interaction everywhere. Uses the existing /team/evaluations list for
 // "who are my reports" (already fetched elsewhere in the app) and the
 // new /team/midyear-review/:employeeId for the detail once expanded.
-function TeamMidYearReviews() {
+function TeamMidYearReviews({ scope = 'mine', onMeta }) {
   const [team, setTeam] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [q, setQ] = useState('');
-  useEffect(() => { api('/pms/team/evaluations').then((r) => setTeam(r.team || [])).catch(() => setTeam([])); }, []);
+  useEffect(() => {
+    setTeam(null);
+    api('/pms/team/evaluations' + scopeParam(scope))
+      .then((r) => { setTeam(r.team || []); if (onMeta) onMeta(r); })
+      .catch(() => setTeam([]));
+  }, [scope]);
   const shown = (team || []).filter((t) => matches(q, t.name, t.designation, t.department));
 
   if (team && !team.length) {

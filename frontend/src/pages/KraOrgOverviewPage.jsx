@@ -17,6 +17,7 @@ export default function KraOrgOverviewPage() {
   const [q, setQ] = useState('');
   const [err, setErr] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [statusFilter, setStatusFilter] = useState(null);
   const [cleaning, setCleaning] = useState(false);
   const [cleanMsg, setCleanMsg] = useState(null);
   // Fix guide item #4 (BR-1.1): bulk KRA upload, alongside the existing
@@ -59,6 +60,9 @@ export default function KraOrgOverviewPage() {
   if (!data.cycle) return <div className="card p-8 text-center text-sm text-navy-400">No active cycle.</div>;
 
   const COUNTER_ORDER = ['not_started', 'draft', 'submitted', 'returned', 'approved'];
+  const shown = statusFilter
+    ? data.employees.filter(e => e.status === statusFilter)
+    : data.employees;
 
   return (
     <div className="space-y-4 max-w-7xl mx-auto">
@@ -93,13 +97,39 @@ export default function KraOrgOverviewPage() {
           </div>
         )}
       </div>
-      <div className="flex gap-3 flex-wrap">
-        {COUNTER_ORDER.map(k => (
-          <div key={k} className="text-center">
-            <p className="text-lg font-bold">{data.counters[k] || 0}</p>
-            <p className="text-[10px] text-navy-400 capitalize">{k.replace('_', ' ')}</p>
-          </div>
-        ))}
+      {/* THE COUNTS ARE THE FILTER. Asked for on 24 Sep — they read as a
+          summary, and the obvious thing to do with "1396 Not Started" is
+          click it to see who. Filtering happens here rather than on the
+          server because the endpoint already returns every row and
+          computes these counts from them; a round trip would buy nothing
+          and would make the counts and the table disagree mid-flight.
+          Clicking the active one clears it, so there is always a way
+          back to everybody without reloading. */}
+      <div className="flex gap-2 flex-wrap">
+        {COUNTER_ORDER.map(k => {
+          const on = statusFilter === k;
+          const n = data.counters[k] || 0;
+          return (
+            <button key={k} type="button" disabled={!n}
+              aria-pressed={on}
+              title={n ? (on ? 'Showing these — click to clear' : `Show only the ${n} ${k.replace('_', ' ')}`) : 'Nobody in this state'}
+              onClick={() => setStatusFilter(on ? null : k)}
+              className={`text-center px-4 py-2 rounded-xl border transition-colors
+                ${on ? 'bg-navy-700 border-navy-700 text-white'
+                     : n ? 'bg-white border-navy-100 hover:bg-navy-50 cursor-pointer'
+                         : 'bg-white border-navy-100 opacity-45 cursor-default'}`}>
+              <p className="text-lg font-bold leading-none">{n}</p>
+              <p className={`text-[10px] capitalize mt-1 ${on ? 'text-white/80' : 'text-navy-400'}`}>
+                {k.replace('_', ' ')}
+              </p>
+            </button>
+          );
+        })}
+        {statusFilter && (
+          <button type="button" className="btn-sec self-center" onClick={() => setStatusFilter(null)}>
+            Clear filter
+          </button>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <Search size={14} className="text-navy-400" />
@@ -115,7 +145,7 @@ export default function KraOrgOverviewPage() {
               <th className="text-left px-3 py-2">Status</th><th className="px-3 py-2" /></tr>
           </thead>
           <tbody className="divide-y divide-navy-100">
-            {data.employees.map(e => (
+            {shown.map(e => (
               <Fragment key={e.employee_id}>
                 <tr>
                   <td className="px-3 py-2 font-semibold">{e.name}</td>
@@ -134,7 +164,7 @@ export default function KraOrgOverviewPage() {
                 )}
               </Fragment>
             ))}
-            {!data.employees.length && <tr><td colSpan={6} className="p-6 text-center text-navy-400">No employees match.</td></tr>}
+            {!shown.length && <tr><td colSpan={6} className="p-6 text-center text-navy-400">{statusFilter ? `Nobody is ${statusFilter.replace('_', ' ')}${q ? ' in this search' : ''}.` : 'No employees match.'}</td></tr>}
           </tbody>
         </table>
       </div>

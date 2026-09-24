@@ -105,6 +105,11 @@ function ImportKraAssign({ report }) {
   );
 }
 
+// Download links, not fetch(): the browser handles the file, and the
+// token rides in the query because a plain <a> cannot send a header.
+// Same pattern as every other download in this app.
+const dl = (path) => `${API_BASE}${path}${path.includes('?') ? '&' : '?'}token=${localStorage.getItem('apms_token')}`;
+
 export default function DirectoryPage() {
   const [rows, setRows] = useState(null);
   const [report, setReport] = useState(null);
@@ -195,7 +200,14 @@ export default function DirectoryPage() {
 
   return (
     <div className="space-y-4 max-w-7xl mx-auto">
-      <PageHead title="Employees" hue="navy" />
+      <PageHead title="Employees" hue="navy">
+        {/* Exports EVERY employee, not the rows left after the search
+            box above — the search is applied in the browser over several
+            fields, and a second copy of that rule server-side would
+            drift. The label says "all" so nobody expects otherwise. */}
+        <a className="btn-sec" href={dl('/employees/export.xlsx')}>Export all (.xlsx)</a>
+        <a className="btn-sec" href={dl('/employees/export.csv')}>.csv</a>
+      </PageHead>
       <div className="card p-4 space-y-2">
         <p className="lbl">Bulk import — CSV or Excel (.xlsx), synced from your HRMS, dry run first</p>
         <div className="flex flex-wrap items-center gap-2">

@@ -866,6 +866,95 @@ router.get('/', async (req, res) => {
   } catch (e) { logger.error('employees list', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
+// ---------------------------------------------------------------------
+// Export the employee master.
+//
+// Asked for on 24 Sep: "please provide export option on this page."
+//
+// It exports EVERY row the list endpoint returns, not the rows left after
+// whatever is typed in the page's search box. The search on that page is
+// applied in the browser over several fields at once; re-implementing it
+// here would be a second copy of one rule, and the two would drift. So
+// the button says "Export all" and means it.
+//
+// emp_code is written as TEXT in the .xlsx, which is the whole reason
+// this is a server-side export rather than a CSV built in the browser:
+// HRMS employee codes carry leading zeros, and Excel silently eats them
+// off anything it decides is a number. A code that arrives as 00123 and
+// opens as 123 is a broken export nobody notices until they try to match
+// it back to the HRMS.
+const EXPORT_COLUMNS = [
+  ['Employee ID', 'emp_code', 26],
+  ['Name', 'name', 28],
+  ['Email', 'email', 34],
+  ['Department', 'department', 22],
+  ['Designation', 'designation', 26],
+  ['Role band', 'role_band', 14],
+  ['Manager', 'manager_name', 26],
+  ["Manager's email", 'manager_email', 34],
+  ['Date of joining', 'date_of_joining', 16],
+  ['Status', 'status', 12],
+  ['Login', 'has_login', 10],
+  ['Role', 'role', 14],
+];
+
+async function exportRows(tenantId) {
+  const r = await db.query(
+    `SELECT e.emp_code, e.name, e.email, e.department, e.designation, e.role_band,
+            e.status, e.date_of_joining, m.name AS manager_name, m.email AS manager_email,
+            (lc.email IS NOT NULL) AS has_login, COALESCE(ur.role, 'employee') AS role
+       FROM core.employees e LEFT JOIN core.employees m ON m.id = e.manager_id
+       LEFT JOIN core.local_credentials lc ON lc.tenant_id = e.tenant_id AND LOWER(lc.email) = LOWER(e.email)
+       LEFT JOIN core.user_roles ur ON ur.tenant_id = e.tenant_id AND LOWER(ur.email) = LOWER(e.email)
+      WHERE e.tenant_id = $1 ORDER BY e.name`, [tenantId]);
+  return r.rows.map((e) => ({
+    ...e,
+    has_login: e.has_login ? 'yes' : 'no',
+    date_of_joining: e.date_of_joining ? new Date(e.date_of_joining).toISOString().slice(0, 10) : '',
+  }));
+}
+
+router.get('/export.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    const rows = await exportRows(req.user.tenant_id);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Employees');
+    const header = ws.addRow(EXPORT_COLUMNS.map(([label]) => label));
+    header.font = { bold: true };
+    for (const row of rows) {
+      const added = ws.addRow(EXPORT_COLUMNS.map(([, key]) => (row[key] == null ? '' : row[key])));
+      // Text, not General: see the note above about leading zeros.
+      added.getCell(1).numFmt = '@';
+    }
+    ws.columns.forEach((col, i) => { col.width = EXPORT_COLUMNS[i][2]; });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="employees-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('employees export xlsx', { error: e.message }); res.status(500).json({ error: 'Could not build the export' }); }
+});
+
+router.get('/export.csv', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    const rows = await exportRows(req.user.tenant_id);
+    const cell = (v) => {
+      const t = String(v == null ? '' : v).replace(/\s*\n\s*/g, ' ');
+      return /[",]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const csv = [EXPORT_COLUMNS.map(([label]) => label),
+      ...rows.map((row) => EXPORT_COLUMNS.map(([, key]) => row[key]))]
+      .map((r) => r.map(cell).join(',')).join('\n') + '\n';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="employees-${new Date().toISOString().slice(0, 10)}.csv"`);
+    // BOM: without it Excel opens a UTF-8 CSV as Windows-1252 and mangles
+    // every non-ASCII name in the file.
+    res.send('\uFEFF' + csv);
+  } catch (e) { logger.error('employees export csv', { error: e.message }); res.status(500).json({ error: 'Could not build the export' }); }
+});
+
 // Direct, single-employee edit — profile fields only (name/department/
 // designation/role_band/manager/date_of_joining/status). email is
 // DELIBERATELY not editable here: core.local_credentials and
