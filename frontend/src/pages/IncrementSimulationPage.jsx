@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Upload, Plus, Trash2, Save, Calculator, AlertTriangle } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
+import Grade from '../grade';
 import SearchBox, { matches } from '../SearchBox';
 
 // The Simulation Report: model increments from the cycle's final ratings
@@ -319,7 +320,7 @@ function ScenarioDetail({ data, onChange, onReload }) {
             {data.lines.map(l => (
               <tr key={l.employee_id} className="border-t border-navy-100">
                 <td className="py-1">{l.name}</td>
-                <td>{l.final_rating}</td>
+                <td><Grade value={l.final_rating} /></td>
                 <td className="text-navy-500">{l.overridden ? <span className="chip bg-amber-100 text-amber-700">override</span> : l.band_label}</td>
                 <td className="text-right">{money(l.current_ctc)}</td>
                 <td className="text-right">{l.increment_pct}%{l.scaled && <span className="text-navy-400"> ↓</span>}</td>

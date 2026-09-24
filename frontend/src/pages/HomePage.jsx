@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { api } from '../utils/api';
+import { grade } from '../grade';
 import {
   Target, TrendingUp, MessageCircle, Clock, ClipboardList, Award, Star, History,
   LayoutDashboard, Users, CheckCircle2, Library, BarChart3, ArrowRight, Lock,
-  Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck, Send, Hourglass, Gauge,
+  Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck, Send, Hourglass, Gauge, CalendarClock,
 } from 'lucide-react';
 
 // The landing screen.
@@ -128,6 +129,7 @@ export default function HomePage() {
   if (!d) return <p className="text-sm text-navy-400">Loading…</p>;
 
   const { cycle, me = {}, team, admin, action } = d;
+  const el = d.eligibility;
   const phase = cycle ? cycle.phase : null;
   const kraStatus = me.kra ? me.kra.status : 'not started';
   const evalOpen = phase === 'manager_eval' || phase === 'hod_eval';
@@ -170,15 +172,43 @@ export default function HomePage() {
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
       {cycle && (
-        <div className="card p-4 flex flex-wrap items-center gap-3">
-          <span className="navico navico-navy w-9 h-9"><BarChart3 size={16} /></span>
-          <div className="min-w-0">
-            <p className="text-sm font-bold">{cycle.name}</p>
-            <p className="text-[11.5px] text-navy-400">
-              {cycle.fiscal_year} · {cycle.cycle_type === 'midyear' ? 'Mid-Year' : 'Annual'}
-            </p>
+        <div className="card p-4 space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="navico navico-navy w-9 h-9"><BarChart3 size={16} /></span>
+            <div className="min-w-0">
+              <p className="text-sm font-bold">{cycle.name}</p>
+              <p className="text-[11.5px] text-navy-400">
+                {cycle.fiscal_year} · {cycle.cycle_type === 'midyear' ? 'Mid-Year' : 'Annual'}
+              </p>
+            </div>
+            <span className="chip bg-amber2-50 text-amber2-600 ml-auto">{PHASE_LABEL[phase] || phase}</span>
           </div>
-          <span className="chip bg-amber2-50 text-amber2-600 ml-auto">{PHASE_LABEL[phase] || phase}</span>
+          {/* WHO THIS CYCLE COVERS. Asked for on 24 Sep, pointing at
+              this card: the joining cut-off, in the client's own two
+              sentences, with the real dates rather than the example.
+              The line underneath is point 5 — the same rule read from
+              the other end, so a person who is NOT in this cycle is
+              told when theirs is instead of being left to work it out. */}
+          {el && (
+            <div className="border-t border-navy-50 pt-2 space-y-1">
+              <p className="text-[11.5px] text-navy-500">{el.line_in}</p>
+              <p className="text-[11.5px] text-navy-500">{el.line_out}</p>
+              {el.mine && el.mine.label && (
+                <p className="text-[11.5px] flex flex-wrap items-center gap-1.5">
+                  <CalendarClock size={13} className="text-navy-400" />
+                  <span className="text-navy-600">Your next appraisal:</span>
+                  <b className="text-navy-900">{el.mine.label}</b>
+                  <span className={`chip ${el.mine.in_this_cycle
+                    ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {el.mine.in_this_cycle ? 'you are in this cycle' : 'not in this cycle'}
+                  </span>
+                </p>
+              )}
+              {el.mine && !el.mine.label && (
+                <p className="text-[11.5px] text-amber2-600">{el.mine.detail}</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -204,7 +234,7 @@ export default function HomePage() {
           : <Stat icon={ListChecks} hue="navy" to="/team/connects"
               n={connects.open_actions || 0} label="Open actions" />}
         <Stat icon={Star} hue="violet" to="/my/rating"
-          n={me.published ? me.published.final_rating : '—'} label="My rating" />
+          n={me.published ? grade(me.published.final_rating) : '—'} label="My rating" />
       </div>
 
       {/* The one thing waiting on this person. A list of five things you
@@ -252,7 +282,10 @@ export default function HomePage() {
           <SecHead icon={Inbox} hue="red" title="My desk"
             sub={`${desk.length} ${desk.length === 1 ? 'thing is' : 'things are'} outstanding`} />
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {desk.map(x => <Desk key={x.key} {...x} />)}
+            {/* key pulled OUT of the spread: React warns when a "key"
+                rides in with the rest of the props, and the warning is
+                only ever visible in the console. */}
+            {desk.map(({ key, ...x }) => <Desk key={key} {...x} />)}
           </div>
         </div>
       )}
@@ -287,7 +320,7 @@ export default function HomePage() {
         <Tile to="/my/self-appraisal" icon={ClipboardList} title="Annual Review" hue="navy"
           sub={me.appraisal ? `Self-appraisal · ${me.appraisal.status.replace('_', ' ')}` : 'Not started'} />
         <Tile to="/my/rating" icon={Star} title="My Rating" hue="violet"
-          sub={me.published ? `${me.published.final_rating} · ${me.published.rating_label || 'published'}` : 'Published after calibration'} />
+          sub={me.published ? `${grade(me.published.final_rating)} · ${me.published.rating_label || 'published'}` : 'Published after calibration'} />
         <Tile to="/my/annual-review" icon={Award} title="Final Rating" hue="navy" sub="Consolidated view" />
         <Tile to="/my/history" icon={History} title="Past Cycles" hue="navy" sub="Previous ratings and trail" />
       </Section>

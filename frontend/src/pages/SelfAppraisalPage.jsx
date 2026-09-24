@@ -4,6 +4,7 @@ import { api, phaseLabel, phaseColor, API_BASE } from '../utils/api';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
 import PageHead from '../PageHead';
+import Grade, { grade } from '../grade';
 
 // Requested: per-KRA rating uses letter grades (A+ down to C), but the
 // computed OVERALL average is shown with the older descriptive wording
@@ -15,18 +16,10 @@ import PageHead from '../PageHead';
 // that field can differ per cycle (some still carry the old descriptive
 // default, some the newer letter-grade one) and this pairing needs to
 // hold regardless of which one a given cycle happens to have stored.
-const KRA_GRADE_LABEL = { 5: 'A+', 4: 'A', 3: 'B+', 2: 'B', 1: 'C' };
-const OVERALL_DESCRIPTIVE_LABEL = { 5: 'Outstanding', 4: 'Exceeds', 3: 'Meets Expectations', 2: 'Developing', 1: 'Needs Improvement' };
 
 // The overall rating is a weighted average, so it's usually fractional
 // (e.g. 3.7) — this finds the CLOSEST whole value to label it with,
 // rather than requiring an exact match.
-function nearestWholeValue(value, scale) {
-  if (value == null || !Array.isArray(scale) || !scale.length) return null;
-  let closest = scale[0].value;
-  for (const s of scale) { if (Math.abs(s.value - value) < Math.abs(closest - value)) closest = s.value; }
-  return closest;
-}
 
 export default function SelfAppraisalPage() {
   const [data, setData] = useState(null);
@@ -103,8 +96,7 @@ export default function SelfAppraisalPage() {
         <label className="lbl mb-0">Overall self-rating (weighted average of the KRAs below)</label>
         {overallRating != null ? (
           <div className="flex items-baseline gap-2">
-            <span className="text-lg font-bold text-navy-700">{OVERALL_DESCRIPTIVE_LABEL[nearestWholeValue(overallRating, data.cycle.rating_scale)] || overallRating}</span>
-            <span className="text-xs text-navy-400">({Number(overallRating).toFixed(1)})</span>
+            <Grade value={overallRating} scale={data.cycle.rating_scale} className="text-lg font-bold text-navy-700" />
           </div>
         ) : (
           <p className="text-xs text-navy-400">Rate each KRA below to see your overall average here.</p>
@@ -128,7 +120,7 @@ export default function SelfAppraisalPage() {
             {(data.cycle.rating_scale || []).map(s => (
               <button key={s.value} type="button" disabled={!open}
                 className={`chip ${Number((entries[k.id] || {}).self_rating) === s.value ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
-                onClick={() => setKraRating(k.id, s.value)}>{KRA_GRADE_LABEL[s.value] || s.label}</button>
+                onClick={() => setKraRating(k.id, s.value)}>{grade(s.value, data.cycle.rating_scale)}</button>
             ))}
           </div>
           {isAnnual && <p className="text-[10px] text-navy-400">Your grade here feeds the overall self-rating above.</p>}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Target, ClipboardList, TrendingUp, Star, Award, Clock } from 'lucide-react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import Grade from '../grade';
 
 export default function AnnualReviewPage() {
   const [data, setData] = useState(null);
@@ -116,7 +117,7 @@ export default function AnnualReviewPage() {
           {data.rating_history.map(h => (
             <div key={h.cycle_id} className="flex justify-between text-xs py-1 border-b border-navy-100 last:border-0">
               <span>{h.cycle_name} ({h.fiscal_year})</span>
-              <span className="font-mono">{h.final_rating} · {h.rating_label}</span>
+              <span className="font-mono"><Grade value={h.final_rating} /> · {h.rating_label}</span>
             </div>
           ))}
         </Section>

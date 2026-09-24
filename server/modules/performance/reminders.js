@@ -253,6 +253,44 @@ const CHASE_KINDS = {
              AND mc.manager_status <> 'submitted'
              AND e.status = 'active' AND e.manager_id IS NOT NULL`,
   },
+  // APPROVALS WAITING ON A MANAGER. Asked for on 24 Sep: "Reminder to
+  // manager for approvals of reports/actions submitted by employee."
+  //
+  // The two chases above cover the REVIEWS — mid-year and annual. They
+  // do not cover the two things an employee submits and then simply
+  // waits on, which are the KRA sheet and the target-achievement plan.
+  // An employee whose KRA sheet sat unapproved for a fortnight had no
+  // mechanism nudging anybody, while the same employee's mid-year did.
+  //
+  // Both use kra_decide rather than a phase of their own: the KRA
+  // window is open for the whole cycle (see phase-machine's header),
+  // so a submitted sheet is decidable whenever the cycle is live.
+  kra: {
+    rule: 'kra_approval_chase',
+    label: 'KRA sheet',
+    link: '/team/kra-sheets',
+    phaseAction: 'kra_decide',
+    detail: 'Submitted more than 3 days ago and still waiting for an approve or a return.',
+    sql: `SELECT ks.employee_id, ks.submitted_at AS self_submitted_at, e.name, e.manager_id
+            FROM pms.kra_sheets ks
+            JOIN core.employees e ON e.id = ks.employee_id AND e.tenant_id = ks.tenant_id
+           WHERE ks.tenant_id = $1 AND ks.cycle_id = $2
+             AND ks.status = 'submitted' AND ks.submitted_at IS NOT NULL
+             AND e.status = 'active' AND e.manager_id IS NOT NULL`,
+  },
+  growth: {
+    rule: 'growth_approval_chase',
+    label: 'target achievement plan',
+    link: '/team/growth',
+    phaseAction: 'kra_decide',
+    detail: 'Submitted more than 3 days ago and still waiting for an approve or a return.',
+    sql: `SELECT dp.employee_id, dp.submitted_at AS self_submitted_at, e.name, e.manager_id
+            FROM pms.development_plans dp
+            JOIN core.employees e ON e.id = dp.employee_id AND e.tenant_id = dp.tenant_id
+           WHERE dp.tenant_id = $1 AND dp.cycle_id = $2
+             AND dp.status = 'submitted' AND dp.submitted_at IS NOT NULL
+             AND e.status = 'active' AND e.manager_id IS NOT NULL`,
+  },
   annual: {
     rule: 'annual_chase',
     label: 'annual appraisal',
@@ -290,7 +328,7 @@ async function runChase(tenantId, cycle, today, kindName) {
     if (!missed.length) continue;
     await notify(tenantId, r.manager_id, k.rule,
       `${r.name}'s ${k.label} is waiting on you`,
-      'Signed by them more than 3 days ago and not yet finalised.', k.link);
+      k.detail || 'Signed by them more than 3 days ago and not yet finalised.', k.link);
     for (const occ of missed) await recordSent(tenantId, k.rule, occ, r.manager_id, r.employee_id, cycle.id);
     rung++;
   }
@@ -317,7 +355,9 @@ async function runReminders(tenantId, now = new Date()) {
   const from = cycle && cycle.opens_at && new Date(cycle.opens_at) > fyFloor
     ? new Date(cycle.opens_at) : fyFloor;
 
-  const counts = { quarterly_connect: 0, midyear_self: 0, midyear_manager: 0, midyear_chase: 0, annual_self: 0, annual_manager: 0, annual_chase: 0 };
+  const counts = { quarterly_connect: 0, midyear_self: 0, midyear_manager: 0, midyear_chase: 0,
+                   annual_self: 0, annual_manager: 0, annual_chase: 0,
+                   kra_approval_chase: 0, growth_approval_chase: 0 };
   counts.quarterly_connect = await runQuarterlyConnect(tenantId, today, from);
 
   if (cycle) {
@@ -328,6 +368,11 @@ async function runReminders(tenantId, now = new Date()) {
     const ann = await runReviewReminders(tenantId, cycle, today, from, 'annual');
     counts.annual_self = ann.self; counts.annual_manager = ann.manager;
     counts.annual_chase = await runChase(tenantId, cycle, today, 'annual');
+
+    // The two approval chases, added 24 Sep — a KRA sheet or a growth
+    // plan sitting submitted with a manager for more than three days.
+    counts.kra_approval_chase = await runChase(tenantId, cycle, today, 'kra');
+    counts.growth_approval_chase = await runChase(tenantId, cycle, today, 'growth');
   }
 
   const total = Object.values(counts).reduce((a, b) => a + b, 0);

@@ -3,6 +3,7 @@ import { Download, FileText } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
 import PageHead from '../PageHead';
+import Grade from '../grade';
 
 export default function MyRatingPage() {
   const [rows, setRows] = useState(null); const [err, setErr] = useState(null);
@@ -21,7 +22,7 @@ export default function MyRatingPage() {
             <div key={r.cycle_id} className="p-4 flex items-center justify-between">
               <div><p className="text-sm font-semibold">{r.cycle_name}</p><p className="text-xs text-navy-400">{r.fiscal_year} · published {new Date(r.published_at).toLocaleDateString('en-IN')}</p></div>
               <div className="flex items-center gap-3">
-                <div className="text-right"><p className="text-xl font-bold">{r.final_rating}</p><p className="text-xs text-navy-500">{r.rating_label || ''}</p></div>
+                <div className="text-right"><p className="text-xl font-bold"><Grade value={r.final_rating} /></p><p className="text-xs text-navy-500">{r.rating_label || ''}</p></div>
                 <a href={`${API_BASE}/pms/closure-letters/me/${r.cycle_id}/download?token=${token}`} target="_blank" rel="noreferrer" className="btn-sec !p-1.5" title="Download closure letter">
                   <FileText size={14} />
                 </a>

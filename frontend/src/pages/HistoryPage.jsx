@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import Grade from '../grade';
 
 // "See past years" — an employee's own performance history across
 // published annual cycles, per a direct request. Reads the same table
@@ -29,8 +30,8 @@ export default function HistoryPage() {
               <p className="text-xs text-navy-400">{h.fiscal_year} · Published {new Date(h.published_at).toLocaleDateString()}</p>
             </div>
             <div className="text-right">
-              <p className="text-lg font-bold text-navy-700">{h.rating_label || h.final_rating}</p>
-              <p className="text-xs text-navy-400">({Number(h.final_rating).toFixed(1)})</p>
+              <p className="text-lg font-bold text-navy-700"><Grade value={h.final_rating} /></p>
+              <p className="text-xs text-navy-400">{h.rating_label || ''}</p>
             </div>
           </div>
         ))}

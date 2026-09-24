@@ -3,6 +3,7 @@ import { Sparkles, FileDown, CheckCircle2 } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
+import Grade from '../grade';
 import SearchBox, { matches } from '../SearchBox';
 
 export default function ClosureLettersPage() {
@@ -65,7 +66,7 @@ function LetterRow({ l, reload }) {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-semibold">{l.employee_name}</p>
-          <p className="text-xs text-navy-400">{l.final_rating} · {l.rating_label}</p>
+          <p className="text-xs text-navy-400"><Grade value={l.final_rating} /> · {l.rating_label}</p>
         </div>
         {l.generated ? (
           <div className="flex items-center gap-2">

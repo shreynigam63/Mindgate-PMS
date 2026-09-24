@@ -6,6 +6,7 @@ import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPa
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import StatusTabs, { statusTabs } from '../StatusTabs';
+import Grade, { grade } from '../grade';
 
 // Matches Self-Appraisal's convention: per-KRA picks in letter grades,
 // the one computed overall in descriptive wording — see that page for
@@ -13,14 +14,6 @@ import StatusTabs, { statusTabs } from '../StatusTabs';
 // summary figure). Fixed local maps, not the cycle's own rating_scale
 // labels, for the same reason: this pairing should hold regardless of
 // which label set a given cycle happens to have stored.
-const KRA_GRADE_LABEL = { 5: 'A+', 4: 'A', 3: 'B+', 2: 'B', 1: 'C' };
-const OVERALL_DESCRIPTIVE_LABEL = { 5: 'Outstanding', 4: 'Exceeds', 3: 'Meets Expectations', 2: 'Developing', 1: 'Needs Improvement' };
-function nearestWholeValue(value, scale) {
-  if (value == null || !Array.isArray(scale) || !scale.length) return null;
-  let closest = scale[0].value;
-  for (const s of scale) { if (Math.abs(s.value - value) < Math.abs(closest - value)) closest = s.value; }
-  return closest;
-}
 
 export default function TeamEvalPage() {
   const [q, setQ] = useState('');
@@ -277,7 +270,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
           {(scale || []).map((sc) => (
             <button key={sc.value} type="button" disabled={!editable}
               className={`chip ${Number(overallRating) === sc.value ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
-              onClick={() => setOverall(sc.value)}>{KRA_GRADE_LABEL[sc.value] || sc.label}</button>
+              onClick={() => setOverall(sc.value)}>{grade(sc.value, scale)}</button>
           ))}
           {saveState === 'saving' && <span className="text-[11px] text-amber-600">Saving…</span>}
           {saveState === 'saved' && <span className="text-[11px] text-emerald-600">Saved ✓</span>}
@@ -304,7 +297,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
               <span className="text-[11px] text-navy-400">{k.weight}%</span>
             </div>
             {selfRating != null && (
-              <p className="text-[11px] text-navy-500">Employee's self-rating: <b>{KRA_GRADE_LABEL[selfRating] || selfRating}</b></p>
+              <p className="text-[11px] text-navy-500">Employee's self-rating: <b>{grade(selfRating, scale)}</b></p>
             )}
             {/* Requested: show what the employee actually wrote, not just
                 their rating — paired directly above the comment box below,
@@ -324,7 +317,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
               {(scale || []).map(s => (
                 <button key={s.value} type="button" disabled={!editable}
                   className={`chip ${Number(myRating) === s.value ? 'bg-navy-700 text-white' : 'bg-white text-navy-600 border border-navy-100'}`}
-                  onClick={() => setRating(k.id, s.value)}>{KRA_GRADE_LABEL[s.value] || s.label}</button>
+                  onClick={() => setRating(k.id, s.value)}>{grade(s.value, scale)}</button>
               ))}
             </div>
             <textarea className="inp !bg-white" rows={2} placeholder="Your comment on this KRA (optional)"
@@ -336,7 +329,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
         <p className="text-sm">
           <span className="font-semibold">Overall rating: </span>
           {overallRating != null ? (
-            <span className="text-emerald-700 font-bold">{OVERALL_DESCRIPTIVE_LABEL[nearestWholeValue(Number(overallRating), scale)] || overallRating} ({Number(overallRating).toFixed(1)})</span>
+            <Grade value={overallRating} scale={scale} className="text-emerald-700 font-bold" />
           ) : (
             <span className="text-navy-400">— rate each KRA above to see the weighted average</span>
           )}

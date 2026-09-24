@@ -3,22 +3,17 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { api, phaseLabel, phaseColor } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import { grade } from '../grade';
 
 // Matches Self-Appraisal/Team Evaluation's convention: per-KRA ratings in
 // letter grades, overall figures in descriptive wording — fixed local
 // maps rather than the cycle's own rating_scale labels, since this
 // pairing should hold regardless of which label set a cycle has stored.
-const KRA_GRADE_LABEL = { 5: 'A+', 4: 'A', 3: 'B+', 2: 'B', 1: 'C' };
-const OVERALL_DESCRIPTIVE_LABEL = { 5: 'Outstanding', 4: 'Exceeds', 3: 'Meets Expectations', 2: 'Developing', 1: 'Needs Improvement' };
-function nearestWholeValue(value) {
-  if (value == null) return null;
-  const values = [5, 4, 3, 2, 1];
-  return values.reduce((closest, v) => Math.abs(v - value) < Math.abs(closest - value) ? v : closest, values[0]);
-}
-function overallLabel(value) {
-  if (value == null) return '—';
-  return `${OVERALL_DESCRIPTIVE_LABEL[nearestWholeValue(Number(value))] || value} (${Number(value).toFixed(1)})`;
-}
+// The three local label maps that used to live here are gone: they were
+// one of three copies in this app that did not agree, and the client
+// asked on 24 Sep for ratings "only in Alphabets and not numbers". One
+// formatter now, in grade.js, with the stored number in the tooltip.
+const overallLabel = (value) => grade(value);
 
 export default function HodQueuePage() {
   const [q, setQ] = useState('');
@@ -99,8 +94,8 @@ function HodRow({ q, editable, reload }) {
                   <span className="text-navy-400">{k.weight}%</span>
                 </div>
                 <div className="flex flex-wrap gap-4">
-                  <p>Employee: <b>{self != null ? (KRA_GRADE_LABEL[self] || self) : '—'}</b></p>
-                  <p>Manager: <b>{mgr != null ? (KRA_GRADE_LABEL[mgr] || mgr) : '—'}</b></p>
+                  <p>Employee: <b>{grade(self)}</b></p>
+                  <p>Manager: <b>{grade(mgr)}</b></p>
                 </div>
                 {mgrComment && <p className="text-navy-500"><b>Manager's comment:</b> {mgrComment}</p>}
               </div>

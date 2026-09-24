@@ -726,3 +726,108 @@ test('the competency form asks the right person the right competencies', async (
   assert.deepEqual(errors, []);
   await ctx.close();
 });
+
+test('Delivery Head is its own tab, and no longer sits under Manager', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 24 Sep: "There should be separate HOD tab next to 3
+  // roles of employee, manager and HR and remove the same from manager
+  // tab."
+  const { ctx, page, errors } = await open('hod@shot.in', '/home');
+  const tabs = (await page.locator('header >> button').allInnerTexts())
+    .map((s) => s.split('\n')[0].trim()).filter(Boolean);
+  assert.ok(tabs.some((x) => /Delivery Head/.test(x)), `tabs were: ${tabs.join(' | ')}`);
+
+  const mgr = await groupItems(page, 'Manager');
+  assert.ok(!mgr.includes('Delivery Head Review'),
+    `it must be gone from Manager — got ${mgr.join(', ')}`);
+  const dh = await groupItems(page, 'Delivery Head');
+  assert.ok(dh.includes('Delivery Head Review'), `Delivery Head tab was: ${dh.join(', ')}`);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+
+  // And it is NOT offered to somebody without the permission — a group
+  // whose every item is filtered out is dropped entirely.
+  const e = await open('emp@shot.in', '/home');
+  const eTabs = (await e.page.locator('header >> button').allInnerTexts()).join(' ');
+  assert.ok(!/Delivery Head/.test(eTabs), 'an employee has no Delivery Head tab');
+  await e.ctx.close();
+});
+
+test('the cycle card states who is eligible, and when yours is', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 24 Sep, pointing at this card: "employee joined on or
+  // before 31st Dec 2026 will be eligible for July 2027" and "employee
+  // joined on or after 01st Jan 2027 will be eligible for July 2028".
+  // Point 5, "suggestion of next appraisal", is the line under it.
+  const { ctx, page, errors } = await open('emp@shot.in', '/home');
+  const main = await page.locator('main').innerText();
+  assert.match(main, /joined on or before 31 December 2026 are eligible for the July 2027 appraisal/i);
+  assert.match(main, /joined on or after 1 January 2027 are eligible for the July 2028 appraisal/i);
+  assert.match(main, /Your next appraisal/i, 'and the employee is told their own');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+
+  // Somebody who joined AFTER the cut-off is told they are not in this
+  // one — which is the half of the rule that is easy to get wrong. The
+  // demo master seeds hod@shot.in with a February 2027 joining date
+  // for exactly this; every other demo login is well before it.
+  const p = await open('hod@shot.in', '/home');
+  const pMain = await p.page.locator('main').innerText();
+  assert.match(pMain, /July 2028/);
+  assert.match(pMain, /not in this cycle/i);
+  await p.ctx.close();
+});
+
+test('ratings read as letters, never as bare numbers', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 24 Sep: "please make sure that ratings should be
+  // measured only in Alphabets and not numbers."
+  //
+  // The demo cycle is graded in WORDS (Outstanding..Needs
+  // Improvement), so this also covers the mapping onto the letter
+  // ladder — before it, this page showed "Exceeds".
+  const { ctx, page, errors } = await open('mgr@shot.in', '/team/eval');
+  await page.locator('.card button').first().click();
+  await page.waitForTimeout(1300);
+  const card = await page.locator('.card').first().innerText();
+  // The rating picker offers grades.
+  const buttons = await page.getByRole('button', { name: /^[A-C]\+?$/ }).count();
+  assert.ok(buttons >= 5, `the picker offers letter grades — found ${buttons}`);
+  assert.ok(!/\bOutstanding\b|\bExceeds\b/.test(card),
+    `no descriptive labels on the rating control — got: ${card.slice(0, 300)}`);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('Team KRA Sheets offers a department view, and only the allowed ones', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 24 Sep: "'Team KRAs' should have department dropdown
+  // view for manager to select departments and employees mapped to
+  // their departments."
+  const tok = async (email) => (await (await fetch(`${API}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: PASS }),
+  })).json()).token;
+  const mgr = await tok('mgr@shot.in');
+  const get = async (p) => (await (await fetch(`${API}/api/v1${p}`,
+    { headers: { Authorization: `Bearer ${mgr}` } })).json());
+
+  const mine = await get('/pms/team/kra-sheets');
+  assert.equal(mine.scope, 'my_reports', 'the default is still my reports');
+  assert.ok((mine.departments || []).length, 'and a list of departments is offered');
+
+  const { ctx, page, errors } = await open('mgr@shot.in', '/team/kra-sheets');
+  const select = page.locator('select').first();
+  assert.equal(await select.count(), 1, 'the dropdown is on the page');
+  const options = await select.locator('option').allInnerTexts();
+  assert.equal(options[0], 'My reports', 'and it opens on My reports');
+  for (const d of mine.departments) assert.ok(options.includes(d), `${d} is offered`);
+
+  await select.selectOption(mine.departments[0]);
+  await page.waitForTimeout(1500);
+  const main = await page.locator('main').innerText();
+  assert.match(main, new RegExp(`Showing everybody in`, 'i'),
+    'the page says the view has widened beyond their own reports');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});

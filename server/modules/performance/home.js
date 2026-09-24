@@ -18,6 +18,7 @@ const db = require('../../core/db');
 const { hasPermission } = require('../../core/permissions');
 const pm = require('./phase-machine');
 const { activeCycle, activeCycleForMidyear } = require('./active-cycle');
+const { nextAppraisalFor, eligibilityStatement, appraisalYearOf, monthName } = require('./eligibility');
 
 // What this person owes, right now, in priority order. The FIRST match is
 // what the banner says — a list of five things you might do is a list
@@ -229,8 +230,35 @@ async function home(user) {
       [t, c.id]);
   }
 
+  // WHO THIS CYCLE COVERS, and when this person's own next appraisal
+  // is. Asked for on 24 Sep — point 7 pointed at the cycle card in a
+  // screenshot, and point 5 ("suggestion of next appraisal") is the
+  // same rule read from the other end: your next appraisal is the
+  // first one whose joining cut-off you are on the right side of.
+  const dojRow = await one(`SELECT date_of_joining FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+    [user.id, t]);
+  const year = appraisalYearOf(c.fiscal_year, c.created_at);
+  const statement = eligibilityStatement(year);
+  const mine = nextAppraisalFor(dojRow && dojRow.date_of_joining);
+
   return {
     cycle: { id: c.id, name: c.name, phase: c.phase, cycle_type: c.cycle_type, fiscal_year: c.fiscal_year },
+    eligibility: {
+      appraisal_year: year,
+      cutoff: statement.cutoff,
+      line_in: statement.line_in,
+      line_out: statement.line_out,
+      // This person's own answer, so the card can say "yours is July
+      // 2028" rather than making them work it out from the rule.
+      mine: {
+        date_of_joining: dojRow ? dojRow.date_of_joining : null,
+        ...mine,
+        label: mine.eligible_from
+          ? `${monthName(mine.eligible_from.month)} ${mine.eligible_from.year}`
+          : null,
+        in_this_cycle: !!(mine.eligible_from && mine.eligible_from.year === year),
+      },
+    },
     me: { kra, midyear, appraisal, published, goals, connects, requested },
     team, admin,
     action: nextAction({ phase: c.phase, kra, midyear, appraisal, team, requested,

@@ -6,6 +6,7 @@ import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import Grade, { grade } from '../grade';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -50,7 +51,6 @@ export function TeamMidYearPage() {
 // wording (Outstanding down to Needs Improvement) — fixed local maps
 // rather than trusting cycle.rating_scale's own .label field, since that
 // field differs per cycle and this pairing needs to hold regardless.
-const KRA_GRADE_LABEL = { 5: 'A+', 4: 'A', 3: 'B+', 2: 'B', 1: 'C' };
 // OVERALL_DESCRIPTIVE_LABEL/overallLabel went with the "From the manager"
 // column on 23 Sep — that panel was the only read-only rating display
 // left on this page. The KRA_GRADE_LABEL pairing above still holds for
@@ -140,7 +140,7 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
               {(scale || []).map((sc) => (
                 <button key={sc.value} type="button" disabled={!editable}
                   className={`chip ${Number(get(k.id, 'rating')) === sc.value ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
-                  onClick={() => setRating(k.id, sc.value)}>{KRA_GRADE_LABEL[sc.value] || sc.label}</button>
+                  onClick={() => setRating(k.id, sc.value)}>{grade(sc.value, scale)}</button>
               ))}
             </div>
 
@@ -152,7 +152,7 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
             {theirs && (theirs.rating != null || theirs.narrative) && (
               <div className="bg-navy-50 rounded-lg p-2 text-[11px] space-y-1">
                 <p className="font-bold text-navy-500 uppercase text-[9px]">Their entry for this KRA</p>
-                {theirs.rating != null && <p><b>{KRA_GRADE_LABEL[Number(theirs.rating)] || theirs.rating}</b></p>}
+                {theirs.rating != null && <p><b>{grade(theirs.rating, scale)}</b></p>}
                 {theirs.narrative && <p className="text-navy-600">{theirs.narrative}</p>}
               </div>
             )}
@@ -401,7 +401,7 @@ function MyMidYearCard() {
               {(data.cycle.rating_scale || []).map((s) => (
                 <button key={s.value} type="button" disabled={!editable}
                   className={`chip ${Number(selfRating) === s.value ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
-                  onClick={() => pickRating(s.value)}>{KRA_GRADE_LABEL[s.value] || s.label}</button>
+                  onClick={() => pickRating(s.value)}>{grade(s.value, scale)}</button>
               ))}
             </div>
           )}
@@ -587,7 +587,7 @@ function TeamMidYearDetail({ employeeId }) {
           <select className="inp w-auto" value={managerRating} disabled={!editable} onChange={(e) => pickRating(e.target.value === '' ? '' : Number(e.target.value))}>
             <option value="">—</option>
             {(data.cycle.rating_scale || []).map((s) => (
-              <option key={s.value} value={s.value}>{KRA_GRADE_LABEL[s.value] || s.label}</option>
+              <option key={s.value} value={s.value}>{grade(s.value, scale)}</option>
             ))}
           </select>
         </div>

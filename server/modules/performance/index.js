@@ -31,6 +31,7 @@ const homeData = require('./home');
 const { super50Roster, super50Scale, super50Rule, super50History, gradeOf } = require('./super50');
 const { parsePriorRatings } = require('./prior-ratings-import');
 const { derivePlacement, PERFORMANCE_BANDS, POTENTIAL_BANDS } = require('./nine-box-derive');
+const { grade } = require('./grade');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -618,17 +619,79 @@ router.get('/team/kra-sheets', async (req, res) => {
     //     HRMS import whose manager_email hadn't resolved yet) and only
     //     corrected afterwards, the sheet's stored snapshot never caught
     //     up. Now checks the employee's CURRENT manager_id live instead.
+    // THE DEPARTMENT VIEW. Asked for on 24 Sep: "'Team KRAs' should
+    // have department dropdown view for manager to select departments
+    // and employees mapped to their departments."
+    //
+    // Which departments a manager may pick is NOT "all of them" — that
+    // would undo the 24 Sep instruction that took the whole-company
+    // switch off this tab. It is:
+    //
+    //   * the departments their own reports sit in, so a manager whose
+    //     team spans three departments can look at one at a time; and
+    //   * any department they HEAD (core.department_heads), because a
+    //     department head is responsible for the department and not
+    //     only for the people who happen to report to them directly.
+    //
+    // Anything outside that list is refused rather than silently
+    // ignored, so a hand-typed query string cannot widen the view.
+    const canSeeAll = await seesWholeCompany(req);
+    const myDepts = canSeeAll
+      ? (await db.query(
+          `SELECT DISTINCT department AS d FROM core.employees
+            WHERE tenant_id=$1 AND status='active' AND department IS NOT NULL AND department <> ''
+            ORDER BY d`, [T(req)])).rows.map((x) => x.d)
+      : (await db.query(
+      `SELECT DISTINCT d FROM (
+          SELECT department AS d FROM core.employees
+           WHERE tenant_id=$1 AND status='active' AND manager_id=$2
+             AND department IS NOT NULL AND department <> ''
+          UNION
+          SELECT department FROM core.department_heads
+           WHERE tenant_id=$1 AND employee_id=$2
+       ) q WHERE d IS NOT NULL AND d <> '' ORDER BY d`,
+      [T(req), req.user.id])).rows.map((x) => x.d);
+
+    const asked = String(req.query.department || '').trim();
+    if (asked && !myDepts.some((d) => d.toLowerCase() === asked.toLowerCase())) {
+      return res.status(403).json({
+        error: `You can view your own reports, or a department you head. "${asked}" is neither.`,
+        departments: myDepts,
+      });
+    }
+
+    // Three shapes of the same query. A department view lists everybody
+    // IN that department; the default still lists the caller's reports.
+    // $3 is always the caller, so is_my_report can be selected in every
+    // branch; the WHERE clause is what differs.
+    const params = [c.id, T(req), req.user.id];
+    let where = '';
+    if (asked) { params.push(asked); where = `AND e.department = $${params.length}`; }
+    else if (!wide) { where = 'AND e.manager_id = $3'; }
+
     const r = await db.query(
       `SELECT e.id AS employee_id, e.name AS employee_name, e.email AS employee_email,
-              s.id, s.status, s.manager_comment,
+              e.department, e.designation, e.manager_id,
+              -- Whether the CALLER is this person's reporting manager.
+              -- Decided here rather than in the browser: the department
+              -- view lists people who are not the caller's reports, and
+              -- what they may do with each row is a server decision.
+              -- COALESCE, because manager_id IS NULL makes the
+              -- comparison NULL rather than false, and a NULL read as
+              -- "not false" in the browser handed the Edit button to a
+              -- manager for every employee who has no manager at all.
+              COALESCE(e.manager_id = $3, false) AS is_my_report,
+              s.id, s.status, s.manager_comment, s.edited_by_manager_at,
               COALESCE((SELECT COUNT(*)::int FROM pms.kras k WHERE k.sheet_id=s.id), 0) AS kra_count,
               COALESCE((SELECT SUM(k.weight) FROM pms.kras k WHERE k.sheet_id=s.id), 0) AS total_weight
          FROM core.employees e
          LEFT JOIN pms.kra_sheets s ON s.cycle_id=$1 AND s.employee_id=e.id
         WHERE e.tenant_id=$2 AND e.status='active'
-          ${wide ? '' : 'AND e.manager_id=$3'} ORDER BY e.name`,
-      wide ? [c.id, T(req)] : [c.id, T(req), req.user.id]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, scope: wide ? 'all_employees' : 'my_reports', can_see_all: await seesWholeCompany(req),
+          ${where} ORDER BY e.name`, params);
+    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase },
+      scope: asked ? 'department' : (wide ? 'all_employees' : 'my_reports'),
+      department: asked || null, departments: myDepts,
+      can_see_all: canSeeAll,
                sheets: r.rows.map((row) => ({ ...row, status: row.status || 'not_started' })) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -683,6 +746,134 @@ router.get('/team/kra-sheets/:sheetId/kras', async (req, res) => {
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// THE MANAGER EDITS A SUBMITTED SHEET IN PLACE.
+//
+// Asked for on 24 Sep: "Direct KRA edit option to manager in team KRAs
+// after submission from employee."
+//
+// Until now a manager's only lever on a submitted sheet was Return —
+// which sends the whole thing back, unblocks nothing, and costs a
+// round trip for a wording change or a weight that is five points out.
+// The KRA sheet is a negotiated document; the manager is the other
+// party to it, and asking them to send it back to fix a typo is the
+// kind of ceremony people work around by phoning each other.
+//
+// WHAT KEEPS THIS HONEST:
+//
+//   * it applies ONLY to a sheet the employee has submitted. A draft
+//     is still the employee's, and an approved sheet is closed;
+//   * the BEFORE and AFTER of every KRA the manager touched goes into
+//     the audit log, because this is somebody editing another person's
+//     objectives and "who changed my KRA" must have an answer;
+//   * the employee is notified, with the count, so a silent rewrite is
+//     impossible;
+//   * the weights still have to total 100, the same rule the employee
+//     is held to — a manager cannot leave a sheet in a state the
+//     employee could not have submitted.
+//
+// The sheet STAYS submitted. Editing is not deciding: the manager
+// still has to approve or return afterwards, and a sheet that
+// silently approved itself on edit would lose that step.
+router.put('/team/kra-sheets/:sheetId/kras', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
+    const s = (await db.query(`SELECT * FROM pms.kra_sheets WHERE id=$1 AND tenant_id=$2`,
+      [req.params.sheetId, T(req)])).rows[0];
+    if (!s) return res.status(404).json({ error: 'sheet not found' });
+    const emp = (await db.query(`SELECT id, name, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [s.employee_id, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee not found' });
+    if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) {
+      return res.status(403).json({ error: 'Not your report' });
+    }
+    const c = (await db.query(`SELECT * FROM pms.cycles WHERE id=$1 AND tenant_id=$2`, [s.cycle_id, T(req)])).rows[0];
+    if (!c || !pm.phaseAllows(c.phase, 'kra_edit')) {
+      return res.status(409).json({ error: `KRA editing is not open (phase: ${c ? c.phase : 'none'})` });
+    }
+    // A DRAFT IS STILL THE EMPLOYEE'S. Editing one from here would let a
+    // manager rewrite objectives the employee has not finished writing,
+    // and the employee would have no way to tell their own draft from
+    // their manager's edit of it.
+    if (s.status !== 'submitted') {
+      return res.status(409).json({
+        error: s.status === 'approved'
+          ? 'This sheet is approved — ask HR to return it before editing.'
+          : `This sheet is ${s.status === 'returned' ? 'back with the employee' : 'still a draft'} — you can edit it once they submit it.`,
+      });
+    }
+
+    const incoming = Array.isArray(req.body && req.body.kras) ? req.body.kras : [];
+    if (!incoming.length) return res.status(422).json({ error: 'Send at least one KRA' });
+    const w = pm.weightsValid(incoming);
+    if (!w.ok) return res.status(422).json({ error: `KRA weights must total 100 (currently ${w.total})` });
+
+    const before = (await db.query(
+      `SELECT id, title, description, weight, category, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`,
+      [s.id])).rows;
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      // writeKras keeps the id of every KRA being kept, so mid-year
+      // ratings, development-goal links and evidence that point at
+      // those ids survive a manager edit exactly as they survive the
+      // employee's own save.
+      await writeKras(client, T(req), s.id, incoming);
+      await client.query(
+        `UPDATE pms.kra_sheets SET updated_at=now(), edited_by_manager_at=now() WHERE id=$1`, [s.id]);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+
+    const after = (await db.query(
+      `SELECT id, title, description, weight, category, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`,
+      [s.id])).rows;
+    const changes = diffKras(before, after);
+    audit(req, 'KRA_EDITED_BY_MANAGER', c.id, emp.id, {
+      sheet_id: s.id, changed: changes.length, changes,
+    });
+    if (changes.length && emp.id !== req.user.id) {
+      await notify(T(req), emp.id, 'kra_edited_by_manager',
+        `${req.user.name} edited your KRA sheet`,
+        `${changes.length} ${changes.length === 1 ? 'change was' : 'changes were'} made. Open My KRAs to see them.`,
+        '/my/kras', { email: true }).catch((e) => logger.warn('kra edit notify failed', { error: e.message }));
+    }
+    res.json({ ok: true, kras: after, weights: pm.weightsValid(after), changes });
+  } catch (e) { logger.error('manager kra edit', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// What actually changed, field by field. Stored on the audit row rather
+// than "the manager edited this sheet", because the question people ask
+// is "who changed my weight from 20 to 30", not "was it touched".
+// The columns pms.kras actually has. `target` was in the first draft and
+// is not one of them — the KPI text is `measures` — which made every
+// manager edit fail with a bare Postgres error. Found by the test.
+const KRA_FIELDS = ['title', 'description', 'weight', 'category', 'measures'];
+// weight is numeric(5,2), so Postgres hands back "60.00" and the audit
+// row read "from 60.00 to 70.00". This log exists to be read by a human
+// asking who changed their weight; trailing zeros are noise in it.
+const show = (v) => {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && String(v).trim() !== '' ? String(n) : String(v);
+};
+
+function diffKras(before, after) {
+  const was = new Map(before.map((k) => [k.id, k]));
+  const is = new Map(after.map((k) => [k.id, k]));
+  const out = [];
+  for (const [id, b] of was) {
+    if (!is.has(id)) { out.push({ kra: b.title, change: 'removed' }); continue; }
+    const a = is.get(id);
+    for (const f of KRA_FIELDS) {
+      const x = show(b[f]);
+      const y = show(a[f]);
+      if (x !== y) out.push({ kra: a.title || b.title, field: f, from: x, to: y });
+    }
+  }
+  for (const [id, a] of is) if (!was.has(id)) out.push({ kra: a.title, change: 'added' });
+  return out;
+}
 
 // ---------------- HR: org-wide KRA overview + enter-on-behalf — BR-1.1/1.4 -
 // FOUND MISSING 28-Aug-2026: /team/kra-sheets (above) is manager-scoped
@@ -5173,7 +5364,8 @@ router.post('/closure-letters/:employeeId/:cycleId/generate', async (req, res) =
       return res.status(400).json({ error: 'salutation, body_paragraphs (non-empty array), and closing_line are required' });
     }
     const h = (await db.query(
-      `SELECT h.final_rating, h.rating_label, c.name AS cycle_name, c.fiscal_year, e.name AS employee_name, e.designation
+      `SELECT h.final_rating, h.rating_label, c.name AS cycle_name, c.fiscal_year, c.rating_scale,
+              e.name AS employee_name, e.designation
          FROM pms.employee_performance_history h JOIN pms.cycles c ON c.id=h.cycle_id JOIN core.employees e ON e.id=h.employee_id
         WHERE h.tenant_id=$1 AND h.employee_id=$2 AND h.cycle_id=$3`,
       [T(req), req.params.employeeId, req.params.cycleId])).rows[0];
@@ -5195,7 +5387,10 @@ router.post('/closure-letters/:employeeId/:cycleId/generate', async (req, res) =
     doc.moveDown(0.8);
     for (const p of body_paragraphs) { doc.text(p, { align: 'justify' }); doc.moveDown(0.6); }
     doc.moveDown(0.4);
-    doc.font('Helvetica-Bold').text(`Final Rating: ${h.final_rating} — ${h.rating_label}`);
+    // The GRADE, not the number — the client's 24 Sep instruction, and
+    // this is the document the employee keeps. The cycle's own scale,
+    // so a tenant that renames its grades gets its own wording.
+    doc.font('Helvetica-Bold').text(`Final Rating: ${grade(h.final_rating, h.rating_scale)}${h.rating_label ? ' — ' + h.rating_label : ''}`);
     doc.font('Helvetica').moveDown(1);
     doc.text(closing_line);
     doc.moveDown(2);

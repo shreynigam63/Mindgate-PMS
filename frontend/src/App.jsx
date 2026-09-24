@@ -120,6 +120,23 @@ const NAV = [
     { to: '/team/midyear', label: 'Team Mid-Year', icon: Clock },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/team/competencies', label: 'Team Competencies', icon: Gauge },
+  ]},
+  // DELIVERY HEAD IS ITS OWN TAB from 24 Sep, asked for directly:
+  // "There should be separate HOD tab next to 3 roles of employee,
+  // manager and HR and remove the same from manager tab."
+  //
+  // It was the odd one out in the Manager group: everything else there
+  // is a manager acting on their own reports, while this is a
+  // department head acting on a whole department, behind a different
+  // permission (pms_hod, not pms_team_eval). A manager without
+  // pms_hod never saw it anyway — the group filter dropped it — so
+  // this changes nothing for them, and gives the people who DO hold
+  // it a tab of their own instead of one entry at the end of somebody
+  // else's.
+  //
+  // The tab disappears for anyone without pms_hod, because a group
+  // whose every item is filtered out is dropped (see TopNav).
+  { group: 'Delivery Head', hue: 'leaf', icon: Landmark, items: [
     { to: '/hod', label: 'Delivery Head Review', icon: Landmark },
   ]},
   { group: 'HR', hue: 'violet', icon: ShieldCheck, items: [

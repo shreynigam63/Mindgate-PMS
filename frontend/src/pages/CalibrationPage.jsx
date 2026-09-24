@@ -3,6 +3,7 @@ import { Sparkles, SlidersHorizontal } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
+import Grade from '../grade';
 import SearchBox, { matches } from '../SearchBox';
 
 const NINE_BOX = ['low-low', 'low-mid', 'low-high', 'mid-low', 'mid-mid', 'mid-high', 'high-low', 'high-mid', 'high-high'];
@@ -149,9 +150,9 @@ function CalRow({ r, reload }) {
       <tr className={wasAdjusted ? 'bg-amber-50/40' : ''}>
         <td className="px-3 py-2 font-semibold">{r.name}</td>
         <td className="px-3 py-2">{r.department || '—'}</td>
-        <td className="px-3 py-2 text-right font-mono">{r.manager_rating ?? '—'}</td>
-        <td className="px-3 py-2 text-right font-mono">{r.hod_rating ?? '—'}</td>
-        <td className="px-3 py-2 text-right font-mono font-bold">{r.proposed ?? '—'}</td>
+        <td className="px-3 py-2 text-right font-mono"><Grade value={r.manager_rating} /></td>
+        <td className="px-3 py-2 text-right font-mono"><Grade value={r.hod_rating} /></td>
+        <td className="px-3 py-2 text-right font-mono font-bold"><Grade value={r.proposed} /></td>
         <td className="px-3 py-2">
           <select className="inp !py-1 !text-[11px] w-auto" value={box} onChange={e => saveBox(e.target.value)}>
             <option value="">—</option>{NINE_BOX.map(b => <option key={b}>{b}</option>)}

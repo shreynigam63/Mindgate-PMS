@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Check, Undo2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Undo2, Pencil } from 'lucide-react';
 import { api } from '../utils/api';
 import { MidYearOnKra, groupByCategory, NO_CATEGORY } from './MyKRASheetPage';
 import PageHead from '../PageHead';
@@ -28,8 +28,13 @@ export default function TeamKraSheetsPage() {
   const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
 
-  const load = () => api('/pms/team/kra-sheets')
+  // THE DEPARTMENT VIEW, asked for on 24 Sep. Empty string means "my
+  // reports", which stays the default — the dropdown widens the view
+  // deliberately rather than replacing it.
+  const [dept, setDept] = useState('');
+  const load = (d = dept) => api(`/pms/team/kra-sheets${d ? `?department=${encodeURIComponent(d)}` : ''}`)
     .then(r => { setData(r); setErr(null); }).catch(e => setErr(e.message));
+  const changeDept = (d) => { setDept(d); setData(null); load(d); };
   useEffect(() => { load(); }, []);
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
@@ -67,6 +72,14 @@ export default function TeamKraSheetsPage() {
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Team KRA Sheets" hue="navy">
+        {(data.departments || []).length > 0 && (
+          <select className="inp !py-1 !px-2 text-xs w-auto !text-navy-800" value={dept}
+            title="Your own reports, or a department you head"
+            onChange={(e) => changeDept(e.target.value)}>
+            <option value="">My reports</option>
+            {data.departments.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        )}
         <span className="chip bg-navy-50 text-navy-600">{data.cycle.name}</span>
         {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting your review</span>}
       </PageHead>
@@ -79,18 +92,34 @@ export default function TeamKraSheetsPage() {
       <StatusTabs tabs={tabs} value={tab} onChange={setTab} />
       <SearchBox value={q} onChange={setQ} placeholder="Search your team by name, designation or status…"
         shown={sheetsShown.length} total={(data.sheets || []).filter(s => !active || active.match(s.status)).length} />
-      {!data.sheets.length && <div className="card p-8 text-center text-sm text-navy-400">No direct reports found.</div>}
+      {!data.sheets.length && (
+        <div className="card p-8 text-center text-sm text-navy-400">
+          {dept ? `Nobody active in ${dept}.` : 'No direct reports found.'}
+        </div>
+      )}
+      {dept && (
+        <p className="text-[11.5px] text-navy-500 -mt-2">
+          Showing everybody in <b>{dept}</b>, not only your own reports. You can approve or
+          return a sheet here only if you are that person's reporting manager.
+        </p>
+      )}
       {sheetsShown.map(s => (
         <div key={s.employee_id} className="card overflow-hidden">
           <button className="w-full flex items-center gap-2 px-4 py-3 text-left" onClick={() => setOpenId(v => v === s.employee_id ? null : s.employee_id)}>
             {openId === s.employee_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            <span className="text-sm font-semibold flex-1">{s.employee_name}</span>
+            <span className="text-sm font-semibold flex-1">
+              {s.employee_name}
+              {s.designation && <span className="block text-[10.5px] font-normal text-navy-400">{s.designation}{s.department ? ` · ${s.department}` : ''}</span>}
+            </span>
+            {s.edited_by_manager_at && (
+              <span className="chip bg-violet-100 text-violet-700" title="A manager has edited this sheet since it was submitted">edited</span>
+            )}
             <span className="text-[11px] text-navy-400">{s.kra_count} KRA{s.kra_count === 1 ? '' : 's'} · {s.total_weight}%</span>
             <span className={`chip ${STATUS_COLOR[s.status] || STATUS_COLOR.not_started}`}>{s.status}</span>
           </button>
           {openId === s.employee_id && (
             s.id
-              ? <SheetEditor sheet={s} reload={load} />
+              ? <SheetEditor sheet={s} reload={load} isMine={s.is_my_report === true} />
               : <p className="border-t border-navy-100 p-4 text-xs text-navy-400">This report hasn't started their KRAs for this cycle yet — nothing to review.</p>
           )}
         </div>
@@ -99,11 +128,14 @@ export default function TeamKraSheetsPage() {
   );
 }
 
-function SheetEditor({ sheet, reload }) {
+function SheetEditor({ sheet, reload, isMine }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState(null);
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [saved, setSaved] = useState(null);
 
   useEffect(() => {
     api(`/pms/team/kra-sheets/${sheet.id}/kras`).then(setDetail).catch(e => setErr(e.message));
@@ -120,6 +152,45 @@ function SheetEditor({ sheet, reload }) {
   };
 
   const canDecide = sheet.status === 'submitted';
+  // DIRECT EDIT, asked for on 24 Sep: "Direct KRA edit option to
+  // manager in team KRAs after submission from employee." Only on a
+  // submitted sheet — a draft is still the employee's, and an approved
+  // one is closed. The sheet stays submitted after an edit: editing is
+  // not deciding, and the Approve/Return buttons below still apply.
+  const canEdit = sheet.status === 'submitted' && isMine;
+
+  const startEdit = () => {
+    setRows((detail.kras || []).map((k) => ({
+      id: k.id, title: k.title || '', measures: k.measures || '',
+      description: k.description || '', weight: k.weight == null ? '' : String(k.weight),
+      category: k.category || '',
+    })));
+    setEditing(true); setErr(null); setSaved(null);
+  };
+  const patch = (i, f, v) => setRows((rs) => rs.map((r, n) => (n === i ? { ...r, [f]: v } : r)));
+  const total = rows.reduce((a, r) => a + (Number(r.weight) || 0), 0);
+
+  const saveEdit = async () => {
+    setBusy(true); setErr(null); setSaved(null);
+    try {
+      const r = await api(`/pms/team/kra-sheets/${sheet.id}/kras`, {
+        method: 'PUT',
+        body: JSON.stringify({ kras: rows.map((x) => ({
+          id: x.id, title: x.title.trim(), measures: x.measures, description: x.description,
+          category: x.category || null,
+          weight: x.weight === '' ? null : Number(x.weight),
+        })) }),
+      });
+      setEditing(false);
+      setSaved(r.changes && r.changes.length
+        ? `Saved — ${r.changes.length} ${r.changes.length === 1 ? 'change' : 'changes'}. ${sheet.employee_name} has been notified.`
+        : 'Saved — nothing actually changed, so nobody was notified.');
+      const fresh = await api(`/pms/team/kra-sheets/${sheet.id}/kras`);
+      setDetail(fresh);
+      reload();
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
 
   return (
     <div className="border-t border-navy-100 p-4 space-y-3">
@@ -146,7 +217,38 @@ function SheetEditor({ sheet, reload }) {
               structure the employee saw — a third rendering of one thing
               is how the three drift apart. Read-only: the parameter is
               set on the sheet, not in review. */}
-          {detail.kras.length > 0 && (
+          {detail.kras.length > 0 && editing && (
+            <div className="card p-3 space-y-2">
+              <p className="text-[11px] text-navy-500">
+                Editing {sheet.employee_name}'s sheet. Every change is recorded against your name
+                and they are told what changed. Weights must still total 100.
+              </p>
+              {rows.map((r, i) => (
+                <div key={r.id} className="border border-navy-100 rounded-lg p-2 space-y-1.5">
+                  <div className="flex gap-2">
+                    <input className="inp !py-1.5 text-xs flex-1" value={r.title}
+                      placeholder="KRA" onChange={(e) => patch(i, 'title', e.target.value)} />
+                    <input className="inp !py-1.5 text-xs w-24" value={r.weight} inputMode="numeric"
+                      placeholder="Weight" onChange={(e) => patch(i, 'weight', e.target.value.replace(/[^0-9]/g, ''))} />
+                  </div>
+                  <input className="inp !py-1.5 text-xs" value={r.category}
+                    placeholder="Parameter" onChange={(e) => patch(i, 'category', e.target.value)} />
+                  <textarea className="inp !py-1.5 text-xs" rows={2} value={r.measures}
+                    placeholder="KPI — measuring metrics & data source"
+                    onChange={(e) => patch(i, 'measures', e.target.value)} />
+                </div>
+              ))}
+              <p className={`text-xs font-semibold ${total === 100 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                Total weight {total}%{total === 100 ? '' : ' — must be 100 before you can save'}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button className="btn-pri" disabled={busy || total !== 100 || rows.some((r) => !r.title.trim())}
+                  onClick={saveEdit}>Save changes</button>
+                <button className="btn-sec" disabled={busy} onClick={() => { setEditing(false); setErr(null); }}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {detail.kras.length > 0 && !editing && (
             <KraTable
               groups={groupByCategory(detail.kras)}
               kpiHeaderNote="(measuring metrics & data source)"
@@ -168,8 +270,14 @@ function SheetEditor({ sheet, reload }) {
           )}
         </div>
       )}
-      {canDecide && (
+      {saved && <p className="text-xs text-emerald-700">{saved}</p>}
+      {canDecide && !editing && (
         <div className="space-y-2">
+          {canEdit && detail && detail.kras.length > 0 && (
+            <button className="btn-sec" onClick={startEdit}>
+              <Pencil size={13} className="inline mr-1" />Edit this sheet
+            </button>
+          )}
           <textarea className="inp" rows={2} placeholder="Comment (required if returning)" value={comment} onChange={e => setComment(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <button className="btn-pri" disabled={busy} onClick={() => decide('approved')}><Check size={13} className="inline mr-1" />Approve</button>

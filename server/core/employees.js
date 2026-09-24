@@ -27,6 +27,7 @@
 // directly and reused by the standalone tool in /tools.
 
 const express = require('express');
+const { handoverOpenRecords, handoverSummary } = require('../modules/performance/manager-handover');
 const multer = require('multer');
 const ExcelJS = require('exceljs');
 const bcrypt = require('bcryptjs');
@@ -596,23 +597,16 @@ async function loadEmployees(tenantId, rows, opts = {}) {
     // sheet keeps the manager who actually reviewed it at the time, for
     // audit accuracy; that's history, not something a later reassignment
     // should silently rewrite.
+    // The same handover the quick-edit route runs, through the same
+    // function — widened on 24 Sep to carry the mid-year check-in, the
+    // evaluation and the competency assessment as well as the KRA
+    // sheet and the growth plan.
     for (const r of rows) {
-      await client.query(
-        `UPDATE pms.kra_sheets ks SET manager_id = e.manager_id, updated_at = now()
-           FROM core.employees e, pms.cycles c
-          WHERE ks.employee_id = e.id AND ks.cycle_id = c.id
-            AND e.tenant_id=$1 AND LOWER(e.email)=LOWER($2)
-            AND c.phase NOT IN ('closed','cancelled')
-            AND ks.manager_id IS DISTINCT FROM e.manager_id`,
-        [tenantId, r.email]);
-      await client.query(
-        `UPDATE pms.development_plans dp SET manager_id = e.manager_id, updated_at = now()
-           FROM core.employees e, pms.cycles c
-          WHERE dp.employee_id = e.id AND dp.cycle_id = c.id
-            AND e.tenant_id=$1 AND LOWER(e.email)=LOWER($2)
-            AND c.phase NOT IN ('closed','cancelled')
-            AND dp.manager_id IS DISTINCT FROM e.manager_id`,
-        [tenantId, r.email]);
+      const who = (await client.query(
+        `SELECT id, manager_id FROM core.employees WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`,
+        [tenantId, r.email])).rows[0];
+      if (!who) continue;
+      await handoverOpenRecords(client, tenantId, who.id, who.manager_id);
     }
     // Pass 4: a KRA sheet is written FOR a job, so a department,
     // designation or role-band change reopens a sheet the employee can no
@@ -996,17 +990,16 @@ router.put('/:employeeId', async (req, res) => {
         WHERE id=$8`,
       [name.trim(), department || null, designation || null, role_band || null, managerId, dojParsed, status || null, emp.id]);
 
-    // Same BR-1.5 propagation the bulk importer already does for a manager
-    // change — this edit path can change someone's manager too, so it
-    // needs the identical fix, not a narrower one.
-    await db.query(
-      `UPDATE pms.kra_sheets ks SET manager_id=$1, updated_at=now()
-         FROM pms.cycles c WHERE ks.employee_id=$2 AND ks.cycle_id=c.id AND c.phase NOT IN ('closed','cancelled')`,
-      [managerId, emp.id]);
-    await db.query(
-      `UPDATE pms.development_plans dp SET manager_id=$1, updated_at=now()
-         FROM pms.cycles c WHERE dp.employee_id=$2 AND dp.cycle_id=c.id AND c.phase NOT IN ('closed','cancelled')`,
-      [managerId, emp.id]);
+    // BR-1.5 propagation, widened on 24 Sep: "Reporting manager change
+    // will also lead to open KRA changes." It always moved the KRA
+    // sheet and the growth plan; it did NOT move the mid-year
+    // check-in, the evaluation or the competency assessment, so half a
+    // person's records stayed with a manager who no longer managed
+    // them. One shared function now, used by this route and by the
+    // bulk importer, so the two cannot drift again — see
+    // modules/performance/manager-handover.js for what moves and why
+    // submitted work does not.
+    const handedOver = await handoverOpenRecords(db, req.user.tenant_id, emp.id, managerId);
 
     // A KRA sheet is written FOR a job. Changing the job reopens a sheet
     // the employee can no longer edit, so they can refill it against the
@@ -1022,6 +1015,10 @@ router.put('/:employeeId', async (req, res) => {
       reopened_kra_sheets: moved.reopened.length,
       reopened_growth_plans: (moved.reopened_growth_plans || []).length,
       reopened_midyear: (moved.reopened_midyear || []).length,
+      // Said out loud too: a reassignment that quietly moved nine
+      // records between two people's queues should say which.
+      handed_over: handedOver,
+      handover_message: handoverSummary(handedOver),
       changes: moved.changes });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
