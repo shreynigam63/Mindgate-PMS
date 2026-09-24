@@ -20,7 +20,7 @@ const { apiPermissionParity, hasPermission } = require('../../core/permissions')
 const { notify } = require('../../core/notifications');
 const { requireConsent } = require('../../core/consent');
 const meetings = require('../../core/meetings');
-const { isSuper50Eligible, computeWeightedRating } = require('./rating-rules');
+const { isSuper50Eligible, computeWeightedRating, DEFAULT_SCALE } = require('./rating-rules');
 const { isConnectDue, shouldRemindAgain, computeCadenceProgress } = require('./connect-reminders');
 const { runReminders } = require('./reminders');
 const { parseCsv, parseExcelSheets, detectFormat } = require('../../core/employees');
@@ -28,6 +28,9 @@ const pm = require('./phase-machine');
 const goalSync = require('./kra-goal-sync');
 const approvals = require('./approvals');
 const homeData = require('./home');
+const { super50Roster, super50Scale, super50Rule, super50History, gradeOf } = require('./super50');
+const { parsePriorRatings } = require('./prior-ratings-import');
+const { derivePlacement, PERFORMANCE_BANDS, POTENTIAL_BANDS } = require('./nine-box-derive');
 
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
@@ -1826,6 +1829,32 @@ const SETTINGS = {
     label: 'KRA Library scope',
     values: ['designation', 'department+designation'],
     default: 'designation',
+  },
+  // SUPER 50, as data rather than as code. Asked for on 24 Sep:
+  // "ratings will be derived from last three annual reviews and ratings
+  // should be A or A+ with current year ratings as A+." That is the
+  // default below — but it was previously a hardcoded `>= 4` and
+  // `=== 5` in rating-rules.js, which is a fact about THIS client's
+  // grade scale compiled into the product. The grades are now looked up
+  // on the cycle's own rating_scale by label, and all three parts of
+  // the rule are settings.
+  super50_window: {
+    label: 'Super 50 — how many annual reviews count',
+    values: ['2', '3', '4', '5'],
+    default: '3',
+    help: 'The rule looks at this many of the most recent annual reviews. Somebody with fewer on record is "not enough history", not a fail.',
+  },
+  super50_min_grade: {
+    label: 'Super 50 — lowest grade allowed in the window',
+    values: ['A+', 'A', 'B+', 'B', 'C'],
+    default: 'A',
+    help: 'Every review in the window must be at least this grade.',
+  },
+  super50_latest_grade: {
+    label: 'Super 50 — grade required this year',
+    values: ['A+', 'A', 'B+', 'B', 'C'],
+    default: 'A+',
+    help: 'The most recent annual review must be exactly this grade.',
   },
 };
 
@@ -3754,20 +3783,71 @@ router.get('/nine-box', async (req, res) => {
       return res.status(403).json({ error: "Requires 'pms_admin' or 'pms_hod'" });
     }
     const level = ['org', 'department', 'manager'].includes(req.query.level) ? req.query.level : 'org';
-    const c = await activeCycle(T(req));
+    // THE ANNUAL CYCLE, not simply "the active" one. The 9-box is an
+    // annual artefact — the client's own words on 24 Sep were "in
+    // Annual review cycle" — and a tenant running a mid-year cycle
+    // alongside it would otherwise have the grid read the mid-year
+    // one, find no published ratings there, and show empty. Falls
+    // back to the active cycle only when no annual cycle is live, so
+    // a single-cycle tenant behaves exactly as before.
+    const c = (await activeCycle(T(req), 'annual')) || (await activeCycle(T(req)));
     if (!c) return res.status(409).json({ error: 'No active cycle' });
-    // The grid stays on CALIBRATED cells only. A manager's potential
-    // (migration 043) is an input to calibration, not a placement: turning
-    // one into a cell would need performance-band thresholds, and this
-    // repo keeps thresholds in tables rather than inventing cut-offs in a
-    // query every tenant then inherits.
-    const rows = (await db.query(
-      `SELECT e.id, e.name, e.department, m.name AS manager_name, tt.nine_box_cell, tt.potential_rating
+    // TWO SOURCES NOW, and the difference between them is the point.
+    //
+    // CALIBRATED is what HR typed on the Calibration screen — a
+    // judgment made by people in a room, and still the only thing this
+    // product treats as a decision.
+    //
+    // DERIVED is new, asked for on 24 Sep: "after analyzing competency
+    // mapping of employees in Annual review cycle, please confirm how
+    // 9 box grid will be displayed." Performance from the annual final
+    // rating, potential from the FORWARD-LOOKING competency categories
+    // — see nine-box-derive.js for why functional competencies are
+    // excluded and why the bands are what they are.
+    //
+    // ?source=derived switches the grid; the default stays calibrated,
+    // so nobody's existing view changes under them.
+    const source = req.query.source === 'derived' ? 'derived' : 'calibrated';
+
+    const calibrated = (await db.query(
+      `SELECT e.id, e.name, e.department, e.designation, m.name AS manager_name,
+              tt.nine_box_cell, tt.potential_rating
          FROM pms.top_talent tt JOIN core.employees e ON e.id=tt.employee_id
          LEFT JOIN core.employees m ON m.id=e.manager_id
         WHERE tt.tenant_id=$1 AND tt.cycle_id=$2 AND tt.nine_box_cell IS NOT NULL`,
       [T(req), c.id])).rows;
 
+    // Everyone with either a published rating or a manager competency
+    // rating this cycle, and the two inputs the placement needs.
+    const derivedRows = (await db.query(
+      `SELECT e.id, e.name, e.department, e.designation, m.name AS manager_name,
+              h.final_rating,
+              coalesce(json_agg(json_build_object(
+                'category', cc.category, 'required_level', cr.required_level,
+                'manager_rating', cr.manager_rating)) FILTER (WHERE cr.id IS NOT NULL), '[]') AS competencies
+         FROM core.employees e
+         LEFT JOIN core.employees m ON m.id = e.manager_id
+         LEFT JOIN pms.employee_performance_history h
+                ON h.tenant_id=$1 AND h.cycle_id=$2 AND h.employee_id=e.id
+         LEFT JOIN pms.competency_assessments ca
+                ON ca.tenant_id=$1 AND ca.cycle_id=$2 AND ca.employee_id=e.id
+         LEFT JOIN pms.competency_ratings cr
+                ON cr.assessment_id=ca.id AND cr.manager_rating IS NOT NULL
+         LEFT JOIN pms.competencies cc ON cc.id = cr.competency_id
+        WHERE e.tenant_id=$1 AND e.status='active'
+        GROUP BY e.id, e.name, e.department, e.designation, m.name, h.final_rating`,
+      [T(req), c.id])).rows;
+
+    const scale = Array.isArray(c.rating_scale) && c.rating_scale.length ? c.rating_scale : DEFAULT_SCALE;
+    const calibratedBy = new Map(calibrated.map((r) => [r.id, r.nine_box_cell]));
+    const placed = [];
+    for (const r of derivedRows) {
+      const p = derivePlacement({ finalRating: r.final_rating, scale, competencyRows: r.competencies });
+      if (!p.cell) continue;
+      placed.push({ ...r, ...p, calibrated_cell: calibratedBy.get(r.id) || null });
+    }
+
+    const rows = source === 'derived' ? placed : calibrated;
     const groupKey = (r) => (level === 'department' ? (r.department || 'Unassigned') : level === 'manager' ? (r.manager_name || 'No manager') : 'Organisation');
     const groups = new Map();
     for (const r of rows) {
@@ -3775,11 +3855,42 @@ router.get('/nine-box', async (req, res) => {
       if (!groups.has(key)) groups.set(key, { key, total: 0, cells: {} });
       const g = groups.get(key);
       g.total++;
-      const cellKey = r.nine_box_cell;
+      const cellKey = source === 'derived' ? r.cell : r.nine_box_cell;
       if (!g.cells[cellKey]) g.cells[cellKey] = [];
-      g.cells[cellKey].push({ id: r.id, name: r.name });
+      g.cells[cellKey].push({
+        id: r.id, name: r.name,
+        ...(source === 'derived'
+          ? { why: r.why, final_rating: r.final_rating, competency_gap: r.competency_gap,
+              calibrated_cell: r.calibrated_cell,
+              // The one fact worth acting on: the data and the room
+              // disagreed about this person.
+              differs: !!(r.calibrated_cell && r.calibrated_cell !== r.cell) }
+          : {}),
+      });
     }
-    res.json({ cycle: { id: c.id, name: c.name }, level, groups: [...groups.values()].sort((a, b) => a.key.localeCompare(b.key)) });
+
+    // Why a grid might be empty, said out loud. Without this "no
+    // employees have a 9-box cell" is the only message, whether the
+    // cause is no calibration, no published ratings, or no competency
+    // assessments — three different problems with three different fixes.
+    const withRating = derivedRows.filter((r) => r.final_rating != null).length;
+    const withCompetency = derivedRows.filter((r) => (r.competencies || []).length > 0).length;
+
+    res.json({
+      cycle: { id: c.id, name: c.name, phase: c.phase }, level, source,
+      bands: { performance: PERFORMANCE_BANDS, potential: POTENTIAL_BANDS },
+      coverage: {
+        employees: derivedRows.length,
+        calibrated: calibrated.length,
+        with_final_rating: withRating,
+        with_manager_competencies: withCompetency,
+        derived: placed.length,
+        // How often the computed placement and the calibrated one part
+        // company. This is the number HR should look at in the room.
+        differs: placed.filter((p) => p.calibrated_cell && p.calibrated_cell !== p.cell).length,
+      },
+      groups: [...groups.values()].sort((a, b) => a.key.localeCompare(b.key)),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3823,6 +3934,12 @@ router.post('/publish', async (req, res) => {
     const scale = Array.isArray(c.rating_scale) ? c.rating_scale : [];
     const label = (v) => { const m = scale.find(s => Math.round(v) === s.value); return m ? m.label : null; };
     let published = 0; let pipsOpened = 0; let super50Flagged = 0; const failures = [];
+    // Read the Super 50 rule and scale ONCE for the whole publish, not
+    // per employee: with 1,398 people that is two queries instead of
+    // 2,796, and it guarantees every employee in one publish is judged
+    // against the same rule.
+    const s50rule = await super50Rule(T(req));
+    const s50scale = await super50Scale(T(req), c);
     for (const r of rows) {
       if (r.final_rating == null) { failures.push({ employee_id: r.employee_id, reason: 'no rating at any layer' }); continue; }
       try {
@@ -3843,17 +3960,20 @@ router.post('/publish', async (req, res) => {
         // A lapsed streak un-flags automatically — this is "currently on
         // the watchlist", not a permanent badge.
         if (c.cycle_type === 'annual') {
-          const hist = (await db.query(
-            `SELECT h.final_rating FROM pms.employee_performance_history h JOIN pms.cycles hc ON hc.id=h.cycle_id
-              WHERE h.tenant_id=$1 AND h.employee_id=$2 AND hc.cycle_type='annual'
-              ORDER BY h.published_at DESC LIMIT 3`, [T(req), r.employee_id])).rows;
-          const eligible = isSuper50Eligible(hist.map((x) => x.final_rating));
+          // The window now comes from super50.js, which reads published
+          // cycles AND any prior years imported from what the client
+          // appraised on before this product — ordered by FISCAL YEAR,
+          // not by published_at. The old query ordered by published_at,
+          // so back-filling an old cycle after a new one made "the most
+          // recent review" whichever was published last.
+          const hist = ((await super50History(T(req), [r.employee_id])).get(r.employee_id) || { list: [] }).list;
+          const eligible = isSuper50Eligible(hist.map((x) => x.rating), s50scale, s50rule);
           const emp = (await db.query(`SELECT super50_flag FROM core.employees WHERE id=$1`, [r.employee_id])).rows[0];
           const wasFlagged = !!(emp && emp.super50_flag);
           if (eligible && !wasFlagged) {
             await db.query(`UPDATE core.employees SET super50_flag=true, super50_since=now() WHERE id=$1`, [r.employee_id]);
             super50Flagged++;
-            audit(req, 'SUPER50_FLAGGED', c.id, r.employee_id, { ratings: hist.map((x) => x.final_rating) });
+            audit(req, 'SUPER50_FLAGGED', c.id, r.employee_id, { ratings: hist.map((x) => x.rating) });
             await notify(T(req), r.employee_id, 'super50_flagged', 'You have been recognised as a consistent top performer', null, '/pms/my-rating');
             // BR-6.6: proactively alert HR/Management to consider retention
             // actions for this newly-flagged employee.
@@ -3861,7 +3981,7 @@ router.post('/publish', async (req, res) => {
             audit(req, 'RETENTION_ALERT_SENT', c.id, r.employee_id, { alerted_recipients: alerted });
           } else if (!eligible && wasFlagged) {
             await db.query(`UPDATE core.employees SET super50_flag=false, super50_since=NULL WHERE id=$1`, [r.employee_id]);
-            audit(req, 'SUPER50_UNFLAGGED', c.id, r.employee_id, { ratings: hist.map((x) => x.final_rating) });
+            audit(req, 'SUPER50_UNFLAGGED', c.id, r.employee_id, { ratings: hist.map((x) => x.rating) });
           }
         }
         // BR-7.1: automatic PIP trigger below the cycle's configured threshold.
@@ -4850,13 +4970,167 @@ router.post('/pip/:id/entries', async (req, res) => {
 router.get('/watchlist', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
-    const r = await db.query(
-      `SELECT e.id, e.name, e.email, e.department, e.designation, e.super50_since,
-              e.last_appraisal_rating, e.last_appraisal_at
-         FROM core.employees e WHERE e.tenant_id=$1 AND e.super50_flag=true
-        ORDER BY e.super50_since ASC`, [T(req)]);
-    res.json({ watchlist: r.rows });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const t = T(req);
+    const c = await activeCycle(t);
+    const { rule, scale, rows, coverage } = await super50Roster(t, { cycle: c });
+
+    // Three lists, not one. The old route returned only the flagged
+    // rows, so an empty page could mean "nobody is good enough" or "no
+    // cycle has ever published" and there was no way to tell which —
+    // which is exactly the state this instance is in.
+    const label = (v) => gradeOf(scale, v);
+    const shape = (r) => ({
+      id: r.id, name: r.name, email: r.email, department: r.department, designation: r.designation,
+      super50_since: r.super50_since, flagged: r.super50_flag,
+      reason: r.reason, detail: r.detail, have: r.have, need: r.need,
+      history: r.history.map((h) => ({ ...h, grade: label(h.rating) })),
+    });
+    const qualifies = rows.filter((r) => r.eligible).map(shape);
+    // Near misses: they have the full window and fail on ONE thing.
+    // Somebody with no history is not "near" — they are unmeasured, and
+    // listing them as near misses would bury the real ones.
+    const nearly = rows
+      .filter((r) => !r.eligible && ['latest_not_top', 'streak_broken'].includes(r.reason))
+      .map(shape)
+      .sort((a, b) => (b.history[0] ? b.history[0].rating : 0) - (a.history[0] ? a.history[0].rating : 0))
+      .slice(0, 50);
+
+    // The flag on core.employees is written at publish time. If it has
+    // drifted from what the rule says today — because the rule was
+    // changed, or prior years were imported since — say so rather than
+    // showing a stale list.
+    const stale = rows.filter((r) => !!r.super50_flag !== r.eligible).length;
+
+    res.json({
+      rule: { ...rule, statement: `Last ${rule.window} annual reviews all ${rule.minGrade} or better, with this year at ${rule.latestGrade}.` },
+      scale, coverage, stale,
+      watchlist: qualifies, nearly,
+      cycle: c ? { id: c.id, name: c.name, phase: c.phase } : null,
+    });
+  } catch (e) { logger.error('watchlist', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// Re-run the rule now. It has only ever been evaluated at /publish,
+// which means changing the rule or importing prior years left the
+// watchlist stale until the next cycle published — possibly a year.
+router.post('/watchlist/recompute', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const t = T(req);
+    const c = await activeCycle(t);
+    const { rows, rule } = await super50Roster(t, { cycle: c });
+    let added = 0; let removed = 0;
+    for (const r of rows) {
+      const was = !!r.super50_flag;
+      if (r.eligible === was) continue;
+      if (r.eligible) {
+        await db.query(`UPDATE core.employees SET super50_flag=true, super50_since=now() WHERE id=$1`, [r.id]);
+        added += 1;
+        audit(req, 'SUPER50_FLAGGED', c ? c.id : null, r.id,
+          { ratings: r.history.map((h) => h.rating), via: 'recompute' });
+      } else {
+        await db.query(`UPDATE core.employees SET super50_flag=false, super50_since=NULL WHERE id=$1`, [r.id]);
+        removed += 1;
+        audit(req, 'SUPER50_UNFLAGGED', c ? c.id : null, r.id,
+          { reason: r.reason, via: 'recompute' });
+      }
+    }
+    audit(req, 'SUPER50_RECOMPUTED', c ? c.id : null, null, { added, removed, rule });
+    res.json({ ok: true, added, removed, on_list: rows.filter((r) => r.eligible).length });
+  } catch (e) { logger.error('watchlist recompute', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// ---- prior-year ratings ---------------------------------------------------
+//
+// A three-year rule needs three years, and a new instance has none. This
+// loads what the client appraised on BEFORE this product, so Super 50
+// can answer on day one instead of in three years.
+const PRIOR_HEADERS = ['Employee Code', 'Email', 'Employee Name', 'Fiscal Year', 'Rating'];
+const PRIOR_BANNER = 'One row per employee per past appraisal year. Match on Employee Code OR Email — whichever your old records carry; Employee Name is only there so you can read the sheet. Fiscal Year is your own label ("FY24-25", "2024") and is sorted by the first four-digit year in it. Rating is the grade as you recorded it (A+, A, B+, B, C) or the number. Re-uploading the same employee and year UPDATES it rather than adding a second row. Only ANNUAL appraisal ratings belong here — this feeds the Super 50 three-year window.';
+
+router.get('/watchlist/prior-ratings/template.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Prior Ratings');
+    ws.addRow([PRIOR_BANNER]);
+    ws.mergeCells(1, 1, 1, PRIOR_HEADERS.length);
+    ws.getRow(1).font = { italic: true };
+    ws.addRow(PRIOR_HEADERS).font = { bold: true };
+    for (const r of [['00042', '', 'Sample Person', 'FY24-25', 'A+'],
+                     ['', 'someone@example.com', 'Sample Person 2', 'FY23-24', 'A']]) ws.addRow(r);
+    // Employee Code as text, or Excel eats the leading zeros and the
+    // codes stop matching the master.
+    ws.getColumn(1).numFmt = '@';
+    ws.columns.forEach((col, i) => { col.width = [18, 30, 26, 16, 12][i] || 16; });
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="prior_ratings_template.xlsx"');
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('prior ratings template', { error: e.message }); res.status(500).json({ error: 'Could not build the template' }); }
+});
+
+router.post('/watchlist/prior-ratings/upload', (req, res, next) => kraUpload.single('file')(req, res, (err) => {
+  if (err) return res.status(400).json({ error: err.message });
+  next();
+}), async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    if (!req.file) return res.status(400).json({ error: 'file required (multipart field "file")' });
+    const t = T(req);
+    const format = detectFormat(req.file);
+    if (format === 'xls-legacy') {
+      return res.status(400).json({ error: 'Legacy .xls files are not supported — please re-save as .xlsx and upload again.' });
+    }
+    const raw = format === 'xlsx'
+      ? (await parseExcelSheets(req.file.buffer)).flatMap((sh) => sh.rows || [])
+      : parseCsv(req.file.buffer.toString('utf8'));
+
+    const scale = await super50Scale(t, await activeCycle(t));
+    const parsed = parsePriorRatings(raw, scale);
+    if (parsed.errors.length) {
+      return res.status(422).json({ ok: false, errors: parsed.errors, rows: parsed.rows.length });
+    }
+
+    // Resolve people BEFORE writing anything, so an unmatched code
+    // fails the file rather than half-importing it.
+    const people = (await db.query(
+      `SELECT id, lower(btrim(email)) AS email, lower(btrim(coalesce(emp_code,''))) AS code, name
+         FROM core.employees WHERE tenant_id=$1 AND status='active'`, [t])).rows;
+    const byEmail = new Map(people.map((p) => [p.email, p]));
+    const byCode = new Map(people.filter((p) => p.code).map((p) => [p.code, p]));
+    const unmatched = [];
+    const resolved = [];
+    for (const r of parsed.rows) {
+      const p = (r.code && byCode.get(r.code)) || (r.email && byEmail.get(r.email)) || null;
+      if (!p) { unmatched.push({ line: r.line, error: `no active employee matches ${r.code ? `code "${r.code}"` : `email "${r.email}"`}` }); continue; }
+      resolved.push({ ...r, employee_id: p.id, employee_name: p.name });
+    }
+    if (unmatched.length) return res.status(422).json({ ok: false, errors: unmatched, rows: parsed.rows.length });
+
+    if (String(req.query.commit || '') !== '1') {
+      // Dry run by default — the same two-step contract as every other
+      // importer here, so Validate can never write.
+      return res.json({ ok: true, committed: false, rows: resolved.length,
+        employees: new Set(resolved.map((r) => r.employee_id)).size,
+        years: [...new Set(resolved.map((r) => r.fiscal_year))].sort(),
+        sample: resolved.slice(0, 5).map((r) => ({ employee: r.employee_name, fiscal_year: r.fiscal_year, grade: r.grade, rating: r.rating })) });
+    }
+
+    for (const r of resolved) {
+      await db.query(
+        `INSERT INTO pms.prior_ratings (tenant_id, employee_id, fiscal_year, grade, rating, sort_year, imported_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (tenant_id, employee_id, fiscal_year)
+           DO UPDATE SET grade=EXCLUDED.grade, rating=EXCLUDED.rating,
+                         sort_year=EXCLUDED.sort_year, imported_by=EXCLUDED.imported_by`,
+        [t, r.employee_id, r.fiscal_year, r.grade, r.rating, r.sort_year, req.user.email]);
+    }
+    audit(req, 'PRIOR_RATINGS_IMPORTED', null, null,
+      { rows: resolved.length, employees: new Set(resolved.map((x) => x.employee_id)).size });
+    res.json({ ok: true, committed: true, rows: resolved.length,
+      employees: new Set(resolved.map((r) => r.employee_id)).size });
+  } catch (e) { logger.error('prior ratings upload', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
 // ---------------- Closure letter PDF generation -----------------------------

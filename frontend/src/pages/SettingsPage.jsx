@@ -27,6 +27,36 @@ const COPY = {
       },
     },
   },
+  // Super 50, split into its three parts so each can be argued with
+  // separately. Asked for on 24 Sep: "ratings will be derived from last
+  // three annual reviews and ratings should be A or A+ with current
+  // year ratings as A+" — which is the default of all three below.
+  super50_window: {
+    title: 'Super 50 — how many annual reviews count',
+    blurb: 'The rule looks at this many of the most recent annual reviews. Somebody with fewer on record is "not enough history" rather than a fail, and is listed separately on the Super 50 page.',
+    options: {
+      2: { label: '2 years', detail: 'A shorter window. More people qualify, and a single strong year counts for more.' },
+      3: { label: '3 years', detail: 'The rule as asked for — a sustained run rather than one good year.' },
+      4: { label: '4 years' }, 5: { label: '5 years' },
+    },
+  },
+  super50_min_grade: {
+    title: 'Super 50 — lowest grade allowed in the window',
+    blurb: 'Every review inside the window must be at least this grade. One year below it takes somebody off the list.',
+    options: {
+      'A+': { label: 'A+', detail: 'Only an unbroken run of the top grade.' },
+      A: { label: 'A', detail: 'A or A+ throughout — the rule as asked for.' },
+      'B+': { label: 'B+' }, B: { label: 'B' }, C: { label: 'C', detail: 'No floor in practice.' },
+    },
+  },
+  super50_latest_grade: {
+    title: 'Super 50 — grade required this year',
+    blurb: 'The most recent annual review must be exactly this grade. This is what makes the list current standing rather than a past reputation.',
+    options: {
+      'A+': { label: 'A+', detail: 'The rule as asked for.' },
+      A: { label: 'A' }, 'B+': { label: 'B+' }, B: { label: 'B' }, C: { label: 'C' },
+    },
+  },
 };
 
 export default function SettingsPage() {
