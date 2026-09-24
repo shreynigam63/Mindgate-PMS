@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Library, Pencil, Save, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Library, Pencil, Save, X, Plus, AlertTriangle } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
@@ -129,6 +129,17 @@ export default function KraLibraryPage() {
           hundred points' worth from it. Publishing <b>replaces</b> the shelf for each department
           and designation in the file and leaves every other shelf untouched.
         </p>
+        {/* CLEARING THE WHOLE LIBRARY. Asked for on 24 Sep: "provide
+            option of clearing previous data on this page for uploading
+            new data."
+            An upload replaces only the shelves PRESENT in the file,
+            which is the right default — two people can publish two
+            departments without treading on each other — but it also
+            means a smaller re-upload leaves every shelf the new file
+            does not mention still standing and still being offered.
+            This is the way to start from nothing. It is deliberately
+            not a one-click button. */}
+        {data.total_kras > 0 && <ClearLibrary total={data.total_kras} onDone={load} />}
         {upErr && <p className="text-xs text-rose-600">{upErr}</p>}
         {report && (
           <div className="text-xs space-y-1">
@@ -326,6 +337,7 @@ function ShelfDetail({ designation, department, onChanged }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState(null);
   const [editing, setEditing] = useState(null);   // the row id being edited
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({});
   const [busy, setBusy] = useState(false);
 
@@ -346,6 +358,27 @@ function ShelfDetail({ designation, department, onChanged }) {
     });
   };
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+
+  const startAdd = () => {
+    setErr(null); setEditing(null); setAdding(true);
+    setDraft({ title: '', category: '', suggested_weight: '', measures: '', description: '' });
+  };
+
+  const add = async () => {
+    setErr(null); setBusy(true);
+    try {
+      // department is whatever shelf this panel is showing — a blank one
+      // is the company-wide shelf, and the server stores that as NULL.
+      const r = await api('/pms/hr/kra-library/entry', {
+        method: 'POST',
+        body: JSON.stringify({ ...draft, designation, department: department || null }),
+      });
+      setRows((rs) => [...rs, r.entry]);
+      setAdding(false);
+      if (onChanged) onChanged();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
 
   const save = async (id) => {
     setErr(null); setBusy(true);
@@ -434,8 +467,60 @@ function ShelfDetail({ designation, department, onChanged }) {
             <span>{r.suggested_weight == null ? '—' : `${Number(r.suggested_weight)}%`}</span>
             <button className="text-navy-300 hover:text-navy-700" title="Edit this KRA"
               onClick={() => open(r)}><Pencil size={12} /></button>
+            {/* Delete sat inside the edit panel, so removing one line meant
+                opening the editor for it first and reading past a Save
+                button to find it. Asked for on 24 Sep as its own option;
+                it is one now, on the row, next to the pencil. */}
+            <button className="text-navy-300 hover:text-rose-600" title="Remove this KRA from the shelf"
+              disabled={busy} onClick={() => remove(r)}><Trash2 size={12} /></button>
           </div>
         ))}
+        // bodyFooter goes straight into <tbody>, so it has to BE a row.
+        // Passing a bare <td> renders and looks right, and React logs a
+        // validateDOMNesting warning a screenshot will never show you —
+        // caught here by failing the browser check on console errors.
+        bodyFooter={adding ? (
+          <tr className="kt-add kt-last">
+          <td colSpan={4} className="p-3 bg-white">
+            <div className="grid sm:grid-cols-2 gap-2">
+              <input className="inp !text-xs" autoFocus value={draft.title} onChange={set('title')}
+                placeholder="KRA (S.M.A.R.T goal) *" />
+              <input className="inp !text-xs" value={draft.category} onChange={set('category')}
+                placeholder="Parameter — e.g. Financial" />
+              <textarea className="inp !text-xs" rows={2} value={draft.measures} onChange={set('measures')}
+                placeholder="KPIs — measuring metrics & data source" />
+              <textarea className="inp !text-xs" rows={2} value={draft.description} onChange={set('description')}
+                placeholder="Comments (optional)" />
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-[11px] text-navy-400">Suggested weightage</span>
+              <input className="inp !text-xs !w-24 text-right" type="number" min="0" max="100" step="0.01"
+                value={draft.suggested_weight} onChange={set('suggested_weight')} placeholder="blank = none" />
+              <button className="btn-pri !py-1 !text-xs" disabled={busy || !draft.title.trim()} onClick={add}>
+                <Save size={12} className="inline mr-1" />Add to shelf
+              </button>
+              <button className="btn-sec !py-1 !text-xs" disabled={busy} onClick={() => setAdding(false)}>
+                <X size={12} className="inline mr-1" />Cancel
+              </button>
+            </div>
+            <p className="text-[10.5px] text-navy-400 mt-1.5">
+              Blank weightage is stored as “none”, not as 0% — a shelf is a menu and not every line
+              carries a suggestion.
+            </p>
+          </td>
+          </tr>
+        ) : (
+          <tr className="kt-add kt-last">
+            {/* kt-param-add, not kt-param: this cell is the control that
+                adds a KRA, not a parameter group. Anything counting the
+                groups on this table would otherwise count it as one. */}
+            <td colSpan={4} className="kt-param-add p-2">
+              <button className="kt-addbtn" onClick={startAdd}>
+                <Plus size={12} className="inline mr-1" />Add a KRA to this shelf
+              </button>
+            </td>
+          </tr>
+        )}
         legend={<>
           <Library size={11} className="inline mr-1" />
           A shelf is a <b>menu</b>, not an instruction — it may deliberately total more than 100,
@@ -445,6 +530,83 @@ function ShelfDetail({ designation, department, onChanged }) {
           are copies, and editing here changes only what the next person is offered.
         </>}
       />
+    </div>
+  );
+}
+
+// "Clear the library" — two gates, because this is the most destructive
+// button on the HR tab and it acts on 2,155 rows on the live tenant.
+//
+//   the typed word   is intent: you cannot do this by mis-clicking.
+//   confirm_count    is correctness: the server refuses unless the number
+//                    still matches, so if a colleague published a shelf
+//                    while this panel was open, the delete stops instead
+//                    of quietly taking their work with it.
+//
+// It says out loud what it does NOT touch, because that is the question
+// anybody sensible asks before pressing it: KRAs already on people's
+// sheets are copies and are unaffected. Clearing the library loses the
+// menu, not the orders.
+function ClearLibrary({ total, onDone }) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [done, setDone] = useState(null);
+
+  const go = async () => {
+    setErr(null); setBusy(true);
+    try {
+      const r = await api('/pms/hr/kra-library', {
+        method: 'DELETE', body: JSON.stringify({ confirm_count: total }),
+      });
+      setDone(r.removed);
+      setOpen(false); setTyped('');
+      onDone();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  if (done != null) {
+    return (
+      <p className="text-xs text-leaf-600 font-semibold">
+        Library cleared — {done} KRA{done === 1 ? '' : 's'} removed. Upload a file above to publish
+        the new shelves.
+      </p>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button className="btn-sec !text-rose-600 !border-rose-200 hover:!bg-rose-50 self-start"
+        onClick={() => { setOpen(true); setErr(null); }}>
+        <Trash2 size={13} className="inline mr-1" />Clear the library ({total} KRAs)
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 space-y-2">
+      <p className="text-xs text-rose-800 flex items-start gap-2">
+        <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+        <span>
+          This removes <b>all {total} KRAs</b> from every shelf, for every department and
+          designation. Employees will be offered nothing until you publish again.
+          {' '}<b>KRAs already on people&rsquo;s sheets are not affected</b> — those are copies.
+          This cannot be undone from the app.
+        </span>
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-rose-800">Type <b>DELETE</b> to confirm:</span>
+        <input className="inp !text-xs !w-32" value={typed} autoFocus
+          onChange={(e) => setTyped(e.target.value)} placeholder="DELETE" />
+        <button className="btn-pri !bg-rose-600 !py-1.5" disabled={busy || typed !== 'DELETE'} onClick={go}>
+          {busy ? 'Clearing…' : `Clear all ${total}`}
+        </button>
+        <button className="btn-sec !py-1.5" disabled={busy}
+          onClick={() => { setOpen(false); setTyped(''); setErr(null); }}>Cancel</button>
+      </div>
+      {err && <p className="text-xs text-rose-700 font-semibold">{err}</p>}
     </div>
   );
 }

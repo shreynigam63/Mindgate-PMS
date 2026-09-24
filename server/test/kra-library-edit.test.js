@@ -184,3 +184,139 @@ test('EDITING THE SHELF DOES NOT TOUCH WHAT SOMEBODY ALREADY PICKED', { skip }, 
   await req('DELETE', `/pms/hr/kra-library/entry/${entryId}`, hrTok);
   assert.equal((await db.query(`SELECT count(*)::int AS n FROM pms.kras WHERE sheet_id=$1`, [sheet.id])).rows[0].n, 1);
 });
+
+// ---------------------------------------------------------------------
+// ADDING ONE KRA, AND EMPTYING THE LIBRARY.
+//
+// Asked for on 24 Sep: "please provide option of clearing previous data
+// on this page for uploading new data. also provide add and delete
+// option for uploading/adding single KRA."
+//
+// Editing and removing one entry already existed (above). Adding one did
+// not, so putting a single line on a shelf meant re-uploading the whole
+// designation — which REPLACES it, so you had to reconstruct every other
+// row first to add one.
+
+test('ADDING ONE KRA lands it at the end of its own shelf', { skip }, async () => {
+  const before = (await db.query(
+    `SELECT count(*)::int AS n FROM pms.kra_library WHERE tenant_id=$1 AND designation='Executive'`,
+    [tenantId])).rows[0].n;
+
+  const r = await req('POST', '/pms/hr/kra-library/entry', hrTok, {
+    designation: 'Executive', category: 'Customer', title: 'Answer the phone',
+    measures: 'Within three rings', suggested_weight: '12.5',
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.equal(r.body.entry.title, 'Answer the phone');
+  assert.equal(Number(r.body.entry.suggested_weight), 12.5, 'two decimal places, as the column stores');
+
+  // At the END, not the top: adding a line must not reorder a shelf HR
+  // has already published and people are reading.
+  const shelf = (await db.query(
+    `SELECT title, sort_order FROM pms.kra_library
+      WHERE tenant_id=$1 AND designation='Executive' ORDER BY sort_order`, [tenantId])).rows;
+  assert.equal(shelf.length, before + 1);
+  assert.equal(shelf[shelf.length - 1].title, 'Answer the phone');
+});
+
+test('a hand-added KRA is indistinguishable from an uploaded one', { skip }, async () => {
+  // Blank department means the company-wide shelf, stored as NULL —
+  // which is exactly what the uploader does with a blank cell. If these
+  // diverged, a hand-added row would match differently from an uploaded
+  // one and nobody would know why.
+  const r = await req('POST', '/pms/hr/kra-library/entry', hrTok, {
+    designation: 'Executive', title: 'Company-wide line', department: '   ',
+  });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.entry.department, null, 'a blank department is NULL, not an empty string');
+  assert.equal(r.body.entry.suggested_weight, null, 'and a blank weight is NULL, not 0');
+});
+
+test('the additions that are refused', { skip }, async () => {
+  const bad = async (body, re) => {
+    const r = await req('POST', '/pms/hr/kra-library/entry', hrTok, body);
+    assert.equal(r.status, 422, JSON.stringify(r.body));
+    assert.match(r.body.error, re);
+  };
+  await bad({ designation: 'Executive' }, /cannot be empty/i);
+  await bad({ designation: 'Executive', title: '   ' }, /cannot be empty/i);
+  await bad({ title: 'orphan' }, /designation/i);
+  await bad({ designation: 'Executive', title: 'x', suggested_weight: 150 }, /between 0 and 100/);
+  await bad({ designation: 'Executive', title: 'x', suggested_weight: -1 }, /between 0 and 100/);
+  await bad({ designation: 'Executive', title: 'x', suggested_weight: 'abc' }, /must be a number/);
+  assert.equal((await req('POST', '/pms/hr/kra-library/entry', empTok,
+    { designation: 'Executive', title: 'x' })).status, 403, 'an employee cannot publish');
+});
+
+test('adding is audited', { skip }, async () => {
+  await new Promise((r) => setTimeout(r, 200));
+  const rows = (await db.query(
+    `SELECT details FROM pms.audit_log WHERE tenant_id=$1 AND action='KRA_LIBRARY_ENTRY_ADDED'`,
+    [tenantId])).rows;
+  assert.ok(rows.length, 'a published shelf is configuration; changing one is audited');
+  assert.ok(rows.some((r) => r.details.title === 'Answer the phone'));
+});
+
+test('EMPTYING THE LIBRARY needs the count, and matches it exactly', { skip }, async () => {
+  const have = (await db.query(
+    `SELECT count(*)::int AS n FROM pms.kra_library WHERE tenant_id=$1`, [tenantId])).rows[0].n;
+  assert.ok(have > 1, 'there is something to clear');
+
+  // No count at all.
+  let r = await req('DELETE', '/pms/hr/kra-library', hrTok, {});
+  assert.equal(r.status, 422);
+  assert.match(r.body.error, /confirm_count is required/);
+  assert.equal(r.body.have, have, 'and it tells you the number to send');
+
+  // THE RACE THIS EXISTS FOR: the page loaded when the library held one
+  // number, somebody published a shelf, and the count no longer matches.
+  // Deleting anyway would silently take their work with it.
+  r = await req('DELETE', '/pms/hr/kra-library', hrTok, { confirm_count: have - 1 });
+  assert.equal(r.status, 409);
+  assert.match(r.body.error, /changed since the page loaded/);
+
+  assert.equal((await db.query(
+    `SELECT count(*)::int AS n FROM pms.kra_library WHERE tenant_id=$1`, [tenantId])).rows[0].n,
+    have, 'and not one row went');
+
+  assert.equal((await req('DELETE', '/pms/hr/kra-library', empTok, { confirm_count: have })).status, 403,
+    'an employee cannot empty the library');
+
+  // Now for real.
+  r = await req('DELETE', '/pms/hr/kra-library', hrTok, { confirm_count: have });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.removed, have);
+  assert.equal((await db.query(
+    `SELECT count(*)::int AS n FROM pms.kra_library WHERE tenant_id=$1`, [tenantId])).rows[0].n, 0);
+
+  // Twice is not an error with a confusing message.
+  r = await req('DELETE', '/pms/hr/kra-library', hrTok, { confirm_count: 0 });
+  assert.equal(r.status, 409);
+  assert.match(r.body.error, /already empty/);
+});
+
+test('EMPTYING THE LIBRARY DOES NOT TOUCH WHAT PEOPLE ALREADY PICKED', { skip }, async () => {
+  // The whole reason this is safe to offer. A KRA on somebody's sheet is
+  // a COPY in pms.kras from the moment they pick it, so clearing the
+  // library loses the menu, not the orders. If this ever stops being
+  // true, the button above becomes the most destructive thing in the
+  // product and this test is what says so.
+  const kept = (await db.query(
+    `SELECT count(*)::int AS n FROM pms.kras k
+       JOIN pms.kra_sheets s ON s.id = k.sheet_id WHERE s.tenant_id=$1`, [tenantId])).rows[0].n;
+  assert.ok(kept > 0, 'the earlier test left a picked KRA on a sheet');
+
+  const still = (await db.query(
+    `SELECT title FROM pms.kras k JOIN pms.kra_sheets s ON s.id = k.sheet_id
+      WHERE s.tenant_id=$1`, [tenantId])).rows;
+  assert.ok(still.length, 'and it is still there with the library gone');
+});
+
+test('the emptying is audited, with the number removed', { skip }, async () => {
+  await new Promise((r) => setTimeout(r, 200));
+  const rows = (await db.query(
+    `SELECT details FROM pms.audit_log WHERE tenant_id=$1 AND action='KRA_LIBRARY_EMPTIED'`,
+    [tenantId])).rows;
+  assert.equal(rows.length, 1);
+  assert.ok(rows[0].details.removed > 0, 'how many went is part of the record');
+});

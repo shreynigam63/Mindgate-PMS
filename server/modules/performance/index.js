@@ -1806,7 +1806,13 @@ router.get('/hr/kra-library', async (req, res) => {
              SELECT 1 FROM pms.kra_library WHERE tenant_id=$1
               GROUP BY designation, coalesce(department,'')) t`, [T(req)])).rows[0].n
       : rows.length;
-    res.json({ shelves: rows, total_shelves: totalShelves, q, uncovered, departments, ambiguous, department_view: departmentView,
+    // The whole library's row count, unfiltered. "Clear the library" sends
+    // it back as confirm_count so the delete refuses if somebody published
+    // a shelf between this page loading and the button being pressed.
+    const totalKras = (await db.query(
+      `SELECT count(*)::int AS n FROM pms.kra_library WHERE tenant_id=$1`, [T(req)])).rows[0].n;
+    res.json({ shelves: rows, total_shelves: totalShelves, total_kras: totalKras,
+      q, uncovered, departments, ambiguous, department_view: departmentView,
       department: wanted || null, scope: await kraLibraryScope(T(req)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1951,6 +1957,113 @@ router.delete('/hr/kra-library/entry/:id', async (req, res) => {
     audit(req, 'KRA_LIBRARY_ENTRY_REMOVED', null, null, {
       id: row.id, designation: row.designation, department: row.department, title: row.title });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Add ONE KRA to a shelf, by hand.
+//
+// Asked for on 24 Sep: "provide add and delete option for
+// uploading/adding single KRA in KRA library page." Editing and removing
+// one entry already existed; adding one did not, so the only way to put a
+// single line on a shelf was to re-upload the whole designation — which
+// replaces it, so you had to reconstruct every other row first.
+//
+// It creates the shelf implicitly. There is no such thing as an empty
+// shelf in this table: a shelf IS its rows, keyed on
+// (department, designation), so adding the first row for a new
+// designation publishes that shelf, exactly as an upload would.
+router.post('/hr/kra-library/entry', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const b = req.body || {};
+    const title = String(b.title == null ? '' : b.title).trim();
+    if (!title) return res.status(422).json({ error: 'The KRA text cannot be empty' });
+    const designation = String(b.designation == null ? '' : b.designation).trim();
+    if (!designation) return res.status(422).json({ error: 'A KRA has to belong to a designation' });
+
+    // Same weight rule as the edit route: blank means "no suggested
+    // weight" and is stored as NULL, because 0% and "not specified" say
+    // different things to the employee reading the shelf.
+    let weight = null;
+    if (b.suggested_weight != null && String(b.suggested_weight).trim() !== '') {
+      weight = Number(b.suggested_weight);
+      if (!Number.isFinite(weight)) return res.status(422).json({ error: `Weightage must be a number — got "${b.suggested_weight}"` });
+      if (weight < 0 || weight > 100) return res.status(422).json({ error: `Weightage must be between 0 and 100 — got ${weight}` });
+      weight = Math.round(weight * 100) / 100;
+    }
+
+    const txt = (v) => (v == null || String(v).trim() === '' ? null : String(v).trim());
+    // Blank department = the company-wide shelf everyone with this title
+    // sees. Stored as NULL, which is what the uploader does with a blank
+    // cell, so a hand-added row and an uploaded one are indistinguishable.
+    const department = txt(b.department);
+
+    // Land it at the end of its shelf rather than at the top, so adding a
+    // line does not reorder what HR already published.
+    const next = (await db.query(
+      `SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM pms.kra_library
+        WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))
+          AND lower(btrim(coalesce(department,'')))=lower(btrim(coalesce($3,'')))`,
+      [T(req), designation, department])).rows[0].n;
+
+    const row = (await db.query(
+      `INSERT INTO pms.kra_library (tenant_id, department, designation, category, title,
+                                    measures, description, suggested_weight, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [T(req), department, designation, txt(b.category), title,
+       txt(b.measures), txt(b.description), weight, next])).rows[0];
+
+    audit(req, 'KRA_LIBRARY_ENTRY_ADDED', null, null, {
+      id: row.id, designation: row.designation, department: row.department, title: row.title });
+    res.status(201).json({ ok: true, entry: row });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// EMPTY THE WHOLE LIBRARY.
+//
+// Asked for on 24 Sep: "provide option of clearing previous data on this
+// page for uploading new data." An upload only replaces the shelves
+// PRESENT in the file, which is the right default — it means two people
+// can publish two departments without treading on each other — but it
+// also means there was no way to start from nothing. Re-uploading a
+// smaller file left every shelf the new file did not mention still
+// standing, and still being offered to employees.
+//
+// TWO GATES, and each does a different job:
+//
+//   confirm_count  must equal the number of rows about to go. The page
+//                  fills it from what it just displayed, so if somebody
+//                  else published a shelf in the meantime the numbers
+//                  disagree and this refuses. That is a real race on a
+//                  shared HR screen, not a hypothetical one.
+//   the typed word is in the UI, where intent belongs.
+//
+// It does NOT touch KRAs already copied onto anybody's sheet. Those are
+// independent rows in pms.kras from the moment an employee picks them —
+// the same rule the per-entry delete follows, and the reason this is
+// recoverable: clearing the library loses the menu, not the orders.
+router.delete('/hr/kra-library', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const have = (await db.query(
+      `SELECT COUNT(*)::int AS n FROM pms.kra_library WHERE tenant_id=$1`, [T(req)])).rows[0].n;
+    if (!have) return res.status(409).json({ error: 'The library is already empty' });
+
+    const asked = (req.body || {}).confirm_count;
+    if (asked == null) {
+      return res.status(422).json({ error: 'confirm_count is required — send the number of KRAs you mean to remove', have });
+    }
+    if (Number(asked) !== have) {
+      return res.status(409).json({
+        error: `The library holds ${have} KRAs, not ${asked} — it changed since the page loaded. Reload and try again.`,
+        have,
+      });
+    }
+
+    const r = await db.query(`DELETE FROM pms.kra_library WHERE tenant_id=$1`, [T(req)]);
+    audit(req, 'KRA_LIBRARY_EMPTIED', null, null, { removed: r.rowCount });
+    logger.warn('KRA library emptied', { tenant: T(req), removed: r.rowCount, by: req.user.email });
+    res.json({ ok: true, removed: r.rowCount });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
