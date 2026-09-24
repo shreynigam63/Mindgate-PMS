@@ -29,6 +29,7 @@ import { groupByCategory, NO_CATEGORY } from './MyKRASheetPage';
 // Both exist because each does something the other cannot.
 export default function KraLibraryPage() {
   const [q, setQ] = useState('');
+  const [panel, setPanel] = useState(null);   // 'add' | 'clear' | null
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [file, setFile] = useState(null);
@@ -97,7 +98,18 @@ export default function KraLibraryPage() {
   // department shelves published, every shelf is a fallback, so every
   // department showed the identical 267 rows and the filter looked dead.
   const shown = (data.shelves || []).filter((x) => (dept === '__none' ? !x.department : true));
+  // Which of the two library-wide panels is open, if either. One at a
+  // time: they are opposite actions and seeing both expanded at once
+  // invites pressing the wrong one.
   const view = data.department_view;
+  // Every designation the tenant knows about — the ones with a shelf and
+  // the ones without. Typing a new one is allowed; this is a suggestion
+  // list, not a constraint, because a shelf for a brand-new title is a
+  // perfectly ordinary thing to want.
+  const allDesignations = [...new Set([
+    ...(data.shelves || []).map((x) => x.designation),
+    ...(data.uncovered || []).map((x) => x.designation),
+  ])].filter(Boolean).sort();
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
@@ -129,17 +141,40 @@ export default function KraLibraryPage() {
           hundred points' worth from it. Publishing <b>replaces</b> the shelf for each department
           and designation in the file and leaves every other shelf untouched.
         </p>
-        {/* CLEARING THE WHOLE LIBRARY. Asked for on 24 Sep: "provide
-            option of clearing previous data on this page for uploading
-            new data."
-            An upload replaces only the shelves PRESENT in the file,
-            which is the right default — two people can publish two
-            departments without treading on each other — but it also
-            means a smaller re-upload leaves every shelf the new file
-            does not mention still standing and still being offered.
-            This is the way to start from nothing. It is deliberately
-            not a one-click button. */}
-        {data.total_kras > 0 && <ClearLibrary total={data.total_kras} onDone={load} />}
+        {/* THE TWO WHOLE-LIBRARY ACTIONS, side by side.
+            Add sits beside Clear because that is where it was asked for
+            on 24 Sep — "Add option should be on left or right side of
+            clear KRA option" — and because the pair reads as what it is:
+            the two things you do to the library other than upload a file.
+            CLEARING is the counterpart to the uploader's one real gap. An
+            upload replaces only the shelves PRESENT in the file, which is
+            the right default — two people can publish two departments
+            without treading on each other — but it also means a smaller
+            re-upload leaves every shelf the new file does not mention
+            still standing and still being offered. This is the way to
+            start from nothing, and it is deliberately not one click. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn-sec" onClick={() => { setPanel(panel === 'add' ? null : 'add'); }}>
+            <Plus size={13} className="inline mr-1" />Add a KRA
+          </button>
+          {data.total_kras > 0 && (
+            <button className="btn-sec !text-rose-600 !border-rose-200 hover:!bg-rose-50"
+              onClick={() => { setPanel(panel === 'clear' ? null : 'clear'); }}>
+              <Trash2 size={13} className="inline mr-1" />Clear the library ({data.total_kras} KRAs)
+            </button>
+          )}
+        </div>
+        {/* The panel opens BELOW the pair rather than in place of one of
+            them: a full-width form between the two buttons pushed Clear
+            onto its own row, and a control that moves when you press its
+            neighbour is how people click the wrong thing. */}
+        {panel === 'add' && (
+          <AddKra departments={data.departments || []} designations={allDesignations}
+            onDone={load} onClose={() => setPanel(null)} />
+        )}
+        {panel === 'clear' && data.total_kras > 0 && (
+          <ClearLibrary total={data.total_kras} onDone={load} onClose={() => setPanel(null)} />
+        )}
         {upErr && <p className="text-xs text-rose-600">{upErr}</p>}
         {report && (
           <div className="text-xs space-y-1">
@@ -547,8 +582,7 @@ function ShelfDetail({ designation, department, onChanged }) {
 // anybody sensible asks before pressing it: KRAs already on people's
 // sheets are copies and are unaffected. Clearing the library loses the
 // menu, not the orders.
-function ClearLibrary({ total, onDone }) {
-  const [open, setOpen] = useState(false);
+function ClearLibrary({ total, onDone, onClose }) {
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -561,7 +595,7 @@ function ClearLibrary({ total, onDone }) {
         method: 'DELETE', body: JSON.stringify({ confirm_count: total }),
       });
       setDone(r.removed);
-      setOpen(false); setTyped('');
+      setTyped('');
       onDone();
     } catch (e) { setErr(e.message); }
     finally { setBusy(false); }
@@ -573,15 +607,6 @@ function ClearLibrary({ total, onDone }) {
         Library cleared — {done} KRA{done === 1 ? '' : 's'} removed. Upload a file above to publish
         the new shelves.
       </p>
-    );
-  }
-
-  if (!open) {
-    return (
-      <button className="btn-sec !text-rose-600 !border-rose-200 hover:!bg-rose-50 self-start"
-        onClick={() => { setOpen(true); setErr(null); }}>
-        <Trash2 size={13} className="inline mr-1" />Clear the library ({total} KRAs)
-      </button>
     );
   }
 
@@ -603,10 +628,94 @@ function ClearLibrary({ total, onDone }) {
         <button className="btn-pri !bg-rose-600 !py-1.5" disabled={busy || typed !== 'DELETE'} onClick={go}>
           {busy ? 'Clearing…' : `Clear all ${total}`}
         </button>
-        <button className="btn-sec !py-1.5" disabled={busy}
-          onClick={() => { setOpen(false); setTyped(''); setErr(null); }}>Cancel</button>
+        <button className="btn-sec !py-1.5" disabled={busy} onClick={onClose}>Cancel</button>
       </div>
       {err && <p className="text-xs text-rose-700 font-semibold">{err}</p>}
+    </div>
+  );
+}
+
+// "Add a KRA" at the page level, beside "Clear the library".
+//
+// Asked for on 24 Sep: "Add option should be on left or right side of
+// clear KRA option." There is also a quick-add at the foot of each open
+// shelf, which is the faster path when you are already looking at one —
+// it knows the designation. This is the other direction: start from
+// nothing, name the shelf, and it is created if it does not exist.
+//
+// Designation and Department are DATALISTS, not dropdowns. Suggesting
+// what already exists stops the commonest way a shelf goes missing — a
+// second spelling of a title nobody notices, so "AVP - Delivery Manager"
+// and "AVP-Delivery Manager" become two shelves and half the people see
+// neither. Typing a new one is still allowed, because publishing a shelf
+// for a brand-new title is an ordinary thing to want.
+function AddKra({ departments, designations, onDone, onClose }) {
+  const blank = { designation: '', department: '', category: '', title: '',
+                  measures: '', description: '', suggested_weight: '' };
+  const [f, setF] = useState(blank);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [done, setDone] = useState(null);
+  const set = (k) => (e) => setF((v) => ({ ...v, [k]: e.target.value }));
+
+  const save = async () => {
+    setErr(null); setBusy(true);
+    try {
+      const r = await api('/pms/hr/kra-library/entry', {
+        method: 'POST', body: JSON.stringify({ ...f, department: f.department || null }),
+      });
+      setDone(`Added to ${r.entry.designation}${r.entry.department ? ` · ${r.entry.department}` : ''}.`);
+      // Keep the shelf, clear the KRA: adding three lines to one shelf is
+      // the common case, and retyping the designation each time is the
+      // kind of friction that sends people back to the spreadsheet.
+      setF((v) => ({ ...blank, designation: v.designation, department: v.department }));
+      onDone();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-xl border border-lagoon-100 bg-lagoon-50/50 p-3 space-y-2">
+      <p className="lbl mb-0">Add one KRA to a shelf</p>
+      <div className="grid sm:grid-cols-2 gap-2">
+        <div>
+          <input className="inp !text-xs" list="kl-designations" value={f.designation}
+            onChange={set('designation')} placeholder="Designation * — e.g. Sales Manager" />
+          <datalist id="kl-designations">
+            {designations.map((d) => <option key={d} value={d} />)}
+          </datalist>
+        </div>
+        <div>
+          <input className="inp !text-xs" list="kl-departments" value={f.department}
+            onChange={set('department')} placeholder="Department — blank = every department" />
+          <datalist id="kl-departments">
+            {departments.map((d) => <option key={d} value={d} />)}
+          </datalist>
+        </div>
+        <input className="inp !text-xs" value={f.title} onChange={set('title')}
+          placeholder="KRA (S.M.A.R.T goal) *" />
+        <input className="inp !text-xs" value={f.category} onChange={set('category')}
+          placeholder="Parameter — e.g. Financial" />
+        <textarea className="inp !text-xs" rows={2} value={f.measures} onChange={set('measures')}
+          placeholder="KPIs — measuring metrics & data source" />
+        <textarea className="inp !text-xs" rows={2} value={f.description} onChange={set('description')}
+          placeholder="Comments (optional)" />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] text-navy-500">Suggested weightage</span>
+        <input className="inp !text-xs !w-24 text-right" type="number" min="0" max="100" step="0.01"
+          value={f.suggested_weight} onChange={set('suggested_weight')} placeholder="blank = none" />
+        <button className="btn-pri !py-1.5" disabled={busy || !f.title.trim() || !f.designation.trim()}
+          onClick={save}>{busy ? 'Adding…' : 'Add to the library'}</button>
+        <button className="btn-sec !py-1.5" disabled={busy} onClick={onClose}>Close</button>
+      </div>
+      <p className="text-[10.5px] text-navy-400">
+        A blank Department publishes to the company-wide shelf everyone with that title sees.
+        Blank weightage is stored as “none”, not 0% — a shelf is a menu and not every line carries
+        a suggestion. Naming a designation that has no shelf yet creates one.
+      </p>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      {done && <p className="text-xs text-leaf-600 font-semibold">{done} Add another, or Close.</p>}
     </div>
   );
 }

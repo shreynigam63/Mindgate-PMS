@@ -502,3 +502,66 @@ test('Team Overview can be searched', async (t) => {
   assert.deepEqual(errors, []);
   await ctx.close();
 });
+
+test('Add sits beside Clear on the KRA Library, and neither button moves', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 24 Sep: "Add option should be on left or right side of
+  // clear KRA option."
+  //
+  // The first attempt put the add FORM in the button row, so opening it
+  // pushed Clear down onto its own line. A control that moves when you
+  // press the one next to it is how people click the wrong thing — and
+  // the wrong thing here empties the library. So the two buttons hold a
+  // fixed row and the panels open underneath, which is what the
+  // coordinate checks below are actually for.
+  const { ctx, page, errors } = await open('admin@shot.in', '/admin/kra-library');
+  try {
+    const addBtn = page.locator('button:has-text("Add a KRA")').first();
+    const clrBtn = page.locator('button:has-text("Clear the library")');
+    assert.equal(await addBtn.count(), 1, 'Add is on the page');
+    assert.equal(await clrBtn.count(), 1, 'so is Clear');
+
+    const where = async () => {
+      const a = await addBtn.boundingBox();
+      const c = await clrBtn.boundingBox();
+      return { a, c };
+    };
+    const shut = await where();
+    assert.ok(Math.abs(shut.a.y - shut.c.y) < 5, 'they share a row');
+    assert.ok(shut.a.x < shut.c.x, 'Add is to the left of Clear');
+
+    // Opening either panel must not move either button.
+    await addBtn.click();
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator('input[placeholder*="Designation *"]').count(), 1,
+      'the add form opened');
+    let now = await where();
+    assert.deepEqual([now.a.x, now.a.y, now.c.x, now.c.y],
+      [shut.a.x, shut.a.y, shut.c.x, shut.c.y], 'neither button moved when Add opened');
+
+    // One panel at a time — they are opposite actions.
+    await clrBtn.click();
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator('input[placeholder*="Designation *"]').count(), 0,
+      'opening Clear closes the add form');
+    assert.equal(await page.locator('input[placeholder="DELETE"]').count(), 1,
+      'and shows the typed confirmation');
+    now = await where();
+    assert.deepEqual([now.a.x, now.a.y, now.c.x, now.c.y],
+      [shut.a.x, shut.a.y, shut.c.x, shut.c.y], 'neither button moved when Clear opened');
+
+    // The add form cannot be submitted half-filled.
+    await addBtn.click();
+    await page.waitForTimeout(400);
+    const submit = page.locator('button:has-text("Add to the library")');
+    assert.ok(await submit.isDisabled(), 'disabled with nothing filled in');
+    await page.locator('input[placeholder*="Designation *"]').fill('Sales Manager');
+    assert.ok(await submit.isDisabled(), 'still disabled with no KRA text');
+    await page.locator('input[placeholder="KRA (S.M.A.R.T goal) *"]').first().fill('x');
+    assert.ok(!(await submit.isDisabled()), 'enabled once both required fields are in');
+
+    assert.deepEqual(errors, []);
+  } finally {
+    await ctx.close();
+  }
+});
