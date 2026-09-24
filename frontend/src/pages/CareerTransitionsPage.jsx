@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, X, Trash2, Save } from 'lucide-react';
+import { Plus, Search, X, Trash2, Save, Download } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 
@@ -77,10 +77,31 @@ export default function CareerTransitionsPage() {
         <button className="btn-pri" onClick={() => { setEditing(null); setShowForm(true); }}><Plus size={13} className="inline mr-1" />Add transition</button>
       </div>
 
+      {/* The filled first draft, asked for on 24 Sep: "please find template
+          of career pathing matrix and fill the same as per department and
+          designation". It is built from the employee master on each click
+          rather than stored, so it never goes stale, and it comes out as
+          the importer's own sheet so it goes straight back in below. */}
+      <div className="card p-4 space-y-2 border-l-4 border-leaf-500">
+        <p className="lbl">Start from a suggested matrix</p>
+        <p className="text-[11.5px] text-navy-500">
+          Built from the designations on your employee master right now — the senior form of each
+          role where one exists, the standard rung otherwise. It is a <b>draft to edit</b>, not a
+          decision: nothing is saved until you upload it below and publish. Rows whose Notes start
+          with <b>PLEASE CHECK</b> are the ones to look at first.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <a className="btn-pri" href={`${API_BASE}/people/career/transitions/suggested.xlsx?token=${localStorage.getItem('apms_token')}`}>
+            <Download size={13} className="inline mr-1" />Download suggested matrix (.xlsx)
+          </a>
+          <a className="btn-sec" href={`${API_BASE}/people/career/transitions/suggested.csv?token=${localStorage.getItem('apms_token')}`}>.csv</a>
+        </div>
+      </div>
+
       <div className="card p-4 space-y-2">
         <p className="lbl">Upload transitions — one row per step, dry run first</p>
         <div className="flex flex-wrap items-center gap-2">
-          <a className="btn-sec" href={`${API_BASE}/people/career/transitions/template.xlsx?token=${localStorage.getItem('apms_token')}`}>Download template (.xlsx)</a>
+          <a className="btn-sec" href={`${API_BASE}/people/career/transitions/template.xlsx?token=${localStorage.getItem('apms_token')}`}>Blank template (.xlsx)</a>
           <a className="btn-sec" href={`${API_BASE}/people/career/transitions/template.csv?token=${localStorage.getItem('apms_token')}`}>.csv</a>
           <input type="file" accept=".xlsx,.csv" className="text-xs"
             onChange={(e) => { setFile(e.target.files[0] || null); setReport(null); setUpErr(null); }} />

@@ -36,6 +36,10 @@ const PAGES = [
   ['final_rating',       '/my/annual-review',         null],
   ['my_rating',          '/my/rating',                null],
   ['past_cycles',        '/my/history',               null],
+  // Competency mapping, added 24 Sep from the client's own workbook.
+  // The employee's own form is theirs, so it is public like the rest of
+  // the Self tab; the team list and the framework are gated below.
+  ['my_competencies',    '/my/competencies',          null],
 
   // The Manager tab's own landing page, added 24 Sep — what /home is for
   // a person's own work, for the people who report to them. First in the
@@ -49,6 +53,7 @@ const PAGES = [
   // card, so My Performance showed other people again.
   ['team_growth',        '/team/growth',              'pms_team_eval'],
   ['team_eval',          '/team/eval',                'pms_team_eval'],
+  ['team_competencies',  '/team/competencies',        'pms_team_eval'],
   // Split out of /my/midyear on 23 Sep: the manager's list of everybody's
   // mid-year reviews was rendering underneath the employee's OWN mid-year
   // card, so "My Performance" showed 1,398 other people. The employee's
@@ -65,6 +70,10 @@ const PAGES = [
   ['career_matrix',      '/admin/career-transitions', 'people_admin'],
   ['kra_overview',       '/admin/kra-overview',       'pms_admin'],
   ['kra_library',        '/admin/kra-library',        'pms_admin'],
+  // The Competency Master and the org-wide dashboard. HR-only, because
+  // a company-level competency average is not an employee's business.
+  ['competency_framework', '/admin/competencies',     'pms_admin'],
+  ['competency_dashboard', '/admin/competency-dashboard', 'pms_admin'],
   ['completion_report',  '/admin/completion-report',  'pms_admin'],
   ['calibration',        '/admin/calibration',        'pms_admin'],
   ['nine_box',           '/admin/nine-box',           'pms_hod'],

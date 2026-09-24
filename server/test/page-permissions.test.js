@@ -159,8 +159,13 @@ test('every page is registered, and every route is registered once', { skip }, a
   // be argued for here too.
   const publicRoutes = rows.filter(r => !r.required_permission).map(r => r.route).sort();
   assert.deepEqual(publicRoutes, [
-    '/engagement', '/home', '/my/annual-review', '/my/growth', '/my/history', '/my/kras',
-    '/my/midyear', '/my/rating', '/my/self-appraisal', '/people', '/pip', '/team/connects',
+    // /my/competencies joined the public set on 24 Sep. It is the
+    // employee's OWN competency form — the same argument as /my/kras.
+    // The framework and the company dashboard are pms_admin, and the
+    // team list is pms_team_eval; only this one is theirs.
+    '/engagement', '/home', '/my/annual-review', '/my/competencies', '/my/growth', '/my/history',
+    '/my/kras', '/my/midyear', '/my/rating', '/my/self-appraisal', '/people', '/pip',
+    '/team/connects',
   ]);
   // /admin/engagement is NOT in that list, and that is the point of the
   // 23 Sep split: taking a survey stays public, running one does not.
@@ -189,8 +194,10 @@ test('a manager adds the team pages and nothing else', { skip }, async () => {
   // /team/midyear had been split out of /my/midyear the same day.
   // /team/dashboard joined on 24 Sep — the Manager tab's own landing
   // page, asked for directly, carrying pms_team_eval like the rest.
-  assert.deepEqual(added, ['/team/dashboard', '/team/eval', '/team/growth', '/team/kra-sheets',
-                           '/team/midyear', '/team/overview']);
+  // /team/competencies joined on 24 Sep with the competency mapping
+  // system, carrying pms_team_eval like the rest of the tab.
+  assert.deepEqual(added, ['/team/competencies', '/team/dashboard', '/team/eval', '/team/growth',
+                           '/team/kra-sheets', '/team/midyear', '/team/overview']);
   assert.ok(!mgr.includes('/admin/increments'), 'a manager never sees compensation');
 });
 

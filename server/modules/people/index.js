@@ -22,6 +22,7 @@ const { parseExcelSheets, parseCsv, detectFormat } = require('../../core/employe
 const {
   validateCareerTransitionRows, COLUMNS: CT_COLUMNS, rowKey: ctRowKey,
 } = require('./career-transitions-import');
+const { suggestTransitions } = require('./career-ladder');
 
 // 2 MB: a career matrix is tens of rows, not tens of thousands. A limit
 // this low turns "somebody uploaded the wrong file" into a clear error
@@ -472,24 +473,86 @@ const TRANSITION_SAMPLE = [
 // only for PUT and DELETE — so the literal filenames are safe here. Worth
 // stating, because the KRA Library's equivalents DO have to be declared
 // before a GET :designation route and the reason is easy to mis-copy.
+// One writer for both downloads. The suggested matrix has to come out
+// of the SAME sheet as the blank template — same banner, same headers,
+// same column widths — because it goes straight back through the same
+// importer, and a second layout would be a second thing to get wrong.
+async function transitionsWorkbook(banner, rows) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Career Transitions');
+  ws.addRow([banner]);
+  ws.mergeCells(1, 1, 1, TRANSITION_HEADERS.length);
+  ws.getRow(1).font = { italic: true };
+  const header = ws.addRow(TRANSITION_HEADERS);
+  header.font = { bold: true };
+  header.alignment = { wrapText: true, vertical: 'middle' };
+  for (const row of rows) ws.addRow(row);
+  ws.columns.forEach((col, i) => { col.width = [22, 26, 16, 26, 16, 16, 18, 20, 44, 44][i] || 20; });
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
 router.get('/career/transitions/template.xlsx', async (req, res) => {
   try {
     if (!(await adminOnly(req, res))) return;
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Career Transitions');
-    ws.addRow([TRANSITION_BANNER]);
-    ws.mergeCells(1, 1, 1, TRANSITION_HEADERS.length);
-    ws.getRow(1).font = { italic: true };
-    const header = ws.addRow(TRANSITION_HEADERS);
-    header.font = { bold: true };
-    header.alignment = { wrapText: true, vertical: 'middle' };
-    for (const row of TRANSITION_SAMPLE) ws.addRow(row);
-    ws.columns.forEach((col, i) => { col.width = [22, 26, 16, 26, 16, 16, 18, 20, 44, 34][i] || 20; });
-    const buf = await wb.xlsx.writeBuffer();
+    const buf = await transitionsWorkbook(TRANSITION_BANNER, TRANSITION_SAMPLE);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="career_transitions_template.xlsx"');
-    res.send(Buffer.from(buf));
+    res.send(buf);
   } catch (e) { logger.error('career transitions template xlsx', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
+});
+
+// ---- The suggested matrix ------------------------------------------------
+//
+// Asked for on 24 Sep: "please find template of career pathing matrix
+// and fill the same as per department and designation, also create
+// downloadable excel sheet for upload."
+//
+// Not a fixture: it reads the designations on the employee master right
+// now and proposes the ladder those imply, so it stays true as the
+// master changes. It writes NOTHING — the output is the importer's own
+// sheet, which HR edits and uploads through Validate/Publish like any
+// other. See career-ladder.js for the three rules it uses.
+const SUGGESTED_BANNER = 'SUGGESTED career pathing matrix, built from the designations on your employee master right now. It is a DRAFT: read it, edit it, delete what does not apply, then upload it through Validate and Publish on this same page. Rows whose Notes start with "PLEASE CHECK" are the ones to look at first — the master has no senior form of that role, so the suggestion is the plain company ladder rather than a real next step. Blank Department = the rung applies to every department; a department-specific row wins over a blank one for the same move. Nothing is saved until you publish.';
+
+async function suggestedTransitionRows(tenantId) {
+  const grid = (await db.query(
+    `SELECT coalesce(department,'') AS department, designation, count(*)::int AS headcount
+       FROM core.employees
+      WHERE tenant_id=$1 AND status='active' AND designation IS NOT NULL AND btrim(designation) <> ''
+      GROUP BY 1,2`, [tenantId])).rows;
+  return suggestTransitions(grid).map((t) => [
+    t.department, t.from_role, t.from_level, t.to_role, t.to_level,
+    t.expected_level_change, t.min_time_months, t.typical_time_months,
+    (t.required_competencies || []).join('\n'), t.notes,
+  ]);
+}
+
+router.get('/career/transitions/suggested.xlsx', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    const rows = await suggestedTransitionRows(T(req));
+    const buf = await transitionsWorkbook(SUGGESTED_BANNER, rows);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="career_matrix_suggested_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    res.send(buf);
+  } catch (e) { logger.error('career transitions suggested xlsx', { error: e.message }); res.status(500).json({ error: 'Could not build the suggested matrix' }); }
+});
+
+router.get('/career/transitions/suggested.csv', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    const rows = await suggestedTransitionRows(T(req));
+    const cell = (v) => {
+      const t = String(v == null ? '' : v).replace(/\s*\n\s*/g, '; ');
+      return /[",]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    // BOM, so Excel reads the en-dashes in titles like "Sr Manager –
+    // Implementation" as UTF-8 rather than mojibake.
+    const csv = '\ufeff' + [TRANSITION_HEADERS, ...rows].map((r) => r.map(cell).join(',')).join('\n') + '\n';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="career_matrix_suggested_${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csv);
+  } catch (e) { logger.error('career transitions suggested csv', { error: e.message }); res.status(500).json({ error: 'Could not build the suggested matrix' }); }
 });
 
 router.get('/career/transitions/template.csv', async (req, res) => {
@@ -963,4 +1026,10 @@ async function careerPathFor(tenantId, employeeId) {
   return { ...path, milestones, progress_pct: careerProgress(milestones) };
 }
 
-module.exports = { router, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor };
+// transitionsWorkbook and the two banners are exported so the SAME
+// writer that serves the download can be driven offline against a
+// customer's employee master — otherwise the file we hand over and the
+// file the button produces are two pieces of code that can drift.
+module.exports = { router, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor,
+                   transitionsWorkbook, suggestedTransitionRows,
+                   TRANSITION_HEADERS, TRANSITION_BANNER, SUGGESTED_BANNER };

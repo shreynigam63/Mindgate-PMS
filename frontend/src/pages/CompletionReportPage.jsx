@@ -89,7 +89,7 @@ export default function CompletionReportPage() {
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="PMS Completion Report" hue="teal">
         {cycles.length > 0 && (
-          <select className="input py-1 text-xs w-auto" value={cycleId} onChange={e => setCycleId(e.target.value)}>
+          <select className="inp !py-1 !px-2 text-xs w-auto" value={cycleId} onChange={e => setCycleId(e.target.value)}>
             {cycles.map(c => (
               <option key={c.id} value={c.id}>
                 {c.name}{CLOSED_PHASES.includes(c.phase) ? ` (${c.phase})` : ''}

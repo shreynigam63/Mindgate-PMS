@@ -2816,6 +2816,12 @@ router.get('/team/home', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---------------- Competency mapping ----------------------------------------
+// The client's own competency workbook, made a working system. Its own
+// file — see competencies.js — because this one is long enough. Mounted
+// here so it inherits authenticate + the parity gate above.
+router.use('/competencies', require('./competencies').router);
+
 // ---------------- All Approvals (HR / super admin) --------------------------
 // Everything the cycle is waiting on, in one queue. See approvals.js for
 // why some rows can be bulk approved and others deliberately cannot.

@@ -211,6 +211,10 @@ test('every page band actually has a background — an unstyled hue is invisible
     ['emp@shot.in', '/my/growth'],
     ['emp@shot.in', '/my/midyear'],
     ['emp@shot.in', '/engagement'],
+    ['emp@shot.in', '/my/competencies'],
+    ['mgr@shot.in', '/team/competencies'],
+    ['hr@shot.in', '/admin/competencies'],
+    ['hr@shot.in', '/admin/competency-dashboard'],
     ['mgr@shot.in', '/team/dashboard'],
     ['mgr@shot.in', '/team/growth'],
     ['mgr@shot.in', '/team/midyear'],
@@ -650,4 +654,75 @@ test('the Manager tab has its own dashboard, and it tracks the reportees', async
   const eMain = await e.page.locator('main').innerText();
   assert.ok(!/Manager Dashboard/.test(eMain), `an employee is kept out — saw: ${eMain.slice(0, 120)}`);
   await e.ctx.close();
+});
+
+test('competency mapping is on all three tabs, and gated per tab', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 24 Sep with the client's own workbook attached:
+  // "Consider 3rd excel sheet for creating employee competency mapping
+  // system for evaluation self and manager to have complete competency
+  // of the organization." Four sheets, four surfaces.
+  const { ctx, page, errors } = await open('hr@shot.in', '/home');
+  const self = await groupItems(page, 'Self');
+  assert.ok(self.includes('My Competencies'), `Self was: ${self.join(', ')}`);
+  const mgr = await groupItems(page, 'Manager');
+  assert.ok(mgr.includes('Team Competencies'), `Manager was: ${mgr.join(', ')}`);
+  const hr = await groupItems(page, 'HR');
+  assert.ok(hr.includes('Competency Framework'), `HR was: ${hr.join(', ')}`);
+  assert.ok(hr.includes('Competency Dashboard'));
+  assert.deepEqual(errors, []);
+  await ctx.close();
+
+  // An employee gets their own form and NOTHING else — the framework
+  // and the company dashboard are HR's.
+  const e = await open('emp@shot.in', '/home');
+  const eSelf = await groupItems(e.page, 'Self');
+  assert.ok(eSelf.includes('My Competencies'), 'the employee keeps their own form');
+  const body = await e.page.locator('header').innerText();
+  assert.ok(!/Competency Framework|Competency Dashboard/.test(body),
+    'but never the framework or the company dashboard');
+  await e.ctx.close();
+});
+
+test('the competency form asks the right person the right competencies', async (t) => {
+  if (needStack(t)) return;
+  // The 10 LEADERSHIP competencies are not asked of somebody with
+  // nobody to lead. A form that makes an individual contributor rate
+  // their Delegation teaches them the form is not about them.
+  const tok = async (email) => (await (await fetch(`${API}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: PASS }),
+  })).json()).token;
+  const get = async (who, p) => (await (await fetch(`${API}/api/v1${p}`,
+    { headers: { Authorization: `Bearer ${who}` } })).json());
+
+  const emp = await get(await tok('emp@shot.in'), '/pms/competencies/me');
+  const mgr = await get(await tok('mgr@shot.in'), '/pms/competencies/me');
+  assert.ok(emp.rows.length > 0 && mgr.rows.length > emp.rows.length,
+    `a manager is asked more: ${emp.rows.length} vs ${mgr.rows.length}`);
+  assert.ok(!emp.rows.some((r) => /LEADERSHIP/.test(r.category)));
+  assert.ok(mgr.rows.some((r) => /LEADERSHIP/.test(r.category)));
+
+  // The page renders the categories it was given, each exactly once —
+  // the first cut grouped only CONSECUTIVE rows, so when two
+  // categories' sort ranges overlapped a heading appeared twice.
+  const { ctx, page, errors } = await open('emp@shot.in', '/my/competencies');
+  const main = await page.locator('main').innerText();
+  const wanted = [...new Set(emp.rows.map((r) => r.category))];
+  for (const cat of wanted) {
+    const hits = main.split(cat).length - 1;
+    assert.equal(hits, 1, `"${cat}" appears exactly once — got ${hits}`);
+  }
+  assert.ok(!/LEADERSHIP COMPETENCY/.test(main), 'and leadership is absent for this person');
+  // The block the page opened on shows the 1-5 control with the
+  // required level. Open one only if none is — the page expands the
+  // first unfinished category by itself, and clicking that one shut it.
+  if (await page.locator('button[aria-pressed]').count() === 0) {
+    await page.locator(`button:has-text("${wanted[0]}")`).first().click();
+    await page.waitForTimeout(600);
+  }
+  assert.ok(await page.locator('button[aria-pressed]').count() >= 5, 'the rating buttons are there');
+  assert.match(await page.locator('main').innerText(), /needs \d/, 'and each says what the role needs');
+  assert.deepEqual(errors, []);
+  await ctx.close();
 });
