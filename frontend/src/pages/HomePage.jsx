@@ -4,7 +4,7 @@ import { api } from '../utils/api';
 import {
   Target, TrendingUp, MessageCircle, Clock, ClipboardList, Award, Star, History,
   LayoutDashboard, Users, CheckCircle2, Library, BarChart3, ArrowRight, Lock,
-  Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck, Send, Hourglass,
+  Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck, Send, Hourglass, Gauge,
 } from 'lucide-react';
 
 // The landing screen.
@@ -296,6 +296,8 @@ export default function HomePage() {
         <Section icon={Users} hue="navy"
           title={team.scope === 'all_employees' ? 'My team · every employee' : 'My team'}
           sub={`${team.reports} ${team.reports === 1 ? 'person' : 'people'} · ${team.kra_approved} KRA sheets approved`}>
+          <Tile to="/team/dashboard" icon={Gauge} title="Manager Dashboard" hue="lagoon"
+            sub="This page, one scope out — everything your reports owe" />
           <Tile to="/team/overview" icon={LayoutDashboard} title="Team Overview" hue="lagoon"
             sub={`${team.reports} ${team.reports === 1 ? 'person' : 'people'} · all phases at a glance`} />
           <Tile to="/team/kra-sheets" icon={Users} title="Team KRA approvals" hue="lagoon"

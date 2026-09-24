@@ -6,7 +6,6 @@ import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import StatusTabs, { statusTabs } from '../StatusTabs';
 import KraTable from '../KraTable';
-import ScopeToggle, { scopeParam } from '../ScopeToggle';
 
 // Fix guide item #5 (BR-1.3): confirmed root cause was that no frontend
 // page anywhere called the existing, working GET /team/kra-sheets and
@@ -29,10 +28,8 @@ export default function TeamKraSheetsPage() {
   const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
 
-  const [scope, setScope] = useState('mine');
-  const load = (sc = scope) => api('/pms/team/kra-sheets' + scopeParam(sc))
+  const load = () => api('/pms/team/kra-sheets')
     .then(r => { setData(r); setErr(null); }).catch(e => setErr(e.message));
-  const changeScope = (sc) => { setScope(sc); setData(null); load(sc); };
   useEffect(() => { load(); }, []);
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
@@ -70,7 +67,6 @@ export default function TeamKraSheetsPage() {
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Team KRA Sheets" hue="navy">
-        <ScopeToggle data={data} value={scope} onChange={changeScope} />
         <span className="chip bg-navy-50 text-navy-600">{data.cycle.name}</span>
         {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting your review</span>}
       </PageHead>

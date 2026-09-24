@@ -2805,6 +2805,17 @@ router.get('/home', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// The Manager tab's own dashboard — the same page for a manager's team
+// that /home is for a person's own work. Asked for on 24 Sep. My reports
+// only, for every role: see teamHome() in home.js for why there is no
+// whole-company switch on it.
+router.get('/team/home', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
+    res.json(await homeData.teamHome(req.user));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ---------------- All Approvals (HR / super admin) --------------------------
 // Everything the cycle is waiting on, in one queue. See approvals.js for
 // why some rows can be bulk approved and others deliberately cannot.

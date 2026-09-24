@@ -236,3 +236,90 @@ test('neither export is open to someone without the permission', { skip }, async
     assert.equal((await req(p, mgrTok)).status, 403, p);
   }
 });
+
+// ---- the Manager tab's dashboard ------------------------------------------
+//
+// Asked for on 24 Sep: "build a dashboard under 'Manager tab' same like
+// one in 'self tab' for manager view regarding tracking of his
+// reportees."
+//
+// The rule with teeth here is the one the SAME message set for the rest
+// of the tab — "remove 'all employees' option from all tabs". So this
+// endpoint has no ?scope=all and no admin widening at all, and the third
+// test below is what stops that quietly coming back.
+
+test('the manager dashboard needs pms_team_eval', { skip }, async () => {
+  const r = await json('/pms/team/home', empTok);
+  assert.equal(r.status, 403);
+  assert.equal(r.body.needs || r.body.error, "Requires 'pms_team_eval'");
+});
+
+test('the manager dashboard counts the caller\'s own reports', { skip }, async () => {
+  const r = await json('/pms/team/home', mgrTok);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.reports, 2);
+  assert.deepEqual(r.body.roster.map((x) => x.name).sort(), ['EX Report A', 'EX Report B']);
+  // The strip and the roster are two readings of one result set, so a
+  // mismatch between them is a real bug and not a rounding difference.
+  assert.equal(r.body.stats.reports, r.body.roster.length);
+  assert.equal(r.body.stats.evals_done + r.body.stats.evals_pending, r.body.stats.reports);
+  assert.equal(r.body.stats.midyear_signed + r.body.stats.midyear_pending, r.body.stats.reports);
+  assert.ok(r.body.cycle && r.body.cycle.name === 'EX Cycle');
+  assert.ok(r.body.action && r.body.action.title, 'it always says what to do next');
+});
+
+test('the manager dashboard never widens to the whole company', { skip }, async () => {
+  // An admin with no reports gets an empty dashboard, NOT the company.
+  // EX Stranger reports to nobody, so their presence would mean the
+  // whole-company query came back.
+  for (const path of ['/pms/team/home', '/pms/team/home?scope=all']) {
+    const r = await json(path, adminTok);
+    assert.equal(r.status, 200, path);
+    assert.equal(r.body.reports, 0, `${path}: an admin sees only their own reports`);
+    assert.deepEqual(r.body.roster, [], `${path}: and the roster is empty`);
+    assert.deepEqual(r.body.pending, [], `${path}: with nothing waiting on them`);
+    // Nothing on this endpoint should even mention a scope, since there
+    // is no longer a control that could change it.
+    assert.equal(r.body.scope, undefined);
+    assert.equal(r.body.can_see_all, undefined);
+  }
+});
+
+test('the manager dashboard names who is waiting, not just how many', { skip }, async () => {
+  // A count tells a manager nothing they can act on. Flip one report's
+  // growth plan to submitted and the dashboard must name that person.
+  const emp = (await db.query(`SELECT id FROM core.employees WHERE tenant_id=$1 AND email='ex-a@x.com'`,
+    [tenantId])).rows[0].id;
+  await db.query(
+    `UPDATE pms.development_plans SET status='submitted', submitted_at=now()
+      WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, emp]);
+  try {
+    const r = await json('/pms/team/home', mgrTok);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.stats.growth_pending, 1);
+    assert.equal(r.body.stats.pending_total, 1);
+    const row = r.body.pending.find((p) => p.kind === 'growth_plan');
+    assert.ok(row, 'the submission is listed, not only counted');
+    assert.equal(row.name, 'EX Report A');
+    assert.equal(row.to, '/team/growth');
+    assert.ok(row.since, 'and it says when, so the page can say how long');
+    // The one action band picks this up too, since nothing else is due
+    // in kra_open with no KRA sheets submitted.
+    assert.ok(/target achievement/i.test(r.body.action.title), r.body.action.title);
+
+    // A plan belonging to somebody who is NOT this manager's report must
+    // not appear — EX Admin's plan has no manager_id at all.
+    const other = (await db.query(`SELECT id FROM core.employees WHERE tenant_id=$1 AND email='ex-far@x.com'`,
+      [tenantId])).rows[0].id;
+    await db.query(`UPDATE pms.development_plans SET status='submitted', submitted_at=now()
+                     WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, other]);
+    const again = await json('/pms/team/home', mgrTok);
+    assert.equal(again.body.stats.growth_pending, 1, 'a stranger\'s submission is not the manager\'s');
+    assert.deepEqual(again.body.pending.map((p) => p.name), ['EX Report A']);
+    await db.query(`UPDATE pms.development_plans SET status='draft', submitted_at=NULL
+                     WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, other]);
+  } finally {
+    await db.query(`UPDATE pms.development_plans SET status='draft', submitted_at=NULL
+                     WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, emp]);
+  }
+});

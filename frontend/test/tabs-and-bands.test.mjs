@@ -211,6 +211,7 @@ test('every page band actually has a background — an unstyled hue is invisible
     ['emp@shot.in', '/my/growth'],
     ['emp@shot.in', '/my/midyear'],
     ['emp@shot.in', '/engagement'],
+    ['mgr@shot.in', '/team/dashboard'],
     ['mgr@shot.in', '/team/growth'],
     ['mgr@shot.in', '/team/midyear'],
     ['mgr@shot.in', '/team/overview'],
@@ -405,45 +406,82 @@ test('All Approvals opens the record and can return it, not just approve blind',
   }
 });
 
-test('the Manager tab opens on my reports, and only an admin can widen it', async (t) => {
+test('the Manager tab shows my reports only, with no way to widen it', async (t) => {
   if (needStack(t)) return;
   // Asked for on 24 Sep: "Team KRA sheets, Team Evaluation and Team
   // Mid-Year in Manager tab should have only names of reportees
-  // reporting to him and not all employees."
+  // reporting to him and not all employees." Then, on the same day,
+  // after the scope toggle shipped: "remove 'all employees' option from
+  // all tabs highlighted in red box" — Team Overview, Team KRA Sheets,
+  // Team Target Achievements, Team Mid-Year, Team Evaluation.
   //
-  // The server test covers who CAN see what. This covers the control: a
-  // manager must not be shown a toggle they cannot use, and an admin
-  // must be able to get the old whole-company view back.
+  // So the Manager tab is now MY REPORTS, full stop, for every role
+  // including a super admin. Whole-company work lives on the HR tab
+  // (All Approvals, KRA Overview, the Completion Report).
   const PAGES = ['/team/kra-sheets', '/team/eval', '/team/midyear',
                  '/team/overview', '/team/growth'];
 
-  for (const path of PAGES) {
-    const { ctx, page } = await open('mgr@shot.in', path);
-    assert.equal(await page.locator('button:has-text("All employees")').count(), 0,
-      `${path}: a plain manager is offered no scope control`);
-    assert.ok(!/all employees · super admin/i.test(await page.locator('body').innerText()),
-      `${path}: and is not told they are seeing everyone`);
+  for (const who of ['mgr@shot.in', 'admin@shot.in']) {
+    for (const path of PAGES) {
+      const { ctx, page, errors } = await open(who, path);
+      const body = await page.locator('body').innerText();
+      assert.equal(await page.locator('button:has-text("All employees")').count(), 0,
+        `${path} (${who}): no "All employees" control`);
+      assert.equal(await page.locator('button:has-text("My reports")').count(), 0,
+        `${path} (${who}): and no scope control at all`);
+      assert.ok(!/all employees/i.test(body),
+        `${path} (${who}): the page never offers the whole company`);
+      assert.deepEqual(errors, [], `${path} (${who}): no page errors`);
+      await ctx.close();
+    }
+  }
+
+  // The list itself must be the reports, not everyone.
+  //
+  // The reporting lines come from the EMPLOYEE DIRECTORY, not from
+  // /pms/team/evaluations — checking the page against the same endpoint
+  // that fills it would pass even if that endpoint returned the whole
+  // company, which is exactly the bug this test exists to catch.
+  const tok = async (email) => (await (await fetch(`${API}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: PASS }),
+  })).json()).token;
+  const get = async (who, p) => (await (await fetch(`${API}/api/v1${p}`,
+    { headers: { Authorization: `Bearer ${who}` } })).json());
+  const admin = await tok('admin@shot.in');
+  const mgr = await tok('mgr@shot.in');
+  const everyone = ((await get(admin, '/employees?limit=500')).employees || [])
+    .filter((e) => e.status === 'active');
+  assert.ok(everyone.length > 5, 'the directory has to be bigger than one team');
+  const reportsTo = (email) => everyone.filter((e) => e.manager_email === email).map((e) => e.name);
+
+  for (const [who, email] of [['mgr@shot.in', 'mgr@shot.in'], ['admin@shot.in', 'admin@shot.in']]) {
+    const mine = reportsTo(email);
+    const { ctx, page } = await open(who, '/team/eval');
+    // The PAGE, not the whole document: the signed-in user's own name
+    // sits in the header on every screen, so reading innerText off
+    // <body> makes the viewer look like a listed employee.
+    const shown = await page.locator('main').innerText();
+    const outsiders = everyone.filter((e) => !mine.includes(e.name));
+    assert.ok(outsiders.length, 'there must be somebody outside the team to miss');
+    for (const o of outsiders) {
+      assert.ok(!shown.includes(o.name),
+        `Team Evaluation (${who}) must not list ${o.name}, who reports to ${o.manager_email || 'nobody'}`);
+    }
     await ctx.close();
   }
 
-  for (const path of PAGES) {
-    const { ctx, page } = await open('admin@shot.in', path);
-    assert.equal(await page.locator('button:has-text("My reports")').count(), 1,
-      `${path}: an admin gets the toggle`);
-    assert.equal(await page.locator('button:has-text("All employees")').count(), 1);
-    assert.equal(await page.locator('button[aria-pressed="true"]:has-text("My reports")').count(), 1,
-      `${path}: and it opens on My reports, which is the change`);
-    await ctx.close();
+  // And the reports themselves ARE there — a page that lists nobody would
+  // pass every assertion above. The page opens on "Still to write", so
+  // compare against that tab only.
+  const team = (await get(mgr, '/pms/team/evaluations')).team || [];
+  const pending = team.filter((n) => n.eval_status !== 'submitted');
+  assert.ok(pending.length, 'the demo manager needs at least one report still to evaluate');
+  const { ctx, page } = await open('mgr@shot.in', '/team/eval');
+  const shown = await page.locator('main').innerText();
+  for (const n of pending) {
+    assert.ok(shown.includes(n.name), `Team Evaluation must list the report ${n.name}`);
   }
-
-  // Widening actually widens. Team KRA Sheets shows a count, so the
-  // change is visible without counting cards.
-  const { ctx, page, errors } = await open('admin@shot.in', '/team/kra-sheets');
-  await page.locator('button:has-text("All employees")').click();
-  await page.waitForTimeout(1800);
-  assert.match(await page.locator('body').innerText(), /All\s+\d+/,
-    'the whole-company view comes back for an admin who asks for it');
-  assert.deepEqual(errors, []);
   await ctx.close();
 });
 
@@ -564,4 +602,52 @@ test('Add sits beside Clear on the KRA Library, and neither button moves', async
   } finally {
     await ctx.close();
   }
+});
+
+test('the Manager tab has its own dashboard, and it tracks the reportees', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 24 Sep: "build a dashboard under 'Manager tab' same
+  // like one in 'self tab' for manager view regarding tracking of his
+  // reportees."
+  const tok = async (email) => (await (await fetch(`${API}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: PASS }),
+  })).json()).token;
+  const mgr = await tok('mgr@shot.in');
+  const data = await (await fetch(`${API}/api/v1/pms/team/home`,
+    { headers: { Authorization: `Bearer ${mgr}` } })).json();
+  assert.ok(data.reports > 0, 'the demo manager has reports');
+
+  const { ctx, page, errors } = await open('mgr@shot.in', '/team/dashboard');
+  const main = await page.locator('main').innerText();
+  assert.match(main, /Manager Dashboard/);
+
+  // It is in the Manager group of the menu, which is the half of the ask
+  // a rendering check cannot see.
+  const items = await groupItems(page, 'Manager');
+  assert.ok(items.includes('Manager Dashboard'), `Manager group was: ${items.join(', ')}`);
+
+  // Every reportee is named — that is what "tracking of his reportees"
+  // means, and a page of counts alone would satisfy nothing.
+  for (const r of data.roster) {
+    assert.ok(main.includes(r.name), `the dashboard names ${r.name}`);
+  }
+  // And the headline numbers are the server's, not decoration.
+  assert.match(main, new RegExp(`${data.stats.kra_approved}/${data.stats.reports}`),
+    'KRAs approved is printed as N of the team size');
+  assert.match(main, new RegExp(`${data.stats.evals_done}/${data.stats.reports}`),
+    'evaluations done likewise');
+
+  // No scope control here either — the Manager tab is my reports, full
+  // stop, including on its own landing page.
+  assert.equal(await page.locator('button:has-text("All employees")').count(), 0);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+
+  // An employee must not reach it at all: the nav does not offer it and
+  // the direct URL is refused by the page guard.
+  const e = await open('emp@shot.in', '/team/dashboard');
+  const eMain = await e.page.locator('main').innerText();
+  assert.ok(!/Manager Dashboard/.test(eMain), `an employee is kept out — saw: ${eMain.slice(0, 120)}`);
+  await e.ctx.close();
 });

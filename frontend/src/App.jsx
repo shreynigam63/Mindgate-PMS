@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -17,6 +17,7 @@ import DepartmentHeadsPage from './pages/DepartmentHeadsPage';
 import CompletionReportPage from './pages/CompletionReportPage';
 import CareerTransitionsPage from './pages/CareerTransitionsPage';
 import HistoryPage from './pages/HistoryPage';
+import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamOverviewPage from './pages/TeamOverviewPage';
 import PIPPage from './pages/PIPPage';
 import WatchlistPage from './pages/WatchlistPage';
@@ -95,6 +96,11 @@ const NAV = [
     { to: '/people', label: 'People Hub', icon: User },
   ]},
   { group: 'Manager', hue: 'lagoon', icon: Users, items: [
+    // Added 24 Sep on request: the Manager tab's own landing page, the
+    // same thing /home is for a person's own work. First in the group
+    // because it is where a manager now starts, and because it links on
+    // to everything below it.
+    { to: '/team/dashboard', label: 'Manager Dashboard', icon: Gauge },
     { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard },
     { to: '/team/kra-sheets', label: 'Team KRA Sheets', icon: ClipboardList },
     // Split out of /my/growth on 23 Sep for the same reason the Mid-Year
@@ -263,6 +269,7 @@ function Main({ user }) {
               <Route path="/team/growth" element={<TeamGrowthPage />} />
               <Route path="/my/annual-review" element={<AnnualReviewPage />} />
               <Route path="/my/history" element={<HistoryPage />} />
+              <Route path="/team/dashboard" element={<TeamDashboardPage />} />
               <Route path="/team/overview" element={<TeamOverviewPage />} />
               <Route path="/team/kra-sheets" element={<TeamKraSheetsPage />} />
               <Route path="/team/eval" element={<TeamEvalPage user={user} />} />

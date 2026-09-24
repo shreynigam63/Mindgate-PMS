@@ -182,7 +182,7 @@ async function home(user) {
               count(*) FILTER (WHERE me.status='submitted')::int AS evals_done
          FROM core.employees e
          LEFT JOIN pms.kra_sheets s ON s.cycle_id=$2 AND s.employee_id=e.id
-         LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$2 AND me.employee_id=e.id
+         LEFT JOIN pms.manager_evaluations me ON me.tenant_id=$1 AND me.cycle_id=$2 AND me.employee_id=e.id
         WHERE e.tenant_id=$1 AND e.status='active' ${scope}`, params);
     if (r && r.reports > 0) {
       // Reports nobody has had a single 1-on-1 with. A count of connects
@@ -238,4 +238,156 @@ async function home(user) {
   };
 }
 
-module.exports = { home, nextAction };
+
+// ---------------------------------------------------------------------------
+// THE MANAGER DASHBOARD.
+//
+// Asked for on 24 Sep: "build a dashboard under 'Manager tab' same like
+// one in 'self tab' for manager view regarding tracking of his
+// reportees." Same shape as home() — a stat strip, one thing to do next,
+// a desk of what is outstanding, links on — but every number is about the
+// people who report to this person rather than about them.
+//
+// MY REPORTS ONLY, for everyone, with no widening switch. That is the
+// other half of the same day's instruction ("remove 'all employees'
+// option from all tabs"): the Manager tab is now one manager's team, and
+// a dashboard that quietly counted the whole company for an admin would
+// put the tab straight back where it was. Whole-company numbers live on
+// the HR tab, where they already did.
+//
+// Read-only. The gate is pms_team_eval, the same permission every other
+// Manager-tab page carries, checked by the route.
+function teamAction({ phase, s }) {
+  if (s.kra_pending > 0)
+    return { kind: 'kra_pending', tone: 'urgent',
+             title: `${s.kra_pending} KRA ${s.kra_pending === 1 ? 'sheet is' : 'sheets are'} waiting on you`,
+             detail: 'Your reports have submitted and cannot start until you approve or return.',
+             cta: 'Review team KRAs', to: '/team/kra-sheets' };
+  if (phase === 'mid_year_review' && s.midyear_pending > 0)
+    return { kind: 'midyear_pending', tone: 'urgent',
+             title: `${s.midyear_pending} mid-year ${s.midyear_pending === 1 ? 'review' : 'reviews'} to sign off`,
+             detail: 'Record where each report stands at the halfway point.',
+             cta: 'Open Team Mid-Year', to: '/team/midyear' };
+  if (phase === 'manager_eval' && s.evals_pending > 0)
+    return { kind: 'evals_pending', tone: 'urgent',
+             title: `${s.evals_pending} ${s.evals_pending === 1 ? 'evaluation' : 'evaluations'} to write`,
+             detail: 'Rate each report against their KRAs and submit.',
+             cta: 'Evaluate my team', to: '/team/eval' };
+  if (s.growth_pending > 0)
+    return { kind: 'growth_pending', tone: 'todo',
+             title: `${s.growth_pending} target ${s.growth_pending === 1 ? 'achievement plan needs' : 'achievement plans need'} a decision`,
+             detail: 'Submitted by your reports and not yet approved or returned.',
+             cta: 'Open Team Target Achievements', to: '/team/growth' };
+  if (s.kra_not_submitted > 0)
+    return { kind: 'chase_kras', tone: 'todo',
+             title: `${s.kra_not_submitted} of your reports ${s.kra_not_submitted === 1 ? 'has' : 'have'} not submitted KRAs`,
+             detail: 'Nothing is blocked on you — they have not sent theirs yet.',
+             cta: 'See who', to: '/team/overview' };
+  if (s.no_connect > 0)
+    return { kind: 'connects', tone: 'todo',
+             title: `${s.no_connect} of your reports ${s.no_connect === 1 ? 'has' : 'have'} no connect logged`,
+             detail: 'A quarterly 1-on-1 has never been recorded for them.',
+             cta: 'Open Quarterly Connects', to: '/team/connects' };
+  return { kind: 'clear', tone: 'clear', title: 'Nothing is waiting on you',
+           detail: 'Every submission from your team has been decided.',
+           cta: null, to: null };
+}
+
+async function teamHome(user) {
+  const t = user.tenant_id;
+  const c = await activeCycle(t);
+  if (!c) {
+    return { cycle: null, reports: 0, stats: null, pending: [], roster: [],
+      action: { kind: 'no_cycle', tone: 'clear', title: 'No cycle is open',
+                detail: 'HR opens a cycle before your team can set KRAs.', cta: null, to: null } };
+  }
+  const one = async (sql, params) => (await db.query(sql, params)).rows[0] || null;
+  const mc = await activeCycleForMidyear(t);
+
+  // One row per report, with every status this page counts, so that the
+  // strip, the desk and the roster can never disagree with each other —
+  // they are three readings of the same result set, not three queries.
+  const roster = (await db.query(
+    `SELECT e.id AS employee_id, e.name, e.department, e.designation,
+            coalesce(s.status, 'not_started')   AS kra_status,
+            (SELECT count(*)::int FROM pms.kras k WHERE k.sheet_id = s.id) AS kra_count,
+            coalesce(p.status, 'not_started')   AS growth_status,
+            coalesce(a.status, 'not_started')   AS self_status,
+            coalesce(me.status, 'not_started')  AS eval_status,
+            coalesce(mid.self_status, 'not_started')    AS midyear_self_status,
+            coalesce(mid.manager_status, 'not_started') AS midyear_manager_status,
+            (SELECT count(*)::int FROM pms.connects k2
+              WHERE k2.tenant_id=$1 AND k2.employee_id=e.id) AS connects
+       FROM core.employees e
+       LEFT JOIN pms.kra_sheets s          ON s.tenant_id=$1 AND s.cycle_id=$2 AND s.employee_id=e.id
+       LEFT JOIN pms.development_plans p   ON p.tenant_id=$1 AND p.cycle_id=$2 AND p.employee_id=e.id
+       LEFT JOIN pms.self_appraisals a     ON a.tenant_id=$1 AND a.cycle_id=$2 AND a.employee_id=e.id
+       LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$2 AND me.employee_id=e.id
+       LEFT JOIN pms.midyear_checkins mid  ON mid.tenant_id=$1 AND mid.cycle_id=$3 AND mid.employee_id=e.id
+      WHERE e.tenant_id=$1 AND e.status='active' AND e.manager_id=$4
+      ORDER BY e.name`,
+    [t, c.id, mc ? mc.id : c.id, user.id])).rows;
+
+  const n = (f) => roster.filter(f).length;
+  const stats = {
+    reports: roster.length,
+    kra_approved: n((r) => r.kra_status === 'approved'),
+    kra_pending: n((r) => r.kra_status === 'submitted'),
+    kra_returned: n((r) => r.kra_status === 'returned'),
+    kra_not_submitted: n((r) => ['not_started', 'draft'].includes(r.kra_status)),
+    growth_pending: n((r) => r.growth_status === 'submitted'),
+    // A self-appraisal that has already been evaluated is not pending —
+    // the same exclusion home() uses, so "waiting on my manager" on an
+    // employee's dashboard and "waiting on me" here stay one number.
+    appraisal_pending: n((r) => r.self_status === 'submitted' && r.eval_status !== 'submitted'),
+    evals_done: n((r) => r.eval_status === 'submitted'),
+    evals_pending: n((r) => r.eval_status !== 'submitted'),
+    midyear_signed: n((r) => r.midyear_manager_status === 'submitted'),
+    midyear_pending: n((r) => r.midyear_manager_status !== 'submitted'),
+    no_connect: n((r) => !r.connects),
+    connects: roster.reduce((a, r) => a + r.connects, 0),
+  };
+  stats.pending_total = stats.kra_pending + stats.growth_pending + stats.appraisal_pending;
+
+  const open = await one(
+    `SELECT count(*)::int AS open_actions
+       FROM pms.connect_action_items a
+       JOIN pms.connects k ON k.id = a.connect_id
+       JOIN core.employees e ON e.id = k.employee_id
+      WHERE k.tenant_id=$1 AND NOT a.done AND e.manager_id=$2 AND e.status='active'`,
+    [t, user.id]);
+  stats.open_actions = open ? open.open_actions : 0;
+
+  // NAMED, not counted. "3 pending" tells a manager nothing they can act
+  // on; "Priya's KRA sheet, waiting 6 days" tells them what to open. This
+  // is the mirror image of the "Requested to manager" list on the
+  // employee's own dashboard — one row in the database, read from the
+  // other end, with the same status tests so the two can never disagree.
+  const pending = (await db.query(
+    `SELECT 'kra_sheet' AS kind, 'KRA sheet' AS label, e.name, e.id AS employee_id,
+            s.submitted_at AS since, '/team/kra-sheets' AS "to"
+       FROM pms.kra_sheets s JOIN core.employees e ON e.id = s.employee_id
+      WHERE s.tenant_id=$1 AND s.cycle_id=$2 AND s.status='submitted'
+        AND e.status='active' AND e.manager_id=$3
+      UNION ALL
+     SELECT 'growth_plan', 'Target achievements', e.name, e.id, p.submitted_at, '/team/growth'
+       FROM pms.development_plans p JOIN core.employees e ON e.id = p.employee_id
+      WHERE p.tenant_id=$1 AND p.cycle_id=$2 AND p.status='submitted'
+        AND e.status='active' AND e.manager_id=$3
+      UNION ALL
+     SELECT 'self_appraisal', 'Annual Review', e.name, e.id, a.submitted_at, '/team/eval'
+       FROM pms.self_appraisals a JOIN core.employees e ON e.id = a.employee_id
+      WHERE a.tenant_id=$1 AND a.cycle_id=$2 AND a.status='submitted'
+        AND e.status='active' AND e.manager_id=$3
+        AND NOT EXISTS (SELECT 1 FROM pms.manager_evaluations me
+                         WHERE me.cycle_id=$2 AND me.employee_id=e.id AND me.status='submitted')
+      ORDER BY since NULLS LAST`, [t, c.id, user.id])).rows;
+
+  return {
+    cycle: { id: c.id, name: c.name, phase: c.phase, cycle_type: c.cycle_type, fiscal_year: c.fiscal_year },
+    reports: roster.length, stats, pending, roster,
+    action: teamAction({ phase: c.phase, s: stats }),
+  };
+}
+
+module.exports = { home, nextAction, teamHome };

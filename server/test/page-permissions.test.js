@@ -187,8 +187,10 @@ test('a manager adds the team pages and nothing else', { skip }, async () => {
   // /team/growth joined on 23 Sep, when the manager's list of everybody's
   // target achievements was split out of /my/growth for the same reason
   // /team/midyear had been split out of /my/midyear the same day.
-  assert.deepEqual(added, ['/team/eval', '/team/growth', '/team/kra-sheets', '/team/midyear',
-                           '/team/overview']);
+  // /team/dashboard joined on 24 Sep — the Manager tab's own landing
+  // page, asked for directly, carrying pms_team_eval like the rest.
+  assert.deepEqual(added, ['/team/dashboard', '/team/eval', '/team/growth', '/team/kra-sheets',
+                           '/team/midyear', '/team/overview']);
   assert.ok(!mgr.includes('/admin/increments'), 'a manager never sees compensation');
 });
 

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
-import ScopeToggle, { scopeParam } from '../ScopeToggle';
 
 const STATUS_COLOR = {
   approved: 'bg-emerald-100 text-emerald-700', submitted: 'bg-emerald-100 text-emerald-700',
@@ -22,13 +21,12 @@ function StatusChip({ value }) {
 export default function TeamOverviewPage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
-  const [scope, setScope] = useState('mine');
   const [q, setQ] = useState('');
 
   useEffect(() => {
     setData(null);
-    api('/pms/team/overview' + scopeParam(scope)).then(setData).catch(e => setErr(e.message));
-  }, [scope]);
+    api('/pms/team/overview').then(setData).catch(e => setErr(e.message));
+  }, []);
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
@@ -39,7 +37,6 @@ export default function TeamOverviewPage() {
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="Team Overview" hue="teal">
-        <ScopeToggle data={data} value={scope} onChange={setScope} />
         <span className="chip bg-navy-50 text-navy-600">{data.cycle.name}</span>
       </PageHead>
       {!!data.rows.length && (
@@ -48,7 +45,7 @@ export default function TeamOverviewPage() {
       )}
       {!data.rows.length && (
         <div className="card p-8 text-center text-sm text-navy-400">
-          {scope === 'all' ? 'No employees found.' : 'No direct reports found.'}
+          No direct reports found.
         </div>
       )}
       <div className="card overflow-x-auto">

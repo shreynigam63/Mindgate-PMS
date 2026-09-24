@@ -37,6 +37,10 @@ const PAGES = [
   ['my_rating',          '/my/rating',                null],
   ['past_cycles',        '/my/history',               null],
 
+  // The Manager tab's own landing page, added 24 Sep — what /home is for
+  // a person's own work, for the people who report to them. First in the
+  // group because it is where a manager now starts.
+  ['team_dashboard',     '/team/dashboard',           'pms_team_eval'],
   ['team_overview',      '/team/overview',            'pms_team_eval'],
   ['team_kra_sheets',    '/team/kra-sheets',          'pms_team_eval'],
   // Split out of /my/growth on 23 Sep for the same reason /team/midyear

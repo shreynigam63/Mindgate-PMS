@@ -4,7 +4,6 @@ import { api, phaseLabel, phaseColor, Bullets } from '../utils/api';
 import AiDraftPanel, { SuggestionList } from './AiDraftPanel';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
-import ScopeToggle, { scopeParam } from '../ScopeToggle';
 
 const STATUS_COLOR = {
   draft: 'bg-slate-100 text-navy-600',
@@ -34,15 +33,11 @@ export default function MyGrowthPage() {
 // Nothing about the review itself changed — same list, same expand, same
 // approve/return, same endpoints.
 export function TeamGrowthPage() {
-  const [scope, setScope] = useState('mine');
-  const [meta, setMeta] = useState(null);
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Team Target Achievements" hue="lagoon"
-        sub="Approve or return the growth plans your reports have submitted.">
-        <ScopeToggle data={meta} value={scope} onChange={setScope} />
-      </PageHead>
-      <TeamDevelopmentPlans standalone scope={scope} onMeta={setMeta} />
+        sub="Approve or return the growth plans your reports have submitted." />
+      <TeamDevelopmentPlans standalone />
     </div>
   );
 }
@@ -918,14 +913,14 @@ function CareerPathCard() {
 // ugly browser popup, not part of the page). Now mirrors
 // TeamKraSheetsPage.jsx's pattern: expand a report to see every goal in
 // full, with the comment box inline on the page itself.
-function TeamDevelopmentPlans({ standalone = false, scope = 'mine', onMeta }) {
+function TeamDevelopmentPlans({ standalone = false }) {
   const [data, setData] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [q, setQ] = useState('');
-  const load = () => api('/pms/team/development-plans' + scopeParam(scope))
-    .then((r) => { setData(r); if (onMeta) onMeta(r); })
+  const load = () => api('/pms/team/development-plans')
+    .then(setData)
     .catch(() => setData({ cycle: null, plans: [] }));
-  useEffect(() => { setData(null); load(); }, [scope]);
+  useEffect(() => { setData(null); load(); }, []);
 
   // As a whole page an empty list has to SAY it is empty; as a trailing
   // block on somebody else's page, returning null was right.

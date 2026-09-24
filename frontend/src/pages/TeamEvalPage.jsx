@@ -6,7 +6,6 @@ import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPa
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import StatusTabs, { statusTabs } from '../StatusTabs';
-import ScopeToggle, { scopeParam } from '../ScopeToggle';
 
 // Matches Self-Appraisal's convention: per-KRA picks in letter grades,
 // the one computed overall in descriptive wording — see that page for
@@ -30,10 +29,8 @@ export default function TeamEvalPage() {
   const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
 
-  const [scope, setScope] = useState('mine');
-  const load = (sc = scope) => api('/pms/team/evaluations' + scopeParam(sc))
+  const load = () => api('/pms/team/evaluations')
     .then(r => { setData(r); setErr(null); }).catch(e => setErr(e.message));
-  const changeScope = (sc) => { setScope(sc); setData(null); load(sc); };
   useEffect(() => { load(); }, []);
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
@@ -62,7 +59,6 @@ export default function TeamEvalPage() {
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Team Evaluation" hue="teal">
-        <ScopeToggle data={data} value={scope} onChange={changeScope} />
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
       </PageHead>
       <StatusTabs tabs={etabs} value={tab} onChange={setTab} />
