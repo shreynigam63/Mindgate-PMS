@@ -67,8 +67,11 @@ async function open(path, email) {
 
 test('the builder asks who the survey goes to, and counts them live', async (t) => {
   if (needStack(t)) return;
+  // "Blank survey", not "New survey": since the library landed on
+  // 25 Sep the primary button opens the template picker, and typing a
+  // survey from scratch is the secondary path.
   const { ctx, page, errors } = await open('/admin/engagement');
-  await page.getByRole('button', { name: /New survey/i }).first().click();
+  await page.getByRole('button', { name: /^Blank survey$/i }).first().click();
   await page.waitForTimeout(600);
 
   // The title survives being typed. A field that remounts per keystroke
@@ -107,7 +110,7 @@ test('the builder asks who the survey goes to, and counts them live', async (t) 
 test('the five lifecycle milestones are pickable, and each is a window', async (t) => {
   if (needStack(t)) return;
   const { ctx, page, errors } = await open('/admin/engagement');
-  await page.getByRole('button', { name: /New survey/i }).first().click();
+  await page.getByRole('button', { name: /^Blank survey$/i }).first().click();
   await page.waitForTimeout(500);
   await page.getByRole('button', { name: /Lifecycle/ }).click();
   await page.waitForTimeout(400);
@@ -135,7 +138,7 @@ test('an employee with no date of joining is reported, not silently dropped', as
   // No silent failure: a cohort that is quietly short looks exactly
   // like a cohort that is genuinely that size.
   const { ctx, page, errors } = await open('/admin/engagement');
-  await page.getByRole('button', { name: /New survey/i }).first().click();
+  await page.getByRole('button', { name: /^Blank survey$/i }).first().click();
   await page.waitForTimeout(500);
   await page.getByRole('button', { name: /Lifecycle/ }).click();
   await page.getByRole('button', { name: /^Day 30 Connect$/ }).click();

@@ -17,6 +17,7 @@ const { apiPermissionParity, hasPermission } = require('../../core/permissions')
 const { notify } = require('../../core/notifications');
 const { normaliseRule, audienceSql, describeRule, needsJoiningDate,
         triggerRule, MILESTONES } = require('./audience');
+const { seedTemplates } = require('../../migrations/056-survey-templates');
 
 // Every state change HR makes to a survey is written down. A release
 // names how many people it wrote to and who they were, because "who
@@ -165,6 +166,90 @@ router.put('/surveys/:id', async (req, res) => {
   } catch (e) { logger.error('survey update', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
+// ---- the survey library (phase 3) ------------------------------------
+//
+// Asked for on 25 Sep: HR picks "Day 30 Connect" rather than typing
+// twenty questions. The rows are per-tenant and editable, so this
+// reads them rather than the file they were seeded from.
+router.get('/templates', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
+    // A tenant created before this table existed, or one made since by
+    // a path that does not seed, would otherwise open an empty picker
+    // and conclude the feature is broken. Seeding is idempotent.
+    const have = +(await db.query(
+      `SELECT count(*)::int AS n FROM engagement.survey_templates WHERE tenant_id=$1`, [T(req)])).rows[0].n;
+    if (!have) {
+      const n = await seedTemplates(db, T(req));
+      logger.info('survey templates seeded on demand', { tenant: T(req), inserted: n });
+    }
+    const rows = (await db.query(
+      `SELECT id, key, category, title, description, trigger_type, trigger_day, trigger_window_days,
+              anonymity_default, audience_rule, questions, blocked_reason, sort_order,
+              jsonb_array_length(questions) AS question_count
+         FROM engagement.survey_templates
+        WHERE tenant_id=$1 AND active ORDER BY sort_order, title`, [T(req)])).rows;
+    // How many times each has been used, so HR can see which of these
+    // are live practice and which have never been run.
+    const used = (await db.query(
+      `SELECT template_key, count(*)::int AS n FROM engagement.surveys
+        WHERE tenant_id=$1 AND template_key IS NOT NULL GROUP BY 1`, [T(req)])).rows;
+    const byKey = Object.fromEntries(used.map((u) => [u.template_key, u.n]));
+    res.json({ templates: rows.map((r) => ({ ...r, used: byKey[r.key] || 0 })) });
+  } catch (e) { logger.error('survey templates', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// Creates a DRAFT from a template. Nothing is released — the draft
+// lands on the list like any other and still has to be opened, so HR
+// reads the twenty questions before 1,400 people do.
+//
+// Overrides let the audience and milestone be set at the same time,
+// because "Day 30 Connect, Development only" is one decision and
+// should not be two screens.
+router.post('/templates/:key/use', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
+    const tpl = (await db.query(
+      `SELECT * FROM engagement.survey_templates WHERE tenant_id=$1 AND key=$2 AND active`,
+      [T(req), req.params.key])).rows[0];
+    if (!tpl) return res.status(404).json({ error: 'No such template' });
+
+    const b = req.body || {};
+    const merged = {
+      trigger_type: b.trigger_type || tpl.trigger_type,
+      trigger_day: b.trigger_day == null ? tpl.trigger_day : b.trigger_day,
+      trigger_window_days: b.trigger_window_days == null ? tpl.trigger_window_days : b.trigger_window_days,
+    };
+    const bad = validateTrigger(merged);
+    if (bad) return res.status(422).json({ error: bad });
+    const rule = normaliseRule(b.audience_rule === undefined ? tpl.audience_rule : b.audience_rule);
+    const anon = b.anonymity_default == null ? tpl.anonymity_default : !!b.anonymity_default;
+
+    const s = (await db.query(
+      `INSERT INTO engagement.surveys (tenant_id, title, survey_type, description, target_audience,
+         audience_rule, trigger_type, trigger_day, trigger_window_days,
+         anonymity_default, allow_attribution_optin, template_key, created_by)
+       VALUES ($1,$2,'pulse',$3,'rule',$4,$5,$6,$7,$8,$8,$9,$10) RETURNING *`,
+      [T(req), b.title || tpl.title, tpl.description || null, JSON.stringify(rule),
+       merged.trigger_type, merged.trigger_type === 'tenure' ? merged.trigger_day : null,
+       merged.trigger_window_days, anon, tpl.key, req.user.email])).rows[0];
+
+    const qs = Array.isArray(tpl.questions) ? tpl.questions : [];
+    let i = 0;
+    for (const q of qs) {
+      const opts = cleanOptions(q.options);
+      await db.query(
+        `INSERT INTO engagement.questions (tenant_id, survey_id, qtype, prompt, options, required, sort_order)
+         VALUES ($1,$2,COALESCE($3,'scale'),$4,$5,COALESCE($6,true),$7)`,
+        [T(req), s.id, q.qtype || null, q.prompt, opts.length ? JSON.stringify(opts) : null,
+         q.required, (i += 10)]);
+    }
+    audit(req, 'SURVEY_CREATED_FROM_TEMPLATE', { survey: s.id, template: tpl.key,
+      title: s.title, questions: qs.length, audience: describeRule(rule), trigger: s.trigger_type });
+    res.json({ ok: true, survey: s, questions: qs.length, template: tpl.key });
+  } catch (e) { logger.error('use template', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
 // "How many people would this reach?" — answered before anything is
 // written, from the same resolver the release uses. Takes an unsaved
 // rule from the builder, so the count moves as HR edits it.
@@ -211,6 +296,13 @@ function validateTrigger(b) {
   const t = b.trigger_type || 'manual';
   if (t === 'manual') return null;
   if (t !== 'tenure') return `Unknown trigger "${t}" — use "manual" or "tenure".`;
+  // Number(null) is 0, not NaN — so a missing day used to validate as
+  // "Day 1", pass this check, and then be written as NULL, which the
+  // table's own constraint rejected as a 500 instead of a sentence.
+  // Absence is checked before the number is read.
+  if (b.trigger_day == null || b.trigger_day === '') {
+    return 'A lifecycle survey needs a milestone — the number of days after joining it should go out (0 to 3650).';
+  }
   const day = Number(b.trigger_day);
   if (!Number.isFinite(day) || day < 0 || day > 3650) {
     return 'A lifecycle survey needs a milestone — the number of days after joining it should go out (0 to 3650).';

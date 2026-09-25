@@ -70,6 +70,8 @@ export function EngagementAdminPage() {
   const [themesOpen, setThemesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [building, setBuilding] = useState(false);
+  const [library, setLibrary] = useState(false);
+  const [madeFrom, setMadeFrom] = useState(null);
   const [sweep, setSweep] = useState(null);
   const [sweeping, setSweeping] = useState(false);
   const load = () => api('/engagement/surveys').then(setData).catch(e => setErr(e.message));
@@ -98,11 +100,31 @@ export function EngagementAdminPage() {
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Engagement" hue="leaf"
         sub="Create surveys, open them to the company, and read the results.">
-        {data.admin && <button className="btn-pri" onClick={() => setBuilding(true)}>
-          <Plus size={13} className="inline mr-1" />New survey</button>}
+        {data.admin && <>
+          <button className="btn-pri" onClick={() => setLibrary(true)}>
+            <Plus size={13} className="inline mr-1" />New from library</button>
+          <button className="btn-sec" onClick={() => setBuilding(true)}>Blank survey</button>
+        </>}
       </PageHead>
+      {library && <SurveyLibrary
+        onClose={() => setLibrary(false)}
+        onBlank={() => { setLibrary(false); setBuilding(true); }}
+        onUsed={(r) => { setLibrary(false); setMadeFrom(r); load(); }} />}
       {building && <SurveyBuilder onClose={() => setBuilding(false)}
         onCreated={() => { setBuilding(false); load(); }} />}
+      {/* Says what just happened, because a template lands as a draft
+          in a list rather than opening anything, and silence there
+          reads as nothing having worked. */}
+      {madeFrom && (
+        <p className="card p-3 text-xs text-navy-600 bg-leaf-50 border-l-4 border-leaf-500">
+          <b>{madeFrom.survey.title}</b> created as a draft with {madeFrom.questions} questions
+          {madeFrom.survey.trigger_type === 'tenure'
+            ? <> — a lifecycle survey for day {madeFrom.survey.trigger_day}–{madeFrom.survey.trigger_day + madeFrom.survey.trigger_window_days}</>
+            : null}.
+          {' '}Check who it goes to, then press <b>Open</b> to release it.
+          <button className="ml-2 underline" onClick={() => setMadeFrom(null)}>dismiss</button>
+        </p>
+      )}
 
       <div className="card divide-y divide-navy-100">
         {data.surveys.map(s => (
@@ -213,6 +235,95 @@ export function EngagementAdminPage() {
   );
 }
 
+
+
+// THE SURVEY LIBRARY (phase 3, 25 Sep). "I would create a Survey
+// Library" — so HR picks "Day 30 Connect" rather than typing twenty
+// questions, and so the rule Mindgate stated themselves survives
+// contact with practice:
+//
+//   "don't ask the same questions at 30/60/90 ... the employee's
+//    questions should evolve with tenure"
+//
+// Typed by hand, five milestones become five copies of whatever was
+// written first. The library is what makes the progression real.
+//
+// Using one creates a DRAFT. Nothing is released here — the survey
+// lands on the list and still has to be opened, so somebody reads the
+// twenty questions before 1,400 people do.
+function SurveyLibrary({ onClose, onUsed, onBlank }) {
+  const [tpls, setTpls] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(null);
+
+  useEffect(() => {
+    api('/engagement/templates').then((r) => setTpls(r.templates)).catch((e) => setErr(e.message));
+  }, []);
+
+  const use = async (t) => {
+    setBusy(t.key); setErr(null);
+    try { onUsed(await api(`/engagement/templates/${t.key}/use`, { method: 'POST', body: '{}' })); }
+    catch (e) { setErr(e.message); setBusy(null); }
+  };
+
+  const cats = [...new Set((tpls || []).map((t) => t.category))];
+  return (
+    <AiModal wide badge={false} title="Start from the survey library" onClose={onClose}
+      footer={
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-navy-500 flex-1">
+            Using one creates a <b>draft</b> you can edit — nothing goes out until you press Open.
+          </span>
+          <button className="btn-sec !py-1.5" onClick={onClose}>Cancel</button>
+          <button className="btn-sec !py-1.5" onClick={onBlank}>Start from blank instead</button>
+        </div>
+      }>
+      <div className="space-y-4">
+        {err && <p className="text-xs text-rose-600">{err}</p>}
+        {!tpls && <p className="text-sm text-navy-400">Loading the library…</p>}
+        {tpls && !tpls.length && <p className="text-sm text-navy-400">The library is empty.</p>}
+        {cats.map((cat) => (
+          <div key={cat}>
+            <p className="lbl">{cat}</p>
+            <div className="space-y-2 mt-1">
+              {tpls.filter((t) => t.category === cat).map((t) => (
+                <div key={t.key} className="card p-3 flex flex-wrap items-start gap-3">
+                  <div className="flex-1 min-w-[260px]">
+                    <p className="text-sm font-semibold flex flex-wrap items-center gap-2">
+                      {t.title}
+                      {t.trigger_type === 'tenure' && (
+                        <span className="chip bg-lagoon-50 text-lagoon-700">
+                          day {t.trigger_day}–{t.trigger_day + t.trigger_window_days}
+                        </span>
+                      )}
+                      <span className={`chip ${t.anonymity_default ? 'bg-emerald-100 text-emerald-700' : 'bg-navy-50 text-navy-500'}`}>
+                        {t.anonymity_default ? 'anonymous' : 'attributed'}
+                      </span>
+                      <span className="chip bg-navy-50 text-navy-500">{t.question_count} questions</span>
+                      {t.used > 0 && <span className="chip bg-navy-50 text-navy-400">used {t.used}×</span>}
+                    </p>
+                    {t.description && <p className="text-[11.5px] text-navy-500 mt-0.5">{t.description}</p>}
+                    {/* A template that cannot be released on this
+                        tenant's data says so, rather than letting HR
+                        release something that reaches nobody. */}
+                    {t.blocked_reason && (
+                      <p className="text-[11px] text-amber-700 bg-amber-50 rounded-md px-2 py-1.5 mt-1.5">
+                        <b>Not automatic yet.</b> {t.blocked_reason}
+                      </p>
+                    )}
+                  </div>
+                  <button className="btn-pri !py-1.5 shrink-0" disabled={busy === t.key} onClick={() => use(t)}>
+                    {busy === t.key ? 'Creating…' : 'Use this'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </AiModal>
+  );
+}
 
 // THE SURVEY BUILDER, replacing a chain of browser prompt() boxes.
 //
