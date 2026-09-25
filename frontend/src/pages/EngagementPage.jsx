@@ -42,8 +42,19 @@ export default function MySurveysPage() {
       {data.length > 0 && (
         <div className="card divide-y divide-navy-50">
           {data.map((i) => (
-            <div key={i.id} className="p-3 flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold flex-1">{i.title}</span>
+            <div key={`${i.id}-${i.subject_employee_id || 'self'}`} className="p-3 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold flex-1">
+                {i.title}
+                {/* A manager holds one of these per reportee, all with
+                    the same title. Without the name they are four
+                    identical rows and there is no way to tell which
+                    one has been done. */}
+                {i.subject_name && (
+                  <span className="chip bg-lagoon-50 text-lagoon-700 ml-2">
+                    about {i.subject_name}{i.subject_designation ? ` · ${i.subject_designation}` : ''}
+                  </span>
+                )}
+              </span>
               <span className="chip bg-navy-50 text-navy-500">{i.survey_type}</span>
               {i.anonymity_default && <span className="chip bg-emerald-100 text-emerald-700">anonymous</span>}
               {i.completed_at
@@ -55,7 +66,13 @@ export default function MySurveysPage() {
       )}
       {open.length > 0 && (
         <p className="text-[11px] text-navy-400">
-          {open.length} still open. Your answers go to HR in aggregate.
+          {open.length} still open.
+          {/* "in aggregate" is true of an anonymous pulse and a lie
+              about an assessment, where HR reads exactly what this
+              manager said about this person. Said separately rather
+              than averaged into one reassuring sentence. */}
+          {open.some((i) => !i.subject_name) && ' Answers to the anonymous ones go to HR in aggregate.'}
+          {open.some((i) => i.subject_name) && ' The ones naming a colleague are assessments: HR sees your answers against their name and yours.'}
         </p>
       )}
     </div>
@@ -181,6 +198,42 @@ export function EngagementAdminPage() {
             <button className="btn-sec" disabled={busy} onClick={() => askThemes(results.survey.id)}>
               <Sparkles size={13} className="inline mr-1 text-amber-500" />{busy ? 'Theming…' : 'Theme verbatims (agent)'}</button>
           </div>
+          {/* THE PER-PERSON SCORECARD. On a manager assessment the
+              cohort average is the least useful number in the file —
+              the point is what each manager said about each of their
+              new joiners. Weakest first, because that is the row HR
+              has to act on. */}
+          {results.subjects && (
+            <div className="mb-3">
+              <p className="lbl">Each employee, as their manager rated them — weakest first</p>
+              {!results.subjects.length && (
+                <p className="text-xs text-navy-400 mt-1">No manager has answered yet.</p>
+              )}
+              <div className="space-y-2 mt-1">
+                {results.subjects.map((p) => (
+                  <details key={p.employee_id} className="card p-3">
+                    <summary className="cursor-pointer text-sm font-semibold flex flex-wrap items-center gap-2">
+                      <span className={`chip ${p.average != null && p.average < 3 ? 'bg-rose-100 text-rose-700' : 'bg-navy-50 text-navy-600'}`}>
+                        {p.average == null ? '—' : p.average.toFixed(1)}
+                      </span>
+                      {p.name}
+                      {p.designation && <span className="text-navy-400 font-normal">· {p.designation}</span>}
+                      <span className="text-[11px] text-navy-400 font-normal">rated by {p.manager}</span>
+                    </summary>
+                    <div className="mt-2 space-y-1">
+                      {p.answers.map((a, n) => (
+                        <div key={n} className="flex flex-wrap gap-2 text-[11.5px]">
+                          <span className="text-navy-500 flex-1 min-w-[200px]">{a.prompt}</span>
+                          <span className="font-semibold text-navy-700">{String(a.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </div>
+          )}
+
           {results.questions.map(q => (
             <div key={q.id} className="text-xs border-t border-navy-100 pt-2">
               <p className="font-semibold">{q.prompt}</p>
@@ -384,6 +437,7 @@ function SurveyBuilder({ onClose, onCreated }) {
   const [opts, setOpts] = useState(null);           // what the master actually holds
   const [rule, setRule] = useState({ departments: [], designations: [], role_bands: [], manager_ids: [] });
   const [trigger, setTrigger] = useState('manual'); // manual | tenure
+  const [kind, setKind] = useState('self');         // self | manager_about_reportee
   const [day, setDay] = useState(30);
   const [win, setWin] = useState(7);
   const [anon, setAnon] = useState(true);
@@ -398,13 +452,13 @@ function SurveyBuilder({ onClose, onCreated }) {
     let dead = false;
     const t = setTimeout(() => {
       api('/engagement/audience/preview', { method: 'POST', body: JSON.stringify({
-        audience_rule: rule, trigger_type: trigger,
+        audience_rule: rule, trigger_type: trigger, audience_kind: kind,
         ...(trigger === 'tenure' ? { trigger_day: Number(day), trigger_window_days: Number(win) } : {}),
       }) }).then((r) => { if (!dead) setPreview(r); })
         .catch((e) => { if (!dead) setPreview({ error: e.message }); });
     }, 250);
     return () => { dead = true; clearTimeout(t); };
-  }, [rule, trigger, day, win]);
+  }, [rule, trigger, day, win, kind]);
 
   const setRuleKey = (k) => (v) => setRule((r) => ({ ...r, [k]: v }));
   const set = (i, k, v) => setQs((rows) => rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
@@ -432,9 +486,10 @@ function SurveyBuilder({ onClose, onCreated }) {
       await api('/engagement/surveys', { method: 'POST', body: JSON.stringify({
         title: title.trim(),
         audience_rule: rule,
+        audience_kind: kind,
         trigger_type: trigger,
         ...(trigger === 'tenure' ? { trigger_day: Number(day), trigger_window_days: Number(win) } : {}),
-        anonymity_default: anon,
+        anonymity_default: kind === 'manager_about_reportee' ? false : anon,
         allow_attribution_optin: anon,
         questions: filled.map((q) => ({
           qtype: q.qtype, prompt: q.prompt.trim(),
@@ -529,6 +584,30 @@ function SurveyBuilder({ onClose, onCreated }) {
         <div className="card p-3 space-y-3 border-l-4 border-leaf-500">
           <p className="lbl">Who gets this survey</p>
 
+          {/* WHO ANSWERS. Asked for on 25 Sep: "you should also survey
+              the manager ... if you only ask employees, your PMS will
+              capture perception, but not the manager's assessment."
+              On a manager survey the picks below choose who is
+              ASSESSED, and each of their managers is invited. */}
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" onClick={() => setKind('self')}
+              className={`chip ${kind === 'self' ? 'bg-lagoon-500 text-white' : 'bg-navy-50 text-navy-500'}`}>
+              Employees answer about themselves
+            </button>
+            <button type="button" onClick={() => setKind('manager_about_reportee')}
+              className={`chip ${kind === 'manager_about_reportee' ? 'bg-lagoon-500 text-white' : 'bg-navy-50 text-navy-500'}`}>
+              Managers answer about each reportee
+            </button>
+          </div>
+          {kind === 'manager_about_reportee' && (
+            <p className="text-[11px] text-lagoon-800 bg-lagoon-50 rounded-md px-2.5 py-1.5">
+              The choices below pick the people being <b>assessed</b>. Each one&rsquo;s reporting manager
+              gets their own copy naming them, so a manager with four new joiners answers four times.
+              An assessment is <b>always attributed</b> — it records what a named manager said about a
+              named person — so the anonymity option does not apply.
+            </p>
+          )}
+
           <div className="flex flex-wrap gap-1.5">
             <button type="button" onClick={() => setTrigger('manual')}
               className={`chip ${trigger === 'manual' ? 'bg-leaf-500 text-white' : 'bg-navy-50 text-navy-500'}`}>
@@ -605,6 +684,24 @@ function SurveyBuilder({ onClose, onCreated }) {
                 <span className="text-navy-500"> e.g. {preview.sample.slice(0, 4).join(', ')}
                   {preview.count > 4 ? ` and ${preview.count - 4} more` : ''}.</span>
               )}
+              {preview.kind === 'manager_about_reportee' && (
+                <span className="block mt-1">
+                  {preview.managers || 0} manager{preview.managers === 1 ? '' : 's'} would be asked,
+                  one copy per person they are assessing.
+                </span>
+              )}
+              {preview.no_manager > 0 && (
+                <span className="block mt-1 text-amber-700">
+                  {preview.no_manager} {preview.no_manager === 1 ? 'person has' : 'people have'} no
+                  reporting manager on the master, so nobody can be asked about them.
+                </span>
+              )}
+              {preview.manager_inactive > 0 && (
+                <span className="block mt-1 text-amber-700">
+                  {preview.manager_inactive} more {preview.manager_inactive === 1 ? 'has' : 'have'} a
+                  manager who is no longer active.
+                </span>
+              )}
               {preview.no_joining_date > 0 && (
                 <span className="block mt-1 text-amber-700">
                   {preview.no_joining_date} active employee{preview.no_joining_date === 1 ? ' has' : 's have'} no
@@ -619,11 +716,13 @@ function SurveyBuilder({ onClose, onCreated }) {
           )}
           {preview?.error && <p className="text-xs text-rose-600">{preview.error}</p>}
 
-          <label className="flex items-center gap-2 text-xs text-navy-600">
-            <input type="checkbox" checked={anon} onChange={(e) => setAnon(e.target.checked)} />
-            Anonymous — answers are never stored against a name
-          </label>
-          {!anon && (
+          {kind === 'self' && (
+            <label className="flex items-center gap-2 text-xs text-navy-600">
+              <input type="checkbox" checked={anon} onChange={(e) => setAnon(e.target.checked)} />
+              Anonymous — answers are never stored against a name
+            </label>
+          )}
+          {kind === 'self' && !anon && (
             <p className="text-[11px] text-amber-700 bg-amber-50 rounded-md px-2 py-1.5">
               Attributed. Every answer is stored against the person who gave it, and the form tells
               them so before they start. Use this for new-hire and manager surveys where HR has to
@@ -652,12 +751,28 @@ function TakeSurvey({ survey, done }) {
   if (!qs) return <p className="text-sm text-navy-400">Loading…</p>;
   const submit = async () => {
     setErr(null);
-    try { await api(`/engagement/surveys/${survey.id}/respond`, { method: 'POST', body: JSON.stringify({ answers, attribute }) }); done(); }
+    try {
+      await api(`/engagement/surveys/${survey.id}/respond`, { method: 'POST', body: JSON.stringify({
+        answers, attribute,
+        // Which reportee this is about. The server matches the
+        // invitation on (survey, me, subject), so this is also what
+        // stops a manager assessing somebody who is not theirs.
+        ...(survey.subject_employee_id ? { subject_employee_id: survey.subject_employee_id } : {}),
+      }) });
+      done();
+    }
     catch (e) { setErr(e.message); }
   };
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       <h2 className="text-lg font-bold">{survey.title}</h2>
+      {survey.subject_name && (
+        <p className="text-sm text-lagoon-800 bg-lagoon-50 border border-lagoon-200 rounded-lg p-2.5">
+          You are assessing <b>{survey.subject_name}</b>
+          {survey.subject_designation ? `, ${survey.subject_designation}` : ''}. Your answers are
+          recorded against their name and yours — this is an assessment, not an anonymous survey.
+        </p>
+      )}
       {survey.anonymity_default && <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2">This survey is anonymous. Your name is never stored with your answers{survey.allow_attribution_optin ? ' unless you opt in below' : ''}.</p>}
       {qs.map(q => (
         <div key={q.id} className="card p-3">

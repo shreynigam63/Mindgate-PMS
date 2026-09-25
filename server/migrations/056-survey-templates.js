@@ -25,15 +25,17 @@ async function seedTemplates(db, tenantId) {
     const r = await db.query(
       `INSERT INTO engagement.survey_templates
          (tenant_id, key, category, title, description, trigger_type, trigger_day,
-          trigger_window_days, anonymity_default, audience_rule, questions, blocked_reason, sort_order)
+          trigger_window_days, anonymity_default, audience_rule, questions, blocked_reason,
+          sort_order, audience_kind)
        VALUES ($1,$2,$3,$4,$5,COALESCE($6,'manual'),$7,COALESCE($8,7),COALESCE($9,true),
-               COALESCE($10,'{}'::jsonb),$11,$12,$13)
+               COALESCE($10,'{}'::jsonb),$11,$12,$13,COALESCE($14,'self'))
        ON CONFLICT (tenant_id, key) DO NOTHING RETURNING key`,
       [tenantId, t.key, t.category, t.title, t.description || null, t.trigger_type || null,
        t.trigger_type === 'tenure' ? t.trigger_day : null,
        t.trigger_window_days == null ? null : t.trigger_window_days,
        t.anonymity_default, JSON.stringify(t.audience_rule || {}),
-       JSON.stringify(t.questions), t.blocked_reason || null, (i + 1) * 10]);
+       JSON.stringify(t.questions), t.blocked_reason || null, (i + 1) * 10,
+       t.audience_kind || null]);
     if (r.rows.length) inserted++;
   }
   return inserted;

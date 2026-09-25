@@ -43,6 +43,12 @@ const BLOCKERS = ['Lack of training', 'Lack of system access', 'Lack of clarity'
   'Dependency on others', 'Manager support', 'Team coordination', 'Process issues',
   'Workload', 'Skill gap', 'No significant blocker', 'Other'];
 
+// Sections 18 and 19 rate capability in four named bands rather than
+// 1-5, and say so explicitly: "Below expectation / Developing / Meets
+// expectation / Exceeds expectation".
+const BANDS = ['Below expectation', 'Developing', 'Meets expectation', 'Exceeds expectation'];
+const band = (what) => ({ qtype: CHOICE, prompt: `${what}`, options: BANDS });
+
 const CAPABILITIES = ['Technical skill', 'Domain knowledge', 'Communication', 'Leadership',
   'Project management', 'Client management', 'Process knowledge', 'Tools / technology', 'Other'];
 
@@ -228,6 +234,94 @@ const TEMPLATES = [
   // manager-side 30/60/90 assessment is not here: it is a survey ABOUT
   // somebody else, which needs a schema change, and a template that
   // cannot be released would be worse than no template.
+  // ---- the manager's side (phase 4) ---------------------------------
+  // Mindgate, section 17: "BUT — YOU SHOULD ALSO SURVEY THE MANAGER.
+  // This is critical. If you only ask employees, your PMS will capture
+  // perception, but not the manager's assessment."
+  //
+  // These are surveys ABOUT a person, answered BY their manager, so
+  // they carry audience_kind 'manager_about_reportee': the rule picks
+  // the new joiners, and each one's manager gets an invitation naming
+  // them. Never anonymous — the whole record is "what X's manager said
+  // about X" — and the schema will not let them be.
+  {
+    key: 'manager_30',
+    category: 'Manager assessment',
+    title: 'Manager 30-Day Review',
+    description: 'The manager\u2019s read at 30 days, on each of their new joiners.',
+    audience_kind: 'manager_about_reportee',
+    trigger_type: 'tenure', trigger_day: 30, trigger_window_days: 7,
+    anonymity_default: false,
+    questions: [
+      s('The employee has understood their role.'),
+      s('The employee has understood their KRAs.'),
+      s('The employee is meeting expected learning milestones.'),
+      s('The employee is demonstrating the required competencies.'),
+      s('The employee is able to work independently.'),
+      s('Productivity is progressing as expected.'),
+      s('Quality of work is satisfactory.'),
+      s('The employee is collaborating effectively.'),
+      c('Does the employee require additional training?', ['No', 'Yes — technical', 'Yes — process', 'Yes — behavioural']),
+      c('Are there any performance concerns?', ['No', 'Minor', 'Significant']),
+      c('Are there any behavioural concerns?', ['No', 'Minor', 'Significant']),
+      t('What support does the employee require over the next 30 days?'),
+    ],
+  },
+  {
+    key: 'manager_60',
+    category: 'Manager assessment',
+    title: 'Manager 60-Day Review',
+    description: 'Productivity and capability at 60 days, rated in the four bands from the specification.',
+    audience_kind: 'manager_about_reportee',
+    trigger_type: 'tenure', trigger_day: 60, trigger_window_days: 7,
+    anonymity_default: false,
+    questions: [
+      s('Productivity is progressing as expected.'),
+      s('Quality is progressing as expected.'),
+      s('The employee is meeting reasonable timelines.'),
+      s('The employee manages dependencies effectively.'),
+      s('The employee requires limited supervision.'),
+      band('Technical / domain capability'),
+      band('Problem solving'),
+      band('Communication'),
+      band('Collaboration'),
+      band('Ownership'),
+      band('Adaptability'),
+      t('What is the one thing this employee should focus on next?'),
+    ],
+  },
+  {
+    key: 'manager_90',
+    category: 'Manager assessment',
+    title: 'Manager 90-Day Review — confirmation',
+    description: 'The ten-parameter assessment at 90 days, and whether a formal development plan is needed.',
+    audience_kind: 'manager_about_reportee',
+    trigger_type: 'tenure', trigger_day: 90, trigger_window_days: 7,
+    anonymity_default: false,
+    questions: [
+      s('Role understanding'),
+      s('Technical capability'),
+      s('Productivity'),
+      s('Quality'),
+      s('Ownership'),
+      s('Collaboration'),
+      s('Communication'),
+      s('Learning agility'),
+      s('Behavioural alignment'),
+      s('Independence'),
+      t('What should the employee focus on during the next 90 days?'),
+      t('What support will you provide?'),
+      // Section 19: "This can automatically create a Development
+      // Plan." It does not yet — the development plan lives in the
+      // performance module and modules here never reach into each
+      // other's internals. The answer is captured and reported so HR
+      // can act on it; wiring it through an exported interface is a
+      // change to that module, not this one.
+      c('Does the employee require a formal development plan?',
+        ['No', 'Yes — technical', 'Yes — behavioural', 'Yes — productivity', 'Yes — role clarity', 'Yes — other']),
+    ],
+  },
+
   {
     key: 'quarterly_pulse',
     category: 'Engagement',
@@ -378,6 +472,15 @@ function validateTemplates(list = TEMPLATES) {
     if (!tpl.category) errors.push(`${where}: no category`);
     if (!Array.isArray(tpl.questions) || !tpl.questions.length) errors.push(`${where}: no questions`);
     if (tpl.trigger_type === 'tenure' && tpl.trigger_day == null) errors.push(`${where}: a tenure trigger needs a day`);
+    if (tpl.audience_kind && !['self', 'manager_about_reportee'].includes(tpl.audience_kind)) {
+      errors.push(`${where}: unknown audience_kind ${tpl.audience_kind}`);
+    }
+    // A manager assessment names both people on every record, so
+    // "anonymous" would be a lie on the form. The database refuses it
+    // too; caught here so the boot fails with a sentence.
+    if (tpl.audience_kind === 'manager_about_reportee' && tpl.anonymity_default !== false) {
+      errors.push(`${where}: a manager assessment cannot be anonymous`);
+    }
     if (tpl.trigger_type !== 'tenure' && tpl.trigger_day != null) errors.push(`${where}: trigger_day on a non-tenure template`);
     for (const q of tpl.questions || []) {
       if (!q.prompt) errors.push(`${where}: a question with no prompt`);
@@ -391,4 +494,4 @@ function validateTemplates(list = TEMPLATES) {
   return errors;
 }
 
-module.exports = { TEMPLATES, validateTemplates, BLOCKERS, CAPABILITIES };
+module.exports = { TEMPLATES, validateTemplates, BLOCKERS, CAPABILITIES, BANDS };

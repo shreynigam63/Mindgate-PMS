@@ -32,13 +32,25 @@ const audit = (req, action, details) => db.query(
 // `survey` may be a saved row or an unsaved {audience_rule, trigger_*}
 // from the builder — the preview on screen and the invitations the
 // release writes go through this one function, so they cannot disagree.
+//
+// TWO SHAPES, since phase 4 on 25 Sep:
+//
+//   'self'                    the rule picks who answers, about
+//                             themselves. Everything before today.
+//
+//   'manager_about_reportee'  the rule picks who is ASSESSED, and the
+//                             invitation goes to each subject's
+//                             manager. One manager with four new
+//                             joiners gets four, not one — which is
+//                             why the invitation key had to change.
 async function resolveAudience(tenantId, survey) {
   const rule = triggerRule(survey);
   const { where, params } = audienceSql(rule, { start: 2 });
-  const rows = (await db.query(
-    `SELECT id, name, email FROM core.employees
+  const subjects = (await db.query(
+    `SELECT id, name, email, manager_id FROM core.employees
       WHERE tenant_id=$1 AND status='active' AND archived_at IS NULL AND (${where})
       ORDER BY name`, [tenantId, ...params])).rows;
+
   // Anyone a tenure rule had to skip for want of a joining date is
   // COUNTED, not swallowed: a cohort that is quietly short looks
   // exactly like a cohort that is genuinely small.
@@ -49,8 +61,41 @@ async function resolveAudience(tenantId, survey) {
         WHERE tenant_id=$1 AND status='active' AND archived_at IS NULL AND date_of_joining IS NULL`,
       [tenantId])).rows[0].n;
   }
-  return { rule, employees: rows, count: rows.length, no_joining_date: noJoiningDate,
-           description: describeRule(rule) };
+
+  const base = { rule, no_joining_date: noJoiningDate };
+  if ((survey && survey.audience_kind) !== 'manager_about_reportee') {
+    return { ...base, kind: 'self', pairs: subjects.map((e) => ({ recipient: e, subject: null })),
+      employees: subjects, count: subjects.length, no_manager: 0,
+      description: describeRule(rule) };
+  }
+
+  // One invitation per SUBJECT, addressed to their manager. Somebody
+  // with no manager on the master cannot be assessed by one, and is
+  // reported rather than dropped — on the real master that is a
+  // handful of people, and a silently shorter list reads as if they
+  // were simply not in the cohort.
+  const withManager = subjects.filter((e) => e.manager_id);
+  const managers = new Map((await db.query(
+    `SELECT id, name, email, status FROM core.employees
+      WHERE tenant_id=$1 AND id = ANY($2::uuid[])`,
+    [tenantId, [...new Set(withManager.map((e) => e.manager_id))]])).rows.map((m) => [m.id, m]));
+
+  const pairs = [];
+  let managerInactive = 0;
+  for (const subj of withManager) {
+    const mgr = managers.get(subj.manager_id);
+    // A manager who has left cannot be asked. Counted, for the same
+    // reason as above.
+    if (!mgr || mgr.status !== 'active') { managerInactive++; continue; }
+    pairs.push({ recipient: mgr, subject: subj });
+  }
+  return { ...base, kind: 'manager_about_reportee', pairs,
+    employees: pairs.map((p) => p.subject),
+    count: pairs.length,
+    no_manager: subjects.length - withManager.length,
+    manager_inactive: managerInactive,
+    managers: new Set(pairs.map((p) => p.recipient.id)).size,
+    description: `the reporting manager of ${describeRule(rule).replace(/^everyone/, 'everyone')}` };
 }
 
 function shouldAttribute(survey, wantsAttribution) {
@@ -93,20 +138,25 @@ router.post('/surveys', async (req, res) => {
     if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
     const b = req.body || {};
     if (!b.title) return res.status(400).json({ error: 'title required' });
-    const bad = validateTrigger(b);
+    const bad = validateTrigger(b) || validateKind(b);
     if (bad) return res.status(422).json({ error: bad });
+    const kind = b.audience_kind === 'manager_about_reportee' ? 'manager_about_reportee' : 'self';
+    // A manager assessment is never anonymous — see the constraint in
+    // migration 057. Forced here as well so the refusal is a sentence
+    // rather than a database error.
+    const anon = kind === 'manager_about_reportee' ? false : b.anonymity_default;
     const rule = normaliseRule(b.audience_rule);
     const s = (await db.query(
       `INSERT INTO engagement.surveys (tenant_id, title, survey_type, description, target_audience,
-         audience_rule, trigger_type, trigger_day, trigger_window_days,
+         audience_rule, audience_kind, trigger_type, trigger_day, trigger_window_days,
          anonymity_default, allow_attribution_optin, closes_at, created_by)
-       VALUES ($1,$2,COALESCE($3,'pulse'),$4,'rule',$5,COALESCE($6,'manual'),$7,COALESCE($8,7),
-               COALESCE($9,true),COALESCE($10,true),$11,$12) RETURNING *`,
+       VALUES ($1,$2,COALESCE($3,'pulse'),$4,'rule',$5,$6,COALESCE($7,'manual'),$8,COALESCE($9,7),
+               COALESCE($10,true),COALESCE($11,true),$12,$13) RETURNING *`,
       [T(req), b.title, b.survey_type || null, b.description || null,
-       JSON.stringify(rule), b.trigger_type || null,
+       JSON.stringify(rule), kind, b.trigger_type || null,
        b.trigger_type === 'tenure' ? Number(b.trigger_day) : null,
        b.trigger_window_days == null ? null : Number(b.trigger_window_days),
-       b.anonymity_default, b.allow_attribution_optin, b.closes_at || null, req.user.email])).rows[0];
+       anon, b.allow_attribution_optin, b.closes_at || null, req.user.email])).rows[0];
     const qs = Array.isArray(b.questions) ? b.questions : [];
     let i = 0;
     for (const q of qs) {
@@ -185,7 +235,7 @@ router.get('/templates', async (req, res) => {
     }
     const rows = (await db.query(
       `SELECT id, key, category, title, description, trigger_type, trigger_day, trigger_window_days,
-              anonymity_default, audience_rule, questions, blocked_reason, sort_order,
+              anonymity_default, audience_rule, audience_kind, questions, blocked_reason, sort_order,
               jsonb_array_length(questions) AS question_count
          FROM engagement.survey_templates
         WHERE tenant_id=$1 AND active ORDER BY sort_order, title`, [T(req)])).rows;
@@ -223,14 +273,18 @@ router.post('/templates/:key/use', async (req, res) => {
     const bad = validateTrigger(merged);
     if (bad) return res.status(422).json({ error: bad });
     const rule = normaliseRule(b.audience_rule === undefined ? tpl.audience_rule : b.audience_rule);
-    const anon = b.anonymity_default == null ? tpl.anonymity_default : !!b.anonymity_default;
+    const kind = tpl.audience_kind === 'manager_about_reportee' ? 'manager_about_reportee' : 'self';
+    // A manager assessment is never anonymous, whatever the caller asks
+    // for — the record names both people by construction.
+    const anon = kind === 'manager_about_reportee' ? false
+      : (b.anonymity_default == null ? tpl.anonymity_default : !!b.anonymity_default);
 
     const s = (await db.query(
       `INSERT INTO engagement.surveys (tenant_id, title, survey_type, description, target_audience,
-         audience_rule, trigger_type, trigger_day, trigger_window_days,
+         audience_rule, audience_kind, trigger_type, trigger_day, trigger_window_days,
          anonymity_default, allow_attribution_optin, template_key, created_by)
-       VALUES ($1,$2,'pulse',$3,'rule',$4,$5,$6,$7,$8,$8,$9,$10) RETURNING *`,
-      [T(req), b.title || tpl.title, tpl.description || null, JSON.stringify(rule),
+       VALUES ($1,$2,'pulse',$3,'rule',$4,$5,$6,$7,$8,$9,$9,$10,$11) RETURNING *`,
+      [T(req), b.title || tpl.title, tpl.description || null, JSON.stringify(rule), kind,
        merged.trigger_type, merged.trigger_type === 'tenure' ? merged.trigger_day : null,
        merged.trigger_window_days, anon, tpl.key, req.user.email])).rows[0];
 
@@ -257,10 +311,12 @@ router.post('/audience/preview', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
     const b = req.body || {};
-    const bad = validateTrigger(b);
+    const bad = validateTrigger(b) || validateKind(b);
     if (bad) return res.status(422).json({ error: bad });
     const a = await resolveAudience(T(req), b);
     res.json({ count: a.count, description: a.description, no_joining_date: a.no_joining_date,
+      kind: a.kind, managers: a.managers, no_manager: a.no_manager || 0,
+      manager_inactive: a.manager_inactive || 0,
       sample: a.employees.slice(0, 8).map((e) => e.name) });
   } catch (e) { logger.error('audience preview', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
@@ -288,6 +344,15 @@ function cleanOptions(v) {
   if (!Array.isArray(v)) return [];
   const out = v.map((x) => String(x == null ? '' : x).trim()).filter(Boolean);
   return [...new Set(out)].slice(0, 40);
+}
+
+// 'self' or 'manager_about_reportee'. Anything else is a typo in a
+// client, and silently treating it as 'self' would send an assessment
+// to the people it was meant to be about.
+function validateKind(b) {
+  const k = b.audience_kind;
+  if (k == null || k === 'self' || k === 'manager_about_reportee') return null;
+  return `Unknown audience "${k}" — use "self" or "manager_about_reportee".`;
 }
 
 // A trigger that cannot fire is worse than no trigger: the survey sits
@@ -323,16 +388,23 @@ function validateTrigger(b) {
 async function inviteAudience(tenantId, survey) {
   const a = await resolveAudience(tenantId, survey);
   let invited = 0;
-  for (const e of a.employees) {
+  for (const { recipient, subject } of a.pairs) {
     const r = await db.query(
-      `INSERT INTO engagement.invitations (tenant_id, survey_id, employee_id) VALUES ($1,$2,$3)
-       ON CONFLICT DO NOTHING RETURNING employee_id`, [tenantId, survey.id, e.id]);
+      `INSERT INTO engagement.invitations (tenant_id, survey_id, employee_id, subject_employee_id)
+       VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`,
+      [tenantId, survey.id, recipient.id, subject ? subject.id : null]);
     if (r.rows.length) {
       invited++;
-      await notify(tenantId, e.id, 'survey_open', `Survey: ${survey.title}`, null, '/engagement');
+      // A manager needs to know WHO the survey is about before they
+      // open it — four notifications that all say "Day 30 Review" and
+      // nothing else is four identical rows in their inbox.
+      const label = subject ? `${survey.title}: ${subject.name}` : `Survey: ${survey.title}`;
+      await notify(tenantId, recipient.id, 'survey_open', label, null, '/engagement');
     }
   }
-  return { invited, matched: a.count, description: a.description, no_joining_date: a.no_joining_date };
+  return { invited, matched: a.count, description: a.description,
+    no_joining_date: a.no_joining_date, no_manager: a.no_manager || 0,
+    manager_inactive: a.manager_inactive || 0, managers: a.managers };
 }
 
 // Release. For a manual survey this is the whole story: the audience is
@@ -360,7 +432,8 @@ router.post('/surveys/:id/open', async (req, res) => {
     logger.info('survey opened', { survey: s.id, invited: r.invited, trigger: s.trigger_type });
     res.json({ ok: true, invited: r.invited, audience_size: r.matched,
       audience: r.description, no_joining_date: r.no_joining_date,
-      standing: s.trigger_type === 'tenure' });
+      no_manager: r.no_manager, manager_inactive: r.manager_inactive, managers: r.managers,
+      kind: s.audience_kind, standing: s.trigger_type === 'tenure' });
   } catch (e) { logger.error('survey open', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
@@ -424,9 +497,13 @@ router.get('/my/invitations', async (req, res) => {
   try {
     const r = await db.query(
       `SELECT s.id, s.title, s.survey_type, s.description, s.anonymity_default, s.allow_attribution_optin,
-              i.completed_at
-         FROM engagement.invitations i JOIN engagement.surveys s ON s.id=i.survey_id
-        WHERE i.tenant_id=$1 AND i.employee_id=$2 AND s.status='open' ORDER BY i.invited_at DESC`,
+              s.audience_kind, i.completed_at,
+              i.subject_employee_id, subj.name AS subject_name, subj.designation AS subject_designation
+         FROM engagement.invitations i
+         JOIN engagement.surveys s ON s.id=i.survey_id
+         LEFT JOIN core.employees subj ON subj.id=i.subject_employee_id
+        WHERE i.tenant_id=$1 AND i.employee_id=$2 AND s.status='open'
+        ORDER BY i.invited_at DESC, subj.name`,
       [T(req), req.user.id]);
     res.json({ invitations: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -434,7 +511,7 @@ router.get('/my/invitations', async (req, res) => {
 
 router.get('/surveys/:id/questions', async (req, res) => {
   try {
-    const inv = (await db.query(`SELECT 1 FROM engagement.invitations WHERE survey_id=$1 AND employee_id=$2`,
+    const inv = (await db.query(`SELECT 1 FROM engagement.invitations WHERE survey_id=$1 AND employee_id=$2 LIMIT 1`,
       [req.params.id, req.user.id])).rows[0];
     const admin = await hasPermission(req.user, 'engagement_admin');
     if (!inv && !admin) return res.status(403).json({ error: 'Not invited to this survey' });
@@ -451,8 +528,28 @@ router.post('/surveys/:id/respond', async (req, res) => {
     const s = (await db.query(`SELECT * FROM engagement.surveys WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!s) { return res.status(404).json({ error: 'survey not found' }); }
     if (s.status !== 'open') { return res.status(409).json({ error: 'Survey is not open' }); }
-    const inv = (await db.query(`SELECT * FROM engagement.invitations WHERE survey_id=$1 AND employee_id=$2`, [s.id, req.user.id])).rows[0];
-    if (!inv) { return res.status(403).json({ error: 'Not invited to this survey' }); }
+    // WHICH invitation. On a manager survey one person holds several
+    // for the same survey, one per reportee, so the subject is part of
+    // the identity of the thing being answered. Matching on
+    // (survey, me, subject) is also the authorisation check: a manager
+    // cannot assess somebody who is not theirs, because no invitation
+    // exists for that pair.
+    const subjectId = (req.body && req.body.subject_employee_id) || null;
+    const inv = (await db.query(
+      `SELECT * FROM engagement.invitations
+        WHERE survey_id=$1 AND employee_id=$2 AND subject_employee_id IS NOT DISTINCT FROM $3`,
+      [s.id, req.user.id, subjectId])).rows[0];
+    if (!inv) {
+      // Said differently when the person IS invited but named the
+      // wrong subject, because "not invited" sends them looking in the
+      // wrong place.
+      const any = (await db.query(
+        `SELECT count(*)::int AS n FROM engagement.invitations WHERE survey_id=$1 AND employee_id=$2`,
+        [s.id, req.user.id])).rows[0].n;
+      return res.status(403).json({ error: any
+        ? 'This survey is not about that employee, or they are not one of your reportees.'
+        : 'Not invited to this survey' });
+    }
     if (inv.completed_at) { return res.status(409).json({ error: 'Already completed' }); }
     const answers = (req.body && req.body.answers) || {};
     const qs = (await db.query(`SELECT id, qtype, required, options FROM engagement.questions WHERE survey_id=$1`, [s.id])).rows;
@@ -482,8 +579,9 @@ router.post('/surveys/:id/respond', async (req, res) => {
     const attributedId = shouldAttribute(s, req.body && req.body.attribute) ? req.user.id : null;
     await client.query('BEGIN');
     const resp = (await client.query(
-      `INSERT INTO engagement.responses (tenant_id, survey_id, employee_id) VALUES ($1,$2,$3) RETURNING id`,
-      [T(req), s.id, attributedId])).rows[0];
+      `INSERT INTO engagement.responses (tenant_id, survey_id, employee_id, subject_employee_id)
+       VALUES ($1,$2,$3,$4) RETURNING id`,
+      [T(req), s.id, attributedId, inv.subject_employee_id])).rows[0];
     for (const q of qs) {
       const a = answers[q.id];
       if (a == null) continue;
@@ -496,7 +594,9 @@ router.post('/surveys/:id/respond', async (req, res) => {
          a.text != null ? String(a.text).slice(0, 4000) : null, li]);
     }
     // Completion on the INVITATION — never on the response.
-    await client.query(`UPDATE engagement.invitations SET completed_at=now() WHERE survey_id=$1 AND employee_id=$2`, [s.id, req.user.id]);
+    // By invitation id, not by (survey, employee): a manager holds one
+    // per reportee and completing one must not mark the rest done.
+    await client.query(`UPDATE engagement.invitations SET completed_at=now() WHERE id=$1`, [inv.id]);
     await client.query('COMMIT');
     res.json({ ok: true, attributed: !!attributedId });
   } catch (e) {
@@ -561,9 +661,47 @@ router.get('/surveys/:id/results', async (req, res) => {
         out.push({ ...q, n: nums.length, average: avg, enps: q.qtype === 'enps' ? enps(nums) : undefined });
       }
     }
-    res.json({ survey: { id: s.id, title: s.title, survey_type: s.survey_type, status: s.status },
+    // A manager assessment is about individuals, so an average across
+    // the cohort is the least useful thing in it. The per-subject
+    // scorecard is the point: "what did each manager say about each of
+    // their new joiners". Only ever built for a manager survey, where
+    // both names are on the record by design — a self survey's
+    // responses stay unjoined to anybody.
+    let subjects;
+    if (s.audience_kind === 'manager_about_reportee') {
+      const rows = (await db.query(
+        `SELECT r.subject_employee_id, subj.name AS subject_name, subj.designation,
+                mgr.name AS manager_name, r.submitted_at,
+                q.id AS question_id, q.prompt, q.qtype, q.sort_order,
+                a.value_num, a.value_text
+           FROM engagement.responses r
+           JOIN core.employees subj ON subj.id=r.subject_employee_id
+           LEFT JOIN core.employees mgr ON mgr.id=r.employee_id
+           JOIN engagement.answers a ON a.response_id=r.id
+           JOIN engagement.questions q ON q.id=a.question_id
+          WHERE r.survey_id=$1 AND r.subject_employee_id IS NOT NULL
+          ORDER BY subj.name, q.sort_order`, [s.id])).rows;
+      const by = new Map();
+      for (const r of rows) {
+        if (!by.has(r.subject_employee_id)) {
+          by.set(r.subject_employee_id, { employee_id: r.subject_employee_id, name: r.subject_name,
+            designation: r.designation, manager: r.manager_name, submitted_at: r.submitted_at, answers: [] });
+        }
+        by.get(r.subject_employee_id).answers.push({ prompt: r.prompt, qtype: r.qtype,
+          value: r.value_num != null ? Number(r.value_num) : r.value_text });
+      }
+      subjects = [...by.values()].map((x) => {
+        const nums = x.answers.filter((a) => typeof a.value === 'number').map((a) => a.value);
+        return { ...x, average: nums.length ? +(nums.reduce((p, c) => p + c, 0) / nums.length).toFixed(2) : null };
+      }).sort((a, b) => (a.average ?? 99) - (b.average ?? 99) || a.name.localeCompare(b.name));
+      // Weakest first: the list exists to be acted on, and the person
+      // a manager rated lowest is the one HR needs to see.
+    }
+
+    res.json({ survey: { id: s.id, title: s.title, survey_type: s.survey_type, status: s.status,
+        audience_kind: s.audience_kind },
       participation: { ...part, rate: part.invited ? Math.round((part.completed / part.invited) * 100) : 0 },
-      questions: out });
+      questions: out, ...(subjects ? { subjects } : {}) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
