@@ -85,17 +85,23 @@ test('a plain manager cannot delete anyone; HR cannot delete their own logged-in
 
   const hrAuth = await login('del-hr@x.com');
   const hrId = hrAuth.user.id;
-  const selfDelete = await api(`/employees/${hrId}`, hrAuth.token, { method: 'DELETE' });
+  const selfDelete = await api(`/employees/${hrId}?purge=1`, hrAuth.token, { method: 'DELETE' });
   assert.equal(selfDelete.status, 422);
 });
 
-test('deleting a MANAGER preserves the report\'s own KRA sheet, but removes review rows that required a manager', { skip }, async () => {
+// ?purge=1 since 25 Sep. The plain DELETE now takes somebody OFF THE
+// LIST and keeps their record — "Delete employees option should only
+// delete employees list and not rest of the strings attached to it" —
+// so the cascade these tests exist for lives behind the explicit flag.
+// The archive path has its own tests in employee-add-and-bulk-delete.
+test('purging a MANAGER preserves the report\'s own KRA sheet, but removes review rows that required a manager', { skip }, async () => {
   const before1 = (await db.query(`SELECT manager_id FROM pms.kra_sheets WHERE id=$1`, [sheetId])).rows[0];
   assert.equal(before1.manager_id, mgrId);
 
   const { token } = await login('del-hr@x.com');
-  const r = await api(`/employees/${mgrId}`, token, { method: 'DELETE' });
+  const r = await api(`/employees/${mgrId}?purge=1`, token, { method: 'DELETE' });
   assert.equal(r.status, 200);
+  assert.equal(r.body.purged, true, 'the permanent one, not the archive');
 
   // The report's own KRA sheet (and its KRA rows, via cascade) still exist.
   const sheet = (await db.query(`SELECT manager_id FROM pms.kra_sheets WHERE id=$1`, [sheetId])).rows[0];
@@ -116,15 +122,18 @@ test('deleting a MANAGER preserves the report\'s own KRA sheet, but removes revi
   assert.equal(reportRow.rows.length, 1, 'the report is NOT deleted just because their manager was');
 });
 
-test('deleting an employee removes their login, role, and audit-logs the deletion', { skip }, async () => {
+test('purging an employee removes their login, role, and audit-logs it', { skip }, async () => {
   const { token } = await login('del-hr@x.com');
   const cred = await db.query(`SELECT 1 FROM core.local_credentials WHERE LOWER(email)='del-mgr@x.com'`);
   assert.equal(cred.rows.length, 0, 'del-mgr\'s login credentials are gone (deleted in the previous test)');
   const role = await db.query(`SELECT 1 FROM core.user_roles WHERE LOWER(email)='del-mgr@x.com'`);
   assert.equal(role.rows.length, 0);
 
-  const audit = await db.query(`SELECT details FROM core.audit_log WHERE action='EMPLOYEE_DELETED' AND entity_id=$1`, [mgrId]);
-  assert.equal(audit.rows.length, 1, 'the deletion itself is recorded in the audit log, even though the employee row is gone');
+  // EMPLOYEE_PURGED, not EMPLOYEE_DELETED: the two are different
+  // actions now and the log has to be able to tell them apart.
+  const audit = await db.query(`SELECT details FROM core.audit_log WHERE action='EMPLOYEE_PURGED' AND entity_id=$1`, [mgrId]);
+  assert.equal(audit.rows.length, 1, 'the erasure itself is recorded, even though the employee row is gone');
+  assert.equal(audit.rows[0].details.permanent, true);
   assert.equal(audit.rows[0].details.email, 'del-mgr@x.com');
 });
 

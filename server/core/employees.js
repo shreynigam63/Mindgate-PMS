@@ -574,7 +574,16 @@ async function loadEmployees(tenantId, rows, opts = {}) {
          ON CONFLICT (tenant_id, email) DO UPDATE SET
            emp_code=EXCLUDED.emp_code, name=EXCLUDED.name, department=EXCLUDED.department,
            designation=EXCLUDED.designation, role_band=EXCLUDED.role_band,
-           date_of_joining=EXCLUDED.date_of_joining, status=EXCLUDED.status, updated_at=now()`,
+           date_of_joining=EXCLUDED.date_of_joining, status=EXCLUDED.status, updated_at=now(),
+           -- BACK ON THE LIST. This is what makes "clear the list, then
+           -- upload a fresh sheet" work the way it was asked for on
+           -- 25 Sep: archiving takes people off the list and keeps
+           -- their records on the same row, and a sheet that names
+           -- them again brings the row back — with its KRA sheets,
+           -- appraisals and ratings still attached. Without this line
+           -- the re-uploaded person would stay invisible and the
+           -- feature would look broken.
+           archived_at=NULL, archived_by=NULL`,
         [tenantId, r.emp_code, r.name, r.email, r.department, r.designation, r.role_band, r.date_of_joining, r.status]);
     }
     // Pass 2: manager links by email.
@@ -844,19 +853,31 @@ router.get('/', async (req, res) => {
     // browser devtools, etc.) and dump the whole employee list even if
     // the button is hidden from them in the UI.
     if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    // Archived people are OFF THE LIST but still on file — see 054.
+    // ?include_archived=true is how HR gets at them to restore one.
+    const showArchived = req.query.include_archived === 'true';
     const r = await db.query(
       `SELECT e.id, e.emp_code, e.name, e.email, e.department, e.designation, e.role_band,
-              e.status, e.date_of_joining, m.name AS manager_name, m.email AS manager_email,
+              e.status, e.date_of_joining, e.archived_at, e.archived_by,
+              m.name AS manager_name, m.email AS manager_email,
               (lc.email IS NOT NULL) AS has_login, COALESCE(ur.role, 'employee') AS role
          FROM core.employees e LEFT JOIN core.employees m ON m.id = e.manager_id
          LEFT JOIN core.local_credentials lc ON lc.tenant_id = e.tenant_id AND LOWER(lc.email) = LOWER(e.email)
          LEFT JOIN core.user_roles ur ON ur.tenant_id = e.tenant_id AND LOWER(ur.email) = LOWER(e.email)
-        WHERE e.tenant_id = $1 ORDER BY e.name`, [req.user.tenant_id]);
+        WHERE e.tenant_id = $1 ${showArchived ? '' : 'AND e.archived_at IS NULL'}
+        ORDER BY e.name`, [req.user.tenant_id]);
+    const archived = (await db.query(
+      `SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1 AND archived_at IS NOT NULL`,
+      [req.user.tenant_id])).rows[0].n;
     // Computed here rather than stored: "has no real address" is a
     // transient state that ends the moment HR adds one, and the address
     // itself already says so. One constant decides it, server-side, so the
     // page never has to know the magic domain.
-    res.json({ employees: r.rows.map((e) => ({ ...e, email_is_placeholder: isPlaceholderEmail(e.email) })) });
+    res.json({
+      employees: r.rows.map((e) => ({ ...e, email_is_placeholder: isPlaceholderEmail(e.email) })),
+      archived_count: archived,
+      showing_archived: showArchived,
+    });
   } catch (e) { logger.error('employees list', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
@@ -1186,21 +1207,26 @@ router.post('/', async (req, res) => {
   } catch (e) { logger.error('employee add', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
-// Delete a SELECTION, or the whole list. Asked for on 25 Sep: "there
-// should be delete list option for deleting employee so we can upload
-// new fresh sheet again".
+// Take a SELECTION, or the whole list, OFF THE LIST. Asked for on
+// 25 Sep: "there should be delete list option for deleting employee so
+// we can upload new fresh sheet again", and refined the same day:
+// "Delete employees option should only delete employees list and not
+// rest of the strings attached to it currently."
 //
-// The importer is an upsert keyed on email, so re-uploading a corrected
-// sheet already fixes everyone in it — what it cannot do is remove
-// somebody the new sheet leaves out. That is the gap this fills.
+// So this ARCHIVES. The employee row stays, keeps its id, and keeps
+// every KRA sheet, appraisal, evaluation, connect and rating hanging
+// off that id — see 054 for why deleting the row would have destroyed
+// or orphaned all of it rather than preserving it.
 //
-// IT IS NOT A SOFT DELETE, and the confirmation says so. Every one of
-// these people takes their KRA sheets, appraisals, evaluations,
-// connects and ratings with them; purgeEmployee is the same cascade the
-// single delete runs, one person at a time inside one transaction.
-// Anyone who only wants to stop somebody appearing should set their
-// Status to inactive on the sheet instead — which is why the response
-// reports what would be destroyed BEFORE it is.
+// What archiving does:
+//   * the row leaves the Employees list
+//   * status becomes 'inactive', so it leaves every other screen too —
+//     73 queries across the product already filter status='active'
+//   * re-uploading a sheet containing that email brings them back,
+//     with their history, because it is the same row
+//
+// The signed-in admin is still never in the blast radius: archiving
+// yourself takes you off the list you are administering.
 router.delete('/', async (req, res) => {
   const client = await db.getClient();
   try {
@@ -1208,80 +1234,154 @@ router.delete('/', async (req, res) => {
     const T = req.user.tenant_id;
     const body = req.body || {};
     const have = (await db.query(
-      `SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1`, [T])).rows[0].n;
+      `SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1 AND archived_at IS NULL`, [T])).rows[0].n;
 
     let targets;
     let cleared = false;
     if (Array.isArray(body.ids)) {
       if (!body.ids.length) return res.status(422).json({ error: 'No employees were selected.' });
       targets = (await db.query(
-        `SELECT id, name, email FROM core.employees WHERE tenant_id=$1 AND id = ANY($2::uuid[])`,
-        [T, body.ids])).rows;
+        `SELECT id, name, email FROM core.employees
+          WHERE tenant_id=$1 AND id = ANY($2::uuid[]) AND archived_at IS NULL`, [T, body.ids])).rows;
     } else if (body.confirm_count != null) {
-      if (!have) return res.status(409).json({ error: 'There are no employees to delete' });
+      if (!have) return res.status(409).json({ error: 'There are no employees on the list' });
       if (Number(body.confirm_count) !== have) {
         return res.status(409).json({
           error: `The list holds ${have} employees, not ${body.confirm_count} — it changed since the page loaded. Reload and try again.`,
           have,
         });
       }
-      targets = (await db.query(`SELECT id, name, email FROM core.employees WHERE tenant_id=$1`, [T])).rows;
+      targets = (await db.query(
+        `SELECT id, name, email FROM core.employees WHERE tenant_id=$1 AND archived_at IS NULL`, [T])).rows;
       cleared = true;
     } else {
       return res.status(422).json({
-        error: 'Send ids to delete a selection, or confirm_count to delete the whole list', have,
+        error: 'Send ids to remove a selection, or confirm_count to clear the whole list', have,
       });
     }
 
-    // The signed-in admin is never in the blast radius. Without this,
-    // "delete the whole list" signs the person out of the system they
-    // are administering and leaves nobody able to load the new sheet.
     const skippedSelf = targets.some((t) => t.id === req.user.id);
     targets = targets.filter((t) => t.id !== req.user.id);
     if (!targets.length) {
-      return res.status(422).json({ error: 'The only account selected is your own, which cannot be deleted while you are signed in as it.' });
+      return res.status(422).json({ error: 'The only account selected is your own, which cannot be removed while you are signed in as it.' });
     }
 
     await client.query('BEGIN');
     await client.query(
       `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details)
        VALUES ($1,$2,$3,'employees',$4)`,
-      [T, req.user.email, cleared ? 'EMPLOYEE_LIST_CLEARED' : 'EMPLOYEES_DELETED',
-        JSON.stringify({ count: targets.length, cleared, kept_self: skippedSelf,
+      [T, req.user.email, cleared ? 'EMPLOYEE_LIST_CLEARED' : 'EMPLOYEES_ARCHIVED',
+        JSON.stringify({ count: targets.length, cleared, kept_self: skippedSelf, archived: true,
           emails: targets.slice(0, 50).map((t) => t.email) })]);
-    for (const emp of targets) await purgeEmployee(client, T, emp);
+    // Their login goes with them — somebody off the list must not be
+    // able to sign in — but the ROW and everything attached to it stays.
+    const ids = targets.map((t) => t.id);
+    const emails = targets.map((t) => t.email.toLowerCase());
+    await client.query(
+      `UPDATE core.employees SET archived_at=now(), archived_by=$3, status='inactive', updated_at=now()
+        WHERE tenant_id=$1 AND id = ANY($2::uuid[])`, [T, ids, req.user.email]);
+    await client.query(
+      `DELETE FROM core.local_credentials WHERE tenant_id=$1 AND LOWER(email) = ANY($2::text[])`, [T, emails]);
     await client.query('COMMIT');
 
-    logger.warn('employees deleted in bulk', { tenantId: T, removed: targets.length, cleared, by: req.user.email });
-    res.json({ ok: true, removed: targets.length, cleared, kept_self: skippedSelf });
+    logger.warn('employees archived', { tenantId: T, archived: targets.length, cleared, by: req.user.email });
+    res.json({
+      ok: true, removed: targets.length, archived: targets.length, cleared, kept_self: skippedSelf,
+      note: 'Removed from the list. Their KRA sheets, appraisals and ratings are kept — re-upload a sheet with the same email to bring them back. Their login is removed and is not restored automatically.',
+    });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
-    logger.error('employee bulk delete', { error: e.message });
+    logger.error('employee bulk archive', { error: e.message });
     res.status(500).json({ error: e.message });
   } finally { client.release(); }
 });
 
+// Put an archived employee back on the list. The other half of 054 —
+// without it, "removed from the list" is indistinguishable from gone,
+// and a mis-click has no way back.
+router.post('/:employeeId/restore', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    const T = req.user.tenant_id;
+    const r = await db.query(
+      `UPDATE core.employees SET archived_at=NULL, archived_by=NULL, status='active', updated_at=now()
+        WHERE tenant_id=$1 AND id=$2 AND archived_at IS NOT NULL RETURNING id, name, email`,
+      [T, req.params.employeeId]);
+    if (!r.rows.length) return res.status(404).json({ error: 'No archived employee with that id' });
+    await db.query(
+      `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+       VALUES ($1,$2,'EMPLOYEE_RESTORED','employees',$3,$4)`,
+      [T, req.user.email, r.rows[0].id, JSON.stringify({ email: r.rows[0].email })]);
+    // THE LOGIN DOES NOT COME BACK. Removing somebody deletes their
+    // credential, and a password cannot be un-deleted — so restoring
+    // the record has to say so, or HR restores a person, tells them
+    // to sign in, and the person cannot. Caught by the demo tenant's
+    // own browser tests going red after a manual archive.
+    const hasLogin = !!(await db.query(
+      `SELECT 1 FROM core.local_credentials WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`,
+      [T, r.rows[0].email])).rows[0];
+    res.json({
+      ok: true,
+      employee: r.rows[0],
+      has_login: hasLogin,
+      note: hasLogin ? 'Back on the list.'
+        : 'Back on the list, with their records. Their login was removed when they came off it — grant a new password under Manage if they need to sign in.',
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// One person, off the list — or, with ?purge=1, genuinely erased.
+//
+// The DEFAULT changed on 25 Sep to match the bulk route: "Delete
+// employees option should only delete employees list and not rest of
+// the strings attached to it currently." So the bin on a row now
+// archives, and their record survives.
+//
+// ?purge=1 keeps the old behaviour, because two real cases need it: a
+// GDPR erasure request, and a test row somebody typed by mistake that
+// should leave no trace. It runs purgeEmployee, which is the
+// 30-statement cascade, and it says what it destroyed.
 router.delete('/:employeeId', async (req, res) => {
   const client = await db.getClient();
   try {
     if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
     const T = req.user.tenant_id;
     const id = req.params.employeeId;
-    const emp = (await db.query(`SELECT id, name, email FROM core.employees WHERE id=$1 AND tenant_id=$2`, [id, T])).rows[0];
+    const purge = req.query.purge === '1';
+    const emp = (await db.query(`SELECT id, name, email, archived_at FROM core.employees WHERE id=$1 AND tenant_id=$2`, [id, T])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
-    if (emp.id === req.user.id) return res.status(422).json({ error: 'You cannot delete your own account while signed in as them.' });
+    if (emp.id === req.user.id) {
+      return res.status(422).json({ error: `You cannot ${purge ? 'delete' : 'remove'} your own account while signed in as them.` });
+    }
+
+    if (!purge) {
+      if (emp.archived_at) return res.status(409).json({ error: `${emp.name} is already off the list` });
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+         VALUES ($1,$2,'EMPLOYEE_ARCHIVED','employees',$3,$4)`,
+        [T, req.user.email, id, JSON.stringify({ name: emp.name, email: emp.email })]);
+      await client.query(
+        `UPDATE core.employees SET archived_at=now(), archived_by=$3, status='inactive', updated_at=now()
+          WHERE tenant_id=$1 AND id=$2`, [T, id, req.user.email]);
+      await client.query(`DELETE FROM core.local_credentials WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [T, emp.email]);
+      await client.query('COMMIT');
+      logger.info('employee archived', { tenantId: T, email: emp.email, by: req.user.email });
+      return res.json({
+        ok: true, archived: true,
+        note: 'Removed from the list. Their KRA sheets, appraisals and ratings are kept — re-upload a sheet with the same email to bring them back. Their login is removed and is not restored automatically.',
+      });
+    }
 
     await client.query('BEGIN');
-    // Audit BEFORE the row disappears, so the name and email are still
-    // known at the moment this is recorded.
     await client.query(
       `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
-       VALUES ($1,$2,'EMPLOYEE_DELETED','employees',$3,$4)`,
-      [T, req.user.email, id, JSON.stringify({ name: emp.name, email: emp.email })]);
+       VALUES ($1,$2,'EMPLOYEE_PURGED','employees',$3,$4)`,
+      [T, req.user.email, id, JSON.stringify({ name: emp.name, email: emp.email, permanent: true })]);
     await purgeEmployee(client, T, emp);
     await client.query('COMMIT');
-    logger.info('employee deleted', { tenantId: T, deletedEmail: emp.email, by: req.user.email });
-    res.json({ ok: true });
+    logger.warn('employee purged', { tenantId: T, deletedEmail: emp.email, by: req.user.email });
+    res.json({ ok: true, purged: true });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: e.message });

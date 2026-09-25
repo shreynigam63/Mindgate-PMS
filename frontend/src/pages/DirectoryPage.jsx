@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, Fragment } from 'react';
-import { Settings2, Trash2, Search, ArrowUpDown, ArrowUp, ArrowDown, X, UserPlus } from 'lucide-react';
+import { Settings2, Trash2, Search, ArrowUpDown, ArrowUp, ArrowDown, X, UserPlus, Undo2 } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 
@@ -122,16 +122,22 @@ export default function DirectoryPage() {
   // row the user is no longer looking at.
   const [picked, setPicked] = useState(new Set());
   const [adding, setAdding] = useState(false);
+  // Archived people are off the list but still on file. Kept out of the
+  // table by default, because the whole point of "remove from the list"
+  // is that they leave it.
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivedCount, setArchivedCount] = useState(0);
   // Default sort matches the server's own ORDER BY name — the same
   // ordering people currently see, just now explicitly a starting state
   // that they can change rather than an unchangeable server-side choice.
   const [sortKey, setSortKey] = useState('name');
   const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
 
-  const load = () => api('/employees')
-    .then((r) => { setRows(r.employees); setPicked(new Set()); })
+  const load = (withArchived = showArchived) => api(`/employees${withArchived ? '?include_archived=true' : ''}`)
+    .then((r) => { setRows(r.employees); setArchivedCount(r.archived_count || 0); setPicked(new Set()); })
     .catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
+  useEffect(() => { load(showArchived); }, [showArchived]);
 
   // Filter + sort in ONE memoised pass so unrelated re-renders (opening
   // a Manage panel, typing in the setup form) don't re-run this. The
@@ -208,28 +214,31 @@ export default function DirectoryPage() {
   const removePicked = async () => {
     const ids = [...picked];
     if (!ids.length) return;
-    const msg = `Permanently delete ${ids.length} employee${ids.length === 1 ? '' : 's'}?\n\n`
-      + 'Their KRA sheets, appraisals, evaluations, connects and ratings go with them. '
-      + 'If you only want them to stop appearing, set their Status to inactive instead.\n\nThis cannot be undone.';
+    const msg = `Remove ${ids.length} employee${ids.length === 1 ? '' : 's'} from the list?\n\n`
+      + 'Their KRA sheets, appraisals, evaluations, connects and ratings are KEPT. '
+      + 'They disappear from every screen and cannot sign in.\n\n'
+      + 'Upload a sheet with the same email address and they come back, with their history.';
     if (!window.confirm(msg)) return;
     setErr(null);
     try {
       const r = await api('/employees', { method: 'DELETE', body: JSON.stringify({ ids }) });
-      if (r.kept_self) setErr('Your own account was left in place — you cannot delete the account you are signed in as.');
+      if (r.kept_self) setErr('Your own account was left on the list — you cannot remove the account you are signed in as.');
       load();
     } catch (e) { setErr(e.message); }
   };
   const clearList = async () => {
     const n = rows.length;
     const typed = window.prompt(
-      `This deletes ALL ${n} employees and everything attached to them — KRA sheets, appraisals, `
-      + 'evaluations, connects and ratings. Your own account is kept so you can upload the new sheet.\n\n'
-      + 'Type DELETE ALL to confirm.');
-    if (typed !== 'DELETE ALL') return;
+      `This takes ALL ${n} employees off the list so you can upload a fresh sheet.\n\n`
+      + 'Their KRA sheets, appraisals, evaluations, connects and ratings are KEPT — uploading a sheet '
+      + 'with the same email addresses brings those people back with their history. Your own account '
+      + 'stays on the list so you can do the upload.\n\n'
+      + 'Type CLEAR LIST to confirm.');
+    if (typed !== 'CLEAR LIST') return;
     setErr(null);
     try {
       const r = await api('/employees', { method: 'DELETE', body: JSON.stringify({ confirm_count: n }) });
-      if (r.kept_self) setErr(`${r.removed} employees deleted. Your own account was kept so you can sign in and upload the new sheet.`);
+      if (r.kept_self) setErr(`${r.removed} employees taken off the list — their records are kept. Your own account stays so you can upload the new sheet.`);
       load();
     } catch (e) { setErr(e.message); }
   };
@@ -241,9 +250,30 @@ export default function DirectoryPage() {
 
   const quickDelete = async (r) => {
     setErr(null);
-    const msg = `Permanently delete ${r.name} (${r.email})?\n\nIf they managed anyone, those reports' own KRAs and appraisals are preserved — only the specific manager-side review records that literally require a manager reference will be removed with them. This cannot be undone.`;
+    const msg = `Remove ${r.name} (${r.email}) from the list?\n\n`
+      + 'Their KRA sheets, appraisals and ratings are kept, and they come back if a future sheet names them.';
     if (!window.confirm(msg)) return;
     try { await api(`/employees/${r.id}`, { method: 'DELETE' }); load(); }
+    catch (e) { setErr(e.message); }
+  };
+  // The genuinely destructive one, behind its own button and its own
+  // typed word — a GDPR erasure and a mistyped test row both need it,
+  // and neither should be one careless click away from the normal bin.
+  const purge = async (r) => {
+    setErr(null);
+    const typed = window.prompt(
+      `PERMANENTLY DELETE ${r.name} (${r.email}) and everything attached to them — KRA sheets, `
+      + 'appraisals, evaluations, connects, ratings and closure letters.\n\n'
+      + 'This cannot be undone and they will NOT come back on a future upload. '
+      + 'To take them off the list and keep their records, use Remove instead.\n\n'
+      + 'Type ERASE to confirm.');
+    if (typed !== 'ERASE') return;
+    try { await api(`/employees/${r.id}?purge=1`, { method: 'DELETE' }); load(); }
+    catch (e) { setErr(e.message); }
+  };
+  const restore = async (r) => {
+    setErr(null);
+    try { await api(`/employees/${r.id}/restore`, { method: 'POST' }); load(); }
     catch (e) { setErr(e.message); }
   };
 
@@ -379,21 +409,35 @@ export default function DirectoryPage() {
               <span className="text-navy-400"> of {rows.length} {rows.length === 1 ? 'employee' : 'employees'}</span>
               {query && <span className="text-brand-500 font-semibold"> · filtered</span>}
             </p>
+            {archivedCount > 0 && (
+              <label className="flex items-center gap-1.5 text-xs text-navy-500">
+                <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+                Show {archivedCount} off the list
+              </label>
+            )}
             <span className="flex-1" />
             {picked.size > 0 && (
               <button className="btn !py-1 text-white bg-rose-600 hover:bg-rose-700" onClick={removePicked}>
-                <Trash2 size={12} className="inline mr-1" />Delete {picked.size} selected
+                <Trash2 size={12} className="inline mr-1" />Remove {picked.size} from the list
               </button>
             )}
             {/* Clearing the list is what makes "upload a fresh sheet"
                 possible: the importer is an upsert, so it can correct
-                everybody in the file but can never remove somebody the
-                file leaves out. */}
+                everybody in the file but can never take out somebody
+                the file leaves out. It takes them OFF THE LIST and
+                keeps their records — see migration 054. */}
             <button className="btn-sec !py-1 !text-rose-600 !border-rose-200" onClick={clearList}
-              title="Delete every employee so a fresh sheet can be uploaded">
-              Delete the whole list ({rows.length})
+              title="Take every employee off the list so a fresh sheet can be uploaded. Their records are kept.">
+              Clear the whole list ({rows.filter((r) => !r.archived_at).length})
             </button>
           </div>
+          <p className="text-[11px] text-navy-400">
+            <b>Removing somebody takes them off this list and out of the product — it does not delete their
+            record.</b> Their KRA sheets, appraisals, evaluations, connects and ratings stay attached, and
+            uploading a sheet with the same email address brings them back with that history. Their
+            <b> login is removed</b> and is not restored automatically — grant a new password under Manage
+            if a restored person needs to sign in. Use <b>Erase</b> on a row for a permanent deletion.
+          </p>
 
           <div className="card overflow-x-auto">
             <table className="w-full text-xs">
@@ -423,10 +467,14 @@ export default function DirectoryPage() {
                   </td></tr>
                 ) : displayedRows.map(r => (
                   <Fragment key={r.id}>
-                    <tr className={picked.has(r.id) ? 'bg-rose-50/60' : ''}>
+                    <tr className={`${picked.has(r.id) ? 'bg-rose-50/60' : ''} ${r.archived_at ? 'opacity-60' : ''}`}>
                       <td className="px-3 py-2">
-                        <input type="checkbox" checked={picked.has(r.id)} onChange={() => togglePick(r.id)}
-                          aria-label={`Select ${r.name}`} />
+                        {/* Somebody already off the list cannot be taken
+                            off it again — the box would arm a no-op. */}
+                        {!r.archived_at && (
+                          <input type="checkbox" checked={picked.has(r.id)} onChange={() => togglePick(r.id)}
+                            aria-label={`Select ${r.name}`} />
+                        )}
                       </td>
                       <td className="px-3 py-2 font-mono text-navy-500">{r.emp_code || '—'}</td>
                       <td className="px-3 py-2 font-semibold">{r.name}</td>
@@ -435,23 +483,41 @@ export default function DirectoryPage() {
                           ? <span className="chip bg-amber-100 text-amber-700" title={`Placeholder: ${r.email}`}>no email on record</span>
                           : r.email}
                       </td>
-                      <td className="px-3 py-2">{r.department || '—'}</td>
+                      <td className="px-3 py-2">
+                        {r.department || '—'}
+                        {r.archived_at && <span className="chip bg-navy-50 text-navy-500 ml-1.5">off the list</span>}
+                      </td>
                       <td className="px-3 py-2">{r.manager_email || '—'}</td><td className="px-3 py-2">{r.status}</td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         <span className={`chip ${r.has_login ? 'bg-leaf-50 text-leaf-600' : 'bg-navy-50 text-navy-500'}`}>{r.has_login ? 'Active' : 'None yet'}</span>
                       </td>
                       <td className="px-3 py-2 capitalize">{r.role}</td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
-                        <button className="btn-sec !py-1 mr-1" onClick={() => setOpenId(v => v === r.id ? null : r.id)}>
-                          <Settings2 size={12} className="inline mr-1" />Manage
-                        </button>
-                        <button
-                          className="btn !py-1 text-white bg-rose-600 hover:bg-rose-700"
-                          onClick={() => quickDelete(r)}
-                          title={`Delete ${r.name}`}
-                        >
-                          <Trash2 size={12} className="inline mr-1" />Delete
-                        </button>
+                        {r.archived_at ? (
+                          <>
+                            <button className="btn-sec !py-1 mr-1" onClick={() => restore(r)}
+                              title={`Put ${r.name} back on the list`}>
+                              <Undo2 size={12} className="inline mr-1" />Restore
+                            </button>
+                            <button className="btn-sec !py-1 !text-rose-600 !border-rose-200"
+                              onClick={() => purge(r)} title={`Permanently erase ${r.name}`}>
+                              Erase
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="btn-sec !py-1 mr-1" onClick={() => setOpenId(v => v === r.id ? null : r.id)}>
+                              <Settings2 size={12} className="inline mr-1" />Manage
+                            </button>
+                            <button
+                              className="btn !py-1 text-white bg-rose-600 hover:bg-rose-700"
+                              onClick={() => quickDelete(r)}
+                              title={`Take ${r.name} off the list — their records are kept`}
+                            >
+                              <Trash2 size={12} className="inline mr-1" />Remove
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                     {openId === r.id && (

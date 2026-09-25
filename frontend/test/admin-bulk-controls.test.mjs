@@ -82,23 +82,32 @@ test('Employees offers an Add form whose fields keep focus while you type', asyn
   await ctx.close();
 });
 
-test('Employees can select rows and offers both deletes', async (t) => {
+test('Employees can select rows, and removing keeps their records', async (t) => {
   if (needStack(t)) return;
   const { ctx, page, errors } = await open('/admin/directory');
   const boxes = page.locator('tbody input[type=checkbox]');
   const n = await boxes.count();
   assert.ok(n > 1, 'there are rows to tick');
   // Nothing ticked: no bulk button, so it cannot be pressed by accident.
-  assert.equal(await page.getByRole('button', { name: /Delete \d+ selected/ }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: /Remove \d+ from the list/ }).count(), 0);
   await boxes.nth(0).check();
   await boxes.nth(1).check();
   await page.waitForTimeout(300);
-  assert.equal(await page.getByRole('button', { name: /Delete 2 selected/ }).count(), 1);
-  // And the whole-list control names the count it would destroy.
-  const clear = page.getByRole('button', { name: /Delete the whole list/ });
+  assert.equal(await page.getByRole('button', { name: /Remove 2 from the list/ }).count(), 1);
+
+  const clear = page.getByRole('button', { name: /Clear the whole list/ });
   assert.equal(await clear.count(), 1);
   assert.ok((await clear.innerText()).includes(`(${n})`),
     `the clear button names the count — got ${JSON.stringify(await clear.innerText())}`);
+
+  // The page has to say what removing actually does, since "Remove"
+  // next to a bin icon reads as "destroy" to most people. Asked for on
+  // 25 Sep: "Delete employees option should only delete employees list
+  // and not rest of the strings attached to it."
+  const main = await page.locator('main').innerText();
+  assert.match(main, /does not delete their\s*record/i);
+  assert.match(main, /login is removed/i);
+  assert.match(main, /Erase/);
   assert.deepEqual(errors, []);
   await ctx.close();
 });

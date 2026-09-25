@@ -153,21 +153,98 @@ test('only people_admin may add', { skip }, async () => {
 
 // -------------------------------------------------------- bulk delete
 
-test('deleting a selection runs the same cascade the single delete runs', { skip }, async () => {
+test('removing a selection takes them OFF THE LIST and keeps every record', { skip }, async () => {
+  // Asked for on 25 Sep, the day after the bulk delete shipped:
+  // "Delete employees option should only delete employees list and not
+  // rest of the strings attached to it currently."
   const before = await count(`SELECT count(*)::int AS n FROM pms.kra_sheets WHERE tenant_id=$1 AND employee_id=$2`,
     [tenantId, reportId]);
-  assert.equal(before, 1, 'the report has a sheet to lose');
+  assert.equal(before, 1, 'the report has a sheet that must survive');
 
   const r = await call(hrTok, '/employees', 'DELETE', { ids: [reportId] });
   assert.equal(r.status, 200);
-  assert.equal(r.body.removed, 1);
-  assert.equal(await count(`SELECT count(*)::int AS n FROM core.employees WHERE id=$1`, [reportId]), 0);
-  // The cascade, not just the row: an orphan sheet behind a foreign key
-  // is exactly what a second copy of this logic would leave behind.
+  assert.equal(r.body.archived, 1);
+  assert.match(r.body.note, /are kept/i);
+
+  // The row is still there...
+  const row = (await db.query(
+    `SELECT archived_at, archived_by, status FROM core.employees WHERE id=$1`, [reportId])).rows[0];
+  assert.ok(row, 'the employee row survives');
+  assert.ok(row.archived_at, 'and is marked as off the list');
+  assert.equal(row.archived_by, 'eab-hr@x.com');
+  assert.equal(row.status, 'inactive', 'which is what takes them off every other screen too');
+
+  // ...and so is everything attached to it. THIS is the whole point.
   assert.equal(await count(`SELECT count(*)::int AS n FROM pms.kra_sheets WHERE tenant_id=$1 AND employee_id=$2`,
-    [tenantId, reportId]), 0);
-  assert.equal(await count(`SELECT count(*)::int AS n FROM pms.kras WHERE tenant_id=$1`, [tenantId]), 0,
-    'the KRAs under that sheet went with it');
+    [tenantId, reportId]), 1, 'the KRA sheet is kept');
+  assert.equal(await count(`SELECT count(*)::int AS n FROM pms.kras WHERE tenant_id=$1`, [tenantId]), 1,
+    'and the KRAs under it');
+
+  // They are off the list the page reads...
+  const list = await call(hrTok, '/employees');
+  assert.ok(!list.body.employees.some((e) => e.id === reportId), 'gone from the default list');
+  assert.equal(list.body.archived_count, 1, 'and counted, so HR can find them');
+  // ...but reachable when asked for.
+  const withArchived = await call(hrTok, '/employees?include_archived=true');
+  assert.ok(withArchived.body.employees.some((e) => e.id === reportId));
+});
+
+test('somebody off the list cannot sign in', { skip }, async () => {
+  const n = await count(
+    `SELECT count(*)::int AS n FROM core.local_credentials WHERE tenant_id=$1 AND LOWER(email)='eab-report@x.com'`,
+    [tenantId]);
+  assert.equal(n, 0, 'the login went with them, even though the record stayed');
+});
+
+test('they can be put back, or brought back by a fresh upload', { skip }, async () => {
+  const back = await call(hrTok, `/employees/${reportId}/restore`, 'POST');
+  assert.equal(back.status, 200);
+  const row = (await db.query(`SELECT archived_at, status FROM core.employees WHERE id=$1`, [reportId])).rows[0];
+  assert.equal(row.archived_at, null);
+  assert.equal(row.status, 'active');
+  // Restoring somebody who is already on the list says so.
+  assert.equal((await call(hrTok, `/employees/${reportId}/restore`, 'POST')).status, 404);
+});
+
+test('an upload naming an archived person brings them back on the SAME row', { skip }, async () => {
+  // The line that makes "clear the list, upload a fresh sheet" work:
+  // the re-uploaded person is the same row, so their history is simply
+  // there again. Without the un-archive in the importer's upsert they
+  // would stay invisible and the feature would look broken.
+  await call(hrTok, '/employees', 'DELETE', { ids: [reportId] });
+  assert.ok((await db.query(`SELECT archived_at FROM core.employees WHERE id=$1`, [reportId])).rows[0].archived_at);
+
+  const csv = 'Full Name,Office Email,Department\nEAB Report,eab-report@x.com,Development\n';
+  const fd = new FormData();
+  fd.append('file', new Blob([csv]), 'fresh.csv');
+  const up = await fetch(`${base}/employees/import?commit=1`, {
+    method: 'POST', headers: { Authorization: `Bearer ${hrTok}` }, body: fd,
+  });
+  assert.equal(up.status, 200, JSON.stringify(await up.json().catch(() => ({}))));
+
+  const row = (await db.query(
+    `SELECT id, archived_at, status, department FROM core.employees WHERE tenant_id=$1 AND email='eab-report@x.com'`,
+    [tenantId])).rows[0];
+  assert.equal(row.id, reportId, 'the SAME row — a new one would not carry the history');
+  assert.equal(row.archived_at, null, 'back on the list');
+  assert.equal(row.department, 'Development');
+  assert.equal(await count(`SELECT count(*)::int AS n FROM pms.kra_sheets WHERE tenant_id=$1 AND employee_id=$2`,
+    [tenantId, reportId]), 1, 'with their KRA sheet still attached');
+});
+
+test('?purge=1 is the permanent one, and it really does erase', { skip }, async () => {
+  // Kept because a GDPR erasure and a mistyped test row both need it.
+  // It is a different verb behind a different word in the UI.
+  const before = await count(`SELECT count(*)::int AS n FROM pms.kra_sheets WHERE tenant_id=$1 AND employee_id=$2`,
+    [tenantId, reportId]);
+  assert.equal(before, 1);
+  const r = await call(hrTok, `/employees/${reportId}?purge=1`, 'DELETE');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.purged, true);
+  assert.equal(await count(`SELECT count(*)::int AS n FROM core.employees WHERE id=$1`, [reportId]), 0);
+  assert.equal(await count(`SELECT count(*)::int AS n FROM pms.kra_sheets WHERE tenant_id=$1 AND employee_id=$2`,
+    [tenantId, reportId]), 0, 'and the cascade ran, so nothing is orphaned');
+  assert.equal(await count(`SELECT count(*)::int AS n FROM pms.kras WHERE tenant_id=$1`, [tenantId]), 0);
 });
 
 test('an empty selection, or no mode at all, is refused rather than guessed at', { skip }, async () => {
@@ -181,37 +258,46 @@ test('an empty selection, or no mode at all, is refused rather than guessed at',
 });
 
 test('clearing the whole list needs the count to match what the page showed', { skip }, async () => {
-  const have = await count(`SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1`, [tenantId]);
+  const have = await count(
+    `SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1 AND archived_at IS NULL`, [tenantId]);
   const wrong = await call(hrTok, '/employees', 'DELETE', { confirm_count: have + 7 });
   assert.equal(wrong.status, 409);
   assert.match(wrong.body.error, /changed since the page loaded/);
-  assert.equal(await count(`SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1`, [tenantId]), have,
-    'a refused clear deletes nothing');
+  assert.equal(await count(
+    `SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1 AND archived_at IS NULL`, [tenantId]), have,
+  'a refused clear changes nothing');
 });
 
-test('the signed-in admin is never deleted, so they can upload the new sheet', { skip }, async () => {
-  const have = await count(`SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1`, [tenantId]);
+test('the signed-in admin stays on the list, so they can upload the new sheet', { skip }, async () => {
+  const have = await count(
+    `SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1 AND archived_at IS NULL`, [tenantId]);
   const r = await call(hrTok, '/employees', 'DELETE', { confirm_count: have });
   assert.equal(r.status, 200);
   assert.equal(r.body.cleared, true);
-  assert.equal(r.body.kept_self, true, 'and it says so, rather than silently deleting one fewer');
+  assert.equal(r.body.kept_self, true, 'and it says so, rather than silently doing one fewer');
   assert.equal(r.body.removed, have - 1);
-  const left = (await db.query(`SELECT email FROM core.employees WHERE tenant_id=$1`, [tenantId])).rows;
-  assert.deepEqual(left.map((x) => x.email), ['eab-hr@x.com'], 'the admin survives, everybody else is gone');
-  // Selecting ONLY yourself is refused outright — it would be a no-op
-  // reported as a success.
+  const left = (await db.query(
+    `SELECT email FROM core.employees WHERE tenant_id=$1 AND archived_at IS NULL`, [tenantId])).rows;
+  assert.deepEqual(left.map((x) => x.email), ['eab-hr@x.com'], 'the admin is the only one left ON the list');
+  // ...and nobody was actually destroyed.
+  const still = await count(`SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1`, [tenantId]);
+  assert.equal(still, have, 'every row is still on file, just off the list');
+
   const self = await call(hrTok, '/employees', 'DELETE', { ids: [hrId] });
   assert.equal(self.status, 422);
   assert.match(self.body.error, /your own/);
 });
 
-test('clearing is audited with who did it and how many went', { skip }, async () => {
+test('clearing is audited, and says it archived rather than deleted', { skip }, async () => {
   const rows = (await db.query(
     `SELECT action, details FROM core.audit_log
-      WHERE tenant_id=$1 AND action IN ('EMPLOYEE_LIST_CLEARED','EMPLOYEES_DELETED') ORDER BY id`, [tenantId])).rows;
-  assert.equal(rows.length, 2, 'the selection delete and the clear');
-  assert.equal(rows[0].action, 'EMPLOYEES_DELETED');
-  assert.equal(rows[1].action, 'EMPLOYEE_LIST_CLEARED');
-  assert.equal(rows[1].details.cleared, true);
-  assert.ok(rows[1].details.count > 0);
+      WHERE tenant_id=$1 AND action IN ('EMPLOYEE_LIST_CLEARED','EMPLOYEES_ARCHIVED','EMPLOYEE_PURGED','EMPLOYEE_RESTORED')
+      ORDER BY id`, [tenantId])).rows;
+  const actions = rows.map((r) => r.action);
+  assert.ok(actions.includes('EMPLOYEES_ARCHIVED'));
+  assert.ok(actions.includes('EMPLOYEE_RESTORED'));
+  assert.ok(actions.includes('EMPLOYEE_PURGED'), 'the permanent one is recorded as its own action');
+  const cleared = rows.find((r) => r.action === 'EMPLOYEE_LIST_CLEARED');
+  assert.ok(cleared);
+  assert.equal(cleared.details.archived, true, 'the record says what actually happened');
 });
