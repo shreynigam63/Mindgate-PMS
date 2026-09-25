@@ -40,6 +40,11 @@ const PAGES = [
   // The employee's own form is theirs, so it is public like the rest of
   // the Self tab; the team list and the framework are gated below.
   ['my_competencies',    '/my/competencies',          null],
+  // Timesheets, added 25 Sep: "only upload option and their own report
+  // should be available for employees". Public for the same reason the
+  // competency form is — it is the employee's own upload and their own
+  // report, and the handler scopes every row to the caller.
+  ['my_timesheet',       '/my/timesheet',             null],
 
   // The Manager tab's own landing page, added 24 Sep — what /home is for
   // a person's own work, for the people who report to them. First in the
@@ -54,6 +59,7 @@ const PAGES = [
   ['team_growth',        '/team/growth',              'pms_team_eval'],
   ['team_eval',          '/team/eval',                'pms_team_eval'],
   ['team_competencies',  '/team/competencies',        'pms_team_eval'],
+  ['team_timesheet',     '/team/timesheet',           'pms_team_eval'],
   // Split out of /my/midyear on 23 Sep: the manager's list of everybody's
   // mid-year reviews was rendering underneath the employee's OWN mid-year
   // card, so "My Performance" showed 1,398 other people. The employee's
@@ -74,6 +80,10 @@ const PAGES = [
   // a company-level competency average is not an employee's business.
   ['competency_framework', '/admin/competencies',     'pms_admin'],
   ['competency_dashboard', '/admin/competency-dashboard', 'pms_admin'],
+  // Every employee's timesheet compliance. HR-only for the same reason
+  // the competency dashboard is: a company-wide list of who has not
+  // filled their timesheet is not a colleague's business.
+  ['hr_timesheet',       '/admin/timesheet',          'pms_admin'],
   ['completion_report',  '/admin/completion-report',  'pms_admin'],
   ['calibration',        '/admin/calibration',        'pms_admin'],
   ['nine_box',           '/admin/nine-box',           'pms_hod'],

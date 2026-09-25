@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -21,6 +21,9 @@ import MyCompetenciesPage from './pages/MyCompetenciesPage';
 import TeamCompetenciesPage from './pages/TeamCompetenciesPage';
 import CompetencyFrameworkPage from './pages/CompetencyFrameworkPage';
 import CompetencyDashboardPage from './pages/CompetencyDashboardPage';
+import MyTimesheetPage from './pages/MyTimesheetPage';
+import TeamTimesheetPage from './pages/TeamTimesheetPage';
+import HrTimesheetPage from './pages/HrTimesheetPage';
 import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamOverviewPage from './pages/TeamOverviewPage';
 import PIPPage from './pages/PIPPage';
@@ -91,6 +94,12 @@ const NAV = [
     // Next to Improvement Plan because both are about capability rather
     // than this year's targets.
     { to: '/my/competencies', label: 'My Competencies', icon: Gauge },
+    // Timesheet, added 25 Sep. Deliberately just an upload and the
+    // employee's own report: "only upload option and their own report
+    // should be available for employees". The same label appears in
+    // the Manager and HR groups over a different scope, which is what
+    // was asked for — one tab named Timesheet on all three.
+    { to: '/my/timesheet', label: 'Timesheet', icon: CalendarClock },
     { to: '/pip', label: 'Improvement Plan', icon: ShieldAlert },
     // ENGAGEMENT WAS SPLIT on 23 Sep, asked for directly: "Engagement tab
     // should be under HR tab and not my performance". The half that is
@@ -120,6 +129,7 @@ const NAV = [
     { to: '/team/midyear', label: 'Team Mid-Year', icon: Clock },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/team/competencies', label: 'Team Competencies', icon: Gauge },
+    { to: '/team/timesheet', label: 'Timesheet', icon: CalendarClock },
   ]},
   // DELIVERY HEAD IS ITS OWN TAB from 24 Sep, asked for directly:
   // "There should be separate HOD tab next to 3 roles of employee,
@@ -152,6 +162,7 @@ const NAV = [
     { to: '/admin/kra-library', label: 'KRA Library', icon: Library },
     { to: '/admin/competencies', label: 'Competency Framework', icon: Layers },
     { to: '/admin/competency-dashboard', label: 'Competency Dashboard', icon: Gauge },
+    { to: '/admin/timesheet', label: 'Timesheet', icon: CalendarClock },
     { to: '/admin/completion-report', label: 'PMS Completion Report', icon: FileText },
     { to: '/admin/calibration', label: 'Calibration', icon: Sparkles },
     { to: '/admin/nine-box', label: '9-Box Grid', icon: Grid3x3 },
@@ -301,6 +312,9 @@ function Main({ user }) {
               <Route path="/team/competencies" element={<TeamCompetenciesPage />} />
               <Route path="/admin/competencies" element={<CompetencyFrameworkPage />} />
               <Route path="/admin/competency-dashboard" element={<CompetencyDashboardPage />} />
+              <Route path="/my/timesheet" element={<MyTimesheetPage />} />
+              <Route path="/team/timesheet" element={<TeamTimesheetPage />} />
+              <Route path="/admin/timesheet" element={<HrTimesheetPage />} />
               <Route path="/team/dashboard" element={<TeamDashboardPage />} />
               <Route path="/team/overview" element={<TeamOverviewPage />} />
               <Route path="/team/kra-sheets" element={<TeamKraSheetsPage />} />

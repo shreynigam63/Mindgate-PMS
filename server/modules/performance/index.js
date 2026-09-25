@@ -3041,6 +3041,11 @@ router.get('/team/home', async (req, res) => {
 // file — see competencies.js — because this one is long enough. Mounted
 // here so it inherits authenticate + the parity gate above.
 router.use('/competencies', require('./competencies').router);
+// Timesheets, added 25 Sep. Mounted here rather than as a new top-level
+// module because compliance with the timesheet is performance data about
+// a person, read next to their KRAs — and a new mount would mean a new
+// permission surface for no gain.
+router.use('/timesheet', require('./timesheet').router);
 
 // ---------------- All Approvals (HR / super admin) --------------------------
 // Everything the cycle is waiting on, in one queue. See approvals.js for

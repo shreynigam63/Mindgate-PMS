@@ -163,9 +163,16 @@ test('every page is registered, and every route is registered once', { skip }, a
     // employee's OWN competency form — the same argument as /my/kras.
     // The framework and the company dashboard are pms_admin, and the
     // team list is pms_team_eval; only this one is theirs.
+    // /my/timesheet joined on 25 Sep, and the argument is the same one
+    // again: "only upload option and their own report should be
+    // available for employees". The page is an employee uploading their
+    // OWN logs and reading their OWN compliance — /pms/timesheet/me
+    // returns nobody else's, and the upload skips rows that are not
+    // theirs. The team roster (/team/timesheet) and the company-wide
+    // dashboard (/admin/timesheet) are gated; only this one is theirs.
     '/engagement', '/home', '/my/annual-review', '/my/competencies', '/my/growth', '/my/history',
-    '/my/kras', '/my/midyear', '/my/rating', '/my/self-appraisal', '/people', '/pip',
-    '/team/connects',
+    '/my/kras', '/my/midyear', '/my/rating', '/my/self-appraisal', '/my/timesheet', '/people',
+    '/pip', '/team/connects',
   ]);
   // /admin/engagement is NOT in that list, and that is the point of the
   // 23 Sep split: taking a survey stays public, running one does not.
@@ -196,8 +203,11 @@ test('a manager adds the team pages and nothing else', { skip }, async () => {
   // page, asked for directly, carrying pms_team_eval like the rest.
   // /team/competencies joined on 24 Sep with the competency mapping
   // system, carrying pms_team_eval like the rest of the tab.
+  // /team/timesheet joined on 25 Sep: "dashboard ... should be available
+  // under 'manager' tab for reportees reporting to particular Manager."
+  // pms_team_eval like the rest of the tab.
   assert.deepEqual(added, ['/team/competencies', '/team/dashboard', '/team/eval', '/team/growth',
-                           '/team/kra-sheets', '/team/midyear', '/team/overview']);
+                           '/team/kra-sheets', '/team/midyear', '/team/overview', '/team/timesheet']);
   assert.ok(!mgr.includes('/admin/increments'), 'a manager never sees compensation');
 });
 
