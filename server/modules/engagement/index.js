@@ -18,6 +18,9 @@ const { notify } = require('../../core/notifications');
 const { normaliseRule, audienceSql, describeRule, needsJoiningDate,
         triggerRule, MILESTONES } = require('./audience');
 const { seedTemplates } = require('../../migrations/056-survey-templates');
+const { seedFlagRules } = require('../../migrations/058-engagement-insights');
+const { flagsFor, groupFlags, worst, scoreByDimension, overallScore, trend,
+        newHireIndex, outcomeByBand } = require('./insights');
 
 // Every state change HR makes to a survey is written down. A release
 // names how many people it wrote to and who they were, because "who
@@ -170,10 +173,10 @@ router.post('/surveys', async (req, res) => {
         return res.status(422).json({ error: `"${String(q.prompt).slice(0, 60)}" is a ${q.qtype} question, so it needs at least two options.` });
       }
       await db.query(
-        `INSERT INTO engagement.questions (tenant_id, survey_id, qtype, prompt, options, required, sort_order)
-         VALUES ($1,$2,COALESCE($3,'scale'),$4,$5,COALESCE($6,true),$7)`,
+        `INSERT INTO engagement.questions (tenant_id, survey_id, qtype, prompt, options, required, sort_order, dimension)
+         VALUES ($1,$2,COALESCE($3,'scale'),$4,$5,COALESCE($6,true),$7,$8)`,
         [T(req), s.id, q.qtype || null, q.prompt, opts.length ? JSON.stringify(opts) : null,
-         q.required, (i += 10)]);
+         q.required, (i += 10), q.dimension || null]);
     }
     audit(req, 'SURVEY_CREATED', { survey: s.id, title: s.title, trigger: s.trigger_type,
       audience: describeRule(rule), questions: qs.length });
@@ -216,23 +219,224 @@ router.put('/surveys/:id', async (req, res) => {
   } catch (e) { logger.error('survey update', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
+// ---- insights (phase 5) ----------------------------------------------
+//
+// Sections 20 to 25: the red-flag engine, the 30/60/90 trend, the
+// onboarding dashboard, and survey data read against PMS data. No
+// Listening Agent — excluded by Mindgate, and nothing here drafts or
+// infers: every number is arithmetic over stored answers, and every
+// flag names the rule and the threshold that produced it.
+//
+// Only ATTRIBUTED responses can appear. An anonymous survey's answers
+// are not joined to anybody anywhere in this file, which is why the
+// query below filters on employee_id IS NOT NULL rather than relying
+// on the caller to remember.
+async function scoredAnswers(tenantId, { employeeId, since, templateKeys } = {}) {
+  const params = [tenantId];
+  let where = `r.tenant_id=$1 AND r.employee_id IS NOT NULL`;
+  if (employeeId) { params.push(employeeId); where += ` AND r.employee_id=$${params.length}`; }
+  if (templateKeys && templateKeys.length) {
+    params.push(templateKeys); where += ` AND s.template_key = ANY($${params.length})`;
+  }
+  if (since) { params.push(since); where += ` AND r.submitted_at >= $${params.length}`; }
+  return (await db.query(
+    `SELECT r.id AS response_id, r.employee_id, r.subject_employee_id, r.submitted_at,
+            s.id AS survey_id, s.title, s.template_key, s.audience_kind, s.trigger_day,
+            q.prompt, q.qtype, q.dimension, a.value_num, a.value_text, a.value_list
+       FROM engagement.responses r
+       JOIN engagement.surveys s ON s.id=r.survey_id
+       JOIN engagement.answers a ON a.response_id=r.id
+       JOIN engagement.questions q ON q.id=a.question_id
+      WHERE ${where}
+      ORDER BY r.submitted_at`, params)).rows;
+}
+
+const loadRules = async (tenantId) => {
+  const have = (await db.query(
+    `SELECT * FROM engagement.flag_rules WHERE tenant_id=$1 AND active ORDER BY sort_order`, [tenantId])).rows;
+  if (have.length) return have;
+  await seedFlagRules(db, tenantId);
+  return (await db.query(
+    `SELECT * FROM engagement.flag_rules WHERE tenant_id=$1 AND active ORDER BY sort_order`, [tenantId])).rows;
+};
+
+// On a manager assessment the answers are ABOUT the subject, so that
+// is who the flag belongs to. On a self survey it is the respondent.
+const subjectOf = (row) => row.subject_employee_id || row.employee_id;
+
+// Where a reading sits on the 30/60/90 line. A lifecycle survey
+// carries its day on the row; one run by hand from the same template
+// does not, and would otherwise have no milestone and land out of
+// order on the trend. The template key is the fallback, because "Day
+// 30 Connect sent manually" is still the day-30 reading.
+const MILESTONE_BY_TEMPLATE = { day_1: 0, week_1: 5, day_30: 30, day_60: 60, day_90: 90,
+  manager_30: 30, manager_60: 60, manager_90: 90 };
+const milestoneOf = (row) => (row.trigger_day != null ? row.trigger_day
+  : (MILESTONE_BY_TEMPLATE[row.template_key] ?? null));
+
+// The red/amber list. One row per person, worst severity first, each
+// carrying the rule, the action and who owns it.
+router.get('/insights/flags', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
+    const rules = await loadRules(T(req));
+    const rows = await scoredAnswers(T(req));
+    const byPerson = new Map();
+    for (const r of rows) {
+      const id = subjectOf(r);
+      if (!byPerson.has(id)) byPerson.set(id, []);
+      byPerson.get(id).push(r);
+    }
+    const people = [];
+    for (const [employee_id, answers] of byPerson) {
+      const flags = flagsFor(answers, rules);
+      if (!flags.length) continue;
+      people.push({ employee_id, severity: worst(flags), flags: groupFlags(flags),
+        raised: flags.length,
+        last_answered: answers[answers.length - 1].submitted_at });
+    }
+    if (!people.length) return res.json({ people: [], counts: { red: 0, amber: 0 }, rules: rules.length });
+    const names = new Map((await db.query(
+      `SELECT id, name, department, designation, manager_id FROM core.employees WHERE tenant_id=$1 AND id = ANY($2::uuid[])`,
+      [T(req), people.map((p) => p.employee_id)])).rows.map((e) => [e.id, e]));
+    const mgrs = new Map((await db.query(
+      `SELECT id, name FROM core.employees WHERE tenant_id=$1`, [T(req)])).rows.map((e) => [e.id, e.name]));
+    const out = people.map((p) => {
+      const e = names.get(p.employee_id) || {};
+      return { ...p, name: e.name, department: e.department, designation: e.designation,
+        manager: e.manager_id ? mgrs.get(e.manager_id) : null };
+    }).sort((a, b) => (a.severity === b.severity ? b.flags.length - a.flags.length
+      : a.severity === 'red' ? -1 : 1));
+    res.json({ people: out, rules: rules.length,
+      counts: { red: out.filter((p) => p.severity === 'red').length,
+        amber: out.filter((p) => p.severity === 'amber').length } });
+  } catch (e) { logger.error('insights flags', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// One person's 30/60/90 trend, plus everything flagged about them.
+router.get('/insights/employee/:employeeId', async (req, res) => {
+  try {
+    const isAdmin = await hasPermission(req.user, 'engagement_admin');
+    const target = req.params.employeeId;
+    // A manager may read their own reportee; nobody else may read
+    // anybody. This is an assessment record, not a directory entry.
+    if (!isAdmin) {
+      const mine = (await db.query(
+        `SELECT 1 FROM core.employees WHERE tenant_id=$1 AND id=$2 AND manager_id=$3`,
+        [T(req), target, req.user.id])).rows[0];
+      if (!mine) return res.status(403).json({ error: 'You can only read your own reportees' });
+    }
+    const emp = (await db.query(
+      `SELECT id, name, department, designation, date_of_joining, status, last_appraisal_rating
+         FROM core.employees WHERE tenant_id=$1 AND id=$2`, [T(req), target])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'No such employee' });
+
+    const rows = (await scoredAnswers(T(req))).filter((r) => subjectOf(r) === target);
+    const byResponse = new Map();
+    for (const r of rows) {
+      if (!byResponse.has(r.response_id)) {
+        byResponse.set(r.response_id, { milestone: milestoneOf(r), label: r.title,
+          taken_at: r.submitted_at, template_key: r.template_key,
+          audience_kind: r.audience_kind, answers: [] });
+      }
+      byResponse.get(r.response_id).answers.push(r);
+    }
+    const readings = [...byResponse.values()];
+    const rules = await loadRules(T(req));
+    const flags = flagsFor(rows, rules);
+    res.json({ employee: emp, ...trend(readings), flags: groupFlags(flags),
+      raised: flags.length, severity: worst(flags),
+      readings: readings.map((r) => ({ label: r.label, milestone: r.milestone,
+        taken_at: r.taken_at, audience_kind: r.audience_kind,
+        overall: overallScore(scoreByDimension(r.answers)) })) });
+  } catch (e) { logger.error('insights employee', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// The new-hire dashboard: the index per dimension and the blockers
+// people actually named, across everyone who answered a lifecycle
+// survey.
+const LIFECYCLE = ['day_1', 'week_1', 'day_30', 'day_60', 'day_90'];
+router.get('/insights/new-hire', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
+    const rows = await scoredAnswers(T(req), { templateKeys: LIFECYCLE });
+    const byPerson = new Map();
+    for (const r of rows) {
+      const id = subjectOf(r);
+      if (!byPerson.has(id)) byPerson.set(id, { employee_id: id, answers: [] });
+      byPerson.get(id).answers.push(r);
+    }
+    const index = newHireIndex([...byPerson.values()]);
+    // Participation across the lifecycle surveys, so an index built on
+    // four answers cannot be mistaken for the voice of the intake.
+    const part = (await db.query(
+      `SELECT s.template_key, count(*)::int AS invited, count(i.completed_at)::int AS completed
+         FROM engagement.invitations i JOIN engagement.surveys s ON s.id=i.survey_id
+        WHERE i.tenant_id=$1 AND s.template_key = ANY($2) GROUP BY 1`, [T(req), LIFECYCLE])).rows;
+    res.json({ ...index, participation: part });
+  } catch (e) { logger.error('insights new-hire', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// Section 25: what later happened to the people who scored low.
+router.get('/insights/outcomes', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
+    const dimension = req.query.dimension || null;
+    const rows = await scoredAnswers(T(req), { templateKeys: LIFECYCLE });
+    const byPerson = new Map();
+    for (const r of rows) {
+      const id = subjectOf(r);
+      if (!byPerson.has(id)) byPerson.set(id, []);
+      byPerson.get(id).push(r);
+    }
+    if (!byPerson.size) return res.json({ dimension, bands: [], unscored: 0, has_ratings: false, people: 0 });
+    const emps = new Map((await db.query(
+      `SELECT id, name, status, archived_at, last_appraisal_rating FROM core.employees
+        WHERE tenant_id=$1 AND id = ANY($2::uuid[])`,
+      [T(req), [...byPerson.keys()]])).rows.map((e) => [e.id, e]));
+    const scored = [...byPerson.entries()].map(([id, answers]) => {
+      const byDim = scoreByDimension(answers);
+      const e = emps.get(id) || {};
+      return { employee_id: id, name: e.name,
+        score: dimension ? (byDim[dimension] ?? null) : overallScore(byDim),
+        rating: e.last_appraisal_rating || null,
+        left: e.status === 'inactive' || !!e.archived_at };
+    });
+    res.json({ dimension: dimension || 'overall', people: scored.length, ...outcomeByBand(scored) });
+  } catch (e) { logger.error('insights outcomes', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// The thresholds themselves, so HR can see what the colours mean.
+router.get('/insights/rules', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
+    res.json({ rules: await loadRules(T(req)) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ---- the survey library (phase 3) ------------------------------------
 //
 // Asked for on 25 Sep: HR picks "Day 30 Connect" rather than typing
 // twenty questions. The rows are per-tenant and editable, so this
 // reads them rather than the file they were seeded from.
+// A tenant created after the migration ran has no library until
+// something seeds it. Called by BOTH the picker and the use endpoint:
+// it used to be only the picker, so using a template by key — which is
+// what an API caller or a deep link does — failed on a fresh tenant
+// with "No such template". Idempotent.
+async function ensureTemplates(tenantId) {
+  const have = +(await db.query(
+    `SELECT count(*)::int AS n FROM engagement.survey_templates WHERE tenant_id=$1`, [tenantId])).rows[0].n;
+  if (have) return 0;
+  const n = await seedTemplates(db, tenantId);
+  logger.info('survey templates seeded on demand', { tenant: tenantId, inserted: n });
+  return n;
+}
+
 router.get('/templates', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
-    // A tenant created before this table existed, or one made since by
-    // a path that does not seed, would otherwise open an empty picker
-    // and conclude the feature is broken. Seeding is idempotent.
-    const have = +(await db.query(
-      `SELECT count(*)::int AS n FROM engagement.survey_templates WHERE tenant_id=$1`, [T(req)])).rows[0].n;
-    if (!have) {
-      const n = await seedTemplates(db, T(req));
-      logger.info('survey templates seeded on demand', { tenant: T(req), inserted: n });
-    }
+    await ensureTemplates(T(req));
     const rows = (await db.query(
       `SELECT id, key, category, title, description, trigger_type, trigger_day, trigger_window_days,
               anonymity_default, audience_rule, audience_kind, questions, blocked_reason, sort_order,
@@ -259,6 +463,7 @@ router.get('/templates', async (req, res) => {
 router.post('/templates/:key/use', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
+    await ensureTemplates(T(req));
     const tpl = (await db.query(
       `SELECT * FROM engagement.survey_templates WHERE tenant_id=$1 AND key=$2 AND active`,
       [T(req), req.params.key])).rows[0];
@@ -293,10 +498,10 @@ router.post('/templates/:key/use', async (req, res) => {
     for (const q of qs) {
       const opts = cleanOptions(q.options);
       await db.query(
-        `INSERT INTO engagement.questions (tenant_id, survey_id, qtype, prompt, options, required, sort_order)
-         VALUES ($1,$2,COALESCE($3,'scale'),$4,$5,COALESCE($6,true),$7)`,
+        `INSERT INTO engagement.questions (tenant_id, survey_id, qtype, prompt, options, required, sort_order, dimension)
+         VALUES ($1,$2,COALESCE($3,'scale'),$4,$5,COALESCE($6,true),$7,$8)`,
         [T(req), s.id, q.qtype || null, q.prompt, opts.length ? JSON.stringify(opts) : null,
-         q.required, (i += 10)]);
+         q.required, (i += 10), q.dimension || null]);
     }
     audit(req, 'SURVEY_CREATED_FROM_TEMPLATE', { survey: s.id, template: tpl.key,
       title: s.title, questions: qs.length, audience: describeRule(rule), trigger: s.trigger_type });

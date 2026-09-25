@@ -102,6 +102,11 @@ const PAGES = [
   // carries the permission the write endpoints already required.
   ['engagement',         '/engagement',               null],
   ['engagement_admin',   '/admin/engagement',         'engagement_admin'],
+  // Added 25 Sep with phase 5. Listed HERE as well as in migration 058
+  // because this array is what index.js re-seeds a tenant from at
+  // boot — a page only in the migration is missing for every tenant
+  // created afterwards.
+  ['engagement_insights', '/admin/engagement-insights', 'engagement_admin'],
   ['people_hub',         '/people',                   null],
 ];
 

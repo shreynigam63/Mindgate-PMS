@@ -11,6 +11,7 @@ import CycleAdminPage from './pages/CycleAdminPage';
 import CalibrationPage from './pages/CalibrationPage';
 import MyRatingPage from './pages/MyRatingPage';
 import MySurveysPage, { EngagementAdminPage } from './pages/EngagementPage';
+import EngagementInsightsPage from './pages/EngagementInsightsPage';
 import PeopleHubPage from './pages/PeopleHubPage';
 import DirectoryPage from './pages/DirectoryPage';
 import DepartmentHeadsPage from './pages/DepartmentHeadsPage';
@@ -178,6 +179,7 @@ const NAV = [
     { to: '/admin/watchlist', label: 'Super 50', icon: Award },
     // The admin half of Engagement — see the Self group for the split.
     { to: '/admin/engagement', label: 'Engagement Surveys', icon: HeartHandshake },
+    { to: '/admin/engagement-insights', label: 'New Hire Insights', icon: HeartHandshake },
     // Tenant-wide configuration. Last in the group because it is set once
     // and then left alone, unlike everything above it.
     { to: '/admin/settings', label: 'Settings', icon: SlidersHorizontal },
@@ -335,6 +337,7 @@ function Main({ user }) {
               <Route path="/admin/nine-box" element={<NineBoxPage />} />
               <Route path="/engagement" element={<MySurveysPage />} />
               <Route path="/admin/engagement" element={<EngagementAdminPage />} />
+              <Route path="/admin/engagement-insights" element={<EngagementInsightsPage />} />
               <Route path="/people" element={<PeopleHubPage user={user} />} />
               <Route path="*" element={<Navigate to="/home" replace />} />
             </Routes>
