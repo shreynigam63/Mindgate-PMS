@@ -55,9 +55,9 @@ test('the next rung is the senior form of the same job where one exists', () => 
     { department: 'Tester', designation: 'Software Tester', headcount: 20 },
     { department: 'Tester', designation: 'Senior Software Tester', headcount: 68 },
   ]);
-  assert.equal(find(rows, '', 'Software Developer').to_role, 'Senior Software Developer');
-  assert.equal(find(rows, '', 'Software Tester').to_role, 'Senior Software Tester');
-  assert.equal(find(rows, '', 'Senior Software Developer').to_role, 'Lead');
+  assert.equal(find(rows, 'Development', 'Software Developer').to_role, 'Senior Software Developer');
+  assert.equal(find(rows, 'Tester', 'Software Tester').to_role, 'Senior Software Tester');
+  assert.equal(find(rows, 'Development', 'Senior Software Developer').to_role, 'Lead');
 });
 
 test('with no senior form, the rung is the generic ladder — not the biggest team', () => {
@@ -72,11 +72,12 @@ test('with no senior form, the rung is the generic ladder — not the biggest te
     { department: 'HR', designation: 'Senior Executive', headcount: 7 },
     { department: 'HR', designation: 'Executive', headcount: 3 },
   ]);
-  const r = find(rows, '', 'Customer Service Representative');
+  const r = find(rows, 'Functional', 'Customer Service Representative');
   assert.equal(r.to_role, 'Senior Executive', 'the generic rung, not the commonest role');
   assert.match(r.notes, /PLEASE CHECK/, 'and it says so, because it is a guess');
-  // A role that DOES have a senior form is not flagged.
-  assert.ok(!/PLEASE CHECK/.test(find(rows, '', 'Executive').notes));
+  // A role that DOES have a senior form, inside its own department, is
+  // not flagged.
+  assert.ok(!/PLEASE CHECK/.test(find(rows, 'HR', 'Executive').notes));
 });
 
 test('a related title only wins from the very next rung up', () => {
@@ -88,7 +89,8 @@ test('a related title only wins from the very next rung up', () => {
     { department: 'Development', designation: 'Deputy Vice President', headcount: 2 },
     { department: 'Development', designation: 'Assistant Vice President', headcount: 5 },
   ]);
-  assert.equal(find(rows, '', 'Assistant Vice President').to_role, 'Deputy Vice President');
+  // Development employs both, so its own ladder places them.
+  assert.equal(find(rows, 'Development', 'Assistant Vice President').to_role, 'Deputy Vice President');
   // But from the very next rung it does win: a Trainee Tester becomes a
   // Software Tester, not the generic Executive.
   const t = suggestTransitions([
@@ -96,10 +98,16 @@ test('a related title only wins from the very next rung up', () => {
     { department: 'Tester', designation: 'Software Tester', headcount: 20 },
     { department: 'HR', designation: 'Executive', headcount: 3 },
   ]);
-  assert.equal(find(t, '', 'Trainee Tester').to_role, 'Software Tester');
+  assert.equal(find(t, 'Tester', 'Trainee Tester').to_role, 'Software Tester');
 });
 
-test('a department rung only appears where it differs from the company-wide one', () => {
+test('EVERY row names a department — none is left blank', () => {
+  // Reported by Mindgate on 25 Sep against the real download: "career
+  // matrix sheet has blank department files". The draft used to lead
+  // with a company-wide block (blank Department, which the importer
+  // reads as "every department") and only added department rows where a
+  // department differed. Correct for the importer, and it produced a
+  // sheet whose Department column was mostly empty.
   const rows = suggestTransitions([
     { department: 'Development', designation: 'Software Developer', headcount: 180 },
     { department: 'Development', designation: 'Senior Software Developer', headcount: 227 },
@@ -108,20 +116,41 @@ test('a department rung only appears where it differs from the company-wide one'
     { department: 'Sales', designation: 'Senior Software Developer', headcount: 1 },
     { department: 'Sales', designation: 'Manager', headcount: 2 },
   ]);
-  // Both departments imply the same first move, so it is stated once,
-  // company-wide. A sheet that repeated it per department would be
-  // unreadable at 34 departments.
-  assert.equal(rows.filter((r) => r.from_role === 'Software Developer').length, 1);
-  assert.equal(find(rows, '', 'Software Developer').department, '');
-  // Sales has no Lead, so its senior developers go straight to Manager
-  // while everyone else goes to Lead. THAT is a department-only rung.
-  assert.equal(find(rows, '', 'Senior Software Developer').to_role, 'Lead');
-  const sales = find(rows, 'Sales', 'Senior Software Developer');
-  assert.ok(sales, 'a department whose ladder differs gets its own row');
-  assert.equal(sales.to_role, 'Manager');
+  assert.ok(rows.length, 'there is something to check');
+  for (const r of rows) {
+    assert.ok(r.department && r.department.trim(), `a blank department came back on ${r.from_role} -> ${r.to_role}`);
+  }
+  // The same move is now stated once PER DEPARTMENT that implies it,
+  // rather than once company-wide — which is what "derived from
+  // department and designation as per employees list" asks for.
+  const devs = rows.filter((r) => r.from_role === 'Software Developer');
+  assert.deepEqual(devs.map((r) => r.department).sort(), ['Development', 'Sales']);
+  // ...and each department's ladder is still its own: Sales has no
+  // Lead, so its senior developers go to Manager while Development's go
+  // to Lead.
+  assert.equal(find(rows, 'Development', 'Senior Software Developer').to_role, 'Lead');
+  assert.equal(find(rows, 'Sales', 'Senior Software Developer').to_role, 'Manager');
 });
 
-test('nothing is proposed that nobody holds, and a one-role department gets nothing', () => {
+test('a department that employs one title still appears, flagged', () => {
+  // The other half of the same change. Dropping single-title
+  // departments kept the sheet tidy and meant Customer Support, PMO and
+  // RMG were simply absent from a draft that claims to be built from
+  // the employee list.
+  const rows = suggestTransitions([
+    { department: 'Development', designation: 'Executive', headcount: 3 },
+    { department: 'Development', designation: 'Senior Executive', headcount: 7 },
+    { department: 'Customer Support', designation: 'Executive', headcount: 1 },
+  ]);
+  const cs = find(rows, 'Customer Support', 'Executive');
+  assert.ok(cs, 'the one-title department is in the draft');
+  assert.equal(cs.to_role, 'Senior Executive');
+  assert.match(cs.notes, /nobody in Customer Support holds Senior Executive today/,
+    'and the note says the rung came from the company-wide ladder');
+  assert.match(cs.notes, /PLEASE CHECK/);
+});
+
+test('nothing is proposed that nobody holds anywhere in the company', () => {
   const master = [
     { department: 'Development', designation: 'Software Developer', headcount: 180 },
     { department: 'Development', designation: 'Senior Software Developer', headcount: 227 },
@@ -133,8 +162,11 @@ test('nothing is proposed that nobody holds, and a one-role department gets noth
     assert.ok(held.has(r.to_role), `${r.to_role} is a real designation on the master`);
     assert.ok(held.has(r.from_role), `${r.from_role} is a real designation on the master`);
   }
-  assert.equal(rows.filter((r) => r.department === 'TBS').length, 0,
-    'a department with one title has no ladder to suggest');
+  // TBS employs one title and nothing above it exists anywhere on the
+  // master either, so there is genuinely no rung to propose — the row
+  // is absent because the DATA has no answer, not because the
+  // department was skipped for being small.
+  assert.equal(rows.filter((r) => r.department === 'TBS').length, 0);
 });
 
 test('every suggested row is a complete, uploadable row', () => {
@@ -207,12 +239,29 @@ test('the suggested workbook is accepted by the importer that has to read it', a
   const back = report.rows.find((r) => r.from_role === 'Software Developer');
   assert.ok(back, 'the developer rung came back');
   assert.equal(back.to_role, 'Senior Software Developer');
-  // A blank Department cell comes back as NULL, not "" — that is the
-  // importer's own "applies to every department" marker, and the
-  // column in people.career_transitions is nullable for exactly this.
-  assert.equal(back.department, null, 'a blank department means every department');
+  // The department travels with the row. It used to be blank here,
+  // because the suggested sheet led with a company-wide block; since
+  // 25 Sep every suggested row names one, so that is what has to
+  // survive the trip.
+  assert.equal(back.department, 'Development');
   assert.ok(back.required_competencies.includes('Problem solving'),
     `competencies split back out of the cell — got ${JSON.stringify(back.required_competencies)}`);
+});
+
+test('a HAND-BLANKED department still means "every department" to the importer', async () => {
+  // The suggested sheet no longer produces one, but the importer's
+  // blank-department feature is untouched and HR can still blank a cell
+  // to make a rung company-wide. Tested directly now that the suggested
+  // sheet cannot cover it — otherwise the 25 Sep change would have
+  // silently deleted this coverage.
+  const buf = await transitionsWorkbook(SUGGESTED_BANNER, [
+    ['', 'Executive', null, 'Senior Executive', null, 1, 12, 18, 'Problem solving', 'company-wide by hand'],
+  ]);
+  const parsed = (await parseExcelSheets(buf)).flatMap((sh) => sh.rows || []);
+  const report = validateCareerTransitionRows(parsed);
+  assert.equal(report.errors.length, 0, JSON.stringify(report.errors));
+  assert.equal(report.rows.length, 1);
+  assert.equal(report.rows[0].department, null, 'a blank cell arrives as NULL, not ""');
 });
 
 test('the sheet carries the importer\'s own headers, in its own order', async () => {

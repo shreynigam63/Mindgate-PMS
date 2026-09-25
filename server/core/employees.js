@@ -1047,6 +1047,220 @@ router.put('/:employeeId', async (req, res) => {
 //      knowing before deleting anyone who managed people.
 // core.local_credentials/user_roles/user_permissions are keyed by email,
 // not id, and are cleaned up by email for the same reason.
+// EVERYTHING that has to go before an employee row can. Lifted out of
+// the single-delete route on 25 Sep so the bulk delete added the same
+// day runs the identical sequence — two copies of a 30-statement
+// cascade is two things to keep in step, and the one that gets
+// forgotten leaves orphan rows behind a foreign key.
+//
+// Takes a client, not the pool: every caller wraps this in its own
+// transaction, because a half-deleted employee is worse than none.
+async function purgeEmployee(client, tenantId, emp) {
+  const id = emp.id;
+    // ---- Nullable manager-style references: preserve the OTHER employee's record ----
+    await client.query(`UPDATE core.employees SET manager_id=NULL WHERE tenant_id=$1 AND manager_id=$2`, [tenantId, id]);
+    await client.query(`UPDATE pms.kra_sheets SET manager_id=NULL WHERE tenant_id=$1 AND manager_id=$2`, [tenantId, id]);
+    await client.query(`UPDATE pms.development_plans SET manager_id=NULL WHERE tenant_id=$1 AND manager_id=$2`, [tenantId, id]);
+    await client.query(`UPDATE people.award_nominations SET nominated_by=NULL WHERE tenant_id=$1 AND nominated_by=$2`, [tenantId, id]);
+
+    // ---- NOT NULL manager-style references: the specific review row can't survive without one ----
+    await client.query(`DELETE FROM pms.manager_evaluations WHERE tenant_id=$1 AND manager_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.hod_evaluations WHERE tenant_id=$1 AND hod_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.connects WHERE tenant_id=$1 AND manager_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.connect_reminders_log WHERE tenant_id=$1 AND manager_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM people.award_nominations WHERE tenant_id=$1 AND nominated_by=$2`, [tenantId, id]);
+
+    // ---- This employee's OWN records — cascades handle child rows
+    // automatically (pms.kras via sheet_id, pms.evidence via appraisal_id,
+    // pms.development_goals via plan_id, pms.pip_weekly_entries via pip_id,
+    // people.appraisal_query_messages via query_id — all ON DELETE CASCADE). ----
+    await client.query(`DELETE FROM core.department_heads WHERE employee_id=$1`, [id]);
+    await client.query(`DELETE FROM core.notifications WHERE employee_id=$1`, [id]);
+    await client.query(`DELETE FROM core.employee_consents WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.kra_sheets WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.self_appraisals WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.manager_evaluations WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.hod_evaluations WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.top_talent WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.connects WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.employee_performance_history WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.closure_letters WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.parameter_scores WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.development_plans WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.connect_reminders_log WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM pms.pulse_checks WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM engagement.invitations WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM engagement.responses WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM people.event_rsvps WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM people.csr_participations WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM people.appraisal_queries WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id]);
+    await client.query(`DELETE FROM people.award_nominations WHERE tenant_id=$1 AND nominee_id=$2`, [tenantId, id]);
+
+    // ---- Login/permission rows, keyed by email not id ----
+    await client.query(`DELETE FROM core.local_credentials WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [tenantId, emp.email]);
+    await client.query(`DELETE FROM core.user_roles WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [tenantId, emp.email]);
+    await client.query(`DELETE FROM core.user_permissions WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [tenantId, emp.email]);
+  await client.query(`DELETE FROM core.employees WHERE id=$1 AND tenant_id=$2`, [id, tenantId]);
+}
+
+// Add ONE person by hand. Asked for on 25 Sep: "add option for adding
+// single employee as currently we don't have any integration to HRMS
+// software." Until there is one, the only way in was a spreadsheet, and
+// a spreadsheet for one new joiner is a spreadsheet nobody makes — so
+// they get added late, or not at all.
+//
+// The same validation as the importer, deliberately: one employee added
+// here and one added by a one-row upload must end up as the same
+// record, or the two paths drift and the second one starts producing
+// people the first would have refused.
+router.post('/', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    const T = req.user.tenant_id;
+    const b = req.body || {};
+    const str = (k) => String(b[k] == null ? '' : b[k]).trim();
+    const name = str('name');
+    const email = str('email').toLowerCase();
+    if (!name) return res.status(422).json({ error: 'Full name is required' });
+    if (!email && !str('emp_code')) {
+      return res.status(422).json({ error: 'An office email is required — or an employee code, which a placeholder address is built from' });
+    }
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(422).json({ error: `"${email}" is not an email address` });
+    }
+    // flexDate's last resort is `new Date(s)`, which is generous enough
+    // to read "the 4th" as April 2001 — fine for an HRMS export, where
+    // a loose parser rescues a column somebody formatted oddly, and not
+    // fine for a single typed field where a silent 2001 join date later
+    // reads as somebody with 25 years' service on the eligibility rule.
+    // So this accepts the shapes the template documents and nothing
+    // else. The importer is deliberately left as it is.
+    const rawDoj = str('date_of_joining');
+    const DATE_SHAPES = [
+      /^\d{4}-\d{1,2}-\d{1,2}$/,                       // 2026-07-01
+      /^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}$/,            // 01/07/2026
+      /^\d{1,2}[-\s]+[A-Za-z]{3,}[-\s,]+\d{2,4}$/,      // 01-Jul-2026
+    ];
+    const doj = rawDoj ? flexDate(rawDoj) : null;
+    if (rawDoj && (!doj || !DATE_SHAPES.some((re) => re.test(rawDoj)))) {
+      return res.status(422).json({ error: `"${rawDoj}" is not a date — use dd/mm/yyyy, yyyy-mm-dd or dd-Mon-yyyy` });
+    }
+    const address = email || `${str('emp_code').toLowerCase().replace(/[^a-z0-9]+/g, '')}@${NO_EMAIL_DOMAIN}`;
+
+    const clash = (await db.query(
+      `SELECT name FROM core.employees WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [T, address])).rows[0];
+    if (clash) return res.status(409).json({ error: `${clash.name} already has that email address` });
+    if (str('emp_code')) {
+      const dupCode = (await db.query(
+        `SELECT name FROM core.employees WHERE tenant_id=$1 AND LOWER(emp_code)=LOWER($2)`, [T, str('emp_code')])).rows[0];
+      if (dupCode) return res.status(409).json({ error: `${dupCode.name} already has employee code ${str('emp_code')}` });
+    }
+
+    // The manager is named by email, and an address that is not on file
+    // is REFUSED rather than quietly ignored — an employee silently
+    // created with no reporting line is how somebody ends up invisible
+    // to every manager screen in the product.
+    let managerId = null;
+    if (str('manager_email')) {
+      const m = (await db.query(
+        `SELECT id FROM core.employees WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [T, str('manager_email')])).rows[0];
+      if (!m) return res.status(422).json({ error: `No employee on file with the email ${str('manager_email')} — add the manager first, or leave it blank` });
+      managerId = m.id;
+    }
+
+    const row = (await db.query(
+      `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, manager_id, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'active')
+       RETURNING id, emp_code, name, email, department, designation, role_band, date_of_joining, status`,
+      [T, str('emp_code') || null, name, address, str('department') || null, str('designation') || null,
+        str('role_band') || null, doj, managerId])).rows[0];
+
+    await db.query(
+      `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+       VALUES ($1,$2,'EMPLOYEE_ADDED','employees',$3,$4)`,
+      [T, req.user.email, row.id, JSON.stringify({ name: row.name, email: row.email, added_by_hand: true })]);
+    logger.info('employee added by hand', { tenantId: T, email: row.email, by: req.user.email });
+    res.status(201).json({ ok: true, employee: row, placeholder_email: isPlaceholderEmail(row.email) });
+  } catch (e) { logger.error('employee add', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// Delete a SELECTION, or the whole list. Asked for on 25 Sep: "there
+// should be delete list option for deleting employee so we can upload
+// new fresh sheet again".
+//
+// The importer is an upsert keyed on email, so re-uploading a corrected
+// sheet already fixes everyone in it — what it cannot do is remove
+// somebody the new sheet leaves out. That is the gap this fills.
+//
+// IT IS NOT A SOFT DELETE, and the confirmation says so. Every one of
+// these people takes their KRA sheets, appraisals, evaluations,
+// connects and ratings with them; purgeEmployee is the same cascade the
+// single delete runs, one person at a time inside one transaction.
+// Anyone who only wants to stop somebody appearing should set their
+// Status to inactive on the sheet instead — which is why the response
+// reports what would be destroyed BEFORE it is.
+router.delete('/', async (req, res) => {
+  const client = await db.getClient();
+  try {
+    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    const T = req.user.tenant_id;
+    const body = req.body || {};
+    const have = (await db.query(
+      `SELECT count(*)::int AS n FROM core.employees WHERE tenant_id=$1`, [T])).rows[0].n;
+
+    let targets;
+    let cleared = false;
+    if (Array.isArray(body.ids)) {
+      if (!body.ids.length) return res.status(422).json({ error: 'No employees were selected.' });
+      targets = (await db.query(
+        `SELECT id, name, email FROM core.employees WHERE tenant_id=$1 AND id = ANY($2::uuid[])`,
+        [T, body.ids])).rows;
+    } else if (body.confirm_count != null) {
+      if (!have) return res.status(409).json({ error: 'There are no employees to delete' });
+      if (Number(body.confirm_count) !== have) {
+        return res.status(409).json({
+          error: `The list holds ${have} employees, not ${body.confirm_count} — it changed since the page loaded. Reload and try again.`,
+          have,
+        });
+      }
+      targets = (await db.query(`SELECT id, name, email FROM core.employees WHERE tenant_id=$1`, [T])).rows;
+      cleared = true;
+    } else {
+      return res.status(422).json({
+        error: 'Send ids to delete a selection, or confirm_count to delete the whole list', have,
+      });
+    }
+
+    // The signed-in admin is never in the blast radius. Without this,
+    // "delete the whole list" signs the person out of the system they
+    // are administering and leaves nobody able to load the new sheet.
+    const skippedSelf = targets.some((t) => t.id === req.user.id);
+    targets = targets.filter((t) => t.id !== req.user.id);
+    if (!targets.length) {
+      return res.status(422).json({ error: 'The only account selected is your own, which cannot be deleted while you are signed in as it.' });
+    }
+
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details)
+       VALUES ($1,$2,$3,'employees',$4)`,
+      [T, req.user.email, cleared ? 'EMPLOYEE_LIST_CLEARED' : 'EMPLOYEES_DELETED',
+        JSON.stringify({ count: targets.length, cleared, kept_self: skippedSelf,
+          emails: targets.slice(0, 50).map((t) => t.email) })]);
+    for (const emp of targets) await purgeEmployee(client, T, emp);
+    await client.query('COMMIT');
+
+    logger.warn('employees deleted in bulk', { tenantId: T, removed: targets.length, cleared, by: req.user.email });
+    res.json({ ok: true, removed: targets.length, cleared, kept_self: skippedSelf });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    logger.error('employee bulk delete', { error: e.message });
+    res.status(500).json({ error: e.message });
+  } finally { client.release(); }
+});
+
 router.delete('/:employeeId', async (req, res) => {
   const client = await db.getClient();
   try {
@@ -1058,62 +1272,13 @@ router.delete('/:employeeId', async (req, res) => {
     if (emp.id === req.user.id) return res.status(422).json({ error: 'You cannot delete your own account while signed in as them.' });
 
     await client.query('BEGIN');
-
-    // ---- Nullable manager-style references: preserve the OTHER employee's record ----
-    await client.query(`UPDATE core.employees SET manager_id=NULL WHERE tenant_id=$1 AND manager_id=$2`, [T, id]);
-    await client.query(`UPDATE pms.kra_sheets SET manager_id=NULL WHERE tenant_id=$1 AND manager_id=$2`, [T, id]);
-    await client.query(`UPDATE pms.development_plans SET manager_id=NULL WHERE tenant_id=$1 AND manager_id=$2`, [T, id]);
-    await client.query(`UPDATE people.award_nominations SET nominated_by=NULL WHERE tenant_id=$1 AND nominated_by=$2`, [T, id]);
-
-    // ---- NOT NULL manager-style references: the specific review row can't survive without one ----
-    await client.query(`DELETE FROM pms.manager_evaluations WHERE tenant_id=$1 AND manager_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.hod_evaluations WHERE tenant_id=$1 AND hod_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.connects WHERE tenant_id=$1 AND manager_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.connect_reminders_log WHERE tenant_id=$1 AND manager_id=$2`, [T, id]);
-    await client.query(`DELETE FROM people.award_nominations WHERE tenant_id=$1 AND nominated_by=$2`, [T, id]);
-
-    // ---- This employee's OWN records — cascades handle child rows
-    // automatically (pms.kras via sheet_id, pms.evidence via appraisal_id,
-    // pms.development_goals via plan_id, pms.pip_weekly_entries via pip_id,
-    // people.appraisal_query_messages via query_id — all ON DELETE CASCADE). ----
-    await client.query(`DELETE FROM core.department_heads WHERE employee_id=$1`, [id]);
-    await client.query(`DELETE FROM core.notifications WHERE employee_id=$1`, [id]);
-    await client.query(`DELETE FROM core.employee_consents WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.kra_sheets WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.self_appraisals WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.manager_evaluations WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.hod_evaluations WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.top_talent WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.connects WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.employee_performance_history WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.closure_letters WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.parameter_scores WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.development_plans WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.connect_reminders_log WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM pms.pulse_checks WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM engagement.invitations WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM engagement.responses WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM people.event_rsvps WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM people.csr_participations WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM people.appraisal_queries WHERE tenant_id=$1 AND employee_id=$2`, [T, id]);
-    await client.query(`DELETE FROM people.award_nominations WHERE tenant_id=$1 AND nominee_id=$2`, [T, id]);
-
-    // ---- Login/permission rows, keyed by email not id ----
-    await client.query(`DELETE FROM core.local_credentials WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [T, emp.email]);
-    await client.query(`DELETE FROM core.user_roles WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [T, emp.email]);
-    await client.query(`DELETE FROM core.user_permissions WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [T, emp.email]);
-
-    // Audit entry BEFORE the employee row itself disappears, so the
-    // name/email are still known at the moment this is recorded.
+    // Audit BEFORE the row disappears, so the name and email are still
+    // known at the moment this is recorded.
     await client.query(
       `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
        VALUES ($1,$2,'EMPLOYEE_DELETED','employees',$3,$4)`,
       [T, req.user.email, id, JSON.stringify({ name: emp.name, email: emp.email })]);
-
-    await client.query(`DELETE FROM core.employees WHERE id=$1 AND tenant_id=$2`, [id, T]);
-
+    await purgeEmployee(client, T, emp);
     await client.query('COMMIT');
     logger.info('employee deleted', { tenantId: T, deletedEmail: emp.email, by: req.user.email });
     res.json({ ok: true });

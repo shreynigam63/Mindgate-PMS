@@ -24,6 +24,16 @@ const {
 } = require('./career-transitions-import');
 const { suggestTransitions } = require('./career-ladder');
 
+// One line per configuration change that a person would later ask
+// about. The upload route has written to this table since 17 Sep; the
+// bulk deletes added on 25 Sep write the same shape, so "who cleared
+// the matrix" stays a query rather than an archaeology exercise.
+const audit = (req, action, details) => db.query(
+  `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details)
+   VALUES ($1,$2,$3,'career_transitions',$4)`,
+  [req.user.tenant_id, req.user.email, action, details ? JSON.stringify(details) : null])
+  .catch((e) => logger.warn('people audit failed', { action, error: e.message }));
+
 // 2 MB: a career matrix is tens of rows, not tens of thousands. A limit
 // this low turns "somebody uploaded the wrong file" into a clear error
 // rather than a slow request.
@@ -393,7 +403,18 @@ router.get('/career/transitions', async (req, res) => {
     const r = await db.query(
       `SELECT * FROM people.career_transitions WHERE ${where}
         ORDER BY coalesce(btrim(department),'') , from_role, from_level NULLS FIRST, to_role`, params);
-    res.json({ transitions: r.rows });
+    // What a suggested draft WOULD be built from, right now. Asked for
+    // on 25 Sep: "if we update employee list in PMS, then suggested
+    // matrix should also be updated as per new designations." It always
+    // was — the draft is generated per download and nothing is stored —
+    // but the page said so nowhere, so there was no way to tell. These
+    // three numbers are that guarantee, on screen.
+    const master = (await db.query(
+      `SELECT count(*)::int AS employees,
+              count(DISTINCT btrim(department)) FILTER (WHERE coalesce(btrim(department),'') <> '')::int AS departments,
+              count(DISTINCT btrim(designation)) FILTER (WHERE coalesce(btrim(designation),'') <> '')::int AS designations
+         FROM core.employees WHERE tenant_id=$1 AND status='active'`, [T(req)])).rows[0];
+    res.json({ transitions: r.rows, master });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -442,6 +463,63 @@ router.delete('/career/transitions/:id', async (req, res) => {
     const r = await db.query(`DELETE FROM people.career_transitions WHERE id=$1 AND tenant_id=$2 RETURNING id`, [req.params.id, T(req)]);
     if (!r.rows.length) return res.status(404).json({ error: 'transition not found' });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Bulk delete. Asked for on 25 Sep: "there is not delete option for
+// deleting multiple files" — the page had a bin on every row and no way
+// to clear a draft you did not want, which after publishing a
+// 200-row suggested matrix is 200 clicks.
+//
+// TWO MODES, one route, and the difference is which gate you pass:
+//
+//   { ids: [...] }         delete exactly these. The page sends what is
+//                          ticked, so it cannot delete more than the
+//                          user can see.
+//   { confirm_count: N }   delete EVERYTHING, and N must equal what is
+//                          there. The page fills it from what it just
+//                          displayed, so if somebody else published a
+//                          transition in the meantime the numbers
+//                          disagree and this refuses — the same gate
+//                          the KRA library's Clear uses, for the same
+//                          reason.
+//
+// Nothing else reads people.career_transitions by id, so there is no
+// cascade to worry about: a transition is reference data, and deleting
+// one cannot orphan an employee's record.
+router.delete('/career/transitions', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    const body = req.body || {};
+    const have = (await db.query(
+      `SELECT count(*)::int AS n FROM people.career_transitions WHERE tenant_id=$1`, [T(req)])).rows[0].n;
+
+    if (Array.isArray(body.ids)) {
+      if (!body.ids.length) return res.status(422).json({ error: 'No transitions were selected.' });
+      const r = await db.query(
+        `DELETE FROM people.career_transitions WHERE tenant_id=$1 AND id = ANY($2::uuid[]) RETURNING id`,
+        [T(req), body.ids]);
+      audit(req, 'CAREER_TRANSITIONS_DELETED', { removed: r.rowCount, asked: body.ids.length });
+      logger.warn('career transitions deleted', { tenant: T(req), removed: r.rowCount, by: req.user.email });
+      return res.json({ ok: true, removed: r.rowCount, asked: body.ids.length });
+    }
+
+    if (body.confirm_count == null) {
+      return res.status(422).json({
+        error: 'Send ids to delete a selection, or confirm_count to clear the whole matrix', have,
+      });
+    }
+    if (!have) return res.status(409).json({ error: 'The matrix is already empty' });
+    if (Number(body.confirm_count) !== have) {
+      return res.status(409).json({
+        error: `The matrix holds ${have} transitions, not ${body.confirm_count} — it changed since the page loaded. Reload and try again.`,
+        have,
+      });
+    }
+    const r = await db.query(`DELETE FROM people.career_transitions WHERE tenant_id=$1`, [T(req)]);
+    audit(req, 'CAREER_MATRIX_EMPTIED', { removed: r.rowCount });
+    logger.warn('career matrix emptied', { tenant: T(req), removed: r.rowCount, by: req.user.email });
+    res.json({ ok: true, removed: r.rowCount, cleared: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -512,7 +590,7 @@ router.get('/career/transitions/template.xlsx', async (req, res) => {
 // master changes. It writes NOTHING — the output is the importer's own
 // sheet, which HR edits and uploads through Validate/Publish like any
 // other. See career-ladder.js for the three rules it uses.
-const SUGGESTED_BANNER = 'SUGGESTED career pathing matrix, built from the designations on your employee master right now. It is a DRAFT: read it, edit it, delete what does not apply, then upload it through Validate and Publish on this same page. Rows whose Notes start with "PLEASE CHECK" are the ones to look at first — the master has no senior form of that role, so the suggestion is the plain company ladder rather than a real next step. Blank Department = the rung applies to every department; a department-specific row wins over a blank one for the same move. Nothing is saved until you publish.';
+const SUGGESTED_BANNER = 'SUGGESTED career pathing matrix, built from the departments and designations on your employee master RIGHT NOW — re-download it after you change the employee list and it changes with it. Every row names a department, and each department is laddered from the titles that department actually employs. It is a DRAFT: read it, edit it, delete what does not apply, then upload it through Validate and Publish on this same page. Rows whose Notes start with "PLEASE CHECK" are the ones to look at first — either the master has no senior form of that role, or nobody in that department holds the next rung yet. The importer still treats a BLANK Department as "every department", so you can blank a cell by hand to make one rung company-wide. Nothing is saved until you publish.';
 
 async function suggestedTransitionRows(tenantId) {
   const grid = (await db.query(

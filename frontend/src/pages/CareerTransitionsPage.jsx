@@ -30,10 +30,18 @@ export default function CareerTransitionsPage() {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     if (showInactive) params.set('show_inactive', 'true');
-    api(`/people/career/transitions?${params}`).then(r => setRows(r.transitions)).catch(e => setErr(e.message));
+    api(`/people/career/transitions?${params}`)
+      .then((r) => { setRows(r.transitions); setMaster(r.master || null); setPicked(new Set()); })
+      .catch(e => setErr(e.message));
   };
   useEffect(() => { load(); }, [q, showInactive]);
   const [roleBands, setRoleBands] = useState([]);
+  // What a suggested draft would be built from right now, so the page
+  // can say out loud that it follows the employee list.
+  const [master, setMaster] = useState(null);
+  // Ticked rows, by id. Cleared on every load: a selection that
+  // survives a reload can delete a row the user is no longer looking at.
+  const [picked, setPicked] = useState(new Set());
   useEffect(() => { api('/people/designations').then(r => setDesignations(r.designations)).catch(() => setDesignations([])); }, []);
   useEffect(() => { api('/people/role-bands').then(r => setRoleBands(r.role_bands)).catch(() => setRoleBands([])); }, []);
   const [departments, setDepartments] = useState([]);
@@ -59,6 +67,34 @@ export default function CareerTransitionsPage() {
     try { await api(`/people/career/transitions/${t.id}`, { method: 'DELETE' }); load(); }
     catch (e) { setErr(e.message); }
   };
+  // Bulk delete. Asked for on 25 Sep: "there is not delete option for
+  // deleting multiple files." Two shapes, one route — the ticked rows,
+  // or the whole matrix behind a typed confirmation.
+  const removePicked = async () => {
+    const ids = [...picked];
+    if (!ids.length) return;
+    if (!confirm(`Remove ${ids.length} transition${ids.length === 1 ? '' : 's'}?\n\nThis cannot be undone. Employees' own career paths are not affected — this is the matrix of allowed moves.`)) return;
+    setErr(null);
+    try { await api('/people/career/transitions', { method: 'DELETE', body: JSON.stringify({ ids }) }); load(); }
+    catch (e) { setErr(e.message); }
+  };
+  const clearAll = async () => {
+    const n = (rows || []).length;
+    // A typed word, not an OK button. Clearing the matrix is the one
+    // action on this page that cannot be undone by re-uploading the
+    // same sheet, because HR's edits to it are not stored anywhere else.
+    const typed = prompt(`This removes ALL ${n} transitions from the matrix.\n\nType DELETE to confirm.`);
+    if (typed !== 'DELETE') return;
+    setErr(null);
+    try { await api('/people/career/transitions', { method: 'DELETE', body: JSON.stringify({ confirm_count: n }) }); load(); }
+    catch (e) { setErr(e.message); }
+  };
+  const toggle = (id) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
   const toggleActive = async (t) => {
     try { await api(`/people/career/transitions/${t.id}`, { method: 'PUT', body: JSON.stringify({ active: !t.active }) }); load(); }
     catch (e) { setErr(e.message); }
@@ -85,11 +121,25 @@ export default function CareerTransitionsPage() {
       <div className="card p-4 space-y-2 border-l-4 border-leaf-500">
         <p className="lbl">Start from a suggested matrix</p>
         <p className="text-[11.5px] text-navy-500">
-          Built from the designations on your employee master right now — the senior form of each
-          role where one exists, the standard rung otherwise. It is a <b>draft to edit</b>, not a
-          decision: nothing is saved until you upload it below and publish. Rows whose Notes start
-          with <b>PLEASE CHECK</b> are the ones to look at first.
+          Built from the <b>departments and designations on your employee master right now</b> — every row
+          names a department, and each department is laddered from the titles that department actually
+          employs. The senior form of each role where one exists, the standard rung otherwise. It is a{' '}
+          <b>draft to edit</b>, not a decision: nothing is saved until you upload it below and publish.
+          Rows whose Notes start with <b>PLEASE CHECK</b> are the ones to look at first.
         </p>
+        {/* The live-derivation guarantee, on screen. Asked for on 25 Sep:
+            "if we update employee list in PMS, then suggested matrix
+            should also be updated as per new designations." It always
+            was — the sheet is generated per download and never stored —
+            but nothing on the page said so. */}
+        {master && (
+          <p className="text-[11.5px] text-navy-600 bg-leaf-50 rounded-md px-2.5 py-1.5">
+            Right now that is <b>{master.employees}</b> active employee{master.employees === 1 ? '' : 's'},{' '}
+            <b>{master.departments}</b> department{master.departments === 1 ? '' : 's'} and{' '}
+            <b>{master.designations}</b> designation{master.designations === 1 ? '' : 's'}. Change the employee
+            list and download again — the draft is rebuilt on every click, never stored.
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <a className="btn-pri" href={`${API_BASE}/people/career/transitions/suggested.xlsx?token=${localStorage.getItem('apms_token')}`}>
             <Download size={13} className="inline mr-1" />Download suggested matrix (.xlsx)
@@ -142,15 +192,43 @@ export default function CareerTransitionsPage() {
         </label>
       </div>
 
+      {/* The bulk controls. "Select all" ticks only what is SHOWN, so a
+          search narrows what can be deleted in one go — deleting rows
+          the user is not looking at is the accident this avoids. */}
+      {rows && rows.length > 0 && (
+        <div className="card p-3 flex flex-wrap items-center gap-2 text-xs">
+          <label className="flex items-center gap-1.5 text-navy-600">
+            <input type="checkbox"
+              checked={picked.size > 0 && rows.every((t) => picked.has(t.id))}
+              ref={(el) => { if (el) el.indeterminate = picked.size > 0 && !rows.every((t) => picked.has(t.id)); }}
+              onChange={(e) => setPicked(e.target.checked ? new Set(rows.map((t) => t.id)) : new Set())} />
+            Select all {q.trim() ? 'shown' : ''} ({rows.length})
+          </label>
+          <span className="text-navy-400">{picked.size} selected</span>
+          <button className="btn-sec !py-1 !text-rose-600 !border-rose-200" disabled={!picked.size} onClick={removePicked}>
+            <Trash2 size={12} className="inline mr-1" />Delete selected
+          </button>
+          <span className="flex-1" />
+          <button className="btn-sec !py-1 !text-rose-600 !border-rose-200" onClick={clearAll}>
+            Clear the whole matrix ({rows.length})
+          </button>
+        </div>
+      )}
+
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {!rows && <p className="text-sm text-navy-400">Loading…</p>}
       {rows && !rows.length && <div className="card p-8 text-center text-sm text-navy-400">No transitions defined yet. Upload a file above, or click "Add transition" to seed the matrix one at a time.</div>}
       {rows && rows.length > 0 && (
         <div className="space-y-2">
           {rows.map(t => (
-            <div key={t.id} className={`card p-4 ${!t.active ? 'opacity-50' : ''}`}>
+            <div key={t.id} className={`card p-4 ${!t.active ? 'opacity-50' : ''} ${picked.has(t.id) ? 'ring-1 ring-rose-300' : ''}`}>
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
+                {/* items-start, or the flex row stretches and the box
+                    lands halfway down a tall card. */}
+                <div className="flex items-start gap-3">
+                  <input type="checkbox" className="mt-1 shrink-0" checked={picked.has(t.id)}
+                    onChange={() => toggle(t.id)} aria-label={`Select ${t.from_role} to ${t.to_role}`} />
+                  <div>
                   <p className="text-sm font-semibold flex flex-wrap items-center gap-2">
                     {/* Which ladder this rung is on. A company-wide rung
                         is labelled too — "no chip" would be ambiguous
@@ -176,6 +254,7 @@ export default function CareerTransitionsPage() {
                     </div>
                   )}
                   {t.notes && <p className="text-xs text-navy-500 mt-1.5 italic">{t.notes}</p>}
+                  </div>
                 </div>
                 <div className="flex gap-1.5 shrink-0">
                   <button className="btn-sec !py-1" onClick={() => { setEditing(t); setShowForm(true); }}>Edit</button>

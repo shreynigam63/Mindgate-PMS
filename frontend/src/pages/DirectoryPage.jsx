@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, Fragment } from 'react';
-import { Settings2, Trash2, Search, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react';
+import { Settings2, Trash2, Search, ArrowUpDown, ArrowUp, ArrowDown, X, UserPlus } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 
@@ -117,13 +117,20 @@ export default function DirectoryPage() {
   const [err, setErr] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [query, setQuery] = useState('');
+  // Ticked rows, by id, and whether the add form is open. The selection
+  // is cleared on every load: one that survives a reload can delete a
+  // row the user is no longer looking at.
+  const [picked, setPicked] = useState(new Set());
+  const [adding, setAdding] = useState(false);
   // Default sort matches the server's own ORDER BY name — the same
   // ordering people currently see, just now explicitly a starting state
   // that they can change rather than an unchangeable server-side choice.
   const [sortKey, setSortKey] = useState('name');
   const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
 
-  const load = () => api('/employees').then(r => setRows(r.employees)).catch(e => setErr(e.message));
+  const load = () => api('/employees')
+    .then((r) => { setRows(r.employees); setPicked(new Set()); })
+    .catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
 
   // Filter + sort in ONE memoised pass so unrelated re-renders (opening
@@ -190,6 +197,48 @@ export default function DirectoryPage() {
   // DELETE handler), so the safety net for "did I really mean to do
   // this" lives at the human-decision moment, not by adding
   // finger-gymnastics on top.
+  // Bulk delete and hand-add, both asked for on 25 Sep: "there should be
+  // delete list option for deleting employee so we can upload new fresh
+  // sheet again and add option for adding single employee as currently
+  // we don't have any integration to HRMS software."
+  //
+  // "Select all" ticks what is SHOWN, so a search narrows the blast
+  // radius — with 1,494 rows, deleting people who are not on screen is
+  // the accident worth designing against.
+  const removePicked = async () => {
+    const ids = [...picked];
+    if (!ids.length) return;
+    const msg = `Permanently delete ${ids.length} employee${ids.length === 1 ? '' : 's'}?\n\n`
+      + 'Their KRA sheets, appraisals, evaluations, connects and ratings go with them. '
+      + 'If you only want them to stop appearing, set their Status to inactive instead.\n\nThis cannot be undone.';
+    if (!window.confirm(msg)) return;
+    setErr(null);
+    try {
+      const r = await api('/employees', { method: 'DELETE', body: JSON.stringify({ ids }) });
+      if (r.kept_self) setErr('Your own account was left in place — you cannot delete the account you are signed in as.');
+      load();
+    } catch (e) { setErr(e.message); }
+  };
+  const clearList = async () => {
+    const n = rows.length;
+    const typed = window.prompt(
+      `This deletes ALL ${n} employees and everything attached to them — KRA sheets, appraisals, `
+      + 'evaluations, connects and ratings. Your own account is kept so you can upload the new sheet.\n\n'
+      + 'Type DELETE ALL to confirm.');
+    if (typed !== 'DELETE ALL') return;
+    setErr(null);
+    try {
+      const r = await api('/employees', { method: 'DELETE', body: JSON.stringify({ confirm_count: n }) });
+      if (r.kept_self) setErr(`${r.removed} employees deleted. Your own account was kept so you can sign in and upload the new sheet.`);
+      load();
+    } catch (e) { setErr(e.message); }
+  };
+  const togglePick = (id) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
   const quickDelete = async (r) => {
     setErr(null);
     const msg = `Permanently delete ${r.name} (${r.email})?\n\nIf they managed anyone, those reports' own KRAs and appraisals are preserved — only the specific manager-side review records that literally require a manager reference will be removed with them. This cannot be undone.`;
@@ -205,9 +254,16 @@ export default function DirectoryPage() {
             box above — the search is applied in the browser over several
             fields, and a second copy of that rule server-side would
             drift. The label says "all" so nobody expects otherwise. */}
+        {/* Adding one person by hand. There is no HRMS integration, so
+            without this a single new joiner needs a spreadsheet — which
+            means they get added late, or not at all. */}
+        <button className="btn-pri" onClick={() => setAdding(true)}>
+          <UserPlus size={13} className="inline mr-1" />Add employee
+        </button>
         <a className="btn-sec" href={dl('/employees/export.xlsx')}>Export all (.xlsx)</a>
         <a className="btn-sec" href={dl('/employees/export.csv')}>.csv</a>
       </PageHead>
+      {adding && <AddEmployee onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} />}
       <div className="card p-4 space-y-2">
         <p className="lbl">Bulk import — CSV or Excel (.xlsx), synced from your HRMS, dry run first</p>
         <div className="flex flex-wrap items-center gap-2">
@@ -323,12 +379,32 @@ export default function DirectoryPage() {
               <span className="text-navy-400"> of {rows.length} {rows.length === 1 ? 'employee' : 'employees'}</span>
               {query && <span className="text-brand-500 font-semibold"> · filtered</span>}
             </p>
+            <span className="flex-1" />
+            {picked.size > 0 && (
+              <button className="btn !py-1 text-white bg-rose-600 hover:bg-rose-700" onClick={removePicked}>
+                <Trash2 size={12} className="inline mr-1" />Delete {picked.size} selected
+              </button>
+            )}
+            {/* Clearing the list is what makes "upload a fresh sheet"
+                possible: the importer is an upsert, so it can correct
+                everybody in the file but can never remove somebody the
+                file leaves out. */}
+            <button className="btn-sec !py-1 !text-rose-600 !border-rose-200" onClick={clearList}
+              title="Delete every employee so a fresh sheet can be uploaded">
+              Delete the whole list ({rows.length})
+            </button>
           </div>
 
           <div className="card overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-navy-50 text-[10px] uppercase tracking-wide text-navy-500">
                 <tr>
+                  <th className="px-3 py-2 w-8">
+                    <input type="checkbox" aria-label="Select every employee shown"
+                      checked={picked.size > 0 && displayedRows.every((r) => picked.has(r.id))}
+                      ref={(el) => { if (el) el.indeterminate = picked.size > 0 && !displayedRows.every((r) => picked.has(r.id)); }}
+                      onChange={(e) => setPicked(e.target.checked ? new Set(displayedRows.map((r) => r.id)) : new Set())} />
+                  </th>
                   <th className="text-left px-3 py-2 cursor-pointer hover:bg-navy-100 select-none" onClick={() => clickHeader('emp_code')}>Employee ID<SortIcon column="emp_code" /></th>
                   <th className="text-left px-3 py-2 cursor-pointer hover:bg-navy-100 select-none" onClick={() => clickHeader('name')}>Name<SortIcon column="name" /></th>
                   <th className="text-left px-3 py-2 cursor-pointer hover:bg-navy-100 select-none" onClick={() => clickHeader('email')}>Email<SortIcon column="email" /></th>
@@ -342,12 +418,16 @@ export default function DirectoryPage() {
               </thead>
               <tbody className="divide-y divide-navy-100">
                 {displayedRows.length === 0 ? (
-                  <tr><td colSpan={9} className="px-3 py-8 text-center text-navy-400">
+                  <tr><td colSpan={10} className="px-3 py-8 text-center text-navy-400">
                     {query ? `No employees match "${query}".` : 'No employees yet.'}
                   </td></tr>
                 ) : displayedRows.map(r => (
                   <Fragment key={r.id}>
-                    <tr>
+                    <tr className={picked.has(r.id) ? 'bg-rose-50/60' : ''}>
+                      <td className="px-3 py-2">
+                        <input type="checkbox" checked={picked.has(r.id)} onChange={() => togglePick(r.id)}
+                          aria-label={`Select ${r.name}`} />
+                      </td>
                       <td className="px-3 py-2 font-mono text-navy-500">{r.emp_code || '—'}</td>
                       <td className="px-3 py-2 font-semibold">{r.name}</td>
                       <td className="px-3 py-2">
@@ -375,7 +455,7 @@ export default function DirectoryPage() {
                       </td>
                     </tr>
                     {openId === r.id && (
-                      <tr><td colSpan={9} className="px-3 pb-3 bg-navy-50/50"><EmployeePanel employee={r} onDone={() => { setOpenId(null); load(); }} /></td></tr>
+                      <tr><td colSpan={10} className="px-3 pb-3 bg-navy-50/50"><EmployeePanel employee={r} onDone={() => { setOpenId(null); load(); }} /></td></tr>
                     )}
                   </Fragment>
                 ))}
@@ -384,6 +464,79 @@ export default function DirectoryPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Module scope on purpose. Declared inside AddEmployee it would be a
+// new component type on every render, so React would unmount and
+// remount the input on each keystroke and the field would lose focus
+// after one character.
+function Field({ label, value, onChange, type = 'text', placeholder, hint }) {
+  return (
+    <label className="text-[11px] text-navy-500 block">
+      {label}
+      <input className="inp !py-1.5 mt-0.5" type={type} value={value} placeholder={placeholder}
+        onChange={onChange} />
+      {hint && <span className="block text-[10.5px] text-navy-400 mt-0.5">{hint}</span>}
+    </label>
+  );
+}
+
+// Add one person by hand — the same fields the importer accepts, and
+// the same validation, because a person added here and a person added
+// by a one-row upload have to end up as the same record.
+//
+// The manager is named by EMAIL rather than by name: the importer
+// matches on the full name as spelt in its own file, which works there
+// because the file carries both, and cannot work here where there is
+// only one row. An address that is not on file is refused by the
+// server rather than quietly ignored.
+function AddEmployee({ onClose, onSaved }) {
+  const [f, setF] = useState({
+    name: '', email: '', emp_code: '', department: '', designation: '',
+    role_band: '', manager_email: '', date_of_joining: '',
+  });
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const save = async () => {
+    setErr(null); setBusy(true);
+    try { await api('/employees', { method: 'POST', body: JSON.stringify(f) }); onSaved(); }
+    catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="card p-4 space-y-3 border-l-4 border-navy-700">
+      <div className="flex items-center justify-between">
+        <p className="lbl">Add one employee</p>
+        <button className="btn-sec !py-1" onClick={onClose}><X size={12} /></button>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Field label="Full name *" value={f.name} onChange={set('name')} placeholder="Jane Sample" />
+        <Field label="Office email" value={f.email} onChange={set('email')} type="email" placeholder="jane.sample@mindgate.in"
+          hint="Leave blank only if there is none — then an employee code is required and a placeholder address is built from it." />
+        <Field label="Employee code" value={f.emp_code} onChange={set('emp_code')} placeholder="MGS1001" />
+        <Field label="Department" value={f.department} onChange={set('department')} placeholder="Development" />
+        <Field label="Designation" value={f.designation} onChange={set('designation')} placeholder="Software Developer"
+          hint="Decides which KRA library shelf they are offered — spell it as the library spells it." />
+        <Field label="Role band" value={f.role_band} onChange={set('role_band')} placeholder="Band 6" />
+        <Field label="Manager's email" value={f.manager_email} onChange={set('manager_email')} placeholder="priya.menon@mindgate.in"
+          hint="Must already be on file. Leave blank for the top of the organisation." />
+        <Field label="Date of joining" value={f.date_of_joining} onChange={set('date_of_joining')} type="date" />
+      </div>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      <div className="flex items-center gap-2">
+        <button className="btn-pri" disabled={busy || !f.name.trim()} onClick={save}>
+          <UserPlus size={13} className="inline mr-1" />Add employee
+        </button>
+        <button className="btn-sec" onClick={onClose}>Cancel</button>
+        <span className="text-[11px] text-navy-400">
+          They are added as <b>active</b>. A login is granted separately, under Manage.
+        </span>
+      </div>
     </div>
   );
 }

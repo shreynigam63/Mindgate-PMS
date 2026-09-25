@@ -103,9 +103,28 @@ const competenciesFor = (toLevel) => COMPETENCIES[toLevel] || COMPETENCIES[8];
 // employee master. Returns the importer's own row shape, so the result
 // can be written into the template sheet with no further mapping.
 //
-// A department is skipped when it has fewer than two rungs: a one-title
-// department has no ladder to suggest, and a row inventing one would be
-// the exact fiction this is supposed to avoid.
+// EVERY ROW NAMES A DEPARTMENT, since 25 Sep. It did not before: the
+// draft led with a company-wide block (blank Department, which the
+// importer reads as "every department") and added department rows only
+// where a department's ladder differed. That is correct behaviour for
+// the importer and it produced a sheet whose Department column was
+// mostly empty, which is what Mindgate reported:
+//
+//   "career matrix sheet has blank department files"
+//   "download suggested matrix should be derived from department and
+//    designation as per employees list available in PMS"
+//
+// So the draft is now built per department, from the designations that
+// department actually employs. The importer still accepts a blank
+// Department — that feature is untouched, and HR can still blank a row
+// by hand to make a rung company-wide — but nothing SUGGESTS one.
+//
+// A department that employs a title with nothing above it inside that
+// department still gets a row: the next rung is taken from the
+// company-wide ladder and the note says the target is not held in that
+// department today. Without this, every small department (Customer
+// Support, PMO, RMG — one title each) would vanish from the draft
+// entirely, which is the opposite of "as per the employees list".
 function suggestTransitions(rows) {
   const clean = (rows || [])
     .map((r) => ({
@@ -115,36 +134,42 @@ function suggestTransitions(rows) {
     }))
     .filter((r) => r.designation);
 
-  const out = [];
-
-  // COMPANY-WIDE RUNGS FIRST. Blank department means "every department"
-  // to the importer, and a department-specific row beats it for the same
-  // move — so this is the fallback ladder for the thin departments, and
-  // the specific rungs below override it wherever a department differs.
+  // The company-wide ladder, computed but NOT emitted. It is the
+  // fallback for a title whose department holds nothing above it.
   const company = new Map();
   for (const r of clean) {
     const c = company.get(r.designation) || { designation: r.designation, headcount: 0 };
     c.headcount += r.headcount;
     company.set(r.designation, c);
   }
-  for (const t of ladder([...company.values()])) {
-    out.push(row('', t, note(t)));
-  }
+  const wide = new Map();
+  for (const t of ladder([...company.values()])) wide.set(t.from.designation, t);
 
-  // THEN THE DEPARTMENT-SPECIFIC ONES, but only where the department's
-  // own ladder differs from the company-wide one — a row that repeats
-  // the fallback verbatim adds nothing and makes the sheet unreadable.
-  const wide = new Set(out.map((r) => `${r.from_role}\u0000${r.to_role}`));
   const byDept = new Map();
   for (const r of clean) {
-    if (!r.department) continue;
-    if (!byDept.has(r.department)) byDept.set(r.department, []);
-    byDept.get(r.department).push(r);
+    // A row with no department on the master cannot be filed under one.
+    // Reported as its own bucket rather than dropped, so HR can see the
+    // gap on their own data instead of wondering why a title is missing.
+    const key = r.department || '(no department on the employee record)';
+    if (!byDept.has(key)) byDept.set(key, []);
+    byDept.get(key).push(r);
   }
+
+  const out = [];
   for (const [department, list] of [...byDept.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const held = new Set(list.map((r) => r.designation));
+    const covered = new Set();
     for (const t of ladder(list)) {
-      if (wide.has(`${t.from.designation}\u0000${t.to.designation}`)) continue;
+      covered.add(t.from.designation);
       out.push(row(department, t, `${note(t)} · ${t.to.headcount} ${t.to.headcount === 1 ? 'person holds' : 'people hold'} ${t.to.designation} in ${department} today`));
+    }
+    // Titles this department employs that its own ladder could not place.
+    for (const designation of [...held].sort()) {
+      if (covered.has(designation)) continue;
+      const t = wide.get(designation);
+      if (!t) continue;   // nothing above it anywhere — the top of the company
+      out.push(row(department, t,
+        `${note(t)} · PLEASE CHECK — nobody in ${department} holds ${t.to.designation} today, so this rung is read off the company-wide ladder`));
     }
   }
   return out;
