@@ -135,6 +135,21 @@ async function main() {
     .catch((e) => logger.warn('calendar reminder sweep failed', { error: e.message }));
   runCalendarReminders();
   setInterval(runCalendarReminders, ONE_DAY_MS);
+
+  // Lifecycle surveys (Day 1 / Week 1 / 30 / 60 / 90). Every open
+  // tenure-triggered survey re-resolves its window and invites whoever
+  // has reached it since the last sweep. Same boot-then-daily shape as
+  // the two above, and the catch-up matters more here than anywhere:
+  // an employee crosses day 30 exactly once, so a sweep that never
+  // runs on that day is a person who never gets asked. The window
+  // (7 days by default) is what makes a missed day recoverable, and
+  // the invitations primary key makes running it twice harmless.
+  const { sweepTenureSurveys } = require('./modules/engagement');
+  const runSurveySweep = () => sweepTenureSurveys(TENANT_ID)
+    .then((r) => r.invited && logger.info('lifecycle surveys invited', { invited: r.invited, surveys: r.surveys }))
+    .catch((e) => logger.warn('lifecycle survey sweep failed', { error: e.message }));
+  runSurveySweep();
+  setInterval(runSurveySweep, ONE_DAY_MS);
 }
 
 main().catch(e => { logger.error('boot failed', { error: e.message }); process.exit(1); });

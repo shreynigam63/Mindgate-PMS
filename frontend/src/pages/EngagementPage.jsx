@@ -70,6 +70,8 @@ export function EngagementAdminPage() {
   const [themesOpen, setThemesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [building, setBuilding] = useState(false);
+  const [sweep, setSweep] = useState(null);
+  const [sweeping, setSweeping] = useState(false);
   const load = () => api('/engagement/surveys').then(setData).catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
 
@@ -105,7 +107,17 @@ export function EngagementAdminPage() {
       <div className="card divide-y divide-navy-100">
         {data.surveys.map(s => (
           <div key={s.id} className="p-3 flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold flex-1">{s.title}</span>
+            <span className="text-sm font-semibold flex-1">
+              {s.title}
+              {/* A standing survey behaves differently from a one-off
+                  and has to look different, or HR cannot tell why one
+                  keeps gaining respondents after it was released. */}
+              {s.trigger_type === 'tenure' && (
+                <span className="chip bg-lagoon-50 text-lagoon-700 ml-2">
+                  standing · day {s.trigger_day}–{s.trigger_day + s.trigger_window_days}
+                </span>
+              )}
+            </span>
             <span className={`chip ${s.status === 'open' ? 'bg-emerald-100 text-emerald-700' : 'bg-navy-50 text-navy-600'}`}>{s.status}</span>
             <span className="text-xs text-navy-400">{s.completed}/{s.invited} completed</span>
             {data.admin && s.status === 'draft' && <button className="btn-sec" onClick={() => openSurvey(s)}><Play size={12} className="inline mr-1" />Open</button>}
@@ -115,6 +127,29 @@ export function EngagementAdminPage() {
         ))}
         {!data.surveys.length && <p className="p-6 text-center text-sm text-navy-400">No surveys yet.</p>}
       </div>
+
+      {/* Lifecycle surveys are swept nightly. This runs the same sweep
+          on demand, which is the only way to see a standing survey do
+          its job without waiting a day. */}
+      {data.admin && data.surveys.some((s) => s.trigger_type === 'tenure' && s.status === 'open') && (
+        <div className="card p-3 flex flex-wrap items-center gap-3 text-xs">
+          <span className="text-navy-500 flex-1">
+            Lifecycle surveys are checked automatically once a day — each new joiner is invited as
+            they reach their milestone. You can run that check now.
+          </span>
+          {sweep && (
+            <span className={sweep.invited ? 'text-emerald-700 font-semibold' : 'text-navy-400'}>
+              {sweep.invited ? `${sweep.invited} newly invited` : 'nobody new today'}
+            </span>
+          )}
+          <button className="btn-sec !py-1" disabled={sweeping} onClick={async () => {
+            setSweeping(true);
+            try { setSweep(await api('/engagement/surveys/sweep', { method: 'POST' })); load(); }
+            catch (e) { setSweep({ invited: 0, error: e.message }); }
+            setSweeping(false);
+          }}>{sweeping ? 'Checking…' : 'Check for new joiners now'}</button>
+        </div>
+      )}
 
       {results && (
         <div className="card p-4 space-y-3">
@@ -129,7 +164,27 @@ export function EngagementAdminPage() {
               <p className="font-semibold">{q.prompt}</p>
               {q.qtype === 'text'
                 ? <p className="text-navy-500">{(q.verbatims || []).length} text answers (themed via the agent — individual verbatims stay in the data)</p>
-                : <p className="text-navy-600">n={q.n} · avg {q.average}{q.enps !== undefined && <> · <b>eNPS {q.enps}</b></>}</p>}
+                : q.tally
+                  // Counted per option, biggest first. This used to
+                  // print "n=0 · avg" for a choice question while the
+                  // answers sat unread in the table — which hit the
+                  // most useful question in a 30-day survey, the one
+                  // naming what is blocking somebody.
+                  ? (
+                    <div className="mt-1 space-y-1">
+                      <p className="text-navy-500 text-[11px]">{q.n} answered</p>
+                      {q.tally.map((t) => (
+                        <div key={t.option} className="flex items-center gap-2">
+                          <div className="w-44 shrink-0 text-navy-600 truncate" title={t.option}>{t.option}</div>
+                          <div className="flex-1 h-2 rounded-full bg-navy-50 overflow-hidden">
+                            <div className="h-full rounded-full bg-leaf-500" style={{ width: `${t.pct}%` }} />
+                          </div>
+                          <div className="w-16 shrink-0 text-right text-navy-500 tabular-nums">{t.count} · {t.pct}%</div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                  : <p className="text-navy-600">n={q.n} · avg {q.average}{q.enps !== undefined && <> · <b>eNPS {q.enps}</b></>}</p>}
             </div>
           ))}
           {/* Themes open over the page. The question-by-question numbers
@@ -170,10 +225,40 @@ export function EngagementAdminPage() {
 //
 // This is the same three fields, on one form, visible at once.
 const QTYPES = [
-  { v: 'scale', label: '1–5 scale',  hint: 'Rated one to five. The default, and what the averages are built from.' },
-  { v: 'enps',  label: 'eNPS 0–10',  hint: 'The "how likely are you to recommend" question. Scored as eNPS.' },
-  { v: 'text',  label: 'Open text',  hint: 'Free text. Read as themes by the agent; individual answers stay in the data.' },
+  { v: 'scale',  label: '1–5 scale',  hint: 'Rated one to five. The default, and what the averages are built from.' },
+  { v: 'enps',   label: 'eNPS 0–10',  hint: 'The "how likely are you to recommend" question. Scored as eNPS.' },
+  { v: 'choice', label: 'Pick one',   hint: 'One option from a list. Counted per option — this is the shape for "what is blocking you?".', opts: true },
+  { v: 'multi',  label: 'Pick any',   hint: 'Any number of options. Counted per option, so the percentages can add up to more than 100.', opts: true },
+  { v: 'text',   label: 'Open text',  hint: 'Free text. Read as themes by the agent; individual answers stay in the data.' },
 ];
+const needsOptions = (t) => (QTYPES.find((x) => x.v === t) || {}).opts === true;
+
+// A checkbox list of the values that actually exist on the employee
+// master. Hoisted to module scope ON PURPOSE: a component declared
+// inside its parent is a new component type on every render, so React
+// remounts it on each keystroke and any input inside loses focus after
+// one character. That bug has already been paid for once on the
+// employee Add form.
+function PickList({ label, options, chosen, onChange, hint }) {
+  if (!options || !options.length) return null;
+  const toggle = (v) => onChange(chosen.includes(v) ? chosen.filter((x) => x !== v) : [...chosen, v]);
+  return (
+    <div>
+      <p className="lbl">{label}{chosen.length ? ` · ${chosen.length} selected` : ''}</p>
+      {hint && <p className="text-[10px] text-navy-400 mb-1">{hint}</p>}
+      <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto p-1.5 rounded-lg border border-navy-100 bg-white">
+        {options.map((o) => {
+          const v = typeof o === 'string' ? o : o.id;
+          const text = typeof o === 'string' ? o : o.name;
+          return (
+            <button key={v} type="button" onClick={() => toggle(v)}
+              className={`chip ${chosen.includes(v) ? 'bg-leaf-500 text-white' : 'bg-navy-50 text-navy-500'}`}>{text}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function SurveyBuilder({ onClose, onCreated }) {
   const [title, setTitle] = useState('');
@@ -181,6 +266,36 @@ function SurveyBuilder({ onClose, onCreated }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
+  // --- audience + trigger, added 25 Sep -----------------------------
+  // "which will be pushed to all employees who are fitting in that
+  // employees categories". Until now this screen sent every survey to
+  // the whole company: it did not expose the audience field at all.
+  const [opts, setOpts] = useState(null);           // what the master actually holds
+  const [rule, setRule] = useState({ departments: [], designations: [], role_bands: [], manager_ids: [] });
+  const [trigger, setTrigger] = useState('manual'); // manual | tenure
+  const [day, setDay] = useState(30);
+  const [win, setWin] = useState(7);
+  const [anon, setAnon] = useState(true);
+  const [preview, setPreview] = useState(null);
+
+  useEffect(() => { api('/engagement/audience/options').then(setOpts).catch(() => setOpts(null)); }, []);
+
+  // The live count. Debounced, and re-run on every change to the rule
+  // or the milestone, so the number on screen is the number the release
+  // will write to — both go through the same resolver on the server.
+  useEffect(() => {
+    let dead = false;
+    const t = setTimeout(() => {
+      api('/engagement/audience/preview', { method: 'POST', body: JSON.stringify({
+        audience_rule: rule, trigger_type: trigger,
+        ...(trigger === 'tenure' ? { trigger_day: Number(day), trigger_window_days: Number(win) } : {}),
+      }) }).then((r) => { if (!dead) setPreview(r); })
+        .catch((e) => { if (!dead) setPreview({ error: e.message }); });
+    }, 250);
+    return () => { dead = true; clearTimeout(t); };
+  }, [rule, trigger, day, win]);
+
+  const setRuleKey = (k) => (v) => setRule((r) => ({ ...r, [k]: v }));
   const set = (i, k, v) => setQs((rows) => rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   const move = (i, d) => setQs((rows) => {
     const j = i + d;
@@ -191,16 +306,28 @@ function SurveyBuilder({ onClose, onCreated }) {
   });
 
   const filled = qs.filter((q) => q.prompt.trim());
+  const optionsOf = (q) => String(q.optionText || '').split('\n').map((x) => x.trim()).filter(Boolean);
   const save = async () => {
     setErr(null);
     if (!title.trim()) { setErr('Give the survey a title.'); return; }
     if (!filled.length) { setErr('A survey needs at least one question.'); return; }
+    // Caught here as well as on the server, because the server's
+    // refusal arrives after the whole form has been posted and names
+    // only the first bad question.
+    const short = filled.find((q) => needsOptions(q.qtype) && optionsOf(q).length < 2);
+    if (short) { setErr(`"${short.prompt.trim().slice(0, 50)}" is a ${short.qtype === 'multi' ? 'pick-any' : 'pick-one'} question, so it needs at least two options — one per line.`); return; }
     setBusy(true);
     try {
       await api('/engagement/surveys', { method: 'POST', body: JSON.stringify({
         title: title.trim(),
+        audience_rule: rule,
+        trigger_type: trigger,
+        ...(trigger === 'tenure' ? { trigger_day: Number(day), trigger_window_days: Number(win) } : {}),
+        anonymity_default: anon,
+        allow_attribution_optin: anon,
         questions: filled.map((q) => ({
           qtype: q.qtype, prompt: q.prompt.trim(),
+          ...(needsOptions(q.qtype) ? { options: optionsOf(q) } : {}),
           ...(q.qtype === 'text' ? { required: false } : {}),
         })),
       }) });
@@ -266,12 +393,133 @@ function SurveyBuilder({ onClose, onCreated }) {
               ))}
             </div>
             <p className="text-[11px] text-navy-400">{(QTYPES.find((t) => t.v === q.qtype) || {}).hint}</p>
+            {needsOptions(q.qtype) && (
+              <div>
+                <label className="lbl">Options — one per line</label>
+                <textarea className="inp" rows={4} value={q.optionText || ''}
+                  onChange={(e) => set(i, 'optionText', e.target.value)}
+                  placeholder={'Lack of training\nLack of system access\nDependency on others\nNo significant blocker'} />
+                <p className="text-[10px] text-navy-400 mt-1">
+                  {optionsOf(q).length} option{optionsOf(q).length === 1 ? '' : 's'} — at least two are needed,
+                  and the results are counted per option.
+                </p>
+              </div>
+            )}
           </div>
         ))}
 
         <button className="btn-sec" onClick={() => setQs((rows) => [...rows, { qtype: 'scale', prompt: '' }])}>
           <Plus size={13} className="inline mr-1" />Add question
         </button>
+
+        {/* WHO IT GOES TO. This whole panel is new on 25 Sep: the form
+            used to send every survey to the entire company because it
+            never asked. */}
+        <div className="card p-3 space-y-3 border-l-4 border-leaf-500">
+          <p className="lbl">Who gets this survey</p>
+
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" onClick={() => setTrigger('manual')}
+              className={`chip ${trigger === 'manual' ? 'bg-leaf-500 text-white' : 'bg-navy-50 text-navy-500'}`}>
+              Send once
+            </button>
+            <button type="button" onClick={() => setTrigger('tenure')}
+              className={`chip ${trigger === 'tenure' ? 'bg-leaf-500 text-white' : 'bg-navy-50 text-navy-500'}`}>
+              Lifecycle — send on a milestone after joining
+            </button>
+          </div>
+
+          {trigger === 'tenure' && (
+            <div className="space-y-2 bg-leaf-50 rounded-lg p-2.5">
+              <div className="flex flex-wrap gap-1.5">
+                {(opts?.milestones || []).map((m) => (
+                  <button key={m.key} type="button"
+                    onClick={() => { setDay(m.day); setWin(m.window); }}
+                    className={`chip ${Number(day) === m.day ? 'bg-navy-700 text-white' : 'bg-white text-navy-600 border border-navy-100'}`}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="lbl">Days after joining</label>
+                  <input className="inp !w-24" type="number" min="0" value={day}
+                    onChange={(e) => setDay(e.target.value)} />
+                </div>
+                <div>
+                  <label className="lbl">Catch-up window (days)</label>
+                  <input className="inp !w-24" type="number" min="1" max="90" value={win}
+                    onChange={(e) => setWin(e.target.value)} />
+                </div>
+              </div>
+              {/* The window is not a nicety. Almost nobody is sitting on
+                  exactly day 30 on any given morning, and an employee
+                  crosses it once — so an exact-day match would miss most
+                  of a cohort and a missed sweep would lose a day's
+                  intake for good. */}
+              <p className="text-[11px] text-navy-600">
+                Goes out to anyone who joined <b>{day}</b> to <b>{Number(day) + Number(win)}</b> days ago.
+                This survey <b>stays open</b> and picks up each new joiner as they reach that point —
+                you press Open once. The window is what stops anyone being missed whose exact day fell
+                between two nightly checks.
+              </p>
+            </div>
+          )}
+
+          {opts && (
+            <div className="grid sm:grid-cols-2 gap-3">
+              <PickList label="Department" options={opts.departments}
+                chosen={rule.departments} onChange={setRuleKey('departments')} />
+              <PickList label="Designation" options={opts.designations}
+                chosen={rule.designations} onChange={setRuleKey('designations')} />
+              <PickList label="Role band" options={opts.role_bands}
+                chosen={rule.role_bands} onChange={setRuleKey('role_bands')} />
+              <PickList label="Reporting manager" options={opts.managers}
+                chosen={rule.manager_ids} onChange={setRuleKey('manager_ids')} />
+            </div>
+          )}
+          <p className="text-[10px] text-navy-400">
+            Pick nothing in a box and it places no restriction. Choices inside one box are
+            <b> any of</b>; across boxes they are <b>all of</b>. Every value is read off the
+            employee master, so a rule cannot name a department nobody is in.
+          </p>
+
+          {/* The live count, from the same resolver the release uses —
+              so what HR reads here and who the system writes to cannot
+              disagree. */}
+          {preview && !preview.error && (
+            <div className="text-xs rounded-lg px-3 py-2 bg-navy-50 text-navy-700">
+              Right now this reaches <b>{preview.count}</b> employee{preview.count === 1 ? '' : 's'} — {preview.description}.
+              {preview.sample?.length > 0 && (
+                <span className="text-navy-500"> e.g. {preview.sample.slice(0, 4).join(', ')}
+                  {preview.count > 4 ? ` and ${preview.count - 4} more` : ''}.</span>
+              )}
+              {preview.no_joining_date > 0 && (
+                <span className="block mt-1 text-amber-700">
+                  {preview.no_joining_date} active employee{preview.no_joining_date === 1 ? ' has' : 's have'} no
+                  date of joining on the master, so {preview.no_joining_date === 1 ? 'they cannot' : 'they cannot'} be
+                  placed on a milestone and {preview.no_joining_date === 1 ? 'is' : 'are'} not included.
+                </span>
+              )}
+              {preview.count === 0 && (
+                <span className="block mt-1 text-rose-600">Nobody matches this today. Opening it would invite no one.</span>
+              )}
+            </div>
+          )}
+          {preview?.error && <p className="text-xs text-rose-600">{preview.error}</p>}
+
+          <label className="flex items-center gap-2 text-xs text-navy-600">
+            <input type="checkbox" checked={anon} onChange={(e) => setAnon(e.target.checked)} />
+            Anonymous — answers are never stored against a name
+          </label>
+          {!anon && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 rounded-md px-2 py-1.5">
+              Attributed. Every answer is stored against the person who gave it, and the form tells
+              them so before they start. Use this for new-hire and manager surveys where HR has to
+              act on an individual; keep pulse and annual surveys anonymous.
+            </p>
+          )}
+        </div>
 
         {err && <p className="text-xs text-rose-600">{err}</p>}
         <p className="text-[11px] text-navy-400">
@@ -303,16 +551,52 @@ function TakeSurvey({ survey, done }) {
       {qs.map(q => (
         <div key={q.id} className="card p-3">
           <p className="text-sm font-semibold mb-2">{q.prompt}{q.required && ' *'}</p>
-          {q.qtype === 'text'
-            ? <textarea className="inp" rows={3} onChange={e => setAnswers(a => ({ ...a, [q.id]: { text: e.target.value } }))} />
-            : (
-              <div className="flex gap-1.5 flex-wrap">
-                {(q.qtype === 'enps' ? [...Array(11).keys()] : [1, 2, 3, 4, 5]).map(n => (
-                  <button key={n} onClick={() => setAnswers(a => ({ ...a, [q.id]: { num: n } }))}
-                    className={`w-9 h-9 rounded-lg text-sm font-semibold border ${answers[q.id]?.num === n ? 'bg-navy-700 text-white border-navy-600' : 'bg-white border-navy-100 hover:bg-navy-50'}`}>{n}</button>
-                ))}
-              </div>
-            )}
+          {q.qtype === 'text' && (
+            <textarea className="inp" rows={3} onChange={e => setAnswers(a => ({ ...a, [q.id]: { text: e.target.value } }))} />
+          )}
+          {/* Pick one. Until 25 Sep a choice question fell through to
+              the branch below and rendered as a 1-5 scale: the options
+              HR wrote were never shown to anybody, and the results
+              reported n=0 while the answers sat in the table. */}
+          {q.qtype === 'choice' && (
+            <div className="space-y-1.5">
+              {(q.options || []).map((opt) => (
+                <label key={opt} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="radio" name={`q-${q.id}`} value={opt}
+                    checked={answers[q.id]?.text === opt}
+                    onChange={() => setAnswers(a => ({ ...a, [q.id]: { text: opt } }))} />
+                  <span>{opt}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          {/* Pick any that apply. */}
+          {q.qtype === 'multi' && (
+            <div className="space-y-1.5">
+              {(q.options || []).map((opt) => {
+                const picked = answers[q.id]?.list || [];
+                return (
+                  <label key={opt} className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={picked.includes(opt)}
+                      onChange={(e) => setAnswers(a => {
+                        const cur = a[q.id]?.list || [];
+                        const list = e.target.checked ? [...cur, opt] : cur.filter((x) => x !== opt);
+                        return { ...a, [q.id]: { list } };
+                      })} />
+                    <span>{opt}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+          {!['text', 'choice', 'multi'].includes(q.qtype) && (
+            <div className="flex gap-1.5 flex-wrap">
+              {(q.qtype === 'enps' ? [...Array(11).keys()] : [1, 2, 3, 4, 5]).map(n => (
+                <button key={n} onClick={() => setAnswers(a => ({ ...a, [q.id]: { num: n } }))}
+                  className={`w-9 h-9 rounded-lg text-sm font-semibold border ${answers[q.id]?.num === n ? 'bg-navy-700 text-white border-navy-600' : 'bg-white border-navy-100 hover:bg-navy-50'}`}>{n}</button>
+              ))}
+            </div>
+          )}
         </div>
       ))}
       {survey.anonymity_default && survey.allow_attribution_optin && (
