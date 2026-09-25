@@ -12,7 +12,7 @@
 // No database: nothing here touches one.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { suggestTransitions, rankOf, familyOf } = require('../modules/people/career-ladder');
+const { suggestTransitions, rankOf, familyOf, SPINE } = require('../modules/people/career-ladder');
 
 const find = (rows, dept, from) => rows.find((r) => r.department === dept && r.from_role === from);
 
@@ -125,11 +125,16 @@ test('EVERY row names a department — none is left blank', () => {
   // department and designation as per employees list" asks for.
   const devs = rows.filter((r) => r.from_role === 'Software Developer');
   assert.deepEqual(devs.map((r) => r.department).sort(), ['Development', 'Sales']);
-  // ...and each department's ladder is still its own: Sales has no
-  // Lead, so its senior developers go to Manager while Development's go
-  // to Lead.
+  // ...and both go to Lead, because Lead is the rung above a senior IC.
+  // This used to say Sales went to MANAGER, since Sales employs no Lead
+  // and the target could only be a title the department already held —
+  // which is exactly the multi-rung bug Mindgate reported on 25 Sep.
+  // A Sales senior developer's next step is a Lead whether or not Sales
+  // has one yet; the note says nobody there holds it.
   assert.equal(find(rows, 'Development', 'Senior Software Developer').to_role, 'Lead');
-  assert.equal(find(rows, 'Sales', 'Senior Software Developer').to_role, 'Manager');
+  const sales = find(rows, 'Sales', 'Senior Software Developer');
+  assert.equal(sales.to_role, 'Lead');
+  assert.match(sales.notes, /nobody in Sales holds Lead today/);
 });
 
 test('a department that employs one title still appears, flagged', () => {
@@ -147,7 +152,12 @@ test('a department that employs one title still appears, flagged', () => {
   assert.equal(cs.to_role, 'Senior Executive');
   assert.match(cs.notes, /nobody in Customer Support holds Senior Executive today/,
     'and the note says the rung came from the company-wide ladder');
-  assert.match(cs.notes, /PLEASE CHECK/);
+  // ...but it is NOT flagged for review. Executive -> Senior Executive
+  // is right; the department simply has not filled that rung yet, and
+  // pointing at an unfilled rung is what a career path is for. Flagging
+  // it put PLEASE CHECK on 85 of 210 rows against the real master,
+  // which buries the nine that are genuinely guesses.
+  assert.ok(!/PLEASE CHECK/.test(cs.notes), `not a guess, so not flagged — got ${cs.notes}`);
 });
 
 test('nothing is proposed that nobody holds anywhere in the company', () => {
@@ -180,8 +190,8 @@ test('every suggested row is a complete, uploadable row', () => {
   for (const r of rows) {
     assert.ok(r.from_role && r.to_role, 'the importer requires both roles');
     assert.notEqual(r.from_role, r.to_role, 'a rung never points at itself');
-    assert.ok(Number.isInteger(r.expected_level_change) && r.expected_level_change > 0,
-      'a transition is always a step up');
+    assert.equal(r.expected_level_change, 1,
+      'every suggested row is exactly one rung, so the column reads 1');
     assert.ok(r.min_time_months > 0 && r.typical_time_months >= r.min_time_months,
       'typical time is never less than the minimum');
     assert.ok(Array.isArray(r.required_competencies) && r.required_competencies.length,
@@ -275,4 +285,129 @@ test('the sheet carries the importer\'s own headers, in its own order', async ()
   const header = [];
   ws.getRow(2).eachCell((c) => header.push(String(c.value)));
   assert.deepEqual(header, TRANSITION_HEADERS);
+});
+
+// ---- one rung per row, added 25 Sep ---------------------------------
+//
+// Reported by Mindgate against the download in this repo's history:
+//
+//   "suggested matrix should only show 1 level of matrix not more than
+//    one level ... attached excel shows more than 1 level jump for
+//    designations as well, please correct the same"
+//
+// Twenty-eight of the 210 rows on the sheet they sent back jumped two
+// rungs or more. Every case below is a real row off that file.
+
+// The company ladder, in order, as the module publishes it. A row is
+// one rung when exactly one of these levels sits between the two — the
+// raw difference between rank numbers is NOT the test, because the
+// scale has an off-spine level (Architect, Assistant Manager) that
+// nobody is promoted through.
+const rungsBetween = (from, to) =>
+  SPINE.filter((l) => l > rankOf(from).level).length - SPINE.filter((l) => l > rankOf(to).level).length;
+
+test('a department with a hole in its ladder steps one rung, not across the hole', () => {
+  // THE BUG. Business Finance employs an Executive and a Senior Manager
+  // and nothing in between, and the target could only be a title the
+  // department already held — so the draft told an Executive their next
+  // step was Senior Manager. Five rungs, on a sheet handed to staff.
+  const rows = suggestTransitions([
+    { department: 'Business Finance', designation: 'Executive', headcount: 1 },
+    { department: 'Business Finance', designation: 'Senior Business Finance Analyst', headcount: 1 },
+    { department: 'Business Finance', designation: 'Senior Manager', headcount: 1 },
+    { department: 'Business Finance', designation: 'Vice President I', headcount: 1 },
+    { department: 'Business Finance', designation: 'Senior Vice President I', headcount: 1 },
+    // the rest of the company, so the missing rungs have real titles
+    { department: 'Development', designation: 'Senior Executive', headcount: 34 },
+    { department: 'Development', designation: 'Lead', headcount: 108 },
+    { department: 'Development', designation: 'Manager', headcount: 61 },
+    { department: 'Development', designation: 'Assistant Vice President', headcount: 30 },
+    { department: 'Development', designation: 'Deputy Vice President', headcount: 4 },
+    { department: 'Development', designation: 'Vice President II', headcount: 7 },
+  ]);
+  const bf = (from) => find(rows, 'Business Finance', from);
+  assert.equal(bf('Executive').to_role, 'Senior Executive', 'was Senior Manager, five rungs up');
+  assert.equal(bf('Senior Business Finance Analyst').to_role, 'Lead', 'was Senior Manager, four rungs up');
+  assert.equal(bf('Senior Manager').to_role, 'Assistant Vice President', 'was Vice President I, three rungs up');
+  assert.equal(bf('Vice President I').to_role, 'Vice President II', 'was Senior Vice President I, two rungs up');
+});
+
+test('no suggested row jumps more than one rung, on any shape of master', () => {
+  const rows = suggestTransitions([
+    { department: 'Admin', designation: 'Office Assistant', headcount: 3 },
+    { department: 'Admin', designation: 'Senior Executive', headcount: 1 },
+    { department: 'Admin', designation: 'Manager', headcount: 1 },
+    { department: 'Admin', designation: 'Assistant Vice President', headcount: 1 },
+    { department: 'Cyber Security', designation: 'Trainee', headcount: 2 },
+    { department: 'Cyber Security', designation: 'Senior Security Analyst', headcount: 11 },
+    { department: 'Cyber Security', designation: 'Vice President I', headcount: 1 },
+    { department: 'Development', designation: 'Executive', headcount: 30 },
+    { department: 'Development', designation: 'Software Developer', headcount: 181 },
+    { department: 'Development', designation: 'Senior Software Developer', headcount: 272 },
+    { department: 'Development', designation: 'Lead', headcount: 108 },
+    { department: 'Development', designation: 'Technical Architect', headcount: 12 },
+    { department: 'Development', designation: 'Manager', headcount: 61 },
+    { department: 'Development', designation: 'Senior Manager', headcount: 28 },
+    { department: 'Development', designation: 'Assistant Vice President', headcount: 30 },
+    { department: 'Development', designation: 'Deputy Vice President', headcount: 4 },
+    { department: 'Development', designation: 'Vice President I', headcount: 11 },
+    { department: 'Development', designation: 'Vice President II', headcount: 7 },
+    // Every spine rung is occupied here ON PURPOSE, so rungsBetween can
+    // measure against the full ladder with no ambiguity. A master with
+    // holes in it is the next test's job.
+    { department: 'Development', designation: 'Senior Vice President I', headcount: 1 },
+    { department: 'Development', designation: 'Senior Vice President II', headcount: 3 },
+    { department: 'Development', designation: 'Business Head', headcount: 1 },
+  ]);
+  assert.ok(rows.length > 15, 'there is something to check');
+  for (const r of rows) {
+    assert.equal(rungsBetween(r.from_role, r.to_role), 1,
+      `${r.department}: ${r.from_role} -> ${r.to_role} is not one rung`);
+    assert.equal(r.expected_level_change, 1,
+      `${r.from_role} -> ${r.to_role} reports ${r.expected_level_change} in the Expected Level Change column`);
+  }
+  // An off-spine title (Architect sits beside the ladder, not on it)
+  // steps onto the ladder at the rung above, and that counts as one.
+  assert.equal(find(rows, 'Development', 'Technical Architect').to_role, 'Manager');
+  // And the top of the ladder proposes nothing at all rather than
+  // pointing at itself.
+  assert.ok(!find(rows, 'Development', 'Business Head'), 'nothing above a Business Head');
+});
+
+test('a rung nobody in the company is on is stepped over, not turned into a dead end', () => {
+  // The other half of "one rung". If the target had to be the very next
+  // spine rung and no more, a company with no Deputy Vice President
+  // would drop every AVP row — the rung above them would be empty and
+  // the row would have nowhere to go. A rung with nobody on it anywhere
+  // is not a rung in THIS company, so AVP -> Vice President is still
+  // one step of its own ladder.
+  const rows = suggestTransitions([
+    { department: 'Sales', designation: 'Assistant Vice President', headcount: 5 },
+    { department: 'Sales', designation: 'Vice President', headcount: 3 },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].to_role, 'Vice President');
+  assert.equal(rows[0].expected_level_change, 1);
+  // ...but when the company DOES have that rung, it is used.
+  const withDvp = suggestTransitions([
+    { department: 'Sales', designation: 'Assistant Vice President', headcount: 5 },
+    { department: 'Sales', designation: 'Vice President', headcount: 3 },
+    { department: 'Finance', designation: 'Deputy Vice President', headcount: 1 },
+  ]);
+  assert.equal(find(withDvp, 'Sales', 'Assistant Vice President').to_role, 'Deputy Vice President',
+    'the rung exists now, so it is not skipped');
+});
+
+test('the senior form only wins when it is the rung directly above', () => {
+  // "Vice President I" and "Senior Vice President I" are one job family
+  // apart, and the senior-form rule handed the sheet a two-rung jump
+  // because Vice President II sits between them. The rung is chosen
+  // first now; the family rule only gets to NAME it.
+  const rows = suggestTransitions([
+    { department: 'Finance', designation: 'Vice President I', headcount: 11 },
+    { department: 'Finance', designation: 'Vice President II', headcount: 7 },
+    { department: 'Finance', designation: 'Senior Vice President I', headcount: 1 },
+  ]);
+  assert.equal(find(rows, 'Finance', 'Vice President I').to_role, 'Vice President II');
+  assert.equal(find(rows, 'Finance', 'Vice President II').to_role, 'Senior Vice President I');
 });

@@ -122,10 +122,12 @@ export default function CareerTransitionsPage() {
         <p className="lbl">Start from a suggested matrix</p>
         <p className="text-[11.5px] text-navy-500">
           Built from the <b>departments and designations on your employee master right now</b> — every row
-          names a department, and each department is laddered from the titles that department actually
-          employs. The senior form of each role where one exists, the standard rung otherwise. It is a{' '}
-          <b>draft to edit</b>, not a decision: nothing is saved until you upload it below and publish.
-          Rows whose Notes start with <b>PLEASE CHECK</b> are the ones to look at first.
+          names a department, and <b>every row is one rung</b>: the step directly above, never a jump of two
+          or more, so Expected Level Change is always 1. The senior form of each role where one exists, the
+          standard rung otherwise. Where a department has nobody on the rung above yet, the rung is named
+          from the company ladder and the Notes say so — pointing at a rung you have not filled is what a
+          career path is for. It is a <b>draft to edit</b>, not a decision: nothing is saved until you upload
+          it below and publish. Rows whose Notes start with <b>PLEASE CHECK</b> are the ones to look at first.
         </p>
         {/* The live-derivation guarantee, on screen. Asked for on 25 Sep:
             "if we update employee list in PMS, then suggested matrix

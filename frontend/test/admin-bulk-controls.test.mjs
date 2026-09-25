@@ -121,6 +121,10 @@ test('the Career Pathing Matrix says what the suggested draft is built from', as
   assert.match(main, /rebuilt on every click, never stored/);
   // Point 2: and it no longer promises blank departments.
   assert.match(main, /every row\s*names a department/i);
+  // 25 Sep, second report: "suggested matrix should only show 1 level
+  // of matrix not more than one level."
+  assert.match(main, /every row is one rung/i);
+  assert.match(main, /Expected Level Change is always 1/i);
   assert.deepEqual(errors, []);
   await ctx.close();
 });

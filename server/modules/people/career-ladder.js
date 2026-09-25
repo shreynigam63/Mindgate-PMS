@@ -114,17 +114,32 @@ const competenciesFor = (toLevel) => COMPETENCIES[toLevel] || COMPETENCIES[8];
 //   "download suggested matrix should be derived from department and
 //    designation as per employees list available in PMS"
 //
-// So the draft is now built per department, from the designations that
+// So the draft is built per department, from the designations that
 // department actually employs. The importer still accepts a blank
 // Department — that feature is untouched, and HR can still blank a row
 // by hand to make a rung company-wide — but nothing SUGGESTS one.
 //
-// A department that employs a title with nothing above it inside that
-// department still gets a row: the next rung is taken from the
-// company-wide ladder and the note says the target is not held in that
-// department today. Without this, every small department (Customer
-// Support, PMO, RMG — one title each) would vanish from the draft
-// entirely, which is the opposite of "as per the employees list".
+// EVERY ROW IS EXACTLY ONE RUNG, since 25 Sep (second report):
+//
+//   "suggested matrix should only show 1 level of matrix not more than
+//    one level ... attached excel shows more than 1 level jump for
+//    designations as well, please correct the same"
+//
+// They were right, and the cause was that the target was drawn only
+// from the titles the DEPARTMENT holds. Business Finance employs an
+// Executive and a Senior Manager and nothing in between, so the draft
+// proposed Executive -> Senior Manager: five rungs in one row, offered
+// to a person as their next step. Twenty-eight of the 210 rows on the
+// sheet they sent back jumped two rungs or more, one of them five.
+//
+// The next rung is now chosen FIRST and the title second: take the rung
+// directly above on the company ladder, then find the truest name for
+// it — the senior form of the same job, the same job written wider, the
+// standard title for that rung, the commonest role the department holds
+// there, in that order. The target may therefore be a title the
+// department does not employ yet, which is the point of a career path;
+// the note says so when that happens. Expected Level Change is 1 on
+// every row, because one rung is what every row now is.
 function suggestTransitions(rows) {
   const clean = (rows || [])
     .map((r) => ({
@@ -134,16 +149,22 @@ function suggestTransitions(rows) {
     }))
     .filter((r) => r.designation);
 
-  // The company-wide ladder, computed but NOT emitted. It is the
-  // fallback for a title whose department holds nothing above it.
+  // Every title anyone holds, company-wide. Used to name a rung that
+  // the department itself has nobody on — never to invent one.
   const company = new Map();
   for (const r of clean) {
     const c = company.get(r.designation) || { designation: r.designation, headcount: 0 };
     c.headcount += r.headcount;
     company.set(r.designation, c);
   }
-  const wide = new Map();
-  for (const t of ladder([...company.values()])) wide.set(t.from.designation, t);
+  const pool = roleSet([...company.values()]);
+  // The rungs THIS COMPANY actually has somebody on. A spine rung that
+  // nobody anywhere holds is not a rung here, so it is stepped over
+  // rather than becoming a dead end: a company with no Deputy Vice
+  // President promotes an AVP to Vice President, and that is still one
+  // rung of its own ladder. Without this, every title under an empty
+  // rung simply vanished from the draft.
+  const rungs = SPINE.filter((l) => pool.some((r) => r.level === l));
 
   const byDept = new Map();
   for (const r of clean) {
@@ -158,101 +179,114 @@ function suggestTransitions(rows) {
   const out = [];
   for (const [department, list] of [...byDept.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const held = new Set(list.map((r) => r.designation));
-    const covered = new Set();
-    for (const t of ladder(list)) {
-      covered.add(t.from.designation);
-      out.push(row(department, t, `${note(t)} · ${t.to.headcount} ${t.to.headcount === 1 ? 'person holds' : 'people hold'} ${t.to.designation} in ${department} today`));
-    }
-    // Titles this department employs that its own ladder could not place.
-    for (const designation of [...held].sort()) {
-      if (covered.has(designation)) continue;
-      const t = wide.get(designation);
-      if (!t) continue;   // nothing above it anywhere — the top of the company
-      out.push(row(department, t,
-        `${note(t)} · PLEASE CHECK — nobody in ${department} holds ${t.to.designation} today, so this rung is read off the company-wide ladder`));
+    for (const t of ladder(list, pool, rungs)) {
+      const inDept = held.has(t.to.designation);
+      const who = inDept
+        ? `${t.to.headcount} ${t.to.headcount === 1 ? 'person holds' : 'people hold'} ${t.to.designation} in ${department} today`
+        : `nobody in ${department} holds ${t.to.designation} today — the rung is named from the company ladder`;
+      out.push(row(department, t, `${note(t)} · ${who}`));
     }
   }
   return out;
 }
 
-// The ladder within one set of designations: for each rung, the next one
-// up. Exported for the test, which is where the ordering rules earn
-// their keep.
+// The ladder within one set of designations: for each title, the next
+// rung up. `pool` is the company-wide set, consulted only to name a
+// rung the department has nobody on. Exported for the test, which is
+// where the ordering rules earn their keep.
 //
-// GENERIC is the plain ladder every company has under its job titles.
-// A title is only used from here if it genuinely appears in the set
-// being laddered — this proposes no role nobody holds.
+// GENERIC is the plain ladder every company has under its job titles,
+// and it is also the SPINE: the rungs themselves, in order. A step is
+// one entry along it, so "one rung" has a single definition that both
+// the target and the Expected Level Change column are read from.
 const GENERIC = {
   1: 'Trainee', 2: 'Executive', 3: 'Senior Executive', 4: 'Lead',
-  // No level 5 on the generic spine: Assistant Manager exists on the
-  // master but only five people hold it, and a Lead's real next step
-  // here is Manager. Assistant Manager still appears as a FROM role.
+  // No level 5 on the spine: Architect and Assistant Manager sit there
+  // on the rank scale, but they are side roles, not a rung everybody
+  // passes through — a Lead's next step here is Manager. Both still
+  // appear as a FROM role, and step to the first rung above them.
   6: 'Manager', 7: 'Senior Manager',
   8: 'Assistant Vice President', 9: 'Deputy Vice President',
   10: 'Vice President I', 11: 'Vice President II',
   12: 'Senior Vice President I', 13: 'Senior Vice President II', 14: 'Business Head',
 };
+const SPINE = Object.keys(GENERIC).map(Number).sort((a, b) => a - b);
 
-function ladder(list) {
+// The rung directly above a level — the only target any suggested row
+// is allowed to have. `rungs` is the ladder in play: the spine by
+// default, or the rungs this company is actually on. null at the top.
+const nextRung = (level, rungs = SPINE) => rungs.find((l) => l > level) ?? null;
+
+function roleSet(list) {
   const seen = new Map();
   for (const r of list) {
     const cur = seen.get(r.designation);
     if (cur) { cur.headcount += r.headcount; continue; }
     seen.set(r.designation, { ...r, ...rankOf(r.designation), family: familyOf(r.designation) });
   }
-  const roles = [...seen.values()].sort((a, b) => a.level - b.level || b.headcount - a.headcount
+  return [...seen.values()].sort((a, b) => a.level - b.level || b.headcount - a.headcount
     || a.designation.localeCompare(b.designation));
-  if (roles.length < 2) return [];
-  const byName = new Map(roles.map((r) => [r.designation.toLowerCase(), r]));
+}
+
+function ladder(list, pool, rungs) {
+  const roles = roleSet(list);
+  const wider = pool && pool.length ? pool : roles;
+  const steps = (rungs && rungs.length) ? rungs : SPINE.filter((l) => wider.some((r) => r.level === l));
 
   const out = [];
   for (const from of roles) {
-    const above = roles.filter((r) => r.level > from.level);
-    if (!above.length) continue;
+    const level = nextRung(from.level, steps);
+    if (level == null) continue;                 // the top of the ladder
+    // Candidates ON THAT RUNG ONLY. The department's own people first,
+    // so a department that already has somebody there keeps its own
+    // title; the company-wide set is the fallback for naming a rung
+    // nobody in the department is on yet.
+    const here = roles.filter((r) => r.level === level);
+    const anywhere = wider.filter((r) => r.level === level);
 
-    // Rule one: the senior form of the same job.
-    const sameJob = above.filter((r) => r.family === from.family);
-    if (sameJob.length) {
-      const lowest = Math.min(...sameJob.map((r) => r.level));
-      out.push({ from, to: pick(sameJob, lowest), why: 'same_job' });
-      continue;
-    }
-
-    // Rule two: a role that is recognisably the same job written wider
-    // or narrower — "Support Executive" → "Senior Executive", "Trainee
-    // Tester" → "Software Tester". Whole words only, and both families
+    const sameJob = (r) => r.family === from.family && r.designation !== from.designation;
+    // A title that is recognisably the same job written wider or
+    // narrower — "Support Executive" -> "Senior Executive", "Trainee
+    // Tester" -> "Software Tester". Whole words only, and both families
     // must be real, or an empty family matches everything.
-    const levels = [...new Set(above.map((r) => r.level))].sort((a, b) => a - b);
-    const related = above.filter((r) => r.family && from.family && r.family !== from.family
-      && (from.family.endsWith(` ${r.family}`) || r.family.endsWith(` ${from.family}`)));
-    // ...but only if it is on the VERY NEXT rung. Without that guard
-    // "Assistant Vice President" matched "Vice President" (level 10)
-    // and skipped Deputy Vice President (level 9) sitting right above
-    // it — a related title two rungs up is not a promotion path.
-    if (related.length && Math.min(...related.map((r) => r.level)) === levels[0]) {
-      out.push({ from, to: pick(related, levels[0]), why: 'related' });
-      continue;
+    const related = (r) => r.family && from.family && r.family !== from.family
+      && (from.family.endsWith(` ${r.family}`) || r.family.endsWith(` ${from.family}`));
+    const isGeneric = (r) => r.designation.toLowerCase() === String(GENERIC[level] || '').toLowerCase();
+    const anyone = () => true;
+
+    // In order. The department's own people come before the company's
+    // for every rule, so a department that already has somebody on the
+    // rung keeps its own title for it. The standard title beats the
+    // commonest one, because without that the fallback is "biggest team
+    // wins" — and since Senior Software Developer is the biggest role
+    // in this company, that made the sheet say a Customer Service
+    // Representative's next step was Senior Software Developer.
+    const RULES = [
+      [here, sameJob, 'same_job'], [anywhere, sameJob, 'same_job'],
+      [here, related, 'related'], [anywhere, related, 'related'],
+      [here, isGeneric, 'generic'], [here, anyone, 'commonest'],
+      [anywhere, isGeneric, 'generic'], [anywhere, anyone, 'commonest'],
+    ];
+    let found = null;
+    for (const [pool_, test, why] of RULES) {
+      const hit = pool_.filter(test);
+      if (hit.length) { found = { to: pick(hit), why }; break; }
     }
 
-    let generic = null;
-    for (const lvl of levels) {
-      const g = byName.get(String(GENERIC[lvl] || '').toLowerCase());
-      if (g && g.level === lvl) { generic = g; break; }
-    }
-    if (generic) { out.push({ from, to: generic, why: 'generic' }); continue; }
-
-    // Rule three: the commonest real role on the rung above.
-    out.push({ from, to: pick(above, levels[0]), why: 'commonest' });
+    // Nobody anywhere in the company is on the rung above. Proposing a
+    // title no employee record has ever carried would put a role on the
+    // sheet that HR cannot match against anything, so the row is left
+    // out and the absence is the data's answer, not a dropped row.
+    if (!found) continue;
+    if (found.to.designation === from.designation) continue;
+    out.push({ from, to: found.to, why: found.why });
   }
   return out;
 }
 
-const pick = (pool, level) => pool.filter((r) => r.level === level)
-  .sort((a, b) => b.headcount - a.headcount || a.designation.localeCompare(b.designation))[0];
+const pick = (pool_) => [...pool_].sort((a, b) => b.headcount - a.headcount
+  || a.designation.localeCompare(b.designation))[0];
 
-// Why a row says what it says. The generic line is a request for a
-// human: it means the master has no senior form of that job, so the
-// suggestion is the plain ladder and probably needs editing.
 // Why a row says what it says. Only `generic` from a base rung is a
 // real guess: above that the generic spine (Lead, Manager, Senior
 // Manager, AVP...) IS the company ladder and needs no apology. Flagging
@@ -266,14 +300,24 @@ const WHY = {
 };
 const CHECK = 'PLEASE CHECK — the master has no senior form of this role, so this is the plain ladder rather than a real next step.';
 
-// A generic rung only needs a human when the role it comes FROM is a
-// specialised title with no senior form. "Trainee → Executive" is the
-// generic ladder read off both ends and is simply right.
+// A rung only needs a human when the role it comes FROM is a
+// specialised title with no senior form and nothing recognisably
+// related above it. "Trainee → Executive" is the generic ladder read
+// off both ends and is simply right.
+//
+// A rung the department has nobody on is NOT flagged. It was, briefly,
+// while the one-rung rule was being written, and that put PLEASE CHECK
+// on 85 of 210 rows — including "Business Analyst → Senior Business
+// Analyst" and "Oracle DBA → Sr. Oracle DBA", which are exactly right
+// and want no review at all. A flag on 40% of the sheet tells HR
+// nothing. The note still SAYS nobody holds it there, in words, which
+// is the honest form of that information: pointing at a rung the
+// department has not filled yet is what a career path is for.
 const onSpine = (d) => Object.values(GENERIC).some((g) => g.toLowerCase() === String(d).toLowerCase());
-const note = (t) => (t.why === 'generic' && t.from.level <= 2 && !onSpine(t.from.designation)
-  ? CHECK : WHY[t.why]);
+const note = (t) => ((t.why === 'generic' || t.why === 'commonest')
+  && t.from.level <= 2 && !onSpine(t.from.designation) ? CHECK : WHY[t.why]);
 
-function row(department, { from, to }, note) {
+function row(department, { from, to }, note_) {
   const [min, typical] = tenure(from.level, to.level);
   return {
     department,
@@ -281,12 +325,17 @@ function row(department, { from, to }, note) {
     from_level: null,
     to_role: to.designation,
     to_level: null,
-    expected_level_change: to.level - from.level,
+    // Always 1. Every suggested row is a single rung along the spine by
+    // construction, so the raw difference between two rank numbers —
+    // which has gaps, and which put a 5 in this column — is not what
+    // this field means.
+    expected_level_change: 1,
     min_time_months: min,
     typical_time_months: typical,
     required_competencies: competenciesFor(to.level),
-    notes: note,
+    notes: note_,
   };
 }
 
-module.exports = { suggestTransitions, ladder, rankOf, familyOf, tenure, competenciesFor, GENERIC, WHY, CHECK };
+module.exports = { suggestTransitions, ladder, rankOf, familyOf, tenure, competenciesFor,
+                   GENERIC, SPINE, nextRung, WHY, CHECK };
