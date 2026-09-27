@@ -21,7 +21,7 @@ before(async () => {
   const express = require('express');
   const cors = require('cors');
   const { runMigrations } = require('../core/migrate');
-  const { devLogin } = require('../core/auth');
+  const { devLogin, changePassword, authenticate } = require('../core/auth');
   await runMigrations();
 
   const t = (await db.query(`INSERT INTO core.tenants (name, slug) VALUES ($1,$1) RETURNING id`, [process.env.TENANT_SLUG])).rows[0];
@@ -42,6 +42,12 @@ before(async () => {
   app.use(express.json());
   app.use((req, _res, next) => { req.tenantId = t.id; next(); });
   app.post('/api/v1/auth/dev-login', devLogin);
+  // Mounted at the real path, because a password HR sets is now a one-use
+  // password (059) and the first-login lock refuses everything else until
+  // it has been replaced. Without this route the employee below could
+  // never get past it, and the permission assertion underneath would be
+  // answered by the lock instead of by the permission.
+  app.post('/api/v1/auth/password', authenticate, changePassword);
   app.use('/api/v1/employees', require('../core/employees').router);
   server = app.listen(0);
   base = `http://localhost:${server.address().port}/api/v1`;
@@ -82,8 +88,21 @@ test('GET /employees is 403 for a non-HR user even though authenticated — API-
   // USER — not just because they weren't signed in.
   await api(`/employees/${empId}/credentials`, empAuth.token, { method: 'POST', body: JSON.stringify({ password: 'employee-password-1' }) });
   const r = await fetch(`${base}/auth/dev-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'creds-emp@x.com', password: 'employee-password-1' }) });
-  const { token: empToken, user } = await r.json();
+  const { token: firstToken, user } = await r.json();
   assert.equal(user.role, 'employee', 'sanity check: the token really is for a plain employee');
+
+  // THROUGH THE FIRST-LOGIN CHANGE FIRST. A password HR chose is one-use
+  // (059), and until it is replaced every route answers with the lock —
+  // which would make the 403 below prove nothing about permissions. So
+  // this walks the real path an employee walks, and then asks the
+  // question this test exists to ask.
+  assert.equal(user.must_change_password, true);
+  const changed = await api('/auth/password', firstToken, {
+    method: 'POST',
+    body: JSON.stringify({ current_password: 'employee-password-1', new_password: 'ChosenByThem9' }),
+  });
+  assert.equal(changed.status, 200);
+  const empToken = changed.body.token;
 
   const listAttempt = await api('/employees', empToken);
   assert.equal(listAttempt.status, 403, 'plain employee gets 403, not the whole employee list');

@@ -8,7 +8,7 @@ const cors = require('cors');
 const db = require('./core/db');
 const logger = require('./core/logger');
 const { runMigrations } = require('./core/migrate');
-const { authenticate, devLogin } = require('./core/auth');
+const { authenticate, devLogin, changePassword } = require('./core/auth');
 const employees = require('./core/employees');
 const { effectivePermissions } = require('./core/permissions');
 
@@ -48,6 +48,10 @@ async function main() {
 
   app.get('/api/v1/health', (_req, res) => res.json({ ok: true, service: 'agentic-pms' }));
   app.post('/api/v1/auth/dev-login', devLogin);
+  // Setting your own password. Authenticated, and reachable even while
+  // the account is locked to this one action — see OPEN_WHILE_LOCKED in
+  // core/auth.js, which is the list this path has to stay in step with.
+  app.post('/api/v1/auth/password', authenticate, changePassword);
   // /me carries the pages this person may open. One row in
   // core.page_permission drives both the sidebar and the direct-URL guard,
   // so a hidden menu item and a typed URL can never disagree.

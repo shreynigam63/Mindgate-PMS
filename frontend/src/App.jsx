@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -218,7 +218,7 @@ const mayOpen = (user, route) => !user.pages || user.pages.includes(route);
 // guards itself.
 const gateClosed = (item, gates) => !!item.gate && gates[item.gate] === false;
 
-function TopNav({ user, gates }) {
+function TopNav({ user, gates, onChangePassword }) {
   const { pathname } = useLocation();
   const nav = useNavigate();
   // If a whole group ends up empty after filtering, drop the tab too: an
@@ -244,6 +244,15 @@ function TopNav({ user, gates }) {
         <div className="flex items-center gap-2 shrink-0">
           <NotificationBell />
           <span className="hidden sm:inline text-xs text-navy-500">{user.name} · {user.role}</span>
+          {/* Icon only on a phone. With the word beside it this row grew
+              past 390px and pushed the whole page sideways — caught by
+              the KRA table's phone test, which measures document scroll
+              width rather than looking at this header at all. */}
+          <button className="btn-sec !px-2 sm:!px-3" onClick={onChangePassword}
+            title="Change your password" aria-label="Change your password">
+            <KeyRound size={12} className="inline sm:mr-1" />
+            <span className="hidden sm:inline">Password</span>
+          </button>
           <button className="btn-sec" onClick={signOut}><LogOut size={12} className="inline mr-1" />Sign out</button>
         </div>
       </div>
@@ -371,6 +380,80 @@ function Main({ user }) {
   );
 }
 
+
+// SETTING YOUR OWN PASSWORD. Two jobs, one screen.
+//
+// Asked for on 27 Sep: "during login everyone should get change password
+// option during first login", and compulsory on the client's own answer.
+// The password HR issues follows a published pattern — first name and
+// @123 — so it is a one-use password by design, and this is where it
+// stops being usable.
+//
+// `forced` is the first-login case: there is no way past it, because the
+// API refuses every other route until the change is made (see
+// OPEN_WHILE_LOCKED in core/auth.js). Signing out is left available, so
+// somebody who opened the wrong account is not trapped.
+//
+// The same screen, unforced, is reachable later from the header — added
+// with it rather than after, because a product where a password can be
+// changed only once, at first sign-in, is a product with no way to
+// change a password.
+function ChangePassword({ forced, email, onDone, onCancel }) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const go = async () => {
+    setErr(null);
+    if (next.length < 8) { setErr('Your new password must be at least 8 characters.'); return; }
+    if (next !== confirm) { setErr('The two new passwords do not match.'); return; }
+    setBusy(true);
+    try {
+      const r = await api('/auth/password', {
+        method: 'POST', body: JSON.stringify({ current_password: current, new_password: next }),
+      });
+      // The old token still says a change is owed and would keep this
+      // person locked out of the app they just unlocked.
+      if (r.token) localStorage.setItem('apms_token', r.token);
+      await onDone();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+
+  return (
+    <div className="max-w-sm mx-auto mt-[10vh] flex flex-col gap-3 glass rounded-2xl p-6">
+      <h1 className="text-lg font-bold flex items-center gap-2 text-navy-900">
+        <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-navy-700 to-brand-500 flex items-center justify-center shadow-card shrink-0">
+          <KeyRound size={14} className="text-white" />
+        </span>
+        {forced ? 'Choose your own password' : 'Change your password'}
+      </h1>
+      <p className="text-xs text-navy-500">
+        {forced
+          ? `The password you signed in with was set for you by HR, and other people can work it out. Choose your own to carry on${email ? ` — you are signed in as ${email}` : ''}.`
+          : 'Enter your current password, then the one you want instead.'}
+      </p>
+      <input className="inp" type="password" autoComplete="current-password"
+        placeholder={forced ? 'The password HR gave you' : 'Current password'}
+        value={current} onChange={(e) => setCurrent(e.target.value)} />
+      <input className="inp" type="password" autoComplete="new-password"
+        placeholder="New password (at least 8 characters)"
+        value={next} onChange={(e) => setNext(e.target.value)} />
+      <input className="inp" type="password" autoComplete="new-password"
+        placeholder="New password again" value={confirm}
+        onChange={(e) => setConfirm(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && go()} />
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      <button className="btn-pri" disabled={busy} onClick={go}>
+        {busy ? 'Saving…' : 'Save my password'}
+      </button>
+      {forced
+        ? <button className="btn-sec !text-xs" onClick={signOut}>Sign out instead</button>
+        : <button className="btn-sec !text-xs" onClick={onCancel}>Cancel</button>}
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [checked, setChecked] = useState(false);
@@ -380,6 +463,7 @@ export default function App() {
   // that happens while somebody watches the menu, and the Home page reads
   // the same figure fresh on every visit.
   const [gates, setGates] = useState({});
+  const [changing, setChanging] = useState(false);
 
   // THE ONLY WAY A USER OBJECT IS BUILT, on a cold load and after a fresh
   // sign-in alike.
@@ -416,10 +500,21 @@ export default function App() {
   }, [user && user.id]);
   if (!checked) return null;
   if (!user) return <Login onUser={loadMe} />;
+  // Before the router, not inside it: there is no route to reach while a
+  // password change is owed, and the API would refuse anything the page
+  // asked for anyway.
+  if (user.must_change_password) {
+    return <ChangePassword forced email={user.email} onDone={loadMe} />;
+  }
+  if (changing) {
+    return <ChangePassword email={user.email}
+      onDone={async () => { setChanging(false); await loadMe(); }}
+      onCancel={() => setChanging(false)} />;
+  }
   return (
     <BrowserRouter>
       <div className="min-h-screen flex flex-col">
-        <TopNav user={user} gates={gates} />
+        <TopNav user={user} gates={gates} onChangePassword={() => setChanging(true)} />
         <Main user={user} />
       </div>
     </BrowserRouter>

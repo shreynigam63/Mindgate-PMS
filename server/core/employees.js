@@ -1418,7 +1418,10 @@ router.post('/credentials/bulk', async (req, res) => {
     const b = req.body || {};
     const dryRun = b.dry_run === true;
     const replaceExisting = b.replace_existing === true;
-    const mode = b.mode === 'same' ? 'same' : 'unique';
+    // 'name'   — the pattern the client asked for: first name + @123.
+    // 'same'   — one password for everybody, typed by HR.
+    // 'unique' — a generated one each, the default.
+    const mode = ['same', 'name'].includes(b.mode) ? b.mode : 'unique';
     const ids = Array.isArray(b.ids) ? b.ids.filter((x) => typeof x === 'string') : null;
     // Checked here rather than left to `ANY($2::uuid[])`, which answers a
     // malformed id with a 500 and a Postgres parse error — an input
@@ -1467,7 +1470,7 @@ router.post('/credentials/bulk', async (req, res) => {
         ORDER BY e.name`, params)).rows
       .map((e) => ({ ...e, email_is_placeholder: isPlaceholderEmail(e.email) }));
 
-    const planned = bulkCreds.plan(rows, { replaceExisting, actorId: req.user.id });
+    const planned = bulkCreds.plan(rows, { replaceExisting, actorId: req.user.id, mode });
     if (dryRun) {
       return res.json({ ok: true, committed: false, mode, replace_existing: replaceExisting,
         max_per_request: BULK_CREDENTIALS_MAX, ...planned });
@@ -1484,11 +1487,19 @@ router.post('/credentials/bulk', async (req, res) => {
       await client.query('BEGIN');
       for (const r of planned.rows) {
         if (r.outcome !== 'create' && r.outcome !== 'reset') { out.push(r); continue; }
-        const password = mode === 'same' ? String(b.password) : bulkCreds.generatePassword();
+        const password = mode === 'same' ? String(b.password)
+          : mode === 'name' ? bulkCreds.derivedPassword(r)
+          : bulkCreds.generatePassword();
         const hash = await bcrypt.hash(password, 10);
+        // must_change_password: HR picked this on somebody else's behalf,
+        // so it is a one-use password and the next sign-in has to replace
+        // it. That is what makes the name@123 pattern safe to hand out —
+        // see migration 059.
         await client.query(
-          `INSERT INTO core.local_credentials (tenant_id, email, password_hash) VALUES ($1,$2,$3)
-           ON CONFLICT (tenant_id, email) DO UPDATE SET password_hash=EXCLUDED.password_hash`,
+          `INSERT INTO core.local_credentials (tenant_id, email, password_hash, must_change_password)
+           VALUES ($1,$2,$3,true)
+           ON CONFLICT (tenant_id, email) DO UPDATE
+             SET password_hash=EXCLUDED.password_hash, must_change_password=true`,
           [T, r.email.toLowerCase(), hash]);
         if (r.outcome === 'create') created++; else reset++;
         out.push({ ...r, password });
@@ -1498,6 +1509,7 @@ router.post('/credentials/bulk', async (req, res) => {
          VALUES ($1,$2,'EMPLOYEE_CREDENTIALS_BULK','employees',$3)`,
         [T, req.user.email, JSON.stringify({
           created, reset, skipped: out.length - created - reset, mode, replace_existing: replaceExisting,
+          must_change_password: true,
           emails: out.filter((r) => r.password).slice(0, 50).map((r) => r.email),
         })]);
       await client.query('COMMIT');
@@ -1508,7 +1520,8 @@ router.post('/credentials/bulk', async (req, res) => {
 
     logger.warn('bulk credentials issued', { tenantId: T, created, reset, mode, by: req.user.email });
     res.json({ ok: true, committed: true, created, reset,
-      skipped: out.length - created - reset, mode, rows: out, counts: planned.counts });
+      skipped: out.length - created - reset, mode, must_change_password: true,
+      rows: out, counts: planned.counts });
   } catch (e) {
     logger.error('bulk credentials', { error: e.message });
     res.status(500).json({ error: e.message });
@@ -1535,9 +1548,13 @@ router.post('/:employeeId/credentials', async (req, res) => {
     const emp = (await db.query(`SELECT email FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, req.user.tenant_id])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
     const hash = await bcrypt.hash(password, 10);
+    // Same rule as the bulk run: a password chosen by somebody other than
+    // its owner is a one-use password, and the next sign-in replaces it.
     await db.query(
-      `INSERT INTO core.local_credentials (tenant_id, email, password_hash) VALUES ($1,$2,$3)
-       ON CONFLICT (tenant_id, email) DO UPDATE SET password_hash=EXCLUDED.password_hash`,
+      `INSERT INTO core.local_credentials (tenant_id, email, password_hash, must_change_password)
+       VALUES ($1,$2,$3,true)
+       ON CONFLICT (tenant_id, email) DO UPDATE
+         SET password_hash=EXCLUDED.password_hash, must_change_password=true`,
       [req.user.tenant_id, emp.email.toLowerCase(), hash]);
     logger.info('employee credentials set', { tenantId: req.user.tenant_id, email: emp.email, by: req.user.email });
     res.json({ ok: true });

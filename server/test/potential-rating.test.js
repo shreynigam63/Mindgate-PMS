@@ -105,10 +105,21 @@ test('a manager records potential with their evaluation', { skip }, async () => 
 });
 
 test('it is audited, because potential feeds the 9-box', { skip }, async () => {
-  const a = (await db.query(
-    `SELECT action, details FROM pms.audit_log
-      WHERE tenant_id=$1 AND employee_id=$2 AND action='POTENTIAL_SET_BY_MANAGER'`,
-    [tenantId, empId])).rows;
+  // POLLED, not read once. audit() in the performance module is
+  // deliberately not awaited — the handler answers the caller and lets
+  // the row land behind it — so under a full-suite run this query could
+  // fire before the write committed and report "not audited" about a
+  // feature that audits perfectly well. Waiting is the honest fix here;
+  // whether the product should await its own audit writes is a separate
+  // question, and a bigger one.
+  let a = [];
+  for (let i = 0; i < 50 && !a.length; i++) {
+    a = (await db.query(
+      `SELECT action, details FROM pms.audit_log
+        WHERE tenant_id=$1 AND employee_id=$2 AND action='POTENTIAL_SET_BY_MANAGER'`,
+      [tenantId, empId])).rows;
+    if (!a.length) await new Promise((r) => setTimeout(r, 50));
+  }
   assert.equal(a.length, 1);
   assert.equal(a[0].details.potential_rating, 'high');
 });

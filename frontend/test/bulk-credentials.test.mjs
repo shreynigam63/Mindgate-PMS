@@ -94,9 +94,10 @@ test('the panel is on the Employees page and opens', async (t) => {
   assert.match(main, /A different password for each person/i);
   assert.match(main, /The same password for everyone/i);
   assert.match(main, /replace the password of anyone who already has a login/i);
-  // The thing HR has to know before they choose "one password for
-  // everyone": nobody can change it afterwards.
-  assert.match(main, /no "change my password" screen yet/i);
+  // The thing HR has to know before handing these out: each one is spent
+  // at the first sign-in, which is what makes a pattern password safe.
+  assert.match(main, /used once/i);
+  assert.match(main, /nothing in the app opens until they have/i);
   assert.deepEqual(errors, []);
   await ctx.close();
 });

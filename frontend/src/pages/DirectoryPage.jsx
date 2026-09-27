@@ -124,7 +124,10 @@ const dl = (path) => `${API_BASE}${path}${path.includes('?') ? '&' : '?'}token=$
 // they will ever be readable.
 function BulkCredentials({ rows, picked, onDone }) {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState('unique');
+  // The client's own rule is the default, because it is what they asked
+  // for and what they will announce to people: "your password is your
+  // first name and @123, and you change it when you sign in."
+  const [mode, setMode] = useState('name');
   const [shared, setShared] = useState('');
   const [replace, setReplace] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -235,7 +238,7 @@ function BulkCredentials({ rows, picked, onDone }) {
         </button>
         <p className="text-[11px] text-navy-400 flex-1 min-w-[16rem]">
           Give a password to everyone who has no login yet — {scopeLabel}. There is no self-service
-          sign-up, so this is how people get in.
+          sign-up, so this is how people get in; each password is used once and replaced at first sign-in.
         </p>
       </div>
     );
@@ -264,6 +267,11 @@ function BulkCredentials({ rows, picked, onDone }) {
         <div className="space-y-1">
           <label className="flex items-center gap-2 text-xs">
             <input type="radio" name="bulk-credential-mode"
+              checked={mode === 'name'} onChange={() => setMode('name')} />
+            Their first name and <span className="font-mono">@123</span>
+          </label>
+          <label className="flex items-center gap-2 text-xs">
+            <input type="radio" name="bulk-credential-mode"
               checked={mode === 'unique'} onChange={() => setMode('unique')} />
             A different password for each person
           </label>
@@ -282,13 +290,14 @@ function BulkCredentials({ rows, picked, onDone }) {
           Also replace the password of anyone who already has a login
         </label>
       </div>
-      {/* Said here rather than in a release note: nobody can change their
-          own password in this product yet, so whatever is set here is
-          what that person signs in with until HR sets another one. */}
+      {/* The reason the pattern password is safe to hand out. It is one
+          sentence and it is the whole security model, so it is on the
+          screen rather than in a release note. */}
       <p className="text-[11px] text-amber2-600">
-        There is no "change my password" screen yet, so whatever is set here stays that person's password
-        until HR changes it. One password for everyone is quick for a demo; for real employees, one each
-        is the safer choice.
+        Every password set here is used once: the person is made to choose their own the first time they
+        sign in, and nothing in the app opens until they have.
+        {mode === 'name' && ' A first name of two or three letters makes a short password — the preview lists those.'}
+        {mode === 'same' && ' One password for everyone is quick for a demo; for real employees, one each is safer.'}
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -315,6 +324,7 @@ function BulkCredentials({ rows, picked, onDone }) {
             {(preview.counts.skip_inactive || 0) > 0 && <span className="chip bg-navy-50 text-navy-500">{preview.counts.skip_inactive} are inactive</span>}
             {(preview.counts.skip_self || 0) > 0 && <span className="chip bg-navy-50 text-navy-500">your own account is left alone</span>}
             {preview.no_email_on_record > 0 && <span className="chip bg-amber-100 text-amber-700">{preview.no_email_on_record} have no email on record</span>}
+            {preview.short_passwords > 0 && <span className="chip bg-amber-100 text-amber-700">{preview.short_passwords} get a password under 8 characters</span>}
           </div>
           {todo.length === 0 && <p className="text-navy-500">Nobody in this selection needs a login.</p>}
           <details className="text-[11px]">
@@ -323,6 +333,15 @@ function BulkCredentials({ rows, picked, onDone }) {
               {preview.rows.map((r) => (
                 <p key={r.id} className="text-navy-500">
                   <b>{r.name}</b> · {r.email} — {r.reason}
+                  {/* What they will actually be given. A rule read off a
+                      slide is not the same as the string this produces
+                      for "M. Harikrishnan", and this is where that is
+                      visible before it goes out rather than after. */}
+                  {r.would_be && (r.outcome === 'create' || r.outcome === 'reset') && (
+                    <span className={r.would_be.length < 8 ? 'text-amber-700' : 'text-navy-600'}>
+                      {' '}· <span className="font-mono">{r.would_be}</span>
+                    </span>
+                  )}
                   {r.placeholder_email && <span className="text-amber-700"> · no email address on record</span>}
                 </p>
               ))}
@@ -341,6 +360,10 @@ function BulkCredentials({ rows, picked, onDone }) {
           <p className="text-rose-600">
             Download the file now. Passwords are stored hashed, so this page is the only place they can
             ever be read — reload it and they are gone for good.
+          </p>
+          <p className="text-navy-500">
+            Each of these works once. The first time somebody signs in with theirs, they are asked to set
+            their own password and nothing else opens until they do.
           </p>
           <details className="text-[11px]">
             <summary className="cursor-pointer text-navy-500">Show the passwords on screen</summary>

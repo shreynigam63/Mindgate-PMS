@@ -41,6 +41,40 @@ function generatePassword() {
   return `${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8, 12)}-${s.slice(12)}`;
 }
 
+// THE PATTERN PASSWORD. Asked for on 27 Sep: "the password for all
+// employees will be their name@123", and confirmed as the first name
+// exactly as asked when the alternatives were put to the client.
+//
+// "Akshay Raut" becomes akshay@123. Lower-cased and stripped of
+// punctuation, because a password nobody can type from the rule is not a
+// rule — "M. Harikrishnan" must not become `M.@123`.
+//
+// TWO FALLBACKS, in order, and neither is a silent correction: the
+// preview reports every password this produces, so HR can see the odd
+// ones before they go out.
+//   - a first token with no letters at all ("R.", "&") would leave
+//     `@123`, which is not a password. The whole name, compacted, is
+//     used instead.
+//   - a name with no letters anywhere falls back to the address, which
+//     every employee has (a placeholder one if nothing else).
+//
+// It is deliberately NOT made unique or lengthened. 23 people on this
+// master share the first name Akshay and will share akshay@123; 20 have
+// a first name of three letters or fewer. That is what was asked for,
+// and it is safe only because must_change_password is set with it — the
+// password survives exactly one sign-in.
+const letters = (s) => String(s || '').replace(/[^A-Za-z0-9]/g, '');
+
+function derivedPassword(emp, suffix = '@123') {
+  const name = String(emp && emp.name || '').trim();
+  const first = letters(name.split(/\s+/)[0] || '');
+  if (first) return first.toLowerCase() + suffix;
+  const whole = letters(name);
+  if (whole) return whole.toLowerCase() + suffix;
+  const local = String(emp && emp.email || '').split('@')[0];
+  return (letters(local) || 'employee').toLowerCase() + suffix;
+}
+
 // WHY A ROW IS OR IS NOT GETTING A PASSWORD. Every row comes back with an
 // answer — this file's whole reason for existing is that "1,401 done" is
 // not a report. HR has to be able to see which twenty-six people were
@@ -82,6 +116,12 @@ function plan(employees, opts = {}) {
       id: e.id, emp_code: e.emp_code || '', name: e.name, email: e.email,
       department: e.department || '', outcome, reason: OUTCOMES[outcome],
       placeholder_email: !!e.email_is_placeholder,
+      // What the pattern would produce for this person. Shown in the
+      // preview, because "akshay@123" is the thing HR is about to hand
+      // out and the only way to notice a name the rule reads badly is to
+      // see it. Only for the mode that uses it — the others have nothing
+      // to show until the run has happened.
+      ...(opts.mode === 'name' ? { would_be: derivedPassword(e) } : {}),
     };
   });
   const counts = rows.reduce((acc, r) => ({ ...acc, [r.outcome]: (acc[r.outcome] || 0) + 1 }), {});
@@ -89,9 +129,14 @@ function plan(employees, opts = {}) {
     rows,
     counts,
     will_write: rows.filter((r) => r.outcome === 'create' || r.outcome === 'reset').length,
+    // Counted and surfaced rather than quietly padded. On this master it
+    // is the twenty people whose first name is an initial or three
+    // letters; HR should know before, not find out from a support call.
+    short_passwords: rows.filter((r) => r.would_be && r.would_be.length < 8
+      && (r.outcome === 'create' || r.outcome === 'reset')).length,
     no_email_on_record: rows.filter((r) => r.placeholder_email
       && (r.outcome === 'create' || r.outcome === 'reset')).length,
   };
 }
 
-module.exports = { generatePassword, decide, plan, OUTCOMES };
+module.exports = { generatePassword, derivedPassword, decide, plan, OUTCOMES };

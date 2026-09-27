@@ -36,6 +36,25 @@ test('a generated password is long, mixed, and never the same twice', () => {
   }
 });
 
+test('the pattern password is the first name, lower-cased, plus @123', () => {
+  const { derivedPassword } = require('../core/bulk-credentials');
+  const p = (name, email) => derivedPassword({ name, email: email === undefined ? 'x.y@mindgate.in' : email });
+  assert.equal(p('Akshay Raut'), 'akshay@123');
+  assert.equal(p('  Lohit  Lala  '), 'lohit@123', 'the double spaces in the HRMS export');
+  assert.equal(p('PRIYA'), 'priya@123', 'lower-cased, or nobody can type it from the rule');
+  // "M. Harikrishnan" must not become `M.@123` — the punctuation goes,
+  // even though what is left is short. Short is what the client chose
+  // when the alternatives were put to them; it is safe because the
+  // password is replaced at the first sign-in.
+  assert.equal(p('M. Harikrishnan'), 'm@123');
+  assert.equal(p('R S Akshaya'), 'r@123');
+  // A first token with no letters at all would leave a bare '@123',
+  // which is not a password. The whole name is used instead.
+  assert.equal(p('. Ramesh'), 'ramesh@123');
+  assert.equal(p('-- --'), 'xy@123', 'and with no letters anywhere, the address');
+  assert.equal(p('', ''), 'employee@123', 'never an empty password, whatever the row holds');
+});
+
 test('who is passed over, and for which reason', () => {
   const me = 'me-id';
   const base = { id: 'x', status: 'active', archived_at: null, has_login: false };
@@ -68,6 +87,22 @@ test('a placeholder address is flagged, never skipped', () => {
   assert.equal(p.no_email_on_record, 1);
   assert.equal(p.rows[1].outcome, 'create');
   assert.equal(p.rows[1].placeholder_email, true);
+});
+
+test('the plan says who gets a short password, rather than leaving it to be found', () => {
+  // Twenty people on the real master have a first name of three letters
+  // or fewer once punctuation is stripped. HR should see that number
+  // before the run, not hear it from a support call.
+  const p = plan([
+    { id: '1', name: 'Akshay Raut', email: 'a@x', status: 'active', has_login: false },
+    { id: '2', name: 'M. Harikrishnan', email: 'b@x', status: 'active', has_login: false },
+    { id: '3', name: 'Om Singh', email: 'c@x', status: 'active', has_login: false },
+    // Already has one, so their short password is not about to be issued
+    // and must not be counted.
+    { id: '4', name: 'E Elasachin', email: 'd@x', status: 'active', has_login: true },
+  ], { mode: 'name' });
+  assert.equal(p.short_passwords, 2, 'm@123 and om@123 — not the one nobody is getting');
+  assert.equal(p.rows[0].would_be, 'akshay@123');
 });
 
 test('the plan counts every row it was given', () => {
@@ -280,11 +315,17 @@ test('the audit row records the run and NOT the passwords', { skip }, async () =
   assert.ok(rows.length >= 3, `every committing run is audited — got ${rows.length}`);
   for (const r of rows) {
     assert.ok(!/Mindgate#2026/.test(r.details), 'the shared password is not in the audit trail');
-    assert.ok(!/password/i.test(r.details.replace(/"replace_existing"|"mode"/g, '')),
-      `no password field at all — got ${r.details}`);
   }
+  // Asserted as an exact key set rather than by grepping for the word
+  // "password": the row legitimately records THAT a change is required,
+  // and a grep would either trip on that or be loosened until it caught
+  // nothing. An exact set fails the moment a new field appears, which is
+  // when somebody should look at whether it belongs here.
   const latest = JSON.parse(rows[0].details);
-  assert.ok('created' in latest && 'reset' in latest && 'mode' in latest);
+  assert.deepEqual(Object.keys(latest).sort(),
+    ['created', 'emails', 'mode', 'must_change_password', 'replace_existing', 'reset', 'skipped']);
+  assert.ok(Array.isArray(latest.emails) && latest.emails.every((e) => typeof e === 'string' && e.includes('@')),
+    'addresses only — never a password beside them');
 });
 
 test('a batch bigger than the cap is refused with the cap named', { skip }, async () => {
