@@ -34,7 +34,9 @@ const TONE = {
 };
 
 // A stat card: one number, one label, one saturated icon square.
-function Stat({ icon: Icon, hue, n, label, to }) {
+// `hint` is the title attribute — used when a card leads nowhere yet, so
+// hovering it says why rather than leaving a dead square.
+function Stat({ icon: Icon, hue, n, label, to, hint }) {
   const body = (
     <>
       <span className={`stat-i si-${hue}`}><Icon size={22} /></span>
@@ -44,8 +46,8 @@ function Stat({ icon: Icon, hue, n, label, to }) {
       </span>
     </>
   );
-  return to ? <NavLink to={to} className="stat hover:shadow-glass">{body}</NavLink>
-            : <div className="stat">{body}</div>;
+  return to ? <NavLink to={to} className="stat hover:shadow-glass" title={hint}>{body}</NavLink>
+            : <div className="stat opacity-70 cursor-not-allowed" title={hint}>{body}</div>;
 }
 
 // A desk tile: a solid colour block carrying one count. Only rendered for
@@ -135,6 +137,12 @@ export default function HomePage() {
   const evalOpen = phase === 'manager_eval' || phase === 'hod_eval';
   const goals = me.goals || {};
   const connects = me.connects || {};
+  // MY RATING IS CLOSED UNTIL SOMETHING IS PUBLISHED. Asked for on 27 Sep.
+  // The count is of EVERY cycle, not this one: the page is a history, so a
+  // rating published last year keeps it open through a year that has not
+  // been calibrated yet. Locked, not hidden — the same rule as every other
+  // tile here, for the reason in this file's header.
+  const hasRating = (me.published_count || 0) > 0;
   // The same submissions, from both ends. `requested` is what THIS person
   // has sent upward and is waiting on; `pending` is what has been sent to
   // them. One row in the database, two readings of it.
@@ -233,8 +241,10 @@ export default function HomePage() {
               label={team.scope === 'all_employees' ? 'Employees' : 'My reports'} />
           : <Stat icon={ListChecks} hue="navy" to="/team/connects"
               n={connects.open_actions || 0} label="Open actions" />}
-        <Stat icon={Star} hue="violet" to="/my/rating"
-          n={me.published ? grade(me.published.final_rating) : '—'} label="My rating" />
+        <Stat icon={Star} hue="violet" to={hasRating ? '/my/rating' : undefined}
+          n={me.published ? grade(me.published.final_rating) : '—'} label="My rating"
+          hint={hasRating ? 'Your published ratings'
+                          : 'Opens once HR publishes your appraisal'} />
       </div>
 
       {/* The one thing waiting on this person. A list of five things you
@@ -319,8 +329,10 @@ export default function HomePage() {
           sub={me.midyear ? `Self: ${me.midyear.self_status.replace('_', ' ')} · manager: ${me.midyear.manager_status.replace('_', ' ')}` : 'Not started'} />
         <Tile to="/my/self-appraisal" icon={ClipboardList} title="Annual Review" hue="navy"
           sub={me.appraisal ? `Self-appraisal · ${me.appraisal.status.replace('_', ' ')}` : 'Not started'} />
-        <Tile to="/my/rating" icon={Star} title="My Rating" hue="violet"
-          sub={me.published ? `${grade(me.published.final_rating)} · ${me.published.rating_label || 'published'}` : 'Published after calibration'} />
+        <Tile to="/my/rating" icon={Star} title="My Rating" hue="violet" locked={!hasRating}
+          sub={me.published ? `${grade(me.published.final_rating)} · ${me.published.rating_label || 'published'}`
+             : hasRating ? 'Your ratings from earlier cycles'
+             : 'Opens once HR publishes your appraisal'} />
         <Tile to="/my/annual-review" icon={Award} title="Final Rating" hue="navy" sub="Consolidated view" />
         <Tile to="/my/history" icon={History} title="Past Cycles" hue="navy" sub="Previous ratings and trail" />
       </Section>

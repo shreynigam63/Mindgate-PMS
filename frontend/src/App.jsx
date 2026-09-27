@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -81,7 +81,16 @@ const NAV = [
     // sent. Only the labels move.
     { to: '/my/self-appraisal', label: 'Annual Review', icon: ClipboardList },
     { to: '/my/annual-review', label: 'Final Rating', icon: Award },
-    { to: '/my/rating', label: 'My Rating', icon: Star },
+    // CLOSED UNTIL A RATING IS PUBLISHED, asked for on 27 Sep: "my rating
+    // option should be visible to employee only when appraisal is
+    // published or it can be unclickable until appraisal is published."
+    // Unclickable is the one this product already does everywhere else —
+    // see HomePage.jsx's header. `gate` names a runtime fact, NOT a
+    // permission: core.page_permission still decides who may open this
+    // page at all, and it is open to everyone because it is your own
+    // rating. What this adds is "there is nothing behind it yet".
+    { to: '/my/rating', label: 'My Rating', icon: Star, gate: 'rating',
+      gateHint: 'Your rating appears here once HR publishes your appraisal' },
     { to: '/my/history', label: 'Past Cycles', icon: History },
     // MOVED OUT OF THE TEAM GROUP on 23 Sep, asked for directly: an
     // employee should not see a Team tab at all. This page was the only
@@ -199,7 +208,17 @@ const signOut = () => { localStorage.removeItem('apms_token'); location.href = '
 // so an unfiltered menu is a tidiness problem, never an access one.
 const mayOpen = (user, route) => !user.pages || user.pages.includes(route);
 
-function TopNav({ user }) {
+// A menu entry whose page exists and is permitted, but has nothing behind
+// it yet. It stays in the row, greyed and unclickable, and says on hover
+// what will open it. `gates[x] === false` is the only closed state:
+// undefined means the answer has not come back (or the call failed), and
+// an unanswered gate leaves the entry working — a UI gate that fails shut
+// would hide a rating somebody actually has, and there is nothing behind
+// it to protect, since the page shows only your own data and the API
+// guards itself.
+const gateClosed = (item, gates) => !!item.gate && gates[item.gate] === false;
+
+function TopNav({ user, gates }) {
   const { pathname } = useLocation();
   const nav = useNavigate();
   // If a whole group ends up empty after filtering, drop the tab too: an
@@ -254,12 +273,18 @@ function TopNav({ user }) {
           sidebar this replaced, on exactly the axis the sidebar was good
           at. Wrapping costs one extra row, and only for HR. */}
       <nav className="subnav px-4 lg:px-6 flex flex-wrap gap-x-1">
-        {here && here.items.map(it => (
+        {here && here.items.map(it => (gateClosed(it, gates) ? (
+          <span key={it.to} className="subnav-item opacity-40 cursor-not-allowed select-none"
+            title={it.gateHint} aria-disabled="true">
+            <span className={`navico navico-${here.hue}`}><it.icon size={13} /></span>{it.label}
+            <Lock size={11} className="ml-1 shrink-0" />
+          </span>
+        ) : (
           <NavLink key={it.to} to={it.to}
             className={({ isActive }) => `subnav-item ${isActive ? `subnav-on subnav-on-${here.hue}` : ''}`}>
             <span className={`navico navico-${here.hue}`}><it.icon size={13} /></span>{it.label}
           </NavLink>
-        ))}
+        )))}
       </nav>
     </header>
   );
@@ -349,6 +374,12 @@ function Main({ user }) {
 export default function App() {
   const [user, setUser] = useState(null);
   const [checked, setChecked] = useState(false);
+  // Runtime facts the menu needs that are not permissions. One so far:
+  // whether this person has any published rating. Fetched once, after
+  // sign-in — it changes when HR publishes a cycle, which is not something
+  // that happens while somebody watches the menu, and the Home page reads
+  // the same figure fresh on every visit.
+  const [gates, setGates] = useState({});
 
   // THE ONLY WAY A USER OBJECT IS BUILT, on a cold load and after a fresh
   // sign-in alike.
@@ -373,12 +404,22 @@ export default function App() {
     if (!t) { setChecked(true); return; }
     loadMe().catch(() => {}).finally(() => setChecked(true));
   }, []);
+
+  // Deliberately NOT awaited with /me: the menu renders while this is in
+  // flight, and an unanswered gate leaves its entry working. See
+  // gateClosed() for why that is the safe direction here.
+  useEffect(() => {
+    if (!user) return;
+    api('/pms/my/rating/status')
+      .then(r => setGates(g => ({ ...g, rating: !!r.has_published })))
+      .catch(() => setGates(g => ({ ...g, rating: true })));
+  }, [user && user.id]);
   if (!checked) return null;
   if (!user) return <Login onUser={loadMe} />;
   return (
     <BrowserRouter>
       <div className="min-h-screen flex flex-col">
-        <TopNav user={user} />
+        <TopNav user={user} gates={gates} />
         <Main user={user} />
       </div>
     </BrowserRouter>

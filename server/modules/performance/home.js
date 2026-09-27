@@ -80,10 +80,31 @@ function nextAction({ phase, kra, midyear, appraisal, teamPending, team, request
            cta: null, to: null, tone: 'clear' };
 }
 
+// How many published ratings this person has, across EVERY cycle.
+//
+// This is the gate on My Rating, and it is deliberately not the current
+// cycle's row. The page is a HISTORY — every year HR has closed — so what
+// opens it is "has anything ever been published for you", not "is this
+// year published". Gating on the current cycle would take last year's
+// rating away from somebody the moment HR opened a new one, which is the
+// opposite of what the page is for.
+async function publishedRatingCount(tenantId, employeeId) {
+  const r = await db.query(
+    `SELECT count(*)::int AS n FROM pms.employee_performance_history
+      WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]);
+  return r.rows[0].n;
+}
+
 async function home(user) {
   const t = user.tenant_id;
   const c = await activeCycle(t);
-  if (!c) return { cycle: null, action: { kind: 'no_cycle', title: 'No cycle is open',
+  // Read BEFORE the no-cycle return. A published rating outlives the cycle
+  // that produced it, so somebody sitting between cycles must still be able
+  // to open My Rating — and this figure is what the page's tile and its
+  // menu entry are unlocked by.
+  const published_count = await publishedRatingCount(t, user.id);
+  if (!c) return { cycle: null, me: { published_count },
+    action: { kind: 'no_cycle', title: 'No cycle is open',
     detail: 'HR opens a cycle before KRAs can be set.', cta: null, to: null, tone: 'clear' } };
 
   const one = async (sql, params) => (await db.query(sql, params)).rows[0] || null;
@@ -259,7 +280,7 @@ async function home(user) {
         in_this_cycle: !!(mine.eligible_from && mine.eligible_from.year === year),
       },
     },
-    me: { kra, midyear, appraisal, published, goals, connects, requested },
+    me: { kra, midyear, appraisal, published, published_count, goals, connects, requested },
     team, admin,
     action: nextAction({ phase: c.phase, kra, midyear, appraisal, team, requested,
                          teamPending: team ? team.kra_pending : 0 }),
@@ -418,4 +439,4 @@ async function teamHome(user) {
   };
 }
 
-module.exports = { home, nextAction, teamHome };
+module.exports = { home, nextAction, teamHome, publishedRatingCount };

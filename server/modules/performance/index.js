@@ -4689,6 +4689,32 @@ router.get('/team/annual-review/:employeeId', async (req, res) => {
 });
 
 // ---------------- My rating & history / Connects / PIP ----------------------
+// Whether My Rating has anything behind it yet.
+//
+// Asked for on 27 Sep: "my rating option should be visible to employee
+// only when appraisal is published or it can be unclickable until
+// appraisal is published." Unclickable, not hidden — that is the rule
+// this product already follows for a phase that has not arrived (see the
+// header of HomePage.jsx: a tile that vanishes makes people ask whether
+// they have lost access; one that says when it opens answers the email
+// they were about to send). So the menu entry and the two tiles stay
+// where they are, greyed, and say what unlocks them.
+//
+// Its own tiny endpoint rather than a field on /me, because /me is core
+// and a published rating is performance data — core does not read into a
+// module. The menu is rendered on every page, so it cannot afford to call
+// /pms/home for this.
+//
+// Sits above '/my/rating' only for reading order — that route is an exact
+// path, so it cannot swallow this one. Should a '/my/rating/:something'
+// ever be added, it is this declaration that must stay first.
+router.get('/my/rating/status', async (req, res) => {
+  try {
+    const count = await homeData.publishedRatingCount(T(req), req.user.id);
+    res.json({ count, has_published: count > 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/my/rating', async (req, res) => {
   try {
     const r = await db.query(

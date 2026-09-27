@@ -287,14 +287,26 @@ test('after the handover the new manager sees it and the old one does not', { sk
 test('a manager is chased for a KRA sheet and a growth plan left sitting', { skip }, async () => {
   const { runChase } = require('../modules/performance/reminders');
   const cycle = (await db.query(`SELECT * FROM pms.cycles WHERE id=$1`, [cycleId])).rows[0];
-  // Submitted four days ago — past the three-day floor the engine uses.
-  const when = new Date(Date.now() - 4 * 86400000);
+
+  // THE CLOCK IS PINNED, and it has to be. The engine does not chase at
+  // the weekend, on purpose. Read against the real date, this test asked
+  // for a chase over the window [today - 1, today] — two consecutive
+  // days, which are both weekend days every Sunday. It went red on
+  // Sunday 27 Sep 2026 with nothing about the product having changed,
+  // and would have again every Sunday after.
+  //
+  // `today` is this week's Wednesday and the submission the Saturday
+  // before it, so the window is Tuesday and Wednesday whenever this runs.
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
+    now.getUTCDate() - ((now.getUTCDay() - 3 + 7) % 7)));
+  // Submitted four days before that — past the three-day floor the engine uses.
+  const when = new Date(today.getTime() - 4 * 86400000);
   await db.query(`UPDATE pms.kra_sheets SET submitted_at=$3, status='submitted'
                    WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, empId, when]);
   await db.query(`UPDATE pms.development_plans SET submitted_at=$3, status='submitted'
                    WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, empId, when]);
 
-  const today = new Date();
   assert.ok(await runChase(tenantId, cycle, today, 'kra') > 0, 'the KRA approval was chased');
   assert.ok(await runChase(tenantId, cycle, today, 'growth') > 0, 'so was the growth plan');
 
