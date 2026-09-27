@@ -34,8 +34,9 @@ const bcrypt = require('bcryptjs');
 const db = require('./db');
 const logger = require('./logger');
 const { authenticate } = require('./auth');
-const { guardUuidParams } = require('./http');
+const { guardUuidParams, UUID_RE } = require('./http');
 const { apiPermissionParity, hasPermission } = require('./permissions');
+const bulkCreds = require('./bulk-credentials');
 
 // ---------- CSV parsing (self-contained; handles quotes and commas) --------
 function parseCsv(text) {
@@ -1386,6 +1387,132 @@ router.delete('/:employeeId', async (req, res) => {
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: e.message });
   } finally { client.release(); }
+});
+
+// BULK login provisioning. Asked for on 27 Sep: "please build create bulk
+// credentials option for Admin/HR login so they can create bulk
+// credentials for employees from front end."
+//
+// The per-person panel below already does this one at a time. On this
+// tenant that is 1,427 openings of a drawer, which is not a workflow.
+//
+// TWO STEPS, like every other batch on this page. `dry_run` decides
+// nothing and writes nothing: it returns the plan — who would get a
+// login, who would be passed over and why — so HR sees the shape of the
+// run before it happens. The commit then names the people explicitly, so
+// what was previewed is what is written even if somebody else edits the
+// list in between.
+//
+// WHY THE COMMIT IS CAPPED. bcryptjs is pure JavaScript and hashes at
+// about 90ms on the PoC box, measured — 1,427 of them is over two
+// minutes of one request holding the runtime. The cap keeps a single
+// call to a few seconds and the page sends the run in batches, which
+// also gives it something honest to show a progress bar from. Raising
+// the cap without moving off bcryptjs would just move the stall.
+const BULK_CREDENTIALS_MAX = 200;
+
+router.post('/credentials/bulk', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    const T = req.user.tenant_id;
+    const b = req.body || {};
+    const dryRun = b.dry_run === true;
+    const replaceExisting = b.replace_existing === true;
+    const mode = b.mode === 'same' ? 'same' : 'unique';
+    const ids = Array.isArray(b.ids) ? b.ids.filter((x) => typeof x === 'string') : null;
+    // Checked here rather than left to `ANY($2::uuid[])`, which answers a
+    // malformed id with a 500 and a Postgres parse error — an input
+    // mistake reported as a server fault. The offending value is not
+    // echoed back, for the reason guardUuidParams() gives.
+    if (ids && !ids.every((x) => UUID_RE.test(x))) {
+      return res.status(400).json({ error: 'ids must all be employee ids' });
+    }
+
+    // One password for everybody is a real request — it is how a PoC gets
+    // a room full of people signed in — but it is only worth offering if
+    // it is at least as strong as the one the single-person route
+    // demands, and it must never arrive empty by accident.
+    if (mode === 'same' && (!b.password || String(b.password).length < 8)) {
+      return res.status(400).json({ error: 'password must be at least 8 characters when every employee is given the same one' });
+    }
+    // A commit always names its people. Letting it mean "and everyone
+    // else you can find" would make the preview a guess.
+    if (!dryRun && (!ids || !ids.length)) {
+      return res.status(400).json({ error: 'ids are required to create logins — run with dry_run first and commit the people it lists' });
+    }
+    if (!dryRun && ids.length > BULK_CREDENTIALS_MAX) {
+      return res.status(413).json({
+        error: `at most ${BULK_CREDENTIALS_MAX} employees per request — send the run in batches`,
+        max: BULK_CREDENTIALS_MAX,
+      });
+    }
+
+    // "Everybody" means everybody ON THE LIST. Archived people are off it
+    // by definition and cannot sign in, so sweeping them in would pad the
+    // preview with dozens of rows explaining themselves — the page's own
+    // count says 1,427 and the plan should agree with it.
+    //
+    // A NAMED id is still read whatever its state, and decide() still has
+    // a skip_archived answer, because a row the caller pointed at has to
+    // come back with a reason rather than silently missing from its own
+    // report.
+    const params = ids ? [T, ids] : [T];
+    const rows = (await db.query(
+      `SELECT e.id, e.emp_code, e.name, e.email, e.department, e.status, e.archived_at,
+              (lc.email IS NOT NULL) AS has_login
+         FROM core.employees e
+         LEFT JOIN core.local_credentials lc
+           ON lc.tenant_id = e.tenant_id AND LOWER(lc.email) = LOWER(e.email)
+        WHERE e.tenant_id = $1 ${ids ? 'AND e.id = ANY($2::uuid[])' : 'AND e.archived_at IS NULL'}
+        ORDER BY e.name`, params)).rows
+      .map((e) => ({ ...e, email_is_placeholder: isPlaceholderEmail(e.email) }));
+
+    const planned = bulkCreds.plan(rows, { replaceExisting, actorId: req.user.id });
+    if (dryRun) {
+      return res.json({ ok: true, committed: false, mode, replace_existing: replaceExisting,
+        max_per_request: BULK_CREDENTIALS_MAX, ...planned });
+    }
+
+    // THE PASSWORDS ARE RETURNED ONCE AND NEVER AGAIN. They are stored as
+    // bcrypt hashes, so nothing here or anywhere else can read them back
+    // — which is why they are not written to the audit row or the log,
+    // and why the page has to be the thing that saves the file.
+    const out = [];
+    let created = 0; let reset = 0;
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      for (const r of planned.rows) {
+        if (r.outcome !== 'create' && r.outcome !== 'reset') { out.push(r); continue; }
+        const password = mode === 'same' ? String(b.password) : bulkCreds.generatePassword();
+        const hash = await bcrypt.hash(password, 10);
+        await client.query(
+          `INSERT INTO core.local_credentials (tenant_id, email, password_hash) VALUES ($1,$2,$3)
+           ON CONFLICT (tenant_id, email) DO UPDATE SET password_hash=EXCLUDED.password_hash`,
+          [T, r.email.toLowerCase(), hash]);
+        if (r.outcome === 'create') created++; else reset++;
+        out.push({ ...r, password });
+      }
+      await client.query(
+        `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details)
+         VALUES ($1,$2,'EMPLOYEE_CREDENTIALS_BULK','employees',$3)`,
+        [T, req.user.email, JSON.stringify({
+          created, reset, skipped: out.length - created - reset, mode, replace_existing: replaceExisting,
+          emails: out.filter((r) => r.password).slice(0, 50).map((r) => r.email),
+        })]);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally { client.release(); }
+
+    logger.warn('bulk credentials issued', { tenantId: T, created, reset, mode, by: req.user.email });
+    res.json({ ok: true, committed: true, created, reset,
+      skipped: out.length - created - reset, mode, rows: out, counts: planned.counts });
+  } catch (e) {
+    logger.error('bulk credentials', { error: e.message });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // HR-provisioned login access — the ONLY way, right now, for anyone other

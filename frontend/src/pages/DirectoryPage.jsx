@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, Fragment } from 'react';
-import { Settings2, Trash2, Search, ArrowUpDown, ArrowUp, ArrowDown, X, UserPlus, Undo2 } from 'lucide-react';
+import { Settings2, Trash2, Search, ArrowUpDown, ArrowUp, ArrowDown, X, UserPlus, Undo2, KeyRound, Download } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 
@@ -109,6 +109,252 @@ function ImportKraAssign({ report }) {
 // token rides in the query because a plain <a> cannot send a header.
 // Same pattern as every other download in this app.
 const dl = (path) => `${API_BASE}${path}${path.includes('?') ? '&' : '?'}token=${localStorage.getItem('apms_token')}`;
+
+// Giving a lot of people a login at once.
+//
+// Asked for on 27 Sep: "please build create bulk credentials option for
+// Admin/HR login so they can create bulk credentials for employees from
+// front end."
+//
+// The Manage panel on each row already sets one password. This is the
+// same act, 1,400 times, with the three things that only matter at that
+// scale: a preview before anything is written, a per-person reason for
+// everyone passed over, and a file of the results — because the
+// passwords are bcrypt-hashed on arrival and this page is the only place
+// they will ever be readable.
+function BulkCredentials({ rows, picked, onDone }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState('unique');
+  const [shared, setShared] = useState('');
+  const [replace, setReplace] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
+  const [progress, setProgress] = useState(null);   // { done, total }
+  const [err, setErr] = useState(null);
+
+  const ids = picked.size ? [...picked] : null;
+  const scopeLabel = picked.size
+    ? `${picked.size} selected ${picked.size === 1 ? 'employee' : 'employees'}`
+    : `everyone on the list (${rows.length})`;
+
+  // A change to who or how invalidates a PREVIEW built from the old
+  // answer — committing against a stale plan is the mistake the preview
+  // exists to prevent.
+  //
+  // IT MUST NOT TOUCH THE RESULT. Committing calls onDone(), which
+  // reloads the list and clears the ticked rows, which lands here as a
+  // change of `picked`. A reset at that moment wiped the passwords off
+  // the screen the instant they were created — the one thing in this
+  // product that cannot be recovered, since they are stored hashed.
+  // Caught by the browser test, which is the only place it is visible.
+  useEffect(() => { setPreview(null); setErr(null); }, [picked, mode, replace]);
+  const reset = () => { setPreview(null); setResult(null); setProgress(null); setErr(null); };
+
+  const body = (extra) => JSON.stringify({
+    ids, mode, replace_existing: replace,
+    ...(mode === 'same' ? { password: shared } : {}), ...extra,
+  });
+
+  const runPreview = async () => {
+    setErr(null); setResult(null);
+    try { setPreview(await api('/employees/credentials/bulk', { method: 'POST', body: body({ dry_run: true }) })); }
+    catch (e) { setErr(e.message); }
+  };
+
+  // SENT IN BATCHES, because bcrypt is slow on purpose and 1,400 hashes
+  // in one request is over two minutes of a held connection. Each batch
+  // is its own transaction and its own audit row, so a failure half way
+  // leaves the batches before it genuinely done — which is what the
+  // error below says, rather than pretending the run was atomic.
+  const commit = async () => {
+    const todo = preview.rows.filter((r) => r.outcome === 'create' || r.outcome === 'reset');
+    // Half the server's cap on purpose. At ~90ms a hash, 200 is an
+    // eighteen-second request and a progress bar that moves twice; 100
+    // is nine seconds and a bar that actually reports progress. The cap
+    // is read from the server so lowering it there lowers this too.
+    const size = Math.min(100, preview.max_per_request || 100);
+    setErr(null); setProgress({ done: 0, total: todo.length });
+    const out = []; let created = 0; let reset_ = 0;
+    try {
+      for (let i = 0; i < todo.length; i += size) {
+        const batch = todo.slice(i, i + size);
+        const r = await api('/employees/credentials/bulk', {
+          method: 'POST', body: JSON.stringify({
+            ids: batch.map((x) => x.id), mode, replace_existing: replace,
+            ...(mode === 'same' ? { password: shared } : {}),
+          }),
+        });
+        out.push(...r.rows.filter((x) => x.password));
+        created += r.created; reset_ += r.reset;
+        setProgress({ done: Math.min(i + size, todo.length), total: todo.length });
+      }
+      setResult({ created, reset: reset_, rows: out, skipped: preview.rows.length - todo.length });
+      onDone();
+    } catch (e) {
+      setErr(`${e.message} — ${out.length} logins were already created before this failed; download the file below before trying again.`);
+      if (out.length) setResult({ created, reset: reset_, rows: out, partial: true });
+    } finally { setProgress(null); }
+  };
+
+  // THE ONLY COPY. Nothing can read a bcrypt hash back, so if this file
+  // is not saved the passwords are gone and the run has to be done again.
+  //
+  // The employee code is written as ="0012" rather than 0012 because
+  // Excel eats leading zeros off anything it decides is a number, and an
+  // HRMS code that opens as 12 cannot be matched back — the same reason
+  // the employee export is built server-side as .xlsx.
+  const download = () => {
+    const cell = (v) => {
+      const t = String(v == null ? '' : v);
+      return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const note = (r) => (r.placeholder_email
+      ? 'no email address on record — hand this over another way'
+      : r.outcome === 'reset' ? 'password replaced' : 'new login');
+    const lines = [
+      ['Employee ID', 'Name', 'Email', 'Department', 'Password', 'Note'].join(','),
+      ...result.rows.map((r) => [
+        r.emp_code ? `="${r.emp_code}"` : '', cell(r.name), cell(r.email),
+        cell(r.department), cell(r.password), cell(note(r)),
+      ].join(',')),
+    ];
+    const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pms-logins-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (!open) {
+    return (
+      <div className="card p-4 flex flex-wrap items-center gap-3">
+        <span className="lbl !mb-0">Logins</span>
+        <button className="btn-sec" onClick={() => setOpen(true)}>
+          <KeyRound size={13} className="inline mr-1" />Create logins in bulk
+        </button>
+        <p className="text-[11px] text-navy-400 flex-1 min-w-[16rem]">
+          Give a password to everyone who has no login yet — {scopeLabel}. There is no self-service
+          sign-up, so this is how people get in.
+        </p>
+      </div>
+    );
+  }
+
+  const todo = preview ? preview.rows.filter((r) => r.outcome === 'create' || r.outcome === 'reset') : [];
+  const canCommit = preview && todo.length > 0 && !progress && (mode !== 'same' || shared.length >= 8);
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <p className="lbl !mb-0 flex-1">
+          Create logins in bulk{result ? '' : ` — ${scopeLabel}`}
+        </p>
+        <button className="btn-sec !py-1" onClick={() => { setOpen(false); reset(); }}>Close</button>
+      </div>
+      {!result && (
+        <p className="text-[11px] text-navy-400">
+          {picked.size
+            ? 'The rows you ticked. Untick them all to work on everybody.'
+            : 'Everybody on the list. Tick rows in the table below to narrow it.'}
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
+        <div className="space-y-1">
+          <label className="flex items-center gap-2 text-xs">
+            <input type="radio" name="bulk-credential-mode"
+              checked={mode === 'unique'} onChange={() => setMode('unique')} />
+            A different password for each person
+          </label>
+          <label className="flex items-center gap-2 text-xs">
+            <input type="radio" name="bulk-credential-mode"
+              checked={mode === 'same'} onChange={() => setMode('same')} />
+            The same password for everyone
+          </label>
+          {mode === 'same' && (
+            <input className="inp !text-xs" value={shared} onChange={(e) => { setShared(e.target.value); setPreview(null); setResult(null); }}
+              placeholder="at least 8 characters" aria-label="Password for everyone" />
+          )}
+        </div>
+        <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
+          Also replace the password of anyone who already has a login
+        </label>
+      </div>
+      {/* Said here rather than in a release note: nobody can change their
+          own password in this product yet, so whatever is set here is
+          what that person signs in with until HR sets another one. */}
+      <p className="text-[11px] text-amber2-600">
+        There is no "change my password" screen yet, so whatever is set here stays that person's password
+        until HR changes it. One password for everyone is quick for a demo; for real employees, one each
+        is the safer choice.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button className="btn-sec" onClick={runPreview} disabled={!!progress}>Preview</button>
+        <button className="btn-pri" onClick={commit} disabled={!canCommit}>
+          {progress ? `Creating… ${progress.done} of ${progress.total}` : `Create ${todo.length || ''} login${todo.length === 1 ? '' : 's'}`}
+        </button>
+        {result && (
+          <button className="btn-pri !bg-leaf-600 hover:!bg-leaf-700" onClick={download}>
+            <Download size={13} className="inline mr-1" />Download the passwords (.csv)
+          </button>
+        )}
+      </div>
+
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+
+      {preview && !result && (
+        <div className="text-xs space-y-1">
+          <div className="flex flex-wrap gap-1.5">
+            <span className="chip bg-leaf-50 text-leaf-600">{preview.counts.create || 0} will get a new login</span>
+            {(preview.counts.reset || 0) > 0 && <span className="chip bg-amber-100 text-amber-700">{preview.counts.reset} will have their password replaced</span>}
+            {(preview.counts.skip_has_login || 0) > 0 && <span className="chip bg-navy-50 text-navy-500">{preview.counts.skip_has_login} already have a login</span>}
+            {(preview.counts.skip_archived || 0) > 0 && <span className="chip bg-navy-50 text-navy-500">{preview.counts.skip_archived} are off the list</span>}
+            {(preview.counts.skip_inactive || 0) > 0 && <span className="chip bg-navy-50 text-navy-500">{preview.counts.skip_inactive} are inactive</span>}
+            {(preview.counts.skip_self || 0) > 0 && <span className="chip bg-navy-50 text-navy-500">your own account is left alone</span>}
+            {preview.no_email_on_record > 0 && <span className="chip bg-amber-100 text-amber-700">{preview.no_email_on_record} have no email on record</span>}
+          </div>
+          {todo.length === 0 && <p className="text-navy-500">Nobody in this selection needs a login.</p>}
+          <details className="text-[11px]">
+            <summary className="cursor-pointer text-navy-500">Who, and why — all {preview.rows.length}</summary>
+            <div className="pt-1 max-h-64 overflow-y-auto space-y-0.5">
+              {preview.rows.map((r) => (
+                <p key={r.id} className="text-navy-500">
+                  <b>{r.name}</b> · {r.email} — {r.reason}
+                  {r.placeholder_email && <span className="text-amber-700"> · no email address on record</span>}
+                </p>
+              ))}
+            </div>
+          </details>
+        </div>
+      )}
+
+      {result && (
+        <div className="text-xs space-y-1">
+          <p className="font-semibold text-leaf-700">
+            {result.created} login{result.created === 1 ? '' : 's'} created
+            {result.reset > 0 && `, ${result.reset} password${result.reset === 1 ? '' : 's'} replaced`}
+            {result.partial && ' — the run stopped early, see above'}
+          </p>
+          <p className="text-rose-600">
+            Download the file now. Passwords are stored hashed, so this page is the only place they can
+            ever be read — reload it and they are gone for good.
+          </p>
+          <details className="text-[11px]">
+            <summary className="cursor-pointer text-navy-500">Show the passwords on screen</summary>
+            <div className="pt-1 max-h-64 overflow-y-auto space-y-0.5">
+              {result.rows.map((r) => (
+                <p key={r.id} className="text-navy-600">{r.email} — <span className="font-mono">{r.password}</span></p>
+              ))}
+            </div>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function DirectoryPage() {
   const [rows, setRows] = useState(null);
@@ -371,6 +617,12 @@ export default function DirectoryPage() {
           </div>
         )}
       </div>
+      {/* Logins, directly under the import: loading people and letting
+          them in are the two halves of standing this product up, and
+          doing the second one person at a time is what was asked to
+          end. It needs the rows and the ticked selection, so it lives
+          here rather than in the header. */}
+      {rows && <BulkCredentials rows={rows.filter((r) => !r.archived_at)} picked={picked} onDone={load} />}
       {!rows ? <p className="text-sm text-navy-400">Loading…</p> : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-3">
