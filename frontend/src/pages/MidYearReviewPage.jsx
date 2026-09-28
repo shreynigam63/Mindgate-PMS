@@ -235,43 +235,6 @@ function DerivedOverall({ scoring, kras, scale }) {
 
 // ---- Mindgate's own PMS form (migration 061) -----------------------------
 
-// The identity block from the top of their form. Every field here is
-// already on the employee record, so it is STATED rather than asked for
-// a second time — re-typing your own employee code into an appraisal is
-// how a form earns the reputation their Google Form has.
-//
-// The two the master cannot answer — total career experience, and the
-// technology someone is actually working in — are questions in the
-// "About you" section instead, which is why they are not here.
-function WhoYouAre({ profile }) {
-  if (!profile) return null;
-  const when = (d) => (d ? new Date(d).toLocaleDateString() : '—');
-  const cell = (label, value) => (
-    <div>
-      <p className="text-[10px] uppercase tracking-wide text-navy-400">{label}</p>
-      <p className="font-medium">{value || '—'}</p>
-    </div>
-  );
-  return (
-    <div className="border border-navy-100 rounded-xl p-3">
-      <p className="text-[10px] uppercase font-bold text-navy-400 mb-2">On record</p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 text-xs">
-        {cell('Employee name', profile.name)}
-        {cell('Employee code', profile.emp_code)}
-        {cell('Designation', profile.designation)}
-        {cell('Department', profile.department)}
-        {cell('Date of joining', when(profile.date_of_joining))}
-        {cell('Reporting manager', profile.manager_name)}
-        {cell("Manager's email", profile.manager_email)}
-        {cell('Delivery head', profile.delivery_head)}
-      </div>
-      <p className="text-[10px] text-navy-400 mt-2">
-        From your employee record. Ask HR if anything here is wrong — it is not edited on this form.
-      </p>
-    </div>
-  );
-}
-
 // One question. Ratings use the CYCLE'S scale and show as letters, like
 // every other rating in this product.
 function FormQuestion({ q, scale, editable, value, onChange }) {
@@ -567,7 +530,6 @@ function MyMidYearCard() {
           this card still says whether the manager has signed, so an
           employee can still tell their half is done. */}
       <div className="grid gap-3">
-        <WhoYouAre profile={data.profile} />
         <div className="border border-navy-100 rounded-xl p-3 space-y-2">
           <p className="text-[10px] uppercase font-bold text-navy-400">Your mid-year</p>
           {hasKras ? (
