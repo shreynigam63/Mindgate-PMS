@@ -16,7 +16,7 @@ const { guardUuidParams } = require('../../core/http');
 const { apiPermissionParity, hasPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const { normaliseRule, audienceSql, describeRule, needsJoiningDate,
-        triggerRule, MILESTONES } = require('./audience');
+        triggerRule, validateRule, MILESTONES } = require('./audience');
 const { seedTemplates } = require('../../migrations/056-survey-templates');
 const { TEMPLATES: SHIPPED_TEMPLATES } = require('./templates');
 const { seedFlagRules } = require('../../migrations/058-engagement-insights');
@@ -142,7 +142,7 @@ router.post('/surveys', async (req, res) => {
     if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
     const b = req.body || {};
     if (!b.title) return res.status(400).json({ error: 'title required' });
-    const bad = validateTrigger(b) || validateKind(b);
+    const bad = validateTrigger(b) || validateKind(b) || validateRule(b.audience_rule);
     if (bad) return res.status(422).json({ error: bad });
     const kind = b.audience_kind === 'manager_about_reportee' ? 'manager_about_reportee' : 'self';
     // A manager assessment is never anonymous — see the constraint in
@@ -194,10 +194,14 @@ router.put('/surveys/:id', async (req, res) => {
     const cur = (await db.query(`SELECT * FROM engagement.surveys WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!cur) return res.status(404).json({ error: 'survey not found' });
     if (cur.status !== 'draft') {
-      return res.status(409).json({ error: 'This survey is already open, so its audience is fixed. Close it and create a new one to change who it goes to.' });
+      // Names questions as well as audience since 28 Sep, when the
+      // editor learned to change them: a refusal that mentions only
+      // the audience reads as though the questions were editable.
+      return res.status(409).json({ error: `This survey is already ${cur.status}, so its questions and audience are fixed. People have been invited against what it says now; create a new one to change it.` });
     }
     const b = req.body || {};
-    const bad = validateTrigger({ ...cur, ...b });
+    const bad = validateTrigger({ ...cur, ...b })
+      || (b.audience_rule === undefined ? null : validateRule(b.audience_rule));
     if (bad) return res.status(422).json({ error: bad });
     const rule = normaliseRule(b.audience_rule === undefined ? cur.audience_rule : b.audience_rule);
     const s = (await db.query(
@@ -215,8 +219,53 @@ router.put('/surveys/:id', async (req, res) => {
          ? Number(b.trigger_day == null ? cur.trigger_day : b.trigger_day) : null,
        b.trigger_window_days == null ? null : Number(b.trigger_window_days),
        b.anonymity_default, b.allow_attribution_optin, b.closes_at || null])).rows[0];
-    audit(req, 'SURVEY_UPDATED', { survey: s.id, audience: describeRule(rule), trigger: s.trigger_type });
-    res.json({ ok: true, survey: s });
+    // ---- the questions, when the caller sent them ------------------
+    //
+    // Asked for on 28 Sep: "provide edit option during previewing
+    // surveys." The preview shows two things — who it goes to and what
+    // they will be asked — so an edit that could only reach the first
+    // of them would be half the feature.
+    //
+    // ABSENT means "leave them alone"; an empty array would mean
+    // "delete every question", which is not something a PUT that only
+    // meant to rename a survey should ever do by omission.
+    //
+    // Replace-all rather than a per-question diff: the editor hands
+    // over the whole list in its new order, and matching up ids to
+    // work out what moved would be more code for the same result. Safe
+    // here ONLY because this is a draft — the guard above has already
+    // refused anything else, and nothing can have answered a draft, so
+    // no response is orphaned.
+    let questionsWritten = null;
+    if (Array.isArray(b.questions)) {
+      const rows = b.questions.filter((q) => q && String(q.prompt || '').trim());
+      if (!rows.length) {
+        return res.status(422).json({ error: 'A survey needs at least one question.' });
+      }
+      // Validated BEFORE the delete, so a bad option list cannot leave
+      // the survey with no questions at all.
+      for (const q of rows) {
+        const opts = cleanOptions(q.options);
+        if ((q.qtype === 'choice' || q.qtype === 'multi') && opts.length < 2) {
+          return res.status(422).json({ error: `"${String(q.prompt).slice(0, 60)}" is a ${q.qtype} question, so it needs at least two options.` });
+        }
+      }
+      await db.query(`DELETE FROM engagement.questions WHERE survey_id=$1 AND tenant_id=$2`, [cur.id, T(req)]);
+      let i = 0;
+      for (const q of rows) {
+        const opts = cleanOptions(q.options);
+        await db.query(
+          `INSERT INTO engagement.questions (tenant_id, survey_id, qtype, prompt, options, required, sort_order, dimension)
+           VALUES ($1,$2,COALESCE($3,'scale'),$4,$5,COALESCE($6,true),$7,$8)`,
+          [T(req), cur.id, q.qtype || null, String(q.prompt).trim(),
+           opts.length ? JSON.stringify(opts) : null, q.required, (i += 10), q.dimension || null]);
+      }
+      questionsWritten = rows.length;
+    }
+
+    audit(req, 'SURVEY_UPDATED', { survey: s.id, audience: describeRule(rule), trigger: s.trigger_type,
+      ...(questionsWritten == null ? {} : { questions: questionsWritten }) });
+    res.json({ ok: true, survey: s, ...(questionsWritten == null ? {} : { questions: questionsWritten }) });
   } catch (e) { logger.error('survey update', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
@@ -556,7 +605,7 @@ router.post('/audience/preview', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
     const b = req.body || {};
-    const bad = validateTrigger(b) || validateKind(b);
+    const bad = validateTrigger(b) || validateKind(b) || validateRule(b.audience_rule);
     if (bad) return res.status(422).json({ error: bad });
     const a = await resolveAudience(T(req), b);
     res.json({ count: a.count, description: a.description, no_joining_date: a.no_joining_date,
@@ -564,6 +613,52 @@ router.post('/audience/preview', async (req, res) => {
       manager_inactive: a.manager_inactive || 0,
       sample: a.employees.slice(0, 8).map((e) => e.name) });
   } catch (e) { logger.error('audience preview', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// Named individuals, searched rather than listed. Asked for on 28 Sep:
+// "HR should have option to select who it goes to, either employee or
+// team or department."
+//
+// WHY THIS IS A SEARCH AND NOT A LIST. /audience/options returns every
+// department and every manager because those are tens of values. The
+// employee master on this instance holds 1,427 active people; shipping
+// all of them into a dropdown is a slow page and an unusable control.
+// So HR types, and this answers — capped, because a query that matches
+// everybody should return a usable page and say there are more, not
+// 1,427 rows.
+router.get('/audience/employees', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
+    const q = String(req.query.q == null ? '' : req.query.q).trim();
+    const ids = String(req.query.ids == null ? '' : req.query.ids).split(',')
+      .map((x) => x.trim()).filter(Boolean).slice(0, 200);
+
+    // Re-opening a saved rule has to show NAMES, not the uuids it
+    // stores, so the picker can resolve the ids it was handed even
+    // when they match no search text.
+    if (ids.length) {
+      const bad = validateRule({ employee_ids: ids });
+      if (bad) return res.status(422).json({ error: bad });
+      const rows = (await db.query(
+        `SELECT id, name, email, emp_code, department, designation FROM core.employees
+          WHERE tenant_id=$1 AND id = ANY($2::uuid[]) ORDER BY name`, [T(req), ids])).rows;
+      return res.json({ employees: rows, total: rows.length, capped: false });
+    }
+
+    const LIMIT = 25;
+    const like = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+    const where = `tenant_id=$1 AND status='active' AND archived_at IS NULL`
+      + (q ? ` AND (name ILIKE $2 OR email ILIKE $2 OR coalesce(emp_code,'') ILIKE $2)` : '');
+    const params = q ? [T(req), like] : [T(req)];
+    const total = +(await db.query(
+      `SELECT count(*)::int AS n FROM core.employees WHERE ${where}`, params)).rows[0].n;
+    const rows = (await db.query(
+      `SELECT id, name, email, emp_code, department, designation FROM core.employees
+        WHERE ${where} ORDER BY name LIMIT ${LIMIT}`, params)).rows;
+    // `capped` rather than silence: a picker that shows 25 of 1,427
+    // and says nothing reads as "these are the only matches".
+    res.json({ employees: rows, total, capped: total > rows.length });
+  } catch (e) { logger.error('audience employees', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
 // The values HR can pick from, straight off the employee master, so a
@@ -720,6 +815,11 @@ router.get('/surveys/:id/preview', async (req, res) => {
         anonymous: s.anonymity_default, audience_kind: s.audience_kind,
         trigger_type: s.trigger_type, trigger_day: s.trigger_day,
         trigger_window_days: s.trigger_window_days,
+        // The rule itself, so the editor can open showing what is
+        // actually set rather than an empty picker that would silently
+        // widen the audience the moment it was saved. Normalised, so
+        // the editor never has to cope with an old row's shape.
+        audience_rule: normaliseRule(s.audience_rule),
       },
       questions, audience, blockers,
       already_invited: +(await db.query(

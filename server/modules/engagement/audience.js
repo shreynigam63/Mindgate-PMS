@@ -10,10 +10,22 @@
 //     departments:     ['Development', 'Cloud'],
 //     designations:    ['Software Developer'],
 //     role_bands:      ['E3'],
-//     manager_ids:     ['<uuid>'],
+//     manager_ids:     ['<uuid>'],   // a TEAM: everyone reporting to them
+//     employee_ids:    ['<uuid>'],   // named individuals
 //     tenure_min_days: 30,      // joined at least 30 days ago
 //     tenure_max_days: 36,      // and at most 36 days ago
 //   }
+//
+// employee_ids added 28 Sep: "HR should have option to select who it
+// goes to, either employee or team or department." Department was
+// `departments` and team was `manager_ids` already; naming individuals
+// was the one of the three that could not be expressed at all.
+//
+// It is a key like any other, so it ANDs with the rest — picking three
+// people AND a department means those three if they are in it, not
+// three plus the department. That is the same rule as everywhere else
+// here, and describeRule() says which it is out loud so HR reads the
+// intersection before releasing rather than after.
 //
 // Lists are OR within a key and AND across keys: two departments and
 // one designation means "a Software Developer in Development or Cloud".
@@ -56,15 +68,38 @@ function normaliseRule(raw) {
     designations: list(r.designations),
     role_bands: list(r.role_bands),
     manager_ids: list(r.manager_ids),
+    employee_ids: list(r.employee_ids),
     tenure_min_days: min,
     tenure_max_days: max,
   };
 }
 
+// uuid-shaped, because manager_ids and employee_ids are cast to uuid[]
+// in the SQL below. A value that is not one throws 22P02 at query time,
+// which surfaces as a 500 on RELEASE — after HR has pressed the button
+// — rather than on the preview they read first. Named here so the
+// refusal is a sentence instead.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Returns an error string, or null. Dropping a bad id instead would be
+// worse than refusing: the rule would resolve to a DIFFERENT audience
+// than the one HR built, and nothing on screen would say so.
+function validateRule(raw) {
+  const r = normaliseRule(raw);
+  for (const key of ['manager_ids', 'employee_ids']) {
+    const bad = r[key].find((v) => !UUID.test(v));
+    if (bad) {
+      return `${key === 'manager_ids' ? 'A chosen manager' : 'A chosen employee'} is not a valid id (${String(bad).slice(0, 40)}).`;
+    }
+  }
+  return null;
+}
+
 const isEveryone = (rule) => {
   const r = normaliseRule(rule);
   return !r.departments.length && !r.designations.length && !r.role_bands.length
-    && !r.manager_ids.length && r.tenure_min_days == null && r.tenure_max_days == null;
+    && !r.manager_ids.length && !r.employee_ids.length
+    && r.tenure_min_days == null && r.tenure_max_days == null;
 };
 
 // A rule needs a date of joining only when it constrains tenure.
@@ -89,6 +124,10 @@ function audienceSql(rule, { start = 1 } = {}) {
   if (r.designations.length) where.push(`designation = ANY(${p(r.designations)})`);
   if (r.role_bands.length) where.push(`role_band = ANY(${p(r.role_bands)})`);
   if (r.manager_ids.length) where.push(`manager_id = ANY(${p(r.manager_ids)}::uuid[])`);
+  // Named individuals. Cast like manager_id above, because a rule that
+  // picked people up by a text comparison against a uuid column would
+  // throw at release time rather than at preview time.
+  if (r.employee_ids.length) where.push(`id = ANY(${p(r.employee_ids)}::uuid[])`);
 
   // tenure = current_date - date_of_joining, so a MINIMUM tenure is an
   // EARLIER joining date. Getting this backwards silently inverts the
@@ -114,6 +153,16 @@ function audienceSql(rule, { start = 1 } = {}) {
 function describeRule(rule) {
   const r = normaliseRule(rule);
   if (isEveryone(r)) return 'everyone on the employee list';
+  // Named people on their own are not "everyone …" anything — HR picked
+  // a list, and the sentence should say so plainly. Only when the rule
+  // ALSO filters does the intersection need spelling out, which the
+  // general branch below does.
+  if (r.employee_ids.length && !r.departments.length && !r.designations.length
+      && !r.role_bands.length && !r.manager_ids.length
+      && r.tenure_min_days == null && r.tenure_max_days == null) {
+    return r.employee_ids.length === 1 ? 'the 1 person picked by name'
+      : `the ${r.employee_ids.length} people picked by name`;
+  }
   const bits = [];
   const many = (arr, one, more) => (arr.length === 1 ? `${one} ${arr[0]}` : `${more} ${arr.join(', ')}`);
   if (r.designations.length) bits.push(many(r.designations, 'with the designation', 'with any of the designations'));
@@ -122,6 +171,13 @@ function describeRule(rule) {
   if (r.manager_ids.length) {
     bits.push(r.manager_ids.length === 1 ? 'reporting to the chosen manager'
       : `reporting to any of the ${r.manager_ids.length} chosen managers`);
+  }
+  // Named people read as a count, not as a uuid list — the names are on
+  // screen beside this sentence, and a line of uuids would be unreadable
+  // in the audit entry this same string ends up in.
+  if (r.employee_ids.length) {
+    bits.push(r.employee_ids.length === 1 ? 'limited to the 1 person picked by name'
+      : `limited to the ${r.employee_ids.length} people picked by name`);
   }
   if (r.tenure_min_days != null && r.tenure_max_days != null) {
     bits.push(`who joined between ${r.tenure_min_days} and ${r.tenure_max_days} days ago`);
@@ -158,4 +214,4 @@ function triggerRule(survey) {
 }
 
 module.exports = { normaliseRule, audienceSql, describeRule, isEveryone,
-                   needsJoiningDate, triggerRule, MILESTONES };
+                   needsJoiningDate, triggerRule, validateRule, MILESTONES };

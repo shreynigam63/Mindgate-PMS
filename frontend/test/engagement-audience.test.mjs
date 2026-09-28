@@ -86,8 +86,20 @@ test('the builder asks who the survey goes to, and counts them live', async (t) 
   assert.match(text, /Who gets this survey/i, 'the audience panel is on the form at all');
   assert.match(text, /Right now this reaches \d+ employee/, 'and it says how many it reaches');
   // Every category the spec asks to target by.
-  for (const box of ['Department', 'Designation', 'Reporting manager']) {
-    assert.match(text, new RegExp(box, 'i'), `${box} can be targeted`);
+  //
+  // "Reporting manager" was renamed "Team — everyone reporting to" on
+  // 28 Sep, when HR asked for the audience in their own words: "either
+  // employee or team or department". Same control, same manager_ids
+  // rule underneath; the label now says which of the three it is.
+  // "Specific people" is new that day — naming individuals could not
+  // be expressed by any route before it.
+  //
+  // Read from textContent, not innerText: the builder is a scrolling
+  // modal and Chromium's innerText omits whatever is scrolled out of
+  // an overflow container, which reports present controls as missing.
+  const allText = await page.evaluate(() => document.body.textContent);
+  for (const box of ['Department', 'Designation', 'Team — everyone reporting to', 'Specific people']) {
+    assert.ok(allText.includes(box), `${box} can be targeted`);
   }
 
   // Narrowing the audience moves the number.

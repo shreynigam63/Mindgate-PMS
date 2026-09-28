@@ -152,6 +152,7 @@ export function EngagementAdminPage() {
   const [library, setLibrary] = useState(false);
   const [madeFrom, setMadeFrom] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [editing, setEditing] = useState(null);   // survey id being edited
   const [sweep, setSweep] = useState(null);
   const [sweeping, setSweeping] = useState(false);
   const load = () => api('/engagement/surveys').then(setData).catch(e => setErr(e.message));
@@ -272,6 +273,19 @@ export function EngagementAdminPage() {
           invitation per person and, on this instance, 1,426
           notifications. So this shows both halves of the decision: the
           questions as they will be asked, and who they will reach. */}
+      {/* Straight back into the preview once saved, so the change can
+          be read in the same place it was asked for. */}
+      {editing && (
+        <SurveyEditor surveyId={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            const id = editing;
+            setEditing(null);
+            load();
+            try { setPreview(await api(`/engagement/surveys/${id}/preview`)); } catch (e) { /* the list still refreshed */ }
+          }} />
+      )}
+
       {preview && (
         <AiModal wide badge={false}
           title={`${preview.survey.title} — preview`}
@@ -283,6 +297,16 @@ export function EngagementAdminPage() {
                   ? 'Nobody is invited until you press Open.'
                   : `This survey is ${preview.survey.status}.`}
               </span>
+              {/* Asked for on 28 Sep: "provide edit option during
+                  previewing surveys." Drafts only — the server refuses
+                  anything else, and offering a button that would be
+                  refused is worse than not offering it. */}
+              {preview.survey.status === 'draft' && (
+                <button className="btn-sec !py-1.5"
+                  onClick={() => { setEditing(preview.survey.id); setPreview(null); }}>
+                  Edit
+                </button>
+              )}
               <button className="btn-sec !py-1.5" onClick={() => setPreview(null)}>Close</button>
               {/* Straight from reading it to releasing it, rather than
                   closing and hunting for the row again. Refused while a
@@ -638,6 +662,124 @@ function PickList({ label, options, chosen, onChange, hint }) {
   );
 }
 
+// Named individuals, searched rather than listed. Asked for on 28 Sep:
+// "HR should have option to select who it goes to, either employee or
+// team or department."
+//
+// A SEARCH, because the master on the client instance holds 1,427
+// active people. PickList above renders every option as a chip, which
+// is right for ~20 departments and unusable for 1,427 names.
+//
+// The chosen people stay on screen as chips even when they match no
+// current search text — otherwise clearing the box would look like
+// the selection had been lost, and HR would re-pick people who were
+// already picked.
+function EmployeePicker({ chosen, onChange }) {
+  const [q, setQ] = useState('');
+  const [res, setRes] = useState(null);
+  const [names, setNames] = useState({});     // id -> name, for the chips
+  const [err, setErr] = useState(null);
+
+  // Resolve ids we do not have a name for yet. Happens when the editor
+  // opens on a saved rule: it holds uuids and nothing else.
+  useEffect(() => {
+    const missing = chosen.filter((id) => !names[id]);
+    if (!missing.length) return;
+    api(`/engagement/audience/employees?ids=${encodeURIComponent(missing.join(','))}`)
+      .then((r) => setNames((m) => ({ ...m,
+        ...Object.fromEntries(r.employees.map((e) => [e.id, e.name])) })))
+      .catch((e) => setErr(e.message));
+  }, [chosen]);
+
+  // Debounced, like the audience count — a request per keystroke over
+  // 1,427 rows is a slow control on a real master.
+  useEffect(() => {
+    let dead = false;
+    const t = setTimeout(() => {
+      api(`/engagement/audience/employees?q=${encodeURIComponent(q)}`)
+        .then((r) => { if (!dead) { setRes(r); setErr(null); } })
+        .catch((e) => { if (!dead) setErr(e.message); });
+    }, 250);
+    return () => { dead = true; clearTimeout(t); };
+  }, [q]);
+
+  const add = (e) => {
+    setNames((m) => ({ ...m, [e.id]: e.name }));
+    if (!chosen.includes(e.id)) onChange([...chosen, e.id]);
+  };
+  const drop = (id) => onChange(chosen.filter((x) => x !== id));
+
+  return (
+    <div className="sm:col-span-2">
+      <p className="lbl">Specific people{chosen.length ? ` · ${chosen.length} selected` : ''}</p>
+      {!!chosen.length && (
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {chosen.map((id) => (
+            <button key={id} type="button" onClick={() => drop(id)}
+              className="chip bg-leaf-500 text-white" title="Remove">
+              {names[id] || 'loading…'} <span className="ml-1 opacity-70">x</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <input className="inp" value={q} onChange={(ev) => setQ(ev.target.value)}
+        placeholder="Search the employee master by name, email or code" />
+      {err && <p className="text-[11px] text-rose-600 mt-1">{err}</p>}
+      {res && (
+        <div className="mt-1 max-h-36 overflow-y-auto rounded-lg border border-navy-100 bg-white divide-y divide-navy-50">
+          {!res.employees.length && <p className="text-[11px] text-navy-400 p-2">Nobody matches that.</p>}
+          {res.employees.map((e) => (
+            <button key={e.id} type="button" onClick={() => add(e)}
+              className="w-full text-left px-2 py-1.5 hover:bg-navy-50 disabled:opacity-40"
+              disabled={chosen.includes(e.id)}>
+              <span className="text-xs font-medium">{e.name}</span>
+              <span className="text-[10.5px] text-navy-400"> · {e.email}
+                {e.department ? ` · ${e.department}` : ''}</span>
+            </button>
+          ))}
+          {/* Said out loud. A list showing 25 of 1,427 with no note
+              reads as "these are the only matches". */}
+          {res.capped && (
+            <p className="text-[10.5px] text-navy-400 p-2">
+              Showing {res.employees.length} of {res.total} — keep typing to narrow it.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The whole "who gets this" picker, shared by the new-survey builder
+// and the draft editor so the two can never drift into offering
+// different audiences.
+function AudienceFields({ opts, rule, setRule }) {
+  const setKey = (k) => (v) => setRule((r) => ({ ...r, [k]: v }));
+  if (!opts) return null;
+  return (
+    <>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <PickList label="Department" options={opts.departments}
+          chosen={rule.departments || []} onChange={setKey('departments')} />
+        <PickList label="Team — everyone reporting to" options={opts.managers}
+          chosen={rule.manager_ids || []} onChange={setKey('manager_ids')} />
+        <PickList label="Designation" options={opts.designations}
+          chosen={rule.designations || []} onChange={setKey('designations')} />
+        <PickList label="Role band" options={opts.role_bands}
+          chosen={rule.role_bands || []} onChange={setKey('role_bands')} />
+        <EmployeePicker chosen={rule.employee_ids || []} onChange={setKey('employee_ids')} />
+      </div>
+      <p className="text-[10px] text-navy-400">
+        Pick nothing at all and it goes to everyone. Choices inside one box are
+        <b> any of</b>; across boxes they are <b>all of</b> — so a department and two
+        named people means those two people <i>if</i> they are in that department.
+        Every value is read off the employee master, so a rule cannot name a
+        department nobody is in.
+      </p>
+    </>
+  );
+}
+
 function SurveyBuilder({ onClose, onCreated }) {
   const [title, setTitle] = useState('');
   const [qs, setQs] = useState([{ qtype: 'scale', prompt: '' }]);
@@ -649,7 +791,7 @@ function SurveyBuilder({ onClose, onCreated }) {
   // employees categories". Until now this screen sent every survey to
   // the whole company: it did not expose the audience field at all.
   const [opts, setOpts] = useState(null);           // what the master actually holds
-  const [rule, setRule] = useState({ departments: [], designations: [], role_bands: [], manager_ids: [] });
+  const [rule, setRule] = useState({ departments: [], designations: [], role_bands: [], manager_ids: [], employee_ids: [] });
   const [trigger, setTrigger] = useState('manual'); // manual | tenure
   const [kind, setKind] = useState('self');         // self | manager_about_reportee
   const [day, setDay] = useState(30);
@@ -674,7 +816,6 @@ function SurveyBuilder({ onClose, onCreated }) {
     return () => { dead = true; clearTimeout(t); };
   }, [rule, trigger, day, win, kind]);
 
-  const setRuleKey = (k) => (v) => setRule((r) => ({ ...r, [k]: v }));
   const set = (i, k, v) => setQs((rows) => rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   const move = (i, d) => setQs((rows) => {
     const j = i + d;
@@ -870,23 +1011,7 @@ function SurveyBuilder({ onClose, onCreated }) {
             </div>
           )}
 
-          {opts && (
-            <div className="grid sm:grid-cols-2 gap-3">
-              <PickList label="Department" options={opts.departments}
-                chosen={rule.departments} onChange={setRuleKey('departments')} />
-              <PickList label="Designation" options={opts.designations}
-                chosen={rule.designations} onChange={setRuleKey('designations')} />
-              <PickList label="Role band" options={opts.role_bands}
-                chosen={rule.role_bands} onChange={setRuleKey('role_bands')} />
-              <PickList label="Reporting manager" options={opts.managers}
-                chosen={rule.manager_ids} onChange={setRuleKey('manager_ids')} />
-            </div>
-          )}
-          <p className="text-[10px] text-navy-400">
-            Pick nothing in a box and it places no restriction. Choices inside one box are
-            <b> any of</b>; across boxes they are <b>all of</b>. Every value is read off the
-            employee master, so a rule cannot name a department nobody is in.
-          </p>
+          <AudienceFields opts={opts} rule={rule} setRule={setRule} />
 
           {/* The live count, from the same resolver the release uses —
               so what HR reads here and who the system writes to cannot
@@ -951,6 +1076,182 @@ function SurveyBuilder({ onClose, onCreated }) {
           questions are dropped rather than saved empty.
         </p>
       </div>
+    </AiModal>
+  );
+}
+
+// Editing a DRAFT. Asked for on 28 Sep, on a screenshot of the preview
+// with the audience box ringed in red: "provide edit option during
+// previewing surveys."
+//
+// THE GAP THIS CLOSES. A survey started from the library arrived with
+// the template's audience baked in — on the client instance that is
+// all 1,427 people — and there was no screen anywhere that could
+// change it. The picker existed, but only inside "New survey", so the
+// only way to retarget a library survey was to rebuild it by hand.
+//
+// Drafts only, and the server enforces that independently: once a
+// survey is open, people have been invited against what it says, and
+// editing it underneath them would make the answers and the
+// participation rate describe different surveys.
+function SurveyEditor({ surveyId, onClose, onSaved }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [opts, setOpts] = useState(null);
+  const [title, setTitle] = useState('');
+  const [rule, setRule] = useState({ departments: [], designations: [], role_bands: [], manager_ids: [], employee_ids: [] });
+  const [qs, setQs] = useState([]);
+  const [reach, setReach] = useState(null);
+
+  useEffect(() => { api('/engagement/audience/options').then(setOpts).catch(() => setOpts(null)); }, []);
+
+  // Seeded from the SAME preview endpoint the preview modal reads, so
+  // the editor opens showing exactly what was on screen a click ago.
+  useEffect(() => {
+    api(`/engagement/surveys/${surveyId}/preview`).then((r) => {
+      setData(r);
+      setTitle(r.survey.title || '');
+      setRule({ departments: [], designations: [], role_bands: [], manager_ids: [], employee_ids: [],
+        ...(r.survey.audience_rule || {}) });
+      setQs((r.questions || []).map((q) => ({
+        qtype: q.qtype, prompt: q.prompt, required: q.required,
+        optionText: Array.isArray(q.options) ? q.options.join('\n') : '',
+      })));
+    }).catch((e) => setErr(e.message));
+  }, [surveyId]);
+
+  // The live count, from the same resolver Open uses.
+  useEffect(() => {
+    if (!data) return;
+    let dead = false;
+    const t = setTimeout(() => {
+      api('/engagement/audience/preview', { method: 'POST', body: JSON.stringify({
+        audience_rule: rule, audience_kind: data.survey.audience_kind,
+        trigger_type: data.survey.trigger_type,
+        ...(data.survey.trigger_type === 'tenure'
+          ? { trigger_day: data.survey.trigger_day, trigger_window_days: data.survey.trigger_window_days } : {}),
+      }) }).then((r) => { if (!dead) setReach(r); })
+        .catch((e) => { if (!dead) setReach({ error: e.message }); });
+    }, 250);
+    return () => { dead = true; clearTimeout(t); };
+  }, [rule, data]);
+
+  const set = (i, k, v) => setQs((rows) => rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  const move = (i, d) => setQs((rows) => {
+    const j = i + d;
+    if (j < 0 || j >= rows.length) return rows;
+    const out = [...rows];
+    [out[i], out[j]] = [out[j], out[i]];
+    return out;
+  });
+  const optionsOf = (q) => String(q.optionText || '').split('\n').map((x) => x.trim()).filter(Boolean);
+  const filled = qs.filter((q) => String(q.prompt || '').trim());
+
+  const save = async () => {
+    setErr(null);
+    if (!title.trim()) { setErr('Give the survey a title.'); return; }
+    if (!filled.length) { setErr('A survey needs at least one question.'); return; }
+    const short = filled.find((q) => needsOptions(q.qtype) && optionsOf(q).length < 2);
+    if (short) { setErr(`"${short.prompt.trim().slice(0, 50)}" is a ${short.qtype === 'multi' ? 'pick-any' : 'pick-one'} question, so it needs at least two options — one per line.`); return; }
+    setBusy(true);
+    try {
+      await api(`/engagement/surveys/${surveyId}`, { method: 'PUT', body: JSON.stringify({
+        title: title.trim(),
+        audience_rule: rule,
+        questions: filled.map((q) => ({
+          qtype: q.qtype, prompt: q.prompt.trim(), required: q.required,
+          ...(needsOptions(q.qtype) ? { options: optionsOf(q) } : {}),
+        })),
+      }) });
+      onSaved();
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <AiModal wide badge={false} title={data ? `Edit — ${data.survey.title}` : 'Edit survey'} onClose={onClose}
+      footer={
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-navy-400 flex-1">
+            Still a draft. Nobody is invited until you press Open.
+          </span>
+          <button className="btn-sec !py-1.5" onClick={onClose}>Cancel</button>
+          <button className="btn-pri !py-1.5" disabled={busy || !data} onClick={save}>
+            {busy ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      }>
+      {!data && !err && <p className="text-navy-400">Loading…</p>}
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      {data && (
+        <div className="space-y-3">
+          <div>
+            <label className="lbl">Survey title</label>
+            <input className="inp" value={title} onChange={(e) => setTitle(e.target.value)} />
+          </div>
+
+          <div className="card p-3 space-y-3 border-l-4 border-leaf-500">
+            <p className="lbl">Who gets this survey</p>
+            {data.survey.audience_kind === 'manager_about_reportee' && (
+              <p className="text-[11px] text-lagoon-800 bg-lagoon-50 rounded-md px-2.5 py-1.5">
+                The choices below pick the people being <b>assessed</b>. Each one&rsquo;s reporting
+                manager gets their own copy naming them.
+              </p>
+            )}
+            <AudienceFields opts={opts} rule={rule} setRule={setRule} />
+            {reach && !reach.error && (
+              <div className="text-xs rounded-lg px-3 py-2 bg-navy-50 text-navy-700">
+                Right now this reaches <b>{reach.count}</b> {reach.count === 1 ? 'person' : 'people'} — {reach.description}.
+                {reach.sample?.length > 0 && (
+                  <span className="text-navy-500"> e.g. {reach.sample.slice(0, 4).join(', ')}
+                    {reach.count > 4 ? ` and ${reach.count - 4} more` : ''}.</span>
+                )}
+                {reach.count === 0 && (
+                  <span className="block mt-1 text-rose-600">Nobody matches this today. Opening it would invite no one.</span>
+                )}
+              </div>
+            )}
+            {reach?.error && <p className="text-xs text-rose-600">{reach.error}</p>}
+          </div>
+
+          <p className="lbl">What they will be asked</p>
+          {qs.map((q, i) => (
+            <div key={i} className="card p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-navy-400">Question {i + 1}</span>
+                <span className="ml-auto flex items-center gap-1">
+                  <button className="text-navy-300 hover:text-navy-700 disabled:opacity-30"
+                    disabled={i === 0} title="Move up" onClick={() => move(i, -1)}>&uarr;</button>
+                  <button className="text-navy-300 hover:text-navy-700 disabled:opacity-30"
+                    disabled={i === qs.length - 1} title="Move down" onClick={() => move(i, 1)}>&darr;</button>
+                  <button className="text-rose-500 hover:text-rose-700 disabled:opacity-30 ml-1"
+                    disabled={qs.length === 1} title="Remove"
+                    onClick={() => setQs((rows) => rows.filter((_, j) => j !== i))}>&times;</button>
+                </span>
+              </div>
+              <input className="inp" value={q.prompt} placeholder="Question text"
+                onChange={(e) => set(i, 'prompt', e.target.value)} />
+              <div className="flex flex-wrap items-center gap-2">
+                {/* QTYPES, not a second hand-written list — a select
+                    offering a type the server does not know would save
+                    a question nobody can answer. */}
+                <select className="inp !w-auto" value={q.qtype} onChange={(e) => set(i, 'qtype', e.target.value)}>
+                  {QTYPES.map((t) => <option key={t.v} value={t.v}>{t.label}</option>)}
+                </select>
+                {needsOptions(q.qtype) && (
+                  <textarea className="inp flex-1 min-w-[220px]" rows={2} value={q.optionText || ''}
+                    placeholder="One option per line" onChange={(e) => set(i, 'optionText', e.target.value)} />
+                )}
+              </div>
+            </div>
+          ))}
+          <button className="btn-sec !py-1.5"
+            onClick={() => setQs((rows) => [...rows, { qtype: 'scale', prompt: '', optionText: '' }])}>
+            <Plus size={12} className="inline mr-1" />Add question
+          </button>
+        </div>
+      )}
     </AiModal>
   );
 }
