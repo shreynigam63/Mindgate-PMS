@@ -119,7 +119,7 @@ export default function TeamKraSheetsPage() {
           </button>
           {openId === s.employee_id && (
             s.id
-              ? <SheetEditor sheet={s} reload={load} isMine={s.is_my_report === true} />
+              ? <SheetEditor sheet={s} reload={load} isMine={s.is_my_report === true} scale={data.cycle.rating_scale} />
               : <p className="border-t border-navy-100 p-4 text-xs text-navy-400">This report hasn't started their KRAs for this cycle yet — nothing to review.</p>
           )}
         </div>
@@ -128,7 +128,7 @@ export default function TeamKraSheetsPage() {
   );
 }
 
-function SheetEditor({ sheet, reload, isMine }) {
+function SheetEditor({ sheet, reload, isMine, scale }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState(null);
   const [comment, setComment] = useState('');
@@ -262,7 +262,7 @@ function SheetEditor({ sheet, reload, isMine }) {
                 <div className="space-y-1">
                   <span className="whitespace-pre-line">{k.measures || <i className="text-navy-300">no KPI recorded</i>}</span>
                   {k.description && <div className="text-navy-400">{k.description}</div>}
-                  <MidYearOnKra midyear={k.midyear} />
+                  <MidYearOnKra midyear={k.midyear} scale={scale} />
                 </div>
               )}
               renderWeight={({ k }) => <span>{k.weight == null ? '—' : `${Number(k.weight)}%`}</span>}

@@ -5,6 +5,7 @@ import KraLibraryPicker from './KraLibraryPicker';
 import KraSuggestPanel from './KraSuggestPanel';
 import PageHead from '../PageHead';
 import KraTable from '../KraTable';
+import Grade from '../grade';
 
 // Whitespace counts as empty. An imported cell can carry a stray space or
 // newline, and treating that as content would put the box back on exactly
@@ -235,7 +236,7 @@ export default function MyKRASheetPage() {
               <button type="button" className="text-[11px] text-navy-300 hover:text-navy-600"
                 onClick={() => openDesc(i)}>+ Add description</button>
             )}
-            <MidYearOnKra midyear={k.midyear} withheld={data.manager_ratings_withheld} />
+            <MidYearOnKra midyear={k.midyear} withheld={data.manager_ratings_withheld} scale={data.cycle.rating_scale} />
           </div>
         )}
         renderWeight={({ k, i }) => (
@@ -341,11 +342,11 @@ export default function MyKRASheetPage() {
 // about how it was going. Read-only here on purpose: mid-year is still
 // scored on the Mid-Year Review page, under its own phase gate. This is
 // the same number, shown where it means something.
-export function MidYearOnKra({ midyear, withheld }) {
+export function MidYearOnKra({ midyear, withheld, scale }) {
   if (!midyear || (!midyear.self && !midyear.manager && !withheld)) return null;
   const cell = (label, entry) => (
     <span>
-      {label} <b>{entry?.rating ?? '—'}</b>
+      {label} <b><Grade value={entry?.rating} scale={scale} /></b>
       {entry?.narrative && <span className="text-navy-400"> — {entry.narrative}</span>}
     </span>
   );

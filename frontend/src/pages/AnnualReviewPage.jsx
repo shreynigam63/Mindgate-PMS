@@ -13,6 +13,11 @@ export default function AnnualReviewPage() {
   if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
   if (!data.cycle) return <div className="card p-8 text-center text-sm text-navy-400">No active annual cycle.</div>;
 
+  // Every rating on this page is read off the cycle's own scale. Read
+  // once here rather than at each <Grade>, so a new one added below
+  // cannot quietly fall back to the default ladder.
+  const scale = data.cycle.rating_scale;
+
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="Final Rating" hue="teal">
@@ -42,15 +47,15 @@ export default function AnnualReviewPage() {
                   mid-year, 5 now" is the shape of the year. Shown next to
                   the others, never blended into them. */}
               {k.midyear && (k.midyear.self || k.midyear.manager) && (
-                <span className="text-navy-500">Mid-year: self <b>{k.midyear.self?.rating ?? '—'}</b> · manager <b>{k.midyear.manager?.rating ?? '—'}</b></span>
+                <span className="text-navy-500">Mid-year: self <b><Grade value={k.midyear.self?.rating} scale={scale} /></b> · manager <b><Grade value={k.midyear.manager?.rating} scale={scale} /></b></span>
               )}
-              <span>Self: <b>{k.self?.self_rating ?? '—'}</b> {k.self?.narrative && <span className="text-navy-500">— {k.self.narrative}</span>}</span>
+              <span>Self: <b><Grade value={k.self?.self_rating} scale={scale} /></b> {k.self?.narrative && <span className="text-navy-500">— {k.self.narrative}</span>}</span>
               {/* Withheld, not missing. An em-dash with no explanation
                   reads as "your manager has not rated this yet", which is
                   a different and usually untrue statement. */}
               {data.manager_ratings_withheld
                 ? <span className="text-navy-400">Manager: <i>not shared until published</i></span>
-                : <span>Manager: <b>{k.manager?.rating ?? '—'}</b> {k.manager?.comment && <span className="text-navy-500">— {k.manager.comment}</span>}</span>}
+                : <span>Manager: <b><Grade value={k.manager?.rating} scale={scale} /></b> {k.manager?.comment && <span className="text-navy-500">— {k.manager.comment}</span>}</span>}
             </div>
           </div>
         ))}
@@ -59,10 +64,10 @@ export default function AnnualReviewPage() {
       {data.midyear && (
         <Section icon={Clock} title="Mid-Year checkpoint">
           <p className="text-xs">
-            Self <b>{data.midyear.self_overall ?? '—'}</b> ({data.midyear.self_status}) · Manager{' '}
+            Self <b><Grade value={data.midyear.self_overall} scale={scale} /></b> ({data.midyear.self_status}) · Manager{' '}
             {data.manager_ratings_withheld
               ? <i className="text-navy-400">not shared until published</i>
-              : <b>{data.midyear.manager_overall ?? '—'}</b>} ({data.midyear.manager_status})
+              : <b><Grade value={data.midyear.manager_overall} scale={scale} /></b>} ({data.midyear.manager_status})
           </p>
           <p className="text-[11px] text-navy-400 mt-1">
             The halfway reading, per KRA above. It is a reference point for the conversation, not an input to the final rating.

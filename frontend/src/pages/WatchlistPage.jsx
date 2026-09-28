@@ -3,6 +3,7 @@ import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import { Award, RefreshCw, Upload, Download, Info, AlertTriangle } from 'lucide-react';
+import Grade from '../grade';
 
 // Super 50 — the high-performer watchlist.
 //
@@ -174,7 +175,7 @@ export default function WatchlistPage() {
             {list.length ? 'Nobody matches that search.' : 'Nobody qualifies under the rule right now.'}
           </div>
         )}
-        {!!shown.length && <People rows={shown} rule={d.rule} qualified />}
+        {!!shown.length && <People rows={shown} rule={d.rule} scale={d.scale} qualified />}
       </div>
 
       {/* Near misses. An empty watchlist tells HR nothing to do; "these
@@ -184,14 +185,14 @@ export default function WatchlistPage() {
           <p className="lbl mb-1">Close — {d.rule?.window} years on record, one thing missing</p>
           {!nearShown.length
             ? <div className="card p-6 text-center text-sm text-navy-400">Nobody matches that search.</div>
-            : <People rows={nearShown} rule={d.rule} />}
+            : <People rows={nearShown} rule={d.rule} scale={d.scale} />}
         </div>
       )}
     </div>
   );
 }
 
-function People({ rows, rule, qualified }) {
+function People({ rows, rule, scale, qualified }) {
   return (
     <div className="card overflow-x-auto">
       <table className="w-full text-xs">
@@ -218,7 +219,7 @@ function People({ rows, rule, qualified }) {
                     ? r.history.map((h, i) => (
                         <span key={i} title={`${h.fiscal_year} · ${h.source}`}
                           className={`chip ${i === 0 ? 'bg-violet-100 text-violet-700' : 'bg-navy-50 text-navy-600'}`}>
-                          {h.grade || h.rating}
+                          <Grade value={h.rating} scale={scale} />
                           <span className="opacity-60"> {h.fiscal_year}</span>
                           {h.source === 'imported' && <span className="opacity-60"> ·i</span>}
                         </span>

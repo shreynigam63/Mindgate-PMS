@@ -110,7 +110,7 @@ export default function CalibrationPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-navy-100">
-            {rowsShown.map(r => <CalRow key={r.employee_id} r={r} reload={load} />)}
+            {rowsShown.map(r => <CalRow key={r.employee_id} r={r} reload={load} scale={data.cycle.rating_scale} />)}
           </tbody>
         </table>
       </div>
@@ -119,7 +119,7 @@ export default function CalibrationPage() {
   );
 }
 
-function CalRow({ r, reload }) {
+function CalRow({ r, reload, scale }) {
   const [to, setTo] = useState('');
   const [box, setBox] = useState(r.nine_box_cell || '');
   const [err, setErr] = useState(null);
@@ -150,9 +150,9 @@ function CalRow({ r, reload }) {
       <tr className={wasAdjusted ? 'bg-amber-50/40' : ''}>
         <td className="px-3 py-2 font-semibold">{r.name}</td>
         <td className="px-3 py-2">{r.department || '—'}</td>
-        <td className="px-3 py-2 text-right font-mono"><Grade value={r.manager_rating} /></td>
-        <td className="px-3 py-2 text-right font-mono"><Grade value={r.hod_rating} /></td>
-        <td className="px-3 py-2 text-right font-mono font-bold"><Grade value={r.proposed} /></td>
+        <td className="px-3 py-2 text-right font-mono"><Grade value={r.manager_rating} scale={scale} /></td>
+        <td className="px-3 py-2 text-right font-mono"><Grade value={r.hod_rating} scale={scale} /></td>
+        <td className="px-3 py-2 text-right font-mono font-bold"><Grade value={r.proposed} scale={scale} /></td>
         <td className="px-3 py-2">
           <select className="inp !py-1 !text-[11px] w-auto" value={box} onChange={e => saveBox(e.target.value)}>
             <option value="">—</option>{NINE_BOX.map(b => <option key={b}>{b}</option>)}

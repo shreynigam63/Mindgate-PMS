@@ -176,7 +176,7 @@ export default function ApprovalsPage() {
                       <tr className="border-t border-navy-50 bg-navy-50/40">
                         <td />
                         <td colSpan={4} className="p-3">
-                          <Record item={i} onDone={load} />
+                          <Record item={i} onDone={load} scale={data.cycle.rating_scale} />
                         </td>
                       </tr>
                     )}
@@ -219,7 +219,7 @@ export default function ApprovalsPage() {
 // true, which is the access All Approvals exists to give: a super admin
 // deciding at any level for anyone, their own records included, with the
 // audit row stamped self_action.
-function Record({ item, onDone }) {
+function Record({ item, onDone, scale }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState(null);
   const [comment, setComment] = useState('');
@@ -274,7 +274,7 @@ function Record({ item, onDone }) {
                 <div className="space-y-1">
                   <span className="whitespace-pre-line">{k.measures || <i className="text-navy-300">no KPI recorded</i>}</span>
                   {k.description && <div className="text-navy-400">{k.description}</div>}
-                  <MidYearOnKra midyear={k.midyear} />
+                  <MidYearOnKra midyear={k.midyear} scale={scale} />
                 </div>
               )}
               renderWeight={({ k }) => <span>{k.weight == null ? '—' : `${Number(k.weight)}%`}</span>}

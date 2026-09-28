@@ -66,6 +66,27 @@ const audit = (req, action, cycleId, employeeId, details) => {
 // became "the" active cycle and shut KRAs for the whole company.
 const { activeCycle, activeCycleForMidyear } = require('./active-cycle');
 
+// The cycle, as a page receives it. ONE shape, because the number of
+// places that built their own was the bug.
+//
+// Reported on 28 Sep with a screenshot of the Mid-Year checkpoint:
+// "ratings still shows average number instead of alphabets average."
+// The letter-grade work of 24 Sep put one formatter in the frontend
+// (grade.jsx) and it needs the cycle's rating_scale to know which
+// ladder to read. 21 handlers in this file hand-built a cycle object;
+// four of them remembered rating_scale. Every page fed by the other
+// seventeen had no scale to pass, so it either printed the raw number
+// or silently fell back to a default ladder that is right only for a
+// five-point scale.
+//
+// So the shape is built here, once. A handler that needs more passes
+// it as `extra`; a handler cannot now forget the scale, because it no
+// longer writes the object.
+const cycleForClient = (c, extra) => (c ? {
+  id: c.id, name: c.name, phase: c.phase,
+  cycle_type: c.cycle_type, rating_scale: c.rating_scale, ...(extra || {}),
+} : null);
+
 // SUPER ADMIN: the team lists show the whole company, including the admin
 // themselves.
 //
@@ -155,7 +176,7 @@ router.get('/cycles/:id/activity', async (req, res) => {
          LEFT JOIN core.employees e ON e.id=al.employee_id
         WHERE al.tenant_id=$1 AND al.cycle_id=$2
         ORDER BY al.at DESC`, [T(req), c.id])).rows;
-    res.json({ cycle: { id: c.id, name: c.name }, events: rows });
+    res.json({ cycle: cycleForClient(c), events: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -463,7 +484,7 @@ router.get('/my/kra-sheet', async (req, res) => {
     // tell whether the halfway conversation had happened at all.
     const published = await publishedFor(T(req), c.id, req.user.id);
     res.json({
-      cycle: { id: c.id, name: c.name, phase: c.phase }, sheet: s,
+      cycle: cycleForClient(c), sheet: s,
       kras: withMidyear(kras, midyear, { includeManager: published }),
       weights: pm.weightsValid(kras),
       known_categories: await knownKraCategories(T(req)),
@@ -688,7 +709,7 @@ router.get('/team/kra-sheets', async (req, res) => {
          LEFT JOIN pms.kra_sheets s ON s.cycle_id=$1 AND s.employee_id=e.id
         WHERE e.tenant_id=$2 AND e.status='active'
           ${where} ORDER BY e.name`, params);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase },
+    res.json({ cycle: cycleForClient(c),
       scope: asked ? 'department' : (wide ? 'all_employees' : 'my_reports'),
       department: asked || null, departments: myDepts,
       can_see_all: canSeeAll,
@@ -902,7 +923,7 @@ router.get('/kra/org-overview', async (req, res) => {
       q ? [c.id, T(req), `%${q}%`] : [c.id, T(req)])).rows;
     const counters = { draft: 0, submitted: 0, returned: 0, approved: 0, not_started: 0 };
     for (const r of rows) counters[r.status] = (counters[r.status] || 0) + 1;
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, counters, employees: rows });
+    res.json({ cycle: cycleForClient(c), counters, employees: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1004,7 +1025,7 @@ router.get('/hr/kra-sheet/:employeeId', async (req, res) => {
     const kras = (await db.query(`SELECT * FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
     const midyear = await midyearEntriesFor(T(req), c.id, emp.id);
     res.json({
-      cycle: { id: c.id, name: c.name, phase: c.phase }, employee: emp, sheet: s,
+      cycle: cycleForClient(c), employee: emp, sheet: s,
       kras: withMidyear(kras, midyear), weights: pm.weightsValid(kras),
       known_categories: await knownKraCategories(T(req)),
       midyear: midyear ? { self_overall: midyear.self_overall, manager_overall: midyear.manager_overall,
@@ -2758,7 +2779,7 @@ router.get('/my/development-plan', async (req, res) => {
          JOIN pms.kra_sheets sh ON sh.id = k.sheet_id
         WHERE sh.cycle_id=$1 AND sh.employee_id=$2
         ORDER BY k.sort_order`, [c.id, req.user.id])).rows;
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, plan: p, goals, kras,
+    res.json({ cycle: cycleForClient(c), plan: p, goals, kras,
       kra_sheet_status: sheetStatus,
       editable: gate.ok && p.status !== 'approved' && p.status !== 'submitted',
       editable_via: gate.via || null,
@@ -2980,7 +3001,7 @@ router.get('/team/development-plans', async (req, res) => {
          FROM pms.development_plans p JOIN core.employees e ON e.id=p.employee_id
         WHERE p.cycle_id=$1 ${wide ? '' : 'AND p.manager_id=$2'} ORDER BY e.name`,
       wide ? [c.id] : [c.id, req.user.id]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase },
+    res.json({ cycle: cycleForClient(c),
                scope: wide ? 'all_employees' : 'my_reports', can_see_all: await seesWholeCompany(req), plans: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3056,7 +3077,7 @@ router.get('/approvals', async (req, res) => {
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, items: [], counts: {}, total: 0 });
     const q = await approvals.pendingApprovals(T(req), c.id);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, ...q });
+    res.json({ cycle: cycleForClient(c), ...q });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3102,7 +3123,7 @@ router.get('/my/self-appraisal', async (req, res) => {
       [T(req), c.id, req.user.id])).rows[0];
     const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.user.id])).rows[0];
     const kras = sheet ? (await db.query(`SELECT id, title, weight FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [sheet.id])).rows : [];
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, cycle_type: c.cycle_type, rating_scale: c.rating_scale }, appraisal: a, kras });
+    res.json({ cycle: cycleForClient(c), appraisal: a, kras });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3398,7 +3419,7 @@ router.get('/my/midyear-review', async (req, res) => {
     const checkin = published ? row : {
       ...row, manager_rating: null, manager_narrative: null, manager_entries: {},
     };
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale },
+    res.json({ cycle: cycleForClient(c),
       checkin, editable, manager_ratings_withheld: !published,
       kras, scoring: midyearOverall(kras, row.self_entries) });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -3496,7 +3517,7 @@ router.get('/team/midyear-review/:employeeId', async (req, res) => {
     // Both sides' scoring state: the manager legitimately sees the
     // employee's own per-KRA ratings and justifications while writing
     // theirs, which is the whole point of a checkpoint review.
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale },
+    res.json({ cycle: cycleForClient(c),
       employee: { id: emp.id, name: emp.name }, checkin: row, editable, kras,
       scoring: midyearOverall(kras, row.manager_entries),
       self_scoring: midyearOverall(kras, row.self_entries) });
@@ -3586,7 +3607,7 @@ router.get('/team/evaluations', async (req, res) => {
         WHERE e.tenant_id=$2 AND e.status='active'
           ${wide ? '' : 'AND e.manager_id=$3'} ORDER BY e.name`,
       wide ? [c.id, T(req)] : [c.id, T(req), req.user.id]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, rating_scale: c.rating_scale, cycle_type: c.cycle_type },
+    res.json({ cycle: cycleForClient(c),
                scope: wide ? 'all_employees' : 'my_reports', can_see_all: await seesWholeCompany(req), team: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3863,7 +3884,7 @@ router.get('/hod/queue', async (req, res) => {
          LEFT JOIN pms.hod_evaluations he ON he.cycle_id=$1 AND he.employee_id=e.id
         WHERE e.tenant_id=$2 ${isAdmin ? '' : 'AND e.department = ANY($3)'} ORDER BY e.department, e.name`,
       isAdmin ? [c.id, T(req)] : [c.id, T(req), depts]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, departments: depts, queue: r.rows });
+    res.json({ cycle: cycleForClient(c), departments: depts, queue: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3942,7 +3963,7 @@ router.get('/calibration', async (req, res) => {
         WHERE e.tenant_id=$2 ORDER BY e.department, e.name`, [c.id, T(req)])).rows;
     const dist = {};
     for (const r of rows) { const k = r.proposed == null ? 'unrated' : String(Math.round(r.proposed)); dist[k] = (dist[k] || 0) + 1; }
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase, bell_curve: c.bell_curve }, rows, distribution: dist });
+    res.json({ cycle: cycleForClient(c, { bell_curve: c.bell_curve }), rows, distribution: dist });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -4073,7 +4094,7 @@ router.get('/nine-box', async (req, res) => {
     const withCompetency = derivedRows.filter((r) => (r.competencies || []).length > 0).length;
 
     res.json({
-      cycle: { id: c.id, name: c.name, phase: c.phase }, level, source,
+      cycle: cycleForClient(c), level, source,
       bands: { performance: PERFORMANCE_BANDS, potential: POTENTIAL_BANDS },
       coverage: {
         employees: derivedRows.length,
@@ -4440,7 +4461,7 @@ router.get('/increment-simulations', async (req, res) => {
       `SELECT s.*, (SELECT count(*)::int FROM pms.increment_overrides o WHERE o.simulation_id=s.id) AS overrides
          FROM pms.increment_simulations s WHERE s.tenant_id=$1 AND s.cycle_id=$2 ORDER BY s.created_at DESC`,
       [T(req), c.id]);
-    res.json({ cycle: { id: c.id, name: c.name }, simulations: r.rows });
+    res.json({ cycle: cycleForClient(c), simulations: r.rows });
   } catch (e) { logger.error('simulations list', { error: e.message }); res.status(500).json({ error: 'Could not load simulations' }); }
 });
 
@@ -4670,7 +4691,7 @@ router.get('/my/annual-review', async (req, res) => {
     const published = await publishedFor(T(req), c.id, req.user.id);
     const summary = await buildAnnualReviewSummary(T(req), req.user.id, c.id,
       { includeParameterScores: false, includeManagerRatings: published });
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, published, ...summary });
+    res.json({ cycle: cycleForClient(c), published, ...summary });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -4684,7 +4705,7 @@ router.get('/team/annual-review/:employeeId', async (req, res) => {
     const c = await activeCycle(T(req), 'annual');
     if (!c) return res.json({ cycle: null, employee: { id: emp.id, name: emp.name } });
     const summary = await buildAnnualReviewSummary(T(req), emp.id, c.id);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, employee: { id: emp.id, name: emp.name }, ...summary });
+    res.json({ cycle: cycleForClient(c), employee: { id: emp.id, name: emp.name }, ...summary });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -5381,7 +5402,7 @@ router.get('/closure-letters', async (req, res) => {
          FROM pms.closure_letters cl JOIN core.employees e ON e.id=cl.employee_id
          LEFT JOIN pms.employee_performance_history h ON h.employee_id=cl.employee_id AND h.cycle_id=cl.cycle_id
         WHERE cl.tenant_id=$1 AND cl.cycle_id=$2 ORDER BY e.name`, [T(req), c.id]);
-    res.json({ cycle: { id: c.id, name: c.name }, letters: r.rows });
+    res.json({ cycle: cycleForClient(c), letters: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -5525,7 +5546,7 @@ async function completionRows(req) {
       row.self_appraisal_status === 'submitted' &&
       row.manager_eval_status === 'submitted',
   }));
-  return { cycle: { id: c.id, name: c.name, phase: c.phase }, rows };
+  return { cycle: cycleForClient(c), rows };
 }
 
 router.get('/reports/completion', async (req, res) => {
@@ -5657,7 +5678,7 @@ router.get('/team/overview', async (req, res) => {
         WHERE e.tenant_id=$2 AND e.status='active'
           ${wide ? '' : 'AND e.manager_id=$4'} ORDER BY e.name`,
       wide ? [c.opens_at || null, T(req), c.id] : [c.opens_at || null, T(req), c.id, req.user.id]);
-    res.json({ cycle: { id: c.id, name: c.name, phase: c.phase },
+    res.json({ cycle: cycleForClient(c),
                scope: wide ? 'all_employees' : 'my_reports', can_see_all: await seesWholeCompany(req), rows: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

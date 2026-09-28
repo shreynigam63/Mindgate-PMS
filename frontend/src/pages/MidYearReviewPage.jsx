@@ -206,21 +206,21 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
 
 // The derived overall. Deliberately shows nothing but progress until every
 // KRA is rated, because that is exactly when the server assigns it.
-function DerivedOverall({ scoring, kras }) {
+function DerivedOverall({ scoring, kras, scale }) {
   if (!scoring) return null;
   if (!scoring.complete) {
     const done = kras.length - (scoring.missing || []).length;
     return (
       <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-xs">
         <b>Overall mid-year rating</b> is assigned once every KRA is rated — {done} of {kras.length} done.
-        {scoring.partial_overall != null && <span className="text-navy-400"> (running average so far: {scoring.partial_overall})</span>}
+        {scoring.partial_overall != null && <span className="text-navy-400"> (running average so far: <Grade value={scoring.partial_overall} scale={scale} />)</span>}
       </div>
     );
   }
   return (
     <div className="bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 text-xs flex flex-wrap items-center gap-2">
       <b>Overall mid-year rating</b>
-      <span className="chip bg-emerald-100 text-emerald-700">{scoring.overall}</span>
+      <span className="chip bg-emerald-100 text-emerald-700"><Grade value={scoring.overall} scale={scale} /></span>
       <span className="text-navy-400">weighted average of all {kras.length} KRA ratings — derived, not set by hand</span>
     </div>
   );
@@ -393,7 +393,7 @@ function MyMidYearCard() {
               <KraScoringList kras={data.kras} entries={data.checkin.self_entries} scale={data.cycle.rating_scale}
                 editable={editable} perspective="self"
                 onPatch={(entries) => persist({ entries })} />
-              <DerivedOverall scoring={data.scoring} kras={data.kras} />
+              <DerivedOverall scoring={data.scoring} kras={data.kras} scale={data.cycle.rating_scale} />
             </>
           ) : (
             <div className="flex flex-wrap items-center gap-1.5">
@@ -401,7 +401,7 @@ function MyMidYearCard() {
               {(data.cycle.rating_scale || []).map((s) => (
                 <button key={s.value} type="button" disabled={!editable}
                   className={`chip ${Number(selfRating) === s.value ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
-                  onClick={() => pickRating(s.value)}>{grade(s.value, scale)}</button>
+                  onClick={() => pickRating(s.value)}>{grade(s.value, data.cycle.rating_scale)}</button>
               ))}
             </div>
           )}
@@ -576,9 +576,9 @@ function TeamMidYearDetail({ employeeId }) {
             editable={editable} perspective="manager" employeeId={employeeId}
             counterpart={data.checkin.self_entries}
             onPatch={(entries) => persist({ entries })} />
-          <DerivedOverall scoring={data.scoring} kras={data.kras} />
+          <DerivedOverall scoring={data.scoring} kras={data.kras} scale={data.cycle.rating_scale} />
           {data.self_scoring && data.self_scoring.complete && (
-            <p className="text-[11px] text-navy-400">Their self-assessed overall: <b>{data.self_scoring.overall}</b></p>
+            <p className="text-[11px] text-navy-400">Their self-assessed overall: <b><Grade value={data.self_scoring.overall} scale={data.cycle.rating_scale} /></b></p>
           )}
         </>
       ) : (
@@ -587,7 +587,7 @@ function TeamMidYearDetail({ employeeId }) {
           <select className="inp w-auto" value={managerRating} disabled={!editable} onChange={(e) => pickRating(e.target.value === '' ? '' : Number(e.target.value))}>
             <option value="">—</option>
             {(data.cycle.rating_scale || []).map((s) => (
-              <option key={s.value} value={s.value}>{grade(s.value, scale)}</option>
+              <option key={s.value} value={s.value}>{grade(s.value, data.cycle.rating_scale)}</option>
             ))}
           </select>
         </div>

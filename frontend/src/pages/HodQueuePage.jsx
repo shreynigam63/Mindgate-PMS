@@ -13,7 +13,11 @@ import { grade } from '../grade';
 // one of three copies in this app that did not agree, and the client
 // asked on 24 Sep for ratings "only in Alphabets and not numbers". One
 // formatter now, in grade.js, with the stored number in the tooltip.
-const overallLabel = (value) => grade(value);
+// Takes the cycle's own scale. Without it this fell back to the default
+// five-point ladder, which is right for the scales in use today and
+// silently wrong for any other — the same gap that put a bare 4.1 on
+// the Mid-Year checkpoint.
+const overallLabel = (value, scale) => grade(value, scale);
 
 export default function HodQueuePage() {
   const [q, setQ] = useState('');
@@ -44,9 +48,9 @@ export default function HodQueuePage() {
             {openId === q.employee_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             <span className="text-sm font-semibold flex-1">{q.name}</span>
             <span className="text-[11px] text-navy-400">{q.department || '—'}</span>
-            <span className="text-xs">Manager: <b>{overallLabel(q.manager_rating)}</b></span>
+            <span className="text-xs">Manager: <b>{overallLabel(q.manager_rating, data.cycle.rating_scale)}</b></span>
           </button>
-          {openId === q.employee_id && <HodRow q={q} editable={editable} reload={load} />}
+          {openId === q.employee_id && <HodRow q={q} editable={editable} reload={load} scale={data.cycle.rating_scale} />}
         </div>
       ))}
     </div>
@@ -57,7 +61,7 @@ export default function HodQueuePage() {
 // (self) and the manager against EACH KRA, not just the two flat overall
 // numbers — so the Delivery Head can see exactly what's behind the
 // manager's rating before finalising their own.
-function HodRow({ q, editable, reload }) {
+function HodRow({ q, editable, reload, scale }) {
   const [detail, setDetail] = useState(null);
   const [detailErr, setDetailErr] = useState(null);
   const [v, setV] = useState(q.hod_rating ?? '');
@@ -94,8 +98,8 @@ function HodRow({ q, editable, reload }) {
                   <span className="text-navy-400">{k.weight}%</span>
                 </div>
                 <div className="flex flex-wrap gap-4">
-                  <p>Employee: <b>{grade(self)}</b></p>
-                  <p>Manager: <b>{grade(mgr)}</b></p>
+                  <p>Employee: <b>{grade(self, scale)}</b></p>
+                  <p>Manager: <b>{grade(mgr, scale)}</b></p>
                 </div>
                 {mgrComment && <p className="text-navy-500"><b>Manager's comment:</b> {mgrComment}</p>}
               </div>
@@ -105,12 +109,12 @@ function HodRow({ q, editable, reload }) {
       )}
       <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-navy-100">
         <div>
-          <p className="text-xs text-navy-500">Manager's overall: <b>{overallLabel(q.manager_rating)}</b></p>
+          <p className="text-xs text-navy-500">Manager's overall: <b>{overallLabel(q.manager_rating, scale)}</b></p>
         </div>
         <div className="flex items-center gap-2">
           <label className="lbl mb-0">Delivery Head rating</label>
           {q.hod_status === 'submitted' ? (
-            <span className="font-mono text-sm">{overallLabel(q.hod_rating)}</span>
+            <span className="font-mono text-sm">{overallLabel(q.hod_rating, scale)}</span>
           ) : (
             <input className="inp w-20 text-right inline-block" type="number" step="0.5" min="1" max="5" value={v} onChange={e => setV(e.target.value)} disabled={!editable} />
           )}
