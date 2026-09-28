@@ -22,7 +22,13 @@ const { buildAnnualReviewSummary, kraSuggestionCandidates } = require('../perfor
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
 const T = (req) => req.user.tenant_id;
-const fail = (res, e) => res.status(e.status || 500).json({ error: e.message });
+// The message is already the user-safe one (core/ai.js decides that,
+// and logs the real cause). `reason` rides along so a screen can tell
+// "try again in a minute" from "this needs an administrator" without
+// parsing the sentence.
+const fail = (res, e) => res.status(e.status || 500).json({
+  error: e.message, ...(e.reason ? { reason: e.reason, retryable: !!e.retryable } : {}),
+});
 
 // ---------------------------------------------------------------------------
 // House style for every AI draft in this module: SHORT BULLETS, GROUPED BY

@@ -124,11 +124,78 @@ async function ensureTable() {
 // truncates the JSON and produces an unusable draft.
 const REASONING_HEADROOM = 8000;
 
+// What the PERSON is told when the AI call fails, as against what the
+// OPERATOR is told.
+//
+// Reported on 28 Sep, with a screenshot of an employee's Quarterly
+// Connects page showing, in red, under their own 1-on-1 notes:
+//
+//   AI call failed (400): {"type":"error","error":{"type":
+//   "invalid_request_error","message":"Your credit balance is too low
+//   to access the Anthropic API. Please go to Plans & Billing to
+//   upgrade or purchase credits."}
+//
+// Two separate faults in one line. The upstream body was passed
+// straight through to a screen, so an employee clicking "AI insights"
+// read the company's billing status — and the same text appears on
+// employee-facing pages, not just HR ones. And nothing was written to
+// the server log, so the count of these in journalctl was zero while
+// every AI feature on the instance was failing; nobody operating it
+// would have known until a user complained, which is exactly how this
+// was found.
+//
+// So: a plain sentence on screen, the whole truth in the log.
+//
+// The sentence says what the person can DO. "Temporarily unavailable"
+// where waiting helps; "ask your administrator" where it does not,
+// because a user retrying a misconfiguration forever is its own kind
+// of silent failure. It never names billing, quota, the key, or the
+// vendor's own wording.
+//
+// Pure and exported so the mapping can be tested without a network.
+function upstreamFailure(status, body) {
+  const raw = String(body || '');
+  // The vendor puts the interesting part in error.message; fall back to
+  // the raw body, which is only ever read by the log.
+  let detail = raw.slice(0, 500);
+  try {
+    const j = JSON.parse(raw);
+    if (j && j.error && j.error.message) detail = j.error.message;
+  } catch { /* not JSON — the raw text stands, for the log only */ }
+
+  const money = /credit balance|billing|quota|payment|insufficient/i.test(detail);
+
+  if (status === 401 || status === 403) {
+    return { reason: 'auth', retryable: false, detail,
+      message: 'AI features are not set up correctly on this instance. Ask your HR administrator to check the configuration.' };
+  }
+  if (status === 429) {
+    return { reason: 'rate_limited', retryable: true, detail,
+      message: 'AI is busy at the moment. Try again in a minute.' };
+  }
+  if (status === 402 || (status === 400 && money)) {
+    // Deliberately not "out of credit". Retrying will not help, so the
+    // sentence points at the one person who can fix it, without saying
+    // anything about the account.
+    return { reason: 'account', retryable: false, detail,
+      message: 'AI is unavailable on this instance just now. Please let your HR administrator know if it keeps happening.' };
+  }
+  if (status >= 500) {
+    return { reason: 'upstream', retryable: true, detail,
+      message: 'The AI service is temporarily unavailable. Try again shortly.' };
+  }
+  return { reason: 'bad_request', retryable: false, detail,
+    message: 'AI could not complete that request. Please let your HR administrator know if it keeps happening.' };
+}
+
 // The one entry point. Returns {draft, id} or throws with a clear message.
 async function narrate({ tenantId, kind, ref, system, input, requestedBy, maxTokens = 1500 }) {
   if (!aiEnabled()) {
-    const e = new Error('Agentic features are not configured on this instance (ANTHROPIC_API_KEY missing).');
-    e.status = 503; throw e;
+    // Names the variable in the LOG, not on the screen — which
+    // environment variable is missing is an operator's business.
+    logger.error('ai call refused — ANTHROPIC_API_KEY is not set', { kind });
+    const e = new Error('AI features are not set up on this instance. Ask your HR administrator to enable them.');
+    e.status = 503; e.reason = 'not_configured'; throw e;
   }
   const res = await fetch(API, {
     method: 'POST',
@@ -167,8 +234,16 @@ async function narrate({ tenantId, kind, ref, system, input, requestedBy, maxTok
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    const e = new Error(`AI call failed (${res.status}): ${body.slice(0, 200)}`);
-    e.status = 502; throw e;
+    const f = upstreamFailure(res.status, body);
+    // THE OPERATOR'S COPY. error level, not warn: every AI feature on
+    // the instance is down when this fires, and it has to be findable
+    // in journalctl by somebody who was not watching a user's screen.
+    logger.error('ai call failed', {
+      kind, model: MODEL, http_status: res.status,
+      reason: f.reason, retryable: f.retryable, detail: f.detail,
+    });
+    const e = new Error(f.message);
+    e.status = 502; e.reason = f.reason; e.retryable = f.retryable; throw e;
   }
   const data = await res.json();
   const text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n');
@@ -204,4 +279,4 @@ async function narrate({ tenantId, kind, ref, system, input, requestedBy, maxTok
   return { id: saved.rows[0].id, created_at: saved.rows[0].created_at, draft };
 }
 
-module.exports = { narrate, parseAiJson, stripRatingSuggestions, aiEnabled, ensureTable };
+module.exports = { narrate, parseAiJson, stripRatingSuggestions, aiEnabled, ensureTable, upstreamFailure };
