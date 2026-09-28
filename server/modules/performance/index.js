@@ -3398,6 +3398,49 @@ function midyearOverall(kras, entries) {
   return { overall: w.complete ? w.rating : null, partial_overall: w.rating, complete: w.complete, missing: w.missing };
 }
 
+// ---- The configurable form sections (migration 061) ----------------------
+// Mindgate's own PMS form, minus the parts this product already covers.
+// Rules in review-form.js; this is the loading and the writing.
+const rf = require('./review-form');
+
+async function loadReviewForm(tenantId, cycleId, employeeId, formKey = 'midyear', perspective = 'self') {
+  const sections = (await db.query(
+    `SELECT id, title, blurb, sort_order, active FROM pms.review_form_sections
+      WHERE tenant_id=$1 AND form_key=$2 AND active=true ORDER BY sort_order`,
+    [tenantId, formKey])).rows;
+  if (!sections.length) return { sections: [], questions: [] };
+  const ids = sections.map((x) => x.id);
+  const questions = (await db.query(
+    `SELECT id, section_id, label, kind, required, sort_order, active
+       FROM pms.review_form_questions
+      WHERE tenant_id=$1 AND section_id = ANY($2) AND active=true ORDER BY sort_order`,
+    [tenantId, ids])).rows;
+  const answers = (await db.query(
+    `SELECT question_id, rating, answer_text FROM pms.review_form_answers
+      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND perspective=$4`,
+    [tenantId, cycleId, employeeId, perspective])).rows;
+  return { sections: rf.assemble({ sections, questions, answers }), questions, answers };
+}
+
+// Who the person is, for the header of the form. Every one of these is
+// already on record, so the form STATES them rather than asking again —
+// the two the master genuinely cannot answer (total career experience,
+// technology used) are questions in the "About you" section instead.
+async function reviewProfile(tenantId, employeeId) {
+  const e = (await db.query(
+    `SELECT e.id, e.name, e.email, e.emp_code, e.designation, e.department, e.date_of_joining,
+            m.name AS manager_name, m.email AS manager_email
+       FROM core.employees e LEFT JOIN core.employees m ON m.id = e.manager_id
+      WHERE e.id=$1 AND e.tenant_id=$2`, [employeeId, tenantId])).rows[0];
+  if (!e) return null;
+  // Delivery Head is the head of the person's department, which is where
+  // this product already keeps it — not a column on the employee.
+  const head = e.department ? (await db.query(
+    `SELECT emp.name FROM core.department_heads dh JOIN core.employees emp ON emp.id = dh.employee_id
+      WHERE dh.tenant_id=$1 AND dh.department=$2 LIMIT 1`, [tenantId, e.department])).rows[0] : null;
+  return { ...e, delivery_head: head ? head.name : null };
+}
+
 router.get('/my/midyear-review', async (req, res) => {
   try {
     const c = await activeCycleForMidyear(T(req));
@@ -3419,9 +3462,12 @@ router.get('/my/midyear-review', async (req, res) => {
     const checkin = published ? row : {
       ...row, manager_rating: null, manager_narrative: null, manager_entries: {},
     };
+    const form = await loadReviewForm(T(req), c.id, req.user.id);
     res.json({ cycle: cycleForClient(c),
       checkin, editable, manager_ratings_withheld: !published,
-      kras, scoring: midyearOverall(kras, row.self_entries) });
+      kras, scoring: midyearOverall(kras, row.self_entries),
+      profile: await reviewProfile(T(req), req.user.id),
+      form: form.sections });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3464,6 +3510,47 @@ router.put('/my/midyear-review', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// The form sections, saved on their own.
+//
+// Separate from PUT /my/midyear-review because they are a separate
+// thing: that route derives an overall rating from KRA entries, and
+// folding fifteen free-text answers into it would mean every keystroke
+// in a training box recomputing somebody's mid-year score.
+//
+// Only questions actually SENT are written, so the page can save one
+// section without blanking the others.
+router.put('/my/midyear-review/form', async (req, res) => {
+  try {
+    const c = await activeCycleForMidyear(T(req));
+    if (!c || !pm.phaseAllows(c.phase, 'midyear_self_edit')) {
+      return res.status(409).json({ error: `Mid-Year Review is not open (phase: ${c ? c.phase : 'none'})` });
+    }
+    const row = await ensureMidyearCheckin(T(req), c.id, req.user.id);
+    if (row.self_status === 'submitted') return res.status(409).json({ error: 'Already submitted — locked' });
+
+    const { questions } = await loadReviewForm(T(req), c.id, req.user.id);
+    const m = rf.mergeAnswers({ questions, incoming: req.body && req.body.answers, scale: c.rating_scale });
+    // All or nothing, and the refusal names every bad answer rather than
+    // the first — a form of fifteen questions refused one at a time is
+    // fifteen round trips.
+    if (!m.ok) return res.status(422).json({ error: 'Some answers were not accepted', rejected: m.errors });
+
+    for (const w of m.writes) {
+      await db.query(
+        `INSERT INTO pms.review_form_answers
+           (tenant_id, cycle_id, employee_id, question_id, perspective, rating, answer_text)
+         VALUES ($1,$2,$3,$4,'self',$5,$6)
+         ON CONFLICT (tenant_id, cycle_id, employee_id, question_id, perspective)
+         DO UPDATE SET rating=EXCLUDED.rating, answer_text=EXCLUDED.answer_text, updated_at=now()`,
+        [T(req), c.id, req.user.id, w.question_id, w.rating, w.answer_text]);
+    }
+    await db.query(`UPDATE pms.midyear_checkins SET self_status='in_progress', updated_at=now()
+                     WHERE id=$1 AND self_status='not_started'`, [row.id]);
+    const after = await loadReviewForm(T(req), c.id, req.user.id);
+    res.json({ ok: true, saved: m.writes.length, missing_required: rf.missingRequired(questions, after.answers) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/my/midyear-review/submit', async (req, res) => {
   try {
     const c = await activeCycleForMidyear(T(req));
@@ -3478,6 +3565,11 @@ router.post('/my/midyear-review/submit', async (req, res) => {
       const sc = midyearOverall(selfKras, row.self_entries);
       if (!sc.complete) return res.status(422).json({ error: `Rate all ${selfKras.length} KRAs before signing — ${sc.missing.length} still unrated.` });
     }
+    // And the form's own required questions. Named, not counted: "one
+    // answer missing" sends somebody hunting through five sections.
+    const { questions, answers } = await loadReviewForm(T(req), c.id, req.user.id);
+    const missing = rf.missingRequired(questions, answers);
+    if (missing.length) return res.status(422).json({ error: `Answer these before signing: ${missing.join(', ')}` });
     // The reopen flag is cleared on submit (040), for the reason the KRA
     // sheet learned the hard way: a flag that outlives a resubmission
     // labels a LATER, unrelated event as a role change.
@@ -3517,10 +3609,16 @@ router.get('/team/midyear-review/:employeeId', async (req, res) => {
     // Both sides' scoring state: the manager legitimately sees the
     // employee's own per-KRA ratings and justifications while writing
     // theirs, which is the whole point of a checkpoint review.
+    // The employee's own answers to the form sections, read-only. The
+    // manager is reading them while writing their half — the same
+    // reason they see the per-KRA self ratings above.
+    const form = await loadReviewForm(T(req), c.id, emp.id);
     res.json({ cycle: cycleForClient(c),
       employee: { id: emp.id, name: emp.name }, checkin: row, editable, kras,
       scoring: midyearOverall(kras, row.manager_entries),
-      self_scoring: midyearOverall(kras, row.self_entries) });
+      self_scoring: midyearOverall(kras, row.self_entries),
+      profile: await reviewProfile(T(req), emp.id),
+      form: form.sections });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

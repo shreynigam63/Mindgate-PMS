@@ -213,7 +213,13 @@ function DerivedOverall({ scoring, kras, scale }) {
     return (
       <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-xs">
         <b>Overall mid-year rating</b> is assigned once every KRA is rated — {done} of {kras.length} done.
-        {scoring.partial_overall != null && <span className="text-navy-400"> (running average so far: <Grade value={scoring.partial_overall} scale={scale} />)</span>}
+        {/* Only once something has actually been rated. With nothing
+            rated the weighted average comes back as 0, which used to
+            read as a harmless "0" and now reads as the letter C — an
+            actual bad grade, on a review nobody has started. */}
+        {done > 0 && scoring.partial_overall != null && (
+          <span className="text-navy-400"> (running average so far: <Grade value={scoring.partial_overall} scale={scale} />)</span>
+        )}
       </div>
     );
   }
@@ -222,6 +228,162 @@ function DerivedOverall({ scoring, kras, scale }) {
       <b>Overall mid-year rating</b>
       <span className="chip bg-emerald-100 text-emerald-700"><Grade value={scoring.overall} scale={scale} /></span>
       <span className="text-navy-400">weighted average of all {kras.length} KRA ratings — derived, not set by hand</span>
+    </div>
+  );
+}
+
+
+// ---- Mindgate's own PMS form (migration 061) -----------------------------
+
+// The identity block from the top of their form. Every field here is
+// already on the employee record, so it is STATED rather than asked for
+// a second time — re-typing your own employee code into an appraisal is
+// how a form earns the reputation their Google Form has.
+//
+// The two the master cannot answer — total career experience, and the
+// technology someone is actually working in — are questions in the
+// "About you" section instead, which is why they are not here.
+function WhoYouAre({ profile }) {
+  if (!profile) return null;
+  const when = (d) => (d ? new Date(d).toLocaleDateString() : '—');
+  const cell = (label, value) => (
+    <div>
+      <p className="text-[10px] uppercase tracking-wide text-navy-400">{label}</p>
+      <p className="font-medium">{value || '—'}</p>
+    </div>
+  );
+  return (
+    <div className="border border-navy-100 rounded-xl p-3">
+      <p className="text-[10px] uppercase font-bold text-navy-400 mb-2">On record</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 text-xs">
+        {cell('Employee name', profile.name)}
+        {cell('Employee code', profile.emp_code)}
+        {cell('Designation', profile.designation)}
+        {cell('Department', profile.department)}
+        {cell('Date of joining', when(profile.date_of_joining))}
+        {cell('Reporting manager', profile.manager_name)}
+        {cell("Manager's email", profile.manager_email)}
+        {cell('Delivery head', profile.delivery_head)}
+      </div>
+      <p className="text-[10px] text-navy-400 mt-2">
+        From your employee record. Ask HR if anything here is wrong — it is not edited on this form.
+      </p>
+    </div>
+  );
+}
+
+// One question. Ratings use the CYCLE'S scale and show as letters, like
+// every other rating in this product.
+function FormQuestion({ q, scale, editable, value, onChange }) {
+  const label = (
+    <p className="text-[11px] font-medium">
+      {q.label}{q.required && <span className="text-rose-600"> *</span>}
+    </p>
+  );
+  if (q.kind === 'rating') {
+    return (
+      <div className="space-y-1">
+        {label}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(scale || []).map((sc) => (
+            <button key={sc.value} type="button" disabled={!editable}
+              className={`chip ${Number(value.rating) === sc.value ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
+              onClick={() => onChange({ rating: sc.value })}>{grade(sc.value, scale)}</button>
+          ))}
+          {/* Clearing has to be possible: a rating picked by accident is
+              otherwise permanent until submit. */}
+          {editable && value.rating != null && (
+            <button type="button" className="text-[10px] text-navy-400 underline"
+              onClick={() => onChange({ rating: null })}>clear</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+  if (q.kind === 'yes_no') {
+    return (
+      <div className="space-y-1">
+        {label}
+        <div className="flex items-center gap-1.5">
+          {['yes', 'no'].map((v) => (
+            <button key={v} type="button" disabled={!editable}
+              className={`chip ${value.answer_text === v ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
+              onClick={() => onChange({ answer_text: v })}>{v === 'yes' ? 'Yes' : 'No'}</button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      {label}
+      <textarea className="inp" rows={2} disabled={!editable}
+        value={value.answer_text || ''}
+        onChange={(e) => onChange({ answer_text: e.target.value })} />
+    </div>
+  );
+}
+
+// The sections, as one editable block with a single Save.
+//
+// Saved on their own route, not folded into the KRA save: that one
+// derives an overall rating from the per-KRA entries, and a keystroke in
+// a training box has no business recomputing somebody's mid-year score.
+export function ReviewFormSections({ form, scale, editable, onSave, readOnly }) {
+  const [draft, setDraft] = useState({});
+  const [state, setState] = useState('idle');
+  const [err, setErr] = useState(null);
+  if (!form || !form.length) return null;
+
+  const valueFor = (q) => (draft[q.id] !== undefined
+    ? draft[q.id]
+    : { rating: q.rating, answer_text: q.answer_text });
+
+  const change = (q, patch) => {
+    setState('idle');
+    setDraft((d) => ({ ...d, [q.id]: { ...valueFor(q), ...patch } }));
+  };
+
+  const save = async () => {
+    setState('saving'); setErr(null);
+    try {
+      await onSave(Object.fromEntries(Object.entries(draft)));
+      setDraft({});
+      setState('saved');
+    } catch (e) {
+      setState('idle');
+      // The server refuses the whole set and names each bad answer; show
+      // them, rather than a single "could not save".
+      setErr(e.message);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {form.map((sec) => (
+        <div key={sec.id} className="border border-navy-100 rounded-xl p-3 space-y-3">
+          <div>
+            <p className="text-[10px] uppercase font-bold text-navy-400">{sec.title}</p>
+            {sec.blurb && <p className="text-[10px] text-navy-400">{sec.blurb}</p>}
+          </div>
+          {sec.questions.map((q) => (
+            <FormQuestion key={q.id} q={q} scale={scale} editable={editable && !readOnly}
+              value={valueFor(q)} onChange={(patch) => change(q, patch)} />
+          ))}
+        </div>
+      ))}
+      {!readOnly && editable && (
+        <div className="flex items-center gap-2">
+          <button className="btn-sec" disabled={state === 'saving' || !Object.keys(draft).length} onClick={save}>
+            {state === 'saving' ? 'Saving…' : 'Save these answers'}
+          </button>
+          {state === 'saved' && <span className="text-[11px] text-emerald-700">Saved</span>}
+          {!!Object.keys(draft).length && state !== 'saving' && (
+            <span className="text-[11px] text-amber-700">Unsaved changes</span>
+          )}
+        </div>
+      )}
+      {err && <p className="text-xs text-rose-600 whitespace-pre-line">{err}</p>}
     </div>
   );
 }
@@ -262,6 +424,25 @@ function MyMidYearCard() {
     timer.current = setTimeout(() => persist({ self_narrative: narrative }), 1200);
   };
   const pickRating = (value) => { setSelfRating(value); persist({ self_rating: value }); };
+
+  // The form sections save on their own route. The refusal names every
+  // answer it would not take, so it is spelt out here rather than
+  // collapsed into "could not save".
+  const saveForm = async (answers) => {
+    try {
+      await api('/pms/my/midyear-review/form', { method: 'PUT', body: JSON.stringify({ answers }) });
+    } catch (e) {
+      // api() attaches the parsed body as `.data`; the server names every
+      // answer it refused, and that list is the useful part.
+      const rejected = e.data && Array.isArray(e.data.rejected) ? e.data.rejected : [];
+      throw new Error(rejected.length
+        ? rejected.map((r) => `${r.label || 'answer'}: ${r.reason}`).join('\n')
+        : e.message);
+    }
+    // Re-read so what is on screen is what was stored, not what was typed.
+    const fresh = await api('/pms/my/midyear-review');
+    setData((d) => (d ? { ...d, form: fresh.form } : d));
+  };
   const askDraft = async () => {
     setDrafting(true); setErr(null);
     try { const r = await api('/agentic/midyear-draft', { method: 'POST', body: JSON.stringify({ employee_id: data.checkin.employee_id, perspective: 'self' }) }); setDraft(r); setDraftOpen(true); }
@@ -386,6 +567,7 @@ function MyMidYearCard() {
           this card still says whether the manager has signed, so an
           employee can still tell their half is done. */}
       <div className="grid gap-3">
+        <WhoYouAre profile={data.profile} />
         <div className="border border-navy-100 rounded-xl p-3 space-y-2">
           <p className="text-[10px] uppercase font-bold text-navy-400">Your mid-year</p>
           {hasKras ? (
@@ -409,9 +591,19 @@ function MyMidYearCard() {
             disabled={!editable} value={selfNarrative} onChange={(e) => { setSelfNarrative(e.target.value); scheduleSave(e.target.value); }} />
           <div className="flex items-center gap-2">
             {editable && <button className="btn-sec" onClick={() => { if (timer.current) clearTimeout(timer.current); persist({ self_rating: selfRating || null, self_narrative: selfNarrative }); }}>Save</button>}
-            {editable && <button className="btn-pri" onClick={submit}><Send size={12} className="inline mr-1" />Save & sign</button>}
             {badge && <span className={`text-[11px] font-medium ${badge[1]}`}>{badge[0]}</span>}
           </div>
+        </div>
+
+        {/* Mindgate's own form, below the KRA scoring and above the
+            signature — the order their PMS form reads in, and the order
+            that makes signing the last thing done rather than a button
+            somebody passes on the way to the questions. */}
+        <ReviewFormSections form={data.form} scale={data.cycle.rating_scale} editable={editable}
+          onSave={saveForm} />
+
+        <div className="flex items-center gap-2">
+          {editable && <button className="btn-pri" onClick={submit}><Send size={12} className="inline mr-1" />Save & sign</button>}
         </div>
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
@@ -580,6 +772,10 @@ function TeamMidYearDetail({ employeeId }) {
           {data.self_scoring && data.self_scoring.complete && (
             <p className="text-[11px] text-navy-400">Their self-assessed overall: <b><Grade value={data.self_scoring.overall} scale={data.cycle.rating_scale} /></b></p>
           )}
+          {/* What they answered on the form, read-only — the manager is
+              reading it while writing their half, the same reason they
+              see the per-KRA self ratings above. */}
+          <ReviewFormSections form={data.form} scale={data.cycle.rating_scale} editable={false} readOnly />
         </>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
