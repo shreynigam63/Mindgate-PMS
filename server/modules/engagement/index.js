@@ -621,6 +621,73 @@ async function inviteAudience(tenantId, survey) {
 // without HR pressing anything again. The people already inside the
 // window on the day of release are invited immediately, which is why
 // this and the sweep call the same function.
+// Read a survey before releasing it.
+//
+// Asked for on 28 Sep, on a screenshot of the survey list: "provide
+// option of viewing draft before opening the survey to employees."
+//
+// Open is irreversible in the way that matters — it writes an
+// invitation row per person and, on this instance, 1,426 notifications.
+// Until now the only way to read what those people would be asked was
+// to open it and look, which is the one thing HR wanted to avoid.
+//
+// Deliberately returns BOTH halves of the decision:
+//   questions  what the employee will be asked, in order, with the
+//              options they will actually see
+//   audience   who it goes to and how many, resolved through the SAME
+//              resolveAudience() that open uses — a preview computed a
+//              different way would be a second implementation to drift
+//
+// Audience resolution can fail on a malformed rule. That must not take
+// the questions down with it: reading the survey is the point, the
+// count is the bonus, so the failure is reported in the payload rather
+// than thrown.
+router.get('/surveys/:id/preview', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
+    const s = (await db.query(`SELECT * FROM engagement.surveys WHERE id=$1 AND tenant_id=$2`,
+      [req.params.id, T(req)])).rows[0];
+    if (!s) return res.status(404).json({ error: 'survey not found' });
+
+    const questions = (await db.query(
+      `SELECT id, qtype, prompt, options, required, sort_order
+         FROM engagement.questions WHERE survey_id=$1 ORDER BY sort_order`, [s.id])).rows;
+
+    let audience = null;
+    try {
+      const a = await resolveAudience(T(req), s);
+      audience = { count: a.count, description: a.description, kind: a.kind,
+        no_joining_date: a.no_joining_date, no_manager: a.no_manager || 0,
+        manager_inactive: a.manager_inactive || 0,
+        sample: a.employees.slice(0, 8).map((e) => e.name) };
+    } catch (e) {
+      audience = { error: e.message };
+    }
+
+    // The same two refusals `open` makes, said BEFORE the button is
+    // pressed rather than after. A survey with no questions, or one
+    // whose rule currently matches nobody, is the thing a preview
+    // exists to catch.
+    const blockers = [];
+    if (!questions.length) blockers.push('No questions yet — add at least one before opening.');
+    if (audience && !audience.error && audience.count === 0) {
+      blockers.push('Nobody matches the audience rule today — opening it would invite no one.');
+    }
+
+    res.json({
+      survey: {
+        id: s.id, title: s.title, description: s.description, status: s.status,
+        anonymous: s.anonymity_default, audience_kind: s.audience_kind,
+        trigger_type: s.trigger_type, trigger_day: s.trigger_day,
+        trigger_window_days: s.trigger_window_days,
+      },
+      questions, audience, blockers,
+      already_invited: +(await db.query(
+        `SELECT COUNT(*) c FROM engagement.invitations WHERE survey_id=$1`, [s.id])).rows[0].c,
+    });
+  } catch (e) { logger.error('survey preview', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
 router.post('/surveys/:id/open', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });

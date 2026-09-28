@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Sparkles, Play, Square, Trash2 } from 'lucide-react';
+import { Plus, Sparkles, Play, Square, Trash2, Eye } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
@@ -89,6 +89,7 @@ export function EngagementAdminPage() {
   const [building, setBuilding] = useState(false);
   const [library, setLibrary] = useState(false);
   const [madeFrom, setMadeFrom] = useState(null);
+  const [preview, setPreview] = useState(null);
   const [sweep, setSweep] = useState(null);
   const [sweeping, setSweeping] = useState(false);
   const load = () => api('/engagement/surveys').then(setData).catch(e => setErr(e.message));
@@ -99,6 +100,12 @@ export function EngagementAdminPage() {
 
   const openSurvey = async (s) => {
     try { const r = await api(`/engagement/surveys/${s.id}/open`, { method: 'POST' }); alert(`Opened — ${r.invited} invited.`); load(); }
+    catch (e) { alert(e.message); }
+  };
+  // Read it before releasing it. Asked for on 28 Sep: "provide option
+  // of viewing draft before opening the survey to employees."
+  const viewDraft = async (s) => {
+    try { setPreview(await api(`/engagement/surveys/${s.id}/preview`)); }
     catch (e) { alert(e.message); }
   };
   const viewResults = async (s) => {
@@ -159,6 +166,12 @@ export function EngagementAdminPage() {
             </span>
             <span className={`chip ${s.status === 'open' ? 'bg-emerald-100 text-emerald-700' : 'bg-navy-50 text-navy-600'}`}>{s.status}</span>
             <span className="text-xs text-navy-400">{s.completed}/{s.invited} completed</span>
+            {/* Preview sits BEFORE Open, so the row reads left to
+                right the way the decision goes: look, then release.
+                Offered on every status, not just drafts — "what did we
+                actually ask them?" is a question about a live survey
+                too, and the answer is the same screen. */}
+            {data.admin && <button className="btn-sec" onClick={() => viewDraft(s)}><Eye size={12} className="inline mr-1" />Preview</button>}
             {data.admin && s.status === 'draft' && <button className="btn-sec" onClick={() => openSurvey(s)}><Play size={12} className="inline mr-1" />Open</button>}
             {data.admin && s.status === 'open' && <button className="btn-sec" onClick={async () => { await api(`/engagement/surveys/${s.id}/close`, { method: 'POST' }); load(); }}><Square size={12} className="inline mr-1" />Close</button>}
             {data.admin && <button className="btn-sec" onClick={() => viewResults(s)}>Results</button>}
@@ -188,6 +201,145 @@ export function EngagementAdminPage() {
             setSweeping(false);
           }}>{sweeping ? 'Checking…' : 'Check for new joiners now'}</button>
         </div>
+      )}
+
+      {/* WHAT THE EMPLOYEE WILL SEE, before anyone sees it.
+          Asked for on 28 Sep: "provide option of viewing draft before
+          opening the survey to employees."
+          Open cannot be undone in the way that matters — it writes an
+          invitation per person and, on this instance, 1,426
+          notifications. So this shows both halves of the decision: the
+          questions as they will be asked, and who they will reach. */}
+      {preview && (
+        <AiModal wide badge={false}
+          title={`${preview.survey.title} — preview`}
+          onClose={() => setPreview(null)}
+          footer={
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-navy-400 flex-1">
+                Nothing has been sent. {preview.survey.status === 'draft'
+                  ? 'Nobody is invited until you press Open.'
+                  : `This survey is ${preview.survey.status}.`}
+              </span>
+              <button className="btn-sec !py-1.5" onClick={() => setPreview(null)}>Close</button>
+              {/* Straight from reading it to releasing it, rather than
+                  closing and hunting for the row again. Refused while a
+                  blocker stands, for the same reasons Open itself
+                  refuses — said here first. */}
+              {preview.survey.status === 'draft' && (
+                <button className="btn-pri !py-1.5" disabled={preview.blockers.length > 0}
+                  title={preview.blockers[0] || 'Invite the audience below'}
+                  onClick={async () => { const sv = preview.survey; setPreview(null); await openSurvey(sv); }}>
+                  <Play size={12} className="inline mr-1" />Open to employees
+                </button>
+              )}
+            </div>
+          }>
+          {preview.survey.description && <p className="text-navy-500">{preview.survey.description}</p>}
+
+          {/* Said before the button, not after it is pressed. */}
+          {preview.blockers.map((b, i) => (
+            <p key={i} className="text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-2 py-1.5">{b}</p>
+          ))}
+
+          <div className="flex flex-wrap gap-2">
+            <span className={`chip ${preview.survey.status === 'open' ? 'bg-emerald-100 text-emerald-700' : 'bg-navy-50 text-navy-600'}`}>
+              {preview.survey.status}
+            </span>
+            <span className="chip bg-navy-50 text-navy-600">
+              {preview.survey.anonymous ? 'anonymous' : 'attributed'}
+            </span>
+            {preview.survey.trigger_type === 'tenure' && (
+              <span className="chip bg-lagoon-50 text-lagoon-700">
+                standing · day {preview.survey.trigger_day}–{preview.survey.trigger_day + preview.survey.trigger_window_days}
+              </span>
+            )}
+            <span className="chip bg-navy-50 text-navy-600">{preview.questions.length} question{preview.questions.length === 1 ? '' : 's'}</span>
+          </div>
+
+          {/* WHO IT REACHES, resolved through the same function Open
+              uses — a count worked out a second way would drift. */}
+          <div className="border border-navy-100 rounded-lg p-2.5">
+            <p className="text-[10px] uppercase font-bold text-navy-400 mb-1">Who it goes to</p>
+            {preview.audience?.error
+              ? <p className="text-rose-600">The audience rule could not be resolved: {preview.audience.error}</p>
+              : (
+                <>
+                  <p><b>{preview.audience.count}</b> {preview.audience.count === 1 ? 'person' : 'people'} — {preview.audience.description}</p>
+                  {!!preview.audience.sample?.length && (
+                    <p className="text-navy-400 text-[11px] mt-0.5">
+                      e.g. {preview.audience.sample.join(', ')}{preview.audience.count > preview.audience.sample.length ? ' …' : ''}
+                    </p>
+                  )}
+                  {/* Counted, never swallowed — a cohort quietly short
+                      looks exactly like a cohort genuinely small. */}
+                  {preview.audience.no_joining_date > 0 && (
+                    <p className="text-amber-700 text-[11px] mt-0.5">
+                      {preview.audience.no_joining_date} skipped — no joining date on record.
+                    </p>
+                  )}
+                  {preview.audience.no_manager > 0 && (
+                    <p className="text-amber-700 text-[11px]">{preview.audience.no_manager} skipped — no manager on record.</p>
+                  )}
+                  {preview.already_invited > 0 && (
+                    <p className="text-navy-400 text-[11px] mt-0.5">
+                      {preview.already_invited} already invited — they are not invited twice.
+                    </p>
+                  )}
+                </>
+              )}
+          </div>
+
+          {/* THE QUESTIONS, rendered as the employee meets them.
+              Disabled controls rather than a list of prompts: a 1–5
+              scale reads differently from a pick-one, and the point of
+              a preview is to catch exactly that before it goes out. */}
+          <div className="space-y-2.5">
+            <p className="text-[10px] uppercase font-bold text-navy-400">What they will be asked</p>
+            {!preview.questions.length && <p className="text-navy-400">No questions on this survey yet.</p>}
+            {preview.questions.map((q, i) => (
+              <div key={q.id} className="border border-navy-100 rounded-lg p-2.5">
+                <p className="font-medium">
+                  <span className="text-navy-400 mr-1">{i + 1}.</span>{q.prompt}
+                  {q.required && <span className="text-rose-600"> *</span>}
+                </p>
+                <div className="mt-1.5">
+                  {q.qtype === 'scale' && (
+                    <div className="flex gap-1.5">
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <span key={n} className="chip bg-navy-50 text-navy-500">{n}</span>
+                      ))}
+                    </div>
+                  )}
+                  {q.qtype === 'enps' && (
+                    <div className="flex flex-wrap gap-1">
+                      {Array.from({ length: 11 }, (_, n) => (
+                        <span key={n} className="chip bg-navy-50 text-navy-500">{n}</span>
+                      ))}
+                    </div>
+                  )}
+                  {(q.qtype === 'choice' || q.qtype === 'multi') && (
+                    <ul className="space-y-0.5">
+                      {(q.options || []).map((opt, n) => (
+                        <li key={n} className="text-navy-600">
+                          <span className="text-navy-300 mr-1">{q.qtype === 'multi' ? '☐' : '○'}</span>{opt}
+                        </li>
+                      ))}
+                      {!(q.options || []).length && (
+                        <li className="text-rose-600">No options on this question — employees would see an empty list.</li>
+                      )}
+                    </ul>
+                  )}
+                  {q.qtype === 'text' && (
+                    <div className="border border-dashed border-navy-200 rounded-md px-2 py-3 text-navy-300">
+                      free text
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </AiModal>
       )}
 
       {results && (
