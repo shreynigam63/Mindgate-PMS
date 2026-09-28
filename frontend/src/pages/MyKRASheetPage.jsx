@@ -6,7 +6,6 @@ import KraSuggestPanel from './KraSuggestPanel';
 import PageHead from '../PageHead';
 import KraTable from '../KraTable';
 import Grade from '../grade';
-import { Award, MessageSquareQuote } from 'lucide-react';
 
 // Whitespace counts as empty. An imported cell can carry a stray space or
 // newline, and treating that as content would put the box back on exactly
@@ -147,15 +146,6 @@ export default function MyKRASheetPage() {
         <span className={`chip ${data.sheet.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : data.sheet.status === 'returned' ? 'bg-rose-100 text-rose-700' : 'bg-navy-50 text-navy-600'}`}>sheet: {sheetStatusLabel(data.sheet.status, data.sheet.reopened_reason)}</span>
         <span className={`chip ${Math.abs(total - 100) < 0.01 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>weights: {total}/100</span>
       </PageHead>
-
-      {/* ABOVE THE SHEET, moved there on 28 Sep at Mindgate's request.
-          The original reading was that KRAs are the page and praise is
-          a footnote. The counter-argument won: somebody opening their
-          appraisal screen should meet what their team is thanked for
-          BEFORE the empty weight boxes, and a panel nobody scrolls to
-          is a panel nobody reads. It still renders nothing until
-          somebody has actually been thanked. */}
-      <TeamRecognition />
 
       {/* Two different things land on 'returned', and attributing the
           wrong one to a manager is worse than saying nothing: a sheet
@@ -346,122 +336,6 @@ export default function MyKRASheetPage() {
   );
 }
 
-
-// WHAT OTHER TEAMS SAID ABOUT YOURS.
-//
-// Asked for on 28 Sep as step three of the Customer Feedback flow:
-// once the form is filled in, the result "will be displayed on My KRAs
-// page" — the recognition a person's own team received, beside the
-// KRAs it speaks to.
-//
-// Read from the engagement module's own endpoint rather than folded
-// into the KRA sheet payload: the performance module does not reach
-// into engagement's tables, and a panel is not worth coupling two
-// modules for. Its failure is swallowed — an employee whose KRA sheet
-// loads must not lose it because a recognition query fell over.
-export function TeamRecognition() {
-  const [r, setR] = useState(null);
-  useEffect(() => { api('/engagement/my/recognition').then(setR).catch(() => setR(null)); }, []);
-
-  // Nothing yet is not a panel. An empty box headed "Recognition" on
-  // the appraisal screen of somebody nobody has thanked is worse than
-  // no box at all.
-  if (!r || !r.responses) return null;
-
-  // A five-slot bar rather than a glyph string. Stars that are text
-  // cannot shrink, which is what pushed this page sideways on a phone;
-  // these are boxes and they behave.
-  const Stars = ({ n, size = 'sm' }) => (
-    <span className={`inline-flex gap-0.5 ${size === 'lg' ? 'text-base' : 'text-[11px]'}`} title={`${n} out of 5`}>
-      {[1, 2, 3, 4, 5].map((i) => (
-        <span key={i} className={i <= Math.round(n) ? 'text-amber-400' : 'text-navy-200'}>★</span>
-      ))}
-    </span>
-  );
-
-  return (
-    <div className="card overflow-hidden">
-      {/* A BAND, not a table header. This is praise, and the page it
-          now sits at the top of is otherwise a grid of empty weight
-          boxes — it has to read differently from them or it reads as
-          more admin. */}
-      <div className="bg-gradient-to-r from-amber-50 via-amber-50/60 to-transparent px-4 py-3
-                      border-b border-amber-100 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <Award size={18} className="text-amber-500 shrink-0" />
-          <div className="min-w-0">
-            <p className="text-sm font-bold leading-tight">What other teams said about {r.department}</p>
-            <p className="text-[11px] text-navy-500">
-              {r.responses} {r.responses === 1 ? 'colleague has' : 'colleagues have'} rated and thanked your team
-            </p>
-          </div>
-        </div>
-        {r.avg_service != null && (
-          <div className="flex items-center gap-2 sm:ml-auto">
-            <span className="text-2xl font-black text-amber-600 tabular-nums leading-none">{r.avg_service}</span>
-            <div className="leading-tight">
-              <Stars n={r.avg_service} size="lg" />
-              <p className="text-[10px] uppercase tracking-wide text-navy-400">out of 5</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="p-4 space-y-3">
-        {/* Each dimension as a filled bar. "4.4" beside "4.7" is two
-            numbers; two bars of different lengths is a comparison you
-            can make without reading. */}
-        {r.ratings.length > 0 && (
-          <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
-            {r.ratings.map((x) => (
-              <div key={x.dimension} className="min-w-0">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[11.5px] text-navy-600 flex-1 min-w-0 truncate" title={x.label}>{x.label}</span>
-                  <span className="text-xs font-bold tabular-nums shrink-0">{x.average}</span>
-                  <span className="text-[10px] text-navy-400 tabular-nums shrink-0">n={x.n}</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-navy-100 overflow-hidden mt-0.5">
-                  <div className="h-full rounded-full bg-amber-400" style={{ width: `${(x.average / 5) * 100}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Ordered by weight, so the first chip is what this team is
-            actually known for. */}
-        {r.kudos.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {r.kudos.map((k, i) => (
-              <span key={k.kind}
-                className={`chip ${i === 0 ? 'bg-leaf-500 text-white' : 'bg-leaf-50 text-leaf-700'}`}>
-                {k.kind}{k.count > 1 && <b className="ml-1">×{k.count}</b>}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* The part people actually want to read, so it gets room: a
-            quote block rather than another row of small print. */}
-        {r.messages.length > 0 && (
-          <div className="space-y-2 pt-1">
-            {r.messages.map((m, i) => (
-              <blockquote key={i} className="border-l-2 border-amber-300 pl-3">
-                <p className="text-xs italic text-navy-700">“{m.text}”</p>
-                <p className="text-[11px] text-navy-400">
-                  {/* Named where the survey was attributed; silent where
-                      it was anonymous, because the response carries no
-                      identity at all — there is nobody to name. */}
-                  — {m.from_name ? `${m.from_name}${m.from_department ? `, ${m.from_department}` : ''}` : 'anonymous'}
-                </p>
-              </blockquote>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // The mid-year rating, against the KRA it was given for.
 //

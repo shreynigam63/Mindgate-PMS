@@ -927,101 +927,64 @@ router.post('/surveys/:id/respond', async (req, res) => {
 });
 
 // ---- Results ----------------------------------------------------------------
-// The kudos and service ratings YOUR TEAM received.
+// What I SUBMITTED, read back to me.
 //
-// Asked for on 28 Sep as step three of the Customer Feedback flow:
-// once the form is filled in, what it produced "will be displayed on
-// My KRAs page" — confirmed as the recognition a person's own team
-// received, not a receipt of what they themselves submitted.
+// Asked for on 28 Sep: "remove from MY KRA page and save the submitted
+// form in my survey page." This replaces the team-recognition panel
+// that briefly sat on My KRAs — the answers a person gave, on the page
+// where they gave them.
 //
-// "Your team" is the caller's DEPARTMENT on the employee master, which
-// is why the team question takes its options from the master (see the
-// template): the two have to be the same strings or nothing ever
-// matches. Compared case-insensitively and trimmed, because HR editing
-// an option to "  Delivery" should not silently empty somebody's
-// panel.
+// ANONYMITY IS WHY THIS CANNOT ALWAYS ANSWER, and that is the feature
+// working rather than a gap. An anonymous response is stored with
+// employee_id NULL; there is no key from a person to their answers, by
+// construction, so "show me what I said" has no truthful answer. The
+// route says which case it is instead of returning an empty list and
+// letting the page imply the answers were lost.
 //
-// READ BY DIMENSION, never by question wording. HR may reword any of
-// these, and matching on prompts would break the panel the first time
-// they did, silently.
-//
-// Anonymity needs no special handling here and that is by construction,
-// not by care: an anonymous response carries employee_id NULL, so the
-// join for "who said it" yields nothing to leak.
-router.get('/my/recognition', async (req, res) => {
+// The same applies to an attributed-optional survey where the person
+// chose not to be named: same NULL, same honest reply.
+router.get('/my/submissions', async (req, res) => {
   try {
-    const me = (await db.query(
-      `SELECT department FROM core.employees WHERE id=$1 AND tenant_id=$2`,
-      [req.user.id, T(req)])).rows[0];
-    const dept = me && me.department ? String(me.department).trim() : '';
-    // No department on the master is not an error, and not an empty
-    // panel with no explanation either — the page says why.
-    if (!dept) return res.json({ department: null, reason: 'no_department', responses: 0, ratings: [], kudos: [], messages: [] });
+    const rows = (await db.query(
+      `SELECT r.id AS response_id, r.survey_id, r.submitted_at, r.subject_employee_id,
+              s.title, s.anonymity_default, s.status,
+              subj.name AS subject_name
+         FROM engagement.responses r
+         JOIN engagement.surveys s ON s.id = r.survey_id
+         LEFT JOIN core.employees subj ON subj.id = r.subject_employee_id
+        WHERE r.tenant_id=$1 AND r.employee_id=$2
+        ORDER BY r.submitted_at DESC`, [T(req), req.user.id])).rows;
+    if (!rows.length) return res.json({ submissions: [] });
 
-    // Every response that NAMED this department in a recognition_team
-    // answer. One query for the set, then the detail hangs off it.
-    const named = (await db.query(
-      `SELECT DISTINCT a.response_id
+    // One query for every answer across every submission, then grouped
+    // in memory — a query per submission is a page that slows down the
+    // longer somebody has worked here.
+    const ids = rows.map((r) => r.response_id);
+    const answers = (await db.query(
+      `SELECT a.response_id, q.id AS question_id, q.prompt, q.qtype, q.sort_order,
+              a.value_num, a.value_text, a.value_list
          FROM engagement.answers a
          JOIN engagement.questions q ON q.id = a.question_id
-         JOIN engagement.responses r ON r.id = a.response_id
-        WHERE q.tenant_id=$1 AND q.dimension='recognition_team'
-          AND r.tenant_id=$1
-          AND EXISTS (SELECT 1 FROM unnest(coalesce(a.value_list,'{}'::text[])) t
-                       WHERE lower(trim(t)) = lower($2))`,
-      [T(req), dept])).rows.map((x) => x.response_id);
-    if (!named.length) {
-      return res.json({ department: dept, responses: 0, ratings: [], kudos: [], messages: [], overall: [] });
+        WHERE a.response_id = ANY($1)
+        ORDER BY q.sort_order`, [ids])).rows;
+    const byResponse = new Map(ids.map((id) => [id, []]));
+    for (const a of answers) {
+      byResponse.get(a.response_id).push({
+        question_id: a.question_id, prompt: a.prompt, qtype: a.qtype,
+        // One shaped value rather than three columns the page has to
+        // pick between — the question type already decides which one.
+        value: a.value_list && a.value_list.length ? a.value_list
+          : (a.value_num != null ? Number(a.value_num) : a.value_text),
+      });
     }
-
-    // Service ratings: the 1-5 questions, averaged per dimension.
-    const ratings = (await db.query(
-      `SELECT q.dimension, min(q.prompt) AS label,
-              round(avg(a.value_num)::numeric, 1)::float AS average, count(*)::int AS n
-         FROM engagement.answers a JOIN engagement.questions q ON q.id=a.question_id
-        WHERE a.response_id = ANY($1) AND q.dimension LIKE 'service_%'
-          AND a.value_num IS NOT NULL
-        GROUP BY q.dimension ORDER BY q.dimension`, [named])).rows;
-
-    // The satisfaction bands, counted.
-    const overall = (await db.query(
-      `SELECT a.value_text AS option, count(*)::int AS count
-         FROM engagement.answers a JOIN engagement.questions q ON q.id=a.question_id
-        WHERE a.response_id = ANY($1) AND q.dimension='service_overall' AND a.value_text IS NOT NULL
-        GROUP BY a.value_text ORDER BY count DESC`, [named])).rows;
-
-    // What people appreciated, tallied. A closed list is the reason
-    // this is a sentence a manager can act on rather than a pile of
-    // differently-worded compliments.
-    const kudos = (await db.query(
-      `SELECT kind, count(*)::int AS count FROM (
-         SELECT unnest(coalesce(a.value_list,'{}'::text[])) AS kind
-           FROM engagement.answers a JOIN engagement.questions q ON q.id=a.question_id
-          WHERE a.response_id = ANY($1) AND q.dimension='recognition_kind'
-       ) k WHERE trim(k.kind) <> '' GROUP BY kind ORDER BY count DESC, kind`, [named])).rows;
-
-    // The messages, newest first, with the sender WHERE THERE IS ONE.
-    const messages = (await db.query(
-      `SELECT a.value_text AS text, r.submitted_at AS at,
-              e.name AS from_name, e.department AS from_department
-         FROM engagement.answers a
-         JOIN engagement.questions q ON q.id=a.question_id
-         JOIN engagement.responses r ON r.id=a.response_id
-         LEFT JOIN core.employees e ON e.id = r.employee_id
-        WHERE a.response_id = ANY($1) AND q.dimension='recognition_message'
-          AND coalesce(trim(a.value_text),'') <> ''
-        ORDER BY r.submitted_at DESC LIMIT 20`, [named])).rows;
-
-    const scored = ratings.filter((x) => x.average != null);
     res.json({
-      department: dept,
-      responses: named.length,
-      avg_service: scored.length
-        ? Math.round((scored.reduce((t, x) => t + x.average * x.n, 0) / scored.reduce((t, x) => t + x.n, 0)) * 10) / 10
-        : null,
-      ratings, overall, kudos, messages,
+      submissions: rows.map((r) => ({
+        survey_id: r.survey_id, title: r.title, submitted_at: r.submitted_at,
+        subject_name: r.subject_name, anonymous: r.anonymity_default, status: r.status,
+        answers: byResponse.get(r.response_id) || [],
+      })),
     });
-  } catch (e) { logger.error('my recognition', { error: e.message }); res.status(500).json({ error: e.message }); }
+  } catch (e) { logger.error('my submissions', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
 router.get('/surveys/:id/results', async (req, res) => {

@@ -21,8 +21,19 @@ export default function MySurveysPage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [taking, setTaking] = useState(null);
-  const load = () => api('/engagement/my/invitations')
-    .then((i) => setData(i.invitations || [])).catch((e) => setErr(e.message));
+  // What this person actually submitted, asked for on 28 Sep: "save the
+  // submitted form in my survey page". Kept separate from the
+  // invitation list because an invitation says a form was SENT and a
+  // submission says what was ANSWERED — and for an anonymous survey
+  // the second genuinely does not exist.
+  const [subs, setSubs] = useState([]);
+  const [openSub, setOpenSub] = useState(null);
+  const load = () => {
+    api('/engagement/my/invitations')
+      .then((i) => setData(i.invitations || [])).catch((e) => setErr(e.message));
+    api('/engagement/my/submissions')
+      .then((r) => setSubs(r.submissions || [])).catch(() => setSubs([]));
+  };
   useEffect(() => { load(); }, []);
 
   if (err && !data) return <p className="text-sm text-rose-600">{err}</p>;
@@ -58,12 +69,63 @@ export default function MySurveysPage() {
               <span className="chip bg-navy-50 text-navy-500">{i.survey_type}</span>
               {i.anonymity_default && <span className="chip bg-emerald-100 text-emerald-700">anonymous</span>}
               {i.completed_at
-                ? <span className="text-xs text-emerald-600">completed ✓</span>
+                ? (() => {
+                  const mine = subs.find((x) => x.survey_id === i.id);
+                  return (
+                    <span className="flex items-center gap-2">
+                      <span className="text-xs text-emerald-600">completed ✓</span>
+                      {/* Only where the answers can actually be
+                          produced. An anonymous response carries no
+                          identity, so there is nothing to look up —
+                          offering a button that opens an empty panel
+                          would imply the answers were lost rather
+                          than never linked. */}
+                      {mine
+                        ? <button className="btn-sec !py-1" onClick={() => setOpenSub(openSub === mine ? null : mine)}>
+                          {openSub === mine ? 'Hide' : 'View my answers'}
+                        </button>
+                        : i.anonymity_default
+                          ? <span className="text-[11px] text-navy-400" title="Anonymous responses are stored with no link to you, so they cannot be shown back">
+                            answers not linked to you
+                          </span>
+                          : null}
+                    </span>
+                  );
+                })()
                 : <button className="btn-pri" onClick={() => setTaking(i)}>Take</button>}
             </div>
           ))}
         </div>
       )}
+      {/* THE SUBMITTED FORM, read back. Shown under the list rather
+          than inside the row: it is a whole form, and squeezing it
+          into a table row is how it would end up unreadable. */}
+      {openSub && (
+        <div className="card p-4 space-y-2">
+          <div className="flex flex-wrap items-baseline gap-2 border-b border-navy-100 pb-2">
+            <p className="text-sm font-bold flex-1">{openSub.title} — what you submitted</p>
+            <span className="text-[11px] text-navy-400">
+              {new Date(openSub.submitted_at).toLocaleString()}
+            </span>
+            <button className="btn-sec !py-1" onClick={() => setOpenSub(null)}>Close</button>
+          </div>
+          {openSub.answers.map((a) => (
+            <div key={a.question_id} className="text-xs">
+              <p className="text-navy-500">{a.prompt}</p>
+              <p className="font-semibold">
+                {/* A question answered and a question skipped are not
+                    the same thing, and a blank line cannot tell them
+                    apart. */}
+                {a.value == null || a.value === '' || (Array.isArray(a.value) && !a.value.length)
+                  ? <span className="font-normal italic text-navy-300">not answered</span>
+                  : Array.isArray(a.value) ? a.value.join(' · ') : String(a.value)}
+              </p>
+            </div>
+          ))}
+          {!openSub.answers.length && <p className="text-xs text-navy-400">No answers were recorded.</p>}
+        </div>
+      )}
+
       {open.length > 0 && (
         <p className="text-[11px] text-navy-400">
           {open.length} still open.

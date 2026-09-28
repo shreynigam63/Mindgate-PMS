@@ -1,16 +1,16 @@
-// node --test — the kudos a team received, on the team's own My KRAs.
+// node --test — the form you submitted, read back on My Surveys.
 //
-// Step three of the Customer Feedback flow asked for on 28 Sep: HR
-// creates the form under Engagement Surveys, it reaches the employee's
-// home page, and what it produces "will be displayed on My KRAs page"
-// — confirmed as the recognition a person's OWN TEAM received, not a
-// receipt of what they submitted.
+// Step three of the Customer Feedback flow, as it finally settled. It
+// was briefly a team-recognition panel on My KRAs; on 28 Sep Mindgate
+// asked to "remove from MY KRA page and save the submitted form in my
+// survey page", so what is kept is the plainer thing: the answers a
+// person gave, on the page where they gave them.
 //
-// The thing that can silently go wrong here is the join. "Your team" is
-// the caller's department on the employee master, and the recognition
-// names a team as free-ish text chosen from a list. If those two ever
-// stop being the same strings, every panel in the company goes blank
-// and nothing errors. That is what most of these tests are about.
+// THE INTERESTING CASE IS THE ONE THAT CANNOT BE ANSWERED. An
+// anonymous response is stored with employee_id NULL — there is no key
+// from a person to their answers, by construction — so "show me what I
+// said" has no truthful answer, and the route must say which case it
+// is rather than return an empty list that reads as data loss.
 //
 // Real Postgres, real HTTP, skips cleanly without DATABASE_URL.
 const { test, after, before } = require('node:test');
@@ -107,122 +107,79 @@ after(async () => {
   await db.pool.end();
 });
 
-test('nobody thanked yet: an honest empty, not a zeroed panel', { skip }, async () => {
-  const r = await get('/engagement/my/recognition', tok.qa);
+test('nothing submitted yet is an empty list, not an error', { skip }, async () => {
+  const r = await get('/engagement/my/submissions', tok.qa);
   assert.equal(r.status, 200);
-  assert.equal(r.body.responses, 0);
-  assert.deepEqual(r.body.kudos, []);
-  assert.equal(r.body.department, 'Testing', 'it still says whose team it was looking for');
+  assert.deepEqual(r.body.submissions, []);
 });
 
-test('kudos reach the team they name, and only that team', { skip }, async () => {
-  await feedback({ from: emp.recon, teams: ['Testing'], kinds: ['Quick response', 'Quality of work'],
+test('an attributed submission comes back in full, in question order', { skip }, async () => {
+  await feedback({ from: emp.qa, teams: ['Delivery'], kinds: ['Quick response', 'Quality of work'],
     message: 'Turned the settlement defect around over a weekend.', quality: 5, overall: 'Excellent' });
-  await feedback({ from: emp.dev, teams: ['Testing'], kinds: ['Quick response'], quality: 4 });
-  // Aimed at somebody else entirely.
-  await feedback({ from: emp.recon, teams: ['Delivery'], kinds: ['Collaboration'], quality: 2 });
 
-  const qa = (await get('/engagement/my/recognition', tok.qa)).body;
-  assert.equal(qa.responses, 2, 'the Delivery one is not theirs');
-  assert.deepEqual(qa.kudos, [
-    { kind: 'Quick response', count: 2 },
-    { kind: 'Quality of work', count: 1 },
-  ], 'tallied, biggest first — the point of a closed list');
-  assert.equal(qa.avg_service, 4.5);
+  const r = await get('/engagement/my/submissions', tok.qa);
+  assert.equal(r.body.submissions.length, 1);
+  const sub = r.body.submissions[0];
+  assert.equal(sub.title, 'Customer Feedback');
+  assert.ok(sub.submitted_at);
 
-  const dev = (await get('/engagement/my/recognition', tok.dev)).body;
-  assert.equal(dev.responses, 1);
-  assert.equal(dev.avg_service, 2, "and Delivery's 2 does not leak into Testing's average");
+  const by = Object.fromEntries(sub.answers.map((a) => [a.prompt, a.value]));
+  assert.equal(by['Overall satisfaction with the team'], 'Excellent');
+  assert.strictEqual(by['Quality of service / deliverables'], 5, 'a number, not the string Postgres returns');
+  assert.deepEqual(by['Which team would you like to recognise?'], ['Delivery']);
+  assert.deepEqual(by['What would you like to appreciate?'], ['Quick response', 'Quality of work'],
+    'a multi-select keeps every pick, in the order it was given');
+  assert.equal(by['Add a short appreciation message'], 'Turned the settlement defect around over a weekend.');
 });
 
-test('THE JOIN: a team named with different spacing or case still lands', { skip }, async () => {
-  // HR is allowed to edit the options. "  testing " must not silently
-  // empty every panel in the department.
-  await feedback({ from: emp.dev, teams: ['  testing '], kinds: ['Collaboration'], quality: 5 });
-  const qa = (await get('/engagement/my/recognition', tok.qa)).body;
-  assert.equal(qa.responses, 3, 'trimmed and case-folded on both sides');
-  assert.ok(qa.kudos.some((k) => k.kind === 'Collaboration'));
+test('THE ANONYMITY CASE: an anonymous answer cannot be read back, and that is the point',
+  { skip }, async () => {
+    // Stored with employee_id NULL. There is no key from this person to
+    // these answers, so the route cannot and must not produce them.
+    await feedback({ teams: ['Delivery'], kinds: ['Collaboration'], message: 'Quietly excellent.', quality: 4 });
+    const r = await get('/engagement/my/submissions', tok.recon);
+    assert.deepEqual(r.body.submissions, [],
+      'an anonymous response must never be retrievable by its author — that is the guarantee, not a gap');
+  });
+
+test('one person never sees another person\'s submission', { skip }, async () => {
+  await feedback({ from: emp.dev, teams: ['Testing'], kinds: ['Problem solving'], quality: 3 });
+  const qa = await get('/engagement/my/submissions', tok.qa);
+  assert.equal(qa.body.submissions.length, 1, "still only their own");
+  const flat = JSON.stringify(qa.body);
+  assert.ok(!flat.includes('Problem solving'), "the other person's answers are not in the payload at all");
 });
 
-test('one response naming two teams counts for both', { skip }, async () => {
-  const before = (await get('/engagement/my/recognition', tok.dev)).body.responses;
-  await feedback({ from: emp.recon, teams: ['Testing', 'Delivery'], kinds: ['Going above & beyond'], quality: 4 });
-  const dev = (await get('/engagement/my/recognition', tok.dev)).body;
-  assert.equal(dev.responses, before + 1, 'a multi-select is not a single choice');
+test('a skipped question is absent, not silently rendered as answered', { skip }, async () => {
+  // The page prints "not answered" for a missing value. That only works
+  // if the API distinguishes a blank from a zero.
+  await feedback({ from: emp.recon, teams: ['Delivery'], quality: 0 });
+  const r = await get('/engagement/my/submissions', tok.recon);
+  const sub = r.body.submissions[0];
+  const quality = sub.answers.find((a) => a.prompt === 'Quality of service / deliverables');
+  assert.strictEqual(quality.value, 0, 'zero is an answer and must survive as one');
+  assert.ok(!sub.answers.some((a) => a.prompt === 'Add a short appreciation message'),
+    'a question never answered simply is not there');
 });
 
-test('an attributed message names its sender; an anonymous one does not', { skip }, async () => {
-  await feedback({ teams: ['Recon'], message: 'Quietly excellent all quarter.', quality: 5 });
-  await feedback({ from: emp.qa, teams: ['Recon'], message: 'Always answer first time.', quality: 4 });
-
-  const recon = (await get('/engagement/my/recognition', tok.recon)).body;
-  const named = recon.messages.find((m) => m.text === 'Always answer first time.');
-  const anon = recon.messages.find((m) => m.text === 'Quietly excellent all quarter.');
-  assert.equal(named.from_name, 'Q Tester');
-  assert.equal(named.from_department, 'Testing', 'who said it, and from where — that is what makes kudos land');
-  // Anonymity is structural: the response carries no identity, so
-  // there is nothing here to withhold in the first place.
-  assert.equal(anon.from_name, null);
+test('submissions are newest first', { skip }, async () => {
+  const r = await get('/engagement/my/submissions', tok.qa);
+  const times = r.body.submissions.map((s) => new Date(s.submitted_at).getTime());
+  assert.deepEqual(times, [...times].sort((a, b) => b - a));
 });
 
-test('somebody with no department is told why, not shown an empty box', { skip }, async () => {
-  const r = await get('/engagement/my/recognition', tok.nodept);
-  assert.equal(r.status, 200);
-  assert.equal(r.body.department, null);
-  assert.equal(r.body.reason, 'no_department',
-    'the page needs to be able to say why rather than render a blank panel');
-});
-
-test('ratings are grouped per dimension, not averaged into one number', { skip }, async () => {
-  const qa = (await get('/engagement/my/recognition', tok.qa)).body;
-  const quality = qa.ratings.find((x) => x.dimension === 'service_quality');
-  assert.ok(quality, 'the dimension, not the wording, is what it is keyed on');
-  assert.equal(quality.label, 'Quality of service / deliverables');
-  assert.ok(quality.n >= 3);
-});
-
-test('READ BY DIMENSION: rewording a question does not break the panel', { skip }, async () => {
-  // HR is explicitly allowed to edit these. Matching on prompts would
-  // break the panel the first time they did, and break it silently.
-  const before = (await get('/engagement/my/recognition', tok.qa)).body;
-  await db.query(`UPDATE engagement.questions SET prompt='Kudos — who deserves it?' WHERE id=$1`, [qKind]);
-  await db.query(`UPDATE engagement.questions SET prompt='Which crew helped you out?' WHERE id=$1`, [qTeam]);
-  try {
-    const after = (await get('/engagement/my/recognition', tok.qa)).body;
-    assert.equal(after.responses, before.responses);
-    assert.deepEqual(after.kudos, before.kudos);
-  } finally {
-    await db.query(`UPDATE engagement.questions SET prompt='What would you like to appreciate?' WHERE id=$1`, [qKind]);
-    await db.query(`UPDATE engagement.questions SET prompt='Which team would you like to recognise?' WHERE id=$1`, [qTeam]);
-  }
-});
-
-test('another tenant\'s kudos never appear', { skip }, async () => {
+test('another tenant\'s submissions never appear', { skip }, async () => {
   const other = (await db.query(`INSERT INTO core.tenants (name, slug) VALUES ($1,$1) RETURNING id`,
-    ['rec-other-' + Date.now()])).rows[0].id;
+    ['sub-other-' + Date.now()])).rows[0].id;
   const os = (await db.query(
     `INSERT INTO engagement.surveys (tenant_id, title, status, audience_kind, created_by)
      VALUES ($1,'Theirs','open','self','x@y.com') RETURNING id`, [other])).rows[0].id;
-  const oq = (await db.query(
-    `INSERT INTO engagement.questions (tenant_id, survey_id, qtype, prompt, sort_order, dimension)
-     VALUES ($1,$2,'multi','Which team?',10,'recognition_team') RETURNING id`, [other, os])).rows[0].id;
-  const orr = (await db.query(
-    `INSERT INTO engagement.responses (tenant_id, survey_id) VALUES ($1,$2) RETURNING id`, [other, os])).rows[0].id;
-  await db.query(`INSERT INTO engagement.answers (response_id, question_id, value_list) VALUES ($1,$2,$3)`,
-    [orr, oq, ['Testing']]);
-
-  const before = 3 + 1; // the Testing responses created above
-  const qa = (await get('/engagement/my/recognition', tok.qa)).body;
-  assert.equal(qa.responses, before, "another tenant also has a 'Testing' team; it must not count here");
-
-  // HONEST NOTE ON WHAT THIS PROVES. The isolation comes from scoping
-  // the QUESTIONS to the tenant — another tenant's recognition_team
-  // question is never selected, so its answers are never reached. The
-  // `r.tenant_id=$1` clause beside it is the house rule's belt and
-  // braces (tenant_id in every WHERE) and is NOT exercised by this
-  // test: removing it alone leaves this passing. It is kept because
-  // the convention is worth more than the line, not because anything
-  // here would catch its removal.
+  // Same employee id, different tenant row — the shape that a missing
+  // tenant filter would leak.
+  await db.query(`INSERT INTO engagement.responses (tenant_id, survey_id, employee_id) VALUES ($1,$2,$3)`,
+    [other, os, emp.qa]);
+  const r = await get('/engagement/my/submissions', tok.qa);
+  assert.ok(!r.body.submissions.some((s) => s.title === 'Theirs'));
 });
 
 test('a template added to the library reaches a tenant that already has some', { skip }, async () => {
