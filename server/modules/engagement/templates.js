@@ -60,6 +60,23 @@ const band = (what, dimension) => ({ qtype: CHOICE, prompt: `${what}`, options: 
 const CAPABILITIES = ['Technical skill', 'Domain knowledge', 'Communication', 'Leadership',
   'Project management', 'Client management', 'Process knowledge', 'Tools / technology', 'Other'];
 
+// The four satisfaction bands from Mindgate's own form (28 Sep), with
+// the emoji dropped. An emoji does not sort, does not average, and does
+// not survive an export to Excel — the words carry the same meaning and
+// can do all three.
+const SATISFACTION = ['Excellent', 'Good', 'Average', 'Needs improvement'];
+
+// The fallback team list, used only when the employee master has no
+// departments to offer. Verbatim from the form.
+const TEAMS = ['Development Team', 'QA Team', 'Support Team',
+  'Infrastructure / Cloud Team', 'Data / AI Team', 'Project Management Team', 'Other'];
+
+// What the kudos is FOR. Tallied per team, so these are a closed list
+// rather than free text — "Technical Expertise x7" is a sentence a
+// manager can act on; seven differently-worded compliments are not.
+const APPRECIATION = ['Technical expertise', 'Quality of work', 'Quick response',
+  'Problem solving', 'Collaboration', 'Going above & beyond'];
+
 const TEMPLATES = [
   // ---- Onboarding ----------------------------------------------------
   {
@@ -457,6 +474,44 @@ const TEMPLATES = [
       t('What could we have done to keep you?'),
     ],
   },
+  // ---- Service & recognition -----------------------------------------
+  {
+    key: 'customer_feedback',
+    category: 'Engagement',
+    title: 'Customer Feedback',
+    description: 'Rate the internal team you depend on, and give them kudos. Under 15 seconds.',
+    trigger_type: 'manual',
+    // NOT anonymous. Kudos with no sender is a poster, not recognition —
+    // "the Recon team said this" is the part that makes it land. The
+    // service ratings ride along attributed for the same reason: a
+    // manager acting on a 2 needs to be able to go and ask about it.
+    anonymity_default: false,
+    questions: [
+      // Asked for on 28 Sep with the form pasted in. The four emoji
+      // bands are kept as words: an emoji does not sort, does not
+      // average, and does not survive an export to Excel.
+      c('Overall satisfaction with the team', SATISFACTION, 'service_overall'),
+      s('Quality of service / deliverables', 'service_quality'),
+      s('Responsiveness & communication', 'service_responsiveness'),
+      s('Technical expertise & problem solving', 'service_expertise'),
+
+      // THE TEAM. Its options are replaced at creation time with the
+      // tenant's OWN departments (see options_from below), because a
+      // kudos naming "Development Team" cannot be shown to anybody if
+      // no such department exists on the employee master — and showing
+      // it on the right person's My KRAs is the entire point of the
+      // feature. The list here is the fallback for an instance with no
+      // departments loaded yet.
+      { qtype: MULTI, prompt: 'Which team would you like to recognise?',
+        options: TEAMS, options_from: 'departments', required: false,
+        dimension: 'recognition_team' },
+      { qtype: MULTI, prompt: 'What would you like to appreciate?',
+        options: APPRECIATION, required: false, dimension: 'recognition_kind' },
+      { qtype: TEXT, prompt: 'Add a short appreciation message', required: false,
+        dimension: 'recognition_message' },
+    ],
+  },
+
 ];
 
 // Every template is checked at load, so a typo in this file fails the

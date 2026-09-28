@@ -494,9 +494,30 @@ router.post('/templates/:key/use', async (req, res) => {
        merged.trigger_window_days, anon, tpl.key, req.user.email])).rows[0];
 
     const qs = Array.isArray(tpl.questions) ? tpl.questions : [];
+    // A question may ask for its options to come from the TENANT rather
+    // than from the template. The only one today is "which team would
+    // you like to recognise?", and it matters: a kudos naming a team
+    // that is not a department on the employee master can never be
+    // shown to the people it was meant for, and showing it on their My
+    // KRAs is the whole point of the feature. Naming the real
+    // departments makes the match exact by construction instead of by
+    // hoping HR typed the same words.
+    //
+    // Falls back to the template's own list when the master has no
+    // departments yet, because a survey with an empty option list is
+    // worse than one with generic options.
+    let fromMaster = null;
+    if (qs.some((q) => q.options_from === 'departments')) {
+      fromMaster = (await db.query(
+        `SELECT DISTINCT department AS v FROM core.employees
+          WHERE tenant_id=$1 AND status='active' AND archived_at IS NULL
+            AND coalesce(trim(department),'') <> '' ORDER BY v`, [T(req)])).rows.map((r) => r.v);
+      if (!fromMaster.length) fromMaster = null;
+    }
     let i = 0;
     for (const q of qs) {
-      const opts = cleanOptions(q.options);
+      const opts = cleanOptions(
+        q.options_from === 'departments' && fromMaster ? fromMaster : q.options);
       await db.query(
         `INSERT INTO engagement.questions (tenant_id, survey_id, qtype, prompt, options, required, sort_order, dimension)
          VALUES ($1,$2,COALESCE($3,'scale'),$4,$5,COALESCE($6,true),$7,$8)`,
