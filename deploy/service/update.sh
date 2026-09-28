@@ -17,6 +17,14 @@ REF="${1:-}"
 This installation was copied from a checkout elsewhere; update that checkout
 and re-run its deploy/service/install.sh, which is also the upgrade path." >&2; exit 1; }
 
+# What a deploy did to the checkout, said out loud — including when the
+# answer is "nothing". See git-report.sh for the incident behind this.
+# shellcheck source=/dev/null
+. "${APP_DIR}/deploy/service/git-report.sh"
+BEFORE_BRANCH=$(git -C "$APP_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')
+BEFORE_SHA=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')
+echo "==> Starting from $(git_state "$APP_DIR")"
+
 echo "==> Backing up first"
 "${APP_DIR}/deploy/service/backup.sh"
 
@@ -24,7 +32,11 @@ echo "==> Fetching"
 git -C "$APP_DIR" fetch --all --prune
 if [ -n "$REF" ]; then git -C "$APP_DIR" checkout "$REF"; fi
 git -C "$APP_DIR" pull --ff-only
-echo "    now at $(git -C "$APP_DIR" rev-parse --short HEAD) — $(git -C "$APP_DIR" log -1 --format=%s)"
+# `|| MOVED=no` rather than letting set -e kill the run: an unchanged
+# checkout is a legitimate rebuild, not a failure. It is reported, and
+# reported again at the end so it survives a tailed log.
+MOVED=yes
+report_git_change "$APP_DIR" "$BEFORE_BRANCH" "$BEFORE_SHA" || MOVED=no
 
 echo "==> Rebuilding"
 (cd "${APP_DIR}/server" && npm ci --omit=dev --no-audit --no-fund)
@@ -45,7 +57,17 @@ chown -R root:root "${APP_DIR}/server"
 echo "==> Restarting"
 systemctl restart agentic-pms-api
 for i in $(seq 1 45); do
-  curl -fsS http://127.0.0.1/api/v1/health >/dev/null 2>&1 && { echo "==> Healthy."; exit 0; }
+  if curl -fsS http://127.0.0.1/api/v1/health >/dev/null 2>&1; then
+    # The summary rides on the SAME line as the success, because
+    # "==> Healthy." on its own is exactly what made a no-op deploy look
+    # like a real one.
+    if [ "$MOVED" = yes ]; then
+      echo "==> Healthy. Deployed ${BEFORE_SHA} -> $(git -C "$APP_DIR" rev-parse --short HEAD) on ${BEFORE_BRANCH}."
+    else
+      echo "==> Healthy — but NOTHING NEW was deployed: still at ${BEFORE_SHA} on ${BEFORE_BRANCH}."
+    fi
+    exit 0
+  fi
   sleep 2
 done
 echo "!! The API did not come back within 90s. Last 40 lines:" >&2
