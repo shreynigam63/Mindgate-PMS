@@ -3422,25 +3422,6 @@ async function loadReviewForm(tenantId, cycleId, employeeId, formKey = 'midyear'
   return { sections: rf.assemble({ sections, questions, answers }), questions, answers };
 }
 
-// Who the person is, for the header of the form. Every one of these is
-// already on record, so the form STATES them rather than asking again —
-// the two the master genuinely cannot answer (total career experience,
-// technology used) are questions in the "About you" section instead.
-async function reviewProfile(tenantId, employeeId) {
-  const e = (await db.query(
-    `SELECT e.id, e.name, e.email, e.emp_code, e.designation, e.department, e.date_of_joining,
-            m.name AS manager_name, m.email AS manager_email
-       FROM core.employees e LEFT JOIN core.employees m ON m.id = e.manager_id
-      WHERE e.id=$1 AND e.tenant_id=$2`, [employeeId, tenantId])).rows[0];
-  if (!e) return null;
-  // Delivery Head is the head of the person's department, which is where
-  // this product already keeps it — not a column on the employee.
-  const head = e.department ? (await db.query(
-    `SELECT emp.name FROM core.department_heads dh JOIN core.employees emp ON emp.id = dh.employee_id
-      WHERE dh.tenant_id=$1 AND dh.department=$2 LIMIT 1`, [tenantId, e.department])).rows[0] : null;
-  return { ...e, delivery_head: head ? head.name : null };
-}
-
 router.get('/my/midyear-review', async (req, res) => {
   try {
     const c = await activeCycleForMidyear(T(req));
@@ -3466,7 +3447,6 @@ router.get('/my/midyear-review', async (req, res) => {
     res.json({ cycle: cycleForClient(c),
       checkin, editable, manager_ratings_withheld: !published,
       kras, scoring: midyearOverall(kras, row.self_entries),
-      profile: await reviewProfile(T(req), req.user.id),
       form: form.sections });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3617,7 +3597,6 @@ router.get('/team/midyear-review/:employeeId', async (req, res) => {
       employee: { id: emp.id, name: emp.name }, checkin: row, editable, kras,
       scoring: midyearOverall(kras, row.manager_entries),
       self_scoring: midyearOverall(kras, row.self_entries),
-      profile: await reviewProfile(T(req), emp.id),
       form: form.sections });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

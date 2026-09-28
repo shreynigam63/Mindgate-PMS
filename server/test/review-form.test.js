@@ -231,23 +231,24 @@ test('the whole of their form is there, in their words', { skip }, async () => {
   assert.equal(labels.length, 20);
 });
 
-test('what is already on record is STATED, not asked again', { skip }, async () => {
+test('what is already on record is never asked for again', { skip }, async () => {
   // Eleven of their 53 columns are identity. Re-typing your own employee
-  // code into an appraisal is how a form earns a bad reputation.
+  // code into an appraisal is how a form earns a bad reputation, so none
+  // of them is a question here.
+  //
+  // They were briefly SHOWN at the top of the page as an "On record"
+  // block. Mindgate asked for that block to go on 28 Sep ("exclude
+  // this"), so the page no longer displays them and the API no longer
+  // sends them — but they must not come back as questions either, which
+  // is what this pins.
   const r = await req('GET', '/pms/my/midyear-review', tok.emp);
-  const p = r.body.profile;
-  assert.equal(p.name, 'F Employee');
-  assert.equal(p.emp_code, 'F-EMP');
-  assert.equal(p.designation, 'Executive');
-  assert.equal(p.manager_name, 'F Manager');
-  assert.equal(p.manager_email, 'f-mgr@x.com');
-  assert.equal(p.delivery_head, 'F Manager', 'read from department_heads, where this product already keeps it');
-  assert.ok(p.date_of_joining);
-
   const labels = r.body.form.flatMap((s) => s.questions.map((q) => q.label));
-  for (const asked of ['Employee Name', 'Employee Code', 'Date of Joining', 'Reporting Manager :', 'Designation']) {
+  for (const asked of ['Employee Name', 'Employee Code', 'Date of Joining',
+    'Reporting Manager :', 'Email ID of Reporting Manager', 'Delivery Head', 'Designation']) {
     assert.ok(!labels.includes(asked), `"${asked}" is on the employee record and must not be a question`);
   }
+  assert.equal(r.body.profile, undefined, 'and the payload does not carry what no screen shows');
+
   // The two the master genuinely cannot answer ARE questions.
   assert.ok(labels.includes('Total Years of Experience'));
   assert.ok(labels.includes('Technology Used'));
@@ -332,7 +333,7 @@ test('the manager reads the answers, and the form is not open to them', { skip }
   const qs = r.body.form.flatMap((s) => s.questions);
   assert.equal(qs.find((q) => q.label === 'Go Getter').rating, 4,
     'the manager sees it while writing their half, like the per-KRA self ratings');
-  assert.equal(r.body.profile.name, 'F Employee');
+  assert.equal(r.body.profile, undefined);
   // There is no write route for the manager's side of the form. If one
   // is ever added it is a decision, not an accident.
   const w = await req('PUT', `/pms/team/midyear-review/${empId}/form`, tok.mgr, { answers: {} });
