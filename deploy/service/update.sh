@@ -36,9 +36,10 @@ echo "==> Rebuilding"
 # Build into place only after the build SUCCEEDS. Building straight into
 # the web root would leave the site half-replaced if vite failed.
 rsync -a --delete "${APP_DIR}/frontend/dist/" "${WEB_ROOT}/"
-# root:root — the service account, per install.sh (APP_USER). Hardcoded
-# here because update.sh does not read install.sh's variables; the two
-# must be changed together or the service loses access to its own files.
+# root:root — the same account install.sh installs under and the same
+# one agentic-pms-api.service starts as. All three are written out in
+# full; they must be changed together or the service loses access to
+# its own files.
 chown -R root:root "${APP_DIR}/server"
 
 echo "==> Restarting"
