@@ -36,7 +36,10 @@ echo "==> Rebuilding"
 # Build into place only after the build SUCCEEDS. Building straight into
 # the web root would leave the site half-replaced if vite failed.
 rsync -a --delete "${APP_DIR}/frontend/dist/" "${WEB_ROOT}/"
-chown -R apms:apms "${APP_DIR}/server"
+# root:root — the service account, per install.sh (APP_USER). Hardcoded
+# here because update.sh does not read install.sh's variables; the two
+# must be changed together or the service loses access to its own files.
+chown -R root:root "${APP_DIR}/server"
 
 echo "==> Restarting"
 systemctl restart agentic-pms-api

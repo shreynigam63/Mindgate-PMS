@@ -15,8 +15,8 @@ StartLimitIntervalSec=120
 
 [Service]
 Type=simple
-User=apms
-Group=apms
+User=root
+Group=root
 WorkingDirectory=/opt/agentic-pms/server
 EnvironmentFile=/etc/agentic-pms/api.env
 ExecStart=/usr/bin/node index.js

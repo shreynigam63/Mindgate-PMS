@@ -23,7 +23,18 @@
 # ============================================================================
 set -euo pipefail
 
-APP_USER=apms
+# THE SERVICE RUNS AS ROOT, asked for on 28 Sep: "in .sh files wherever
+# the apms user is used, change that into root."
+#
+# This was a dedicated unprivileged account. The trade it makes is real
+# and worth writing down: as `apms`, a flaw in the Node process got you
+# that account and nothing else; as root it gets you the box. The
+# hardening in agentic-pms-api.service (NoNewPrivileges, ProtectSystem,
+# ProtectHome, the address-family restriction) still applies and is now
+# doing more of the work.
+#
+# Left as a variable rather than inlined, so putting it back is one line.
+APP_USER=root
 APP_DIR=/opt/agentic-pms
 WEB_ROOT=/var/www/agentic-pms
 ENV_DIR=/etc/agentic-pms
@@ -193,6 +204,9 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Application user and files
 # ---------------------------------------------------------------------------
+# Creates the account only if it does not exist. With APP_USER=root the
+# id check always succeeds, so useradd never runs — which is the point:
+# this line must not try to create, or modify, root.
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER" \
   || useradd --system --create-home --shell /sbin/nologin "$APP_USER"
 
@@ -296,7 +310,7 @@ PORT=8080
 BIND_HOST=127.0.0.1
 ENVEOF
 fi
-# 0640 root:apms — the service can read it, no other account on the box can.
+# 0640 root:${APP_USER} — the service can read it, no other account can.
 chown "root:${APP_USER}" "$ENV_FILE"
 chmod 640 "$ENV_FILE"
 
