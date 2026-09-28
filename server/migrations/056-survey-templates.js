@@ -66,11 +66,61 @@ module.exports.up = async (db) => {
     -- release something that would reach nobody.
     blocked_reason text,
     sort_order  integer NOT NULL DEFAULT 100,
+    -- Written here even though the column was introduced by 057,
+    -- because seedTemplates() below writes it. See the ALTER after this
+    -- statement for the whole story.
+    audience_kind text NOT NULL DEFAULT 'self',
     active      boolean NOT NULL DEFAULT true,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     UNIQUE (tenant_id, key)
   )`);
+  // WHY THIS IS HERE, AND WHY THE CREATE TABLE ABOVE IS NOT ENOUGH.
+  //
+  // audience_kind was introduced by 057, which also reached back and
+  // taught the shared seedTemplates() below to write it — the helper is
+  // called by 057 and by the runtime as well, so it tracks the NEWEST
+  // schema while this migration runs against the OLDEST. The result was
+  // a migration that inserts into a column it never creates.
+  //
+  // A fresh database hid it completely: no migration inserts a tenant
+  // (index.js creates it AFTER runMigrations), so core.tenants is empty
+  // here, the seed loop at the bottom runs zero times and the INSERT
+  // never executes. Every test builds exactly that database, which is
+  // why a green suite said nothing.
+  //
+  // An installation UPGRADING from a pre-056 build already has tenants
+  // from an earlier boot. There the loop runs, and 056 died with
+  //   42703: column "audience_kind" of relation "survey_templates"
+  //          does not exist
+  // Worse, migrate.js records a migration only after up() returns, so
+  // 056 stayed unlogged and every following boot re-ran it and failed
+  // again — a permanent boot loop needing hands on the database. Hit on
+  // a customer server, 28 Sep.
+  //
+  // THIS ALTER IS THE HALF THAT DOES THE WORK, and the comment says so
+  // because it was measured rather than assumed. Deleting the column
+  // from the CREATE TABLE above leaves all four tests in
+  // test/migration-056-audience-kind.test.js green — the ALTER runs
+  // before the seed in every case, including the one where the table
+  // already exists from the older 056 and CREATE TABLE IF NOT EXISTS is
+  // silent. Deleting this ALTER instead fails immediately.
+  //
+  // The column stays in the CREATE TABLE anyway, and not as decoration:
+  // a CREATE TABLE that omitted a column this same file inserts into is
+  // the entire bug. A reader should be able to see every column
+  // seedTemplates() writes in the table definition, without knowing
+  // that a later migration exists. The cost is that a fresh database
+  // gets the column mid-table and an upgraded one gets it appended —
+  // immaterial, since nothing here selects by position.
+  //
+  // The DEFAULT matches 057's, so a row seeded by either migration
+  // means the same thing. 057 keeps its own copy of this ALTER: it is
+  // idempotent, and it is what protects an installation that already
+  // logged 056.
+  await db.query(`ALTER TABLE engagement.survey_templates
+    ADD COLUMN IF NOT EXISTS audience_kind text NOT NULL DEFAULT 'self'`);
+
   await db.query(`CREATE INDEX IF NOT EXISTS idx_survey_templates_tenant
     ON engagement.survey_templates (tenant_id, active, sort_order)`);
 
