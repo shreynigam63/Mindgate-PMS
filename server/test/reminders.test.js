@@ -15,6 +15,7 @@ const HAS_DB = !!process.env.DATABASE_URL;
 const skip = !HAS_DB && 'DATABASE_URL not set — see file header';
 
 let db, runReminders, tenantId, cycleId, empId, mgrId, emp2Id;
+let runChase;
 
 const on = (y, m, d) => new Date(Date.UTC(y, m - 1, d));
 
@@ -35,6 +36,10 @@ async function setPhase(phase) {
   await db.query(`UPDATE pms.cycles SET phase=$2 WHERE id=$1`, [cycleId, phase]);
 }
 
+// runChase takes the cycle ROW, not its id — it reads the phase off it.
+const cycleRow = async () =>
+  (await db.query(`SELECT * FROM pms.cycles WHERE id=$1`, [cycleId])).rows[0];
+
 before(async () => {
   if (!HAS_DB) return;
   process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-rem';
@@ -43,6 +48,7 @@ before(async () => {
   const { runMigrations } = require('../core/migrate');
   await runMigrations();
   ({ runReminders } = require('../modules/performance'));
+  ({ runChase } = require('../modules/performance/reminders'));
 
   const t = (await db.query(`INSERT INTO core.tenants (name, slug) VALUES ($1,$1) RETURNING id`, [process.env.TENANT_SLUG])).rows[0];
   tenantId = t.id;
@@ -192,6 +198,53 @@ test('annual reminders run in March against the self-appraisal, not the mid-year
   assert.equal((await bells(emp2Id, 'annual_self')).length, 1);
   assert.equal((await bells(empId, 'annual_self')).length, 0);
   assert.match((await bells(mgrId, 'annual_manager'))[0].title, /Rem Emp Two's annual self-appraisal is still pending/);
+});
+
+// The distinction the 28 Sep window change forced into the open: being
+// able to WRITE something and being CHASED about it are different
+// questions. Until then a review was editable in exactly one phase, so
+// the engine asked the first to mean the second and got away with it.
+test('a still-open mid-year is not chased during Annual Review', { skip }, async () => {
+  await reset();
+  await setPhase('self_appraisal');
+  // Nobody has filled their mid-year in, and they are all still allowed
+  // to — the window runs to the end of Annual Review now.
+  const pm = require('../modules/performance/phase-machine');
+  assert.equal(pm.phaseAllows('self_appraisal', 'midyear_self_edit'), true,
+    'the premise: it really is still writeable here');
+
+  const r = await runReminders(tenantId, on(2026, 9, 15));   // a mid-year reminder date
+  assert.equal(r.midyear_self, 0,
+    'writeable is not the same as due — chasing the whole company about their mid-year ' +
+    'while they are doing their annual appraisal is noise');
+  assert.equal(r.midyear_manager, 0);
+  assert.equal((await bells(empId, 'midyear_self')).length, 0);
+
+  // And it still fires in the phase it belongs to.
+  await setPhase('mid_year_review');
+  const inPhase = await runReminders(tenantId, on(2026, 9, 15));
+  assert.ok(inPhase.midyear_self > 0, `fires in its own phase — got ${JSON.stringify(inPhase)}`);
+});
+
+test('nor is the manager chased about a mid-year sign-off during Annual Review', { skip }, async () => {
+  // The other half, and it needed its own test: the first version of the
+  // chase gate passed every assertion above while doing nothing, because
+  // nothing here reached runChase('midyear') at all.
+  await reset();
+  await db.query(
+    `INSERT INTO pms.midyear_checkins (tenant_id, cycle_id, employee_id, self_status, self_submitted_at, manager_status)
+     VALUES ($1,$2,$3,'submitted','2026-09-01','not_started')
+     ON CONFLICT (cycle_id, employee_id) DO UPDATE
+       SET self_status='submitted', self_submitted_at='2026-09-01', manager_status='not_started'`,
+    [tenantId, cycleId, empId]);
+
+  await setPhase('self_appraisal');
+  assert.equal(await runChase(tenantId, await cycleRow(), on(2026, 9, 10), 'midyear'), 0,
+    'still signable, but not the manager\'s problem to be nagged about now');
+
+  await setPhase('mid_year_review');
+  assert.ok(await runChase(tenantId, await cycleRow(), on(2026, 9, 10), 'midyear') > 0,
+    'and it does chase inside the mid-year phase');
 });
 
 test('the annual chase waits on the manager evaluation, and stops when it is submitted', { skip }, async () => {

@@ -66,6 +66,45 @@ function canCancel(from) {
 // submitted nothing — exactly the case the merged window must refuse.
 // growthEditable() below carries that rule, and every devplan/career route
 // goes through it rather than through phaseAllows() alone.
+//
+// EMPLOYEE-FACING WINDOWS STAY OPEN UNTIL ANNUAL REVIEW.
+//
+// Asked for on 28 Sep: "cycle still locks after advancing to next phase,
+// please keep phases open till annual review it will locked only once
+// submitted by employee or approved by manager."
+//
+// This REVERSES the closing half of two earlier requests, deliberately
+// and at the client's word. September's rule was "editable only after
+// the cycle is moved into this phase", which the tests below still
+// record — and it meant HR could not move the cycle on without shutting
+// a door on everybody who was mid-way through. Advancing out of KRA
+// Setting shut the growth plan; advancing out of Mid-Year shut the
+// mid-year. The remedy was a whole-tenant rollback, which reopens it for
+// everyone, which is the opposite of locking.
+//
+// What has NOT changed is when a window OPENS. Mid-Year still must not
+// open before the cycle reaches it ("should not open before completion
+// of growth plan"), and the growth plan still opens per employee on
+// their own KRA submission. Only the closing moved: from "the phase
+// passed" to "you submitted it, or your manager approved it", which is
+// the sheet's own rule from 17 Sep applied to the rest.
+//
+// The last phase an employee may still be writing in is Annual Review —
+// `self_appraisal` in the stored values, which is what the UI labels
+// "Annual Review". After that the cycle belongs to the manager, the
+// delivery head and calibration.
+const EMPLOYEE_WINDOW_LAST = 'self_appraisal';
+
+// Actions that open at a phase and stay open to the end of that window.
+// Their absence from ALLOWS is not an oversight: two sources of truth for
+// one gate is how the growth plan ended up shut in every phase.
+const OPEN_FROM = {
+  midyear_self_edit:     'mid_year_review',
+  midyear_self_submit:   'mid_year_review',
+  midyear_manager_edit:  'mid_year_review',
+  midyear_manager_submit: 'mid_year_review',
+};
+
 const ALLOWS = {
   // devplan_* and career_edit are deliberately NOT listed here, even though
   // the two windows were merged on 16 Sep. In kra_open they depend on the
@@ -76,7 +115,8 @@ const ALLOWS = {
   // growthEditable() below carries the real rule; every devplan/career route
   // goes through it rather than through phaseAllows() alone.
   kra_open:        ['kra_edit', 'kra_submit', 'kra_decide'],
-  mid_year_review: ['midyear_self_edit', 'midyear_self_submit', 'midyear_manager_edit', 'midyear_manager_submit'],
+  // mid_year_review's own actions moved to OPEN_FROM above — they no
+  // longer end when the phase does.
   self_appraisal:  ['self_edit', 'self_submit'],
   manager_eval:    ['manager_edit', 'manager_submit'],
   hod_eval:        ['hod_edit', 'hod_submit'],
@@ -110,8 +150,12 @@ const KRA_ACTIONS = ['kra_edit', 'kra_submit', 'kra_decide'];
 const KRA_SHUT = ['draft', 'closed'];
 
 function phaseAllows(phase, action) {
-  if (KRA_ACTIONS.includes(action)) {
-    return ORDER.includes(phase) && !KRA_SHUT.includes(phase);
+  const i = ORDER.indexOf(phase);
+  if (i === -1) return false;                     // a typo is not a licence
+  if (KRA_ACTIONS.includes(action)) return !KRA_SHUT.includes(phase);
+  const from = OPEN_FROM[action];
+  if (from) {
+    return i >= ORDER.indexOf(from) && i <= ORDER.indexOf(EMPLOYEE_WINDOW_LAST);
   }
   return (ALLOWS[phase] || []).includes(action);
 }
@@ -169,6 +213,13 @@ function growthEditable(phase, { sheetStatus = null, planStatus = null } = {}) {
         : 'Your plan is with your manager — it reopens if they return it' };
   }
 
+  // OPENS on the employee's own KRA submission, and then STAYS open to
+  // the end of Annual Review — 28 Sep. It used to be open in kra_open
+  // alone: the branch below tested phaseAllows(phase, 'devplan_edit'),
+  // and no phase has ever listed that action, so it was dead code and
+  // the growth plan shut the instant HR advanced the cycle. The dead
+  // branch is why the bug survived a GROWTH_EDIT_LAST_PHASE constant
+  // that says calibration.
   if (phase === 'kra_open') {
     if (SHEET_SENT.includes(sheetStatus)) return { ok: true, via: 'kra_submitted' };
     return {
@@ -178,7 +229,14 @@ function growthEditable(phase, { sheetStatus = null, planStatus = null } = {}) {
     };
   }
 
-  if (phaseAllows(phase, 'devplan_edit')) return { ok: true, via: 'phase' };
+  // Past KRA Setting the sheet condition has done its job: the cycle
+  // itself has moved into the part of the year the growth plan is
+  // about. Only the plan's own status closes it now, and that was
+  // checked above.
+  const i2 = ORDER.indexOf(phase);
+  if (i2 > ORDER.indexOf('kra_open') && i2 <= ORDER.indexOf(EMPLOYEE_WINDOW_LAST)) {
+    return { ok: true, via: 'phase' };
+  }
 
   return { ok: false, reason: 'phase',
     error: `Growth planning is not open (phase: ${phase || 'none'})` };

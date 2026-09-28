@@ -153,15 +153,22 @@ test('progress updates are NOT phase-gated — progress happens all year', { ski
   const before = await api('/people/career/my-path', token);
   const first = before.body.milestones[0];
 
-  // Move the cycle well past Growth Planning, where the milestone TEXT is
-  // locked, and confirm progress still moves. A gate here would mean
-  // marking something done months after you actually did it.
-  await db.query(`UPDATE pms.cycles SET phase='self_appraisal' WHERE id=$1`, [cycleId]);
+  // Move the cycle past the point where the milestone TEXT is locked, and
+  // confirm progress still moves. A gate here would mean marking
+  // something done months after you actually did it.
+  //
+  // manager_eval, not self_appraisal: from 28 Sep the employee's writing
+  // window runs to the END of Annual Review ("keep phases open till
+  // annual review"), so self_appraisal is now inside it and the text is
+  // legitimately still editable there. The point of this test is the
+  // contrast — text locked, progress open — so it has to stand where the
+  // text is actually locked.
+  await db.query(`UPDATE pms.cycles SET phase='manager_eval' WHERE id=$1`, [cycleId]);
 
   const blocked = await api('/people/career/my-milestones', token, {
     method: 'PUT', body: JSON.stringify({ milestones: [MS('Rewritten', '2026-06-30')] }),
   });
-  assert.equal(blocked.status, 409, 'the text is locked outside Growth Planning');
+  assert.equal(blocked.status, 409, 'the text is locked once the employee window has passed');
 
   const moved = await api(`/people/career/my-milestones/${first.id}/progress`, token, {
     method: 'PUT', body: JSON.stringify({ progress_pct: 100 }),

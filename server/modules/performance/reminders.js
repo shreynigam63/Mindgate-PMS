@@ -138,8 +138,20 @@ async function runQuarterlyConnect(tenantId, today, from) {
 // Rules 2/3 and their annual twins — "you have not filled this in yet"
 // ---------------------------------------------------------------------------
 // Mid-year and annual differ only in which table records the submission,
-// which month they run in, and which phase has to be open — so they share
+// which month they run in, and which phase they belong to — so they share
 // one implementation rather than two that drift apart.
+//
+// `remindPhase` IS NOT `selfPhaseAction`, and the difference started
+// mattering on 28 Sep. Until then a review was editable in exactly one
+// phase, so "can they still write it" and "should we chase them" had the
+// same answer and this code asked the first to mean the second. Now the
+// employee windows run to the end of Annual Review, so a mid-year
+// checkin is still WRITEABLE during annual season — and nagging the
+// whole company about their mid-year while they are doing their annual
+// appraisal is noise, on a tenant already carrying 42,165 unread
+// notifications. A reminder belongs to its own phase; the open window
+// afterwards is a courtesy for stragglers, not a standing invitation to
+// keep asking.
 const REVIEW_KINDS = {
   midyear: {
     selfRule: 'midyear_self',
@@ -148,6 +160,7 @@ const REVIEW_KINDS = {
     managerDates: sched.midYearManagerDates,
     selfPhaseAction: 'midyear_self_submit',
     managerPhaseAction: 'midyear_manager_submit',
+    remindPhase: 'mid_year_review',
     label: 'Mid-Year Review',
     selfLink: '/pms/midyear-review',
     managerLink: '/pms/team/midyear-review',
@@ -165,6 +178,7 @@ const REVIEW_KINDS = {
     managerDates: sched.annualManagerDates,
     selfPhaseAction: 'self_submit',
     managerPhaseAction: 'manager_submit',
+    remindPhase: 'self_appraisal',
     label: 'annual self-appraisal',
     selfLink: '/pms/self-appraisal',
     managerLink: '/pms/team',
@@ -183,7 +197,7 @@ async function runReviewReminders(tenantId, cycle, today, from, kindName) {
   if (!pendingRows.length) return { self: 0, manager: 0 };
 
   let self = 0;
-  if (pm.phaseAllows(cycle.phase, k.selfPhaseAction)) {
+  if (cycle.phase === k.remindPhase) {
     self = await fireCalendarRule({
       tenantId, rule: k.selfRule, today, from, cycleId: cycle.id,
       dates: windowFiscalYears(today).flatMap((fy) => k.selfDates(fy)),
@@ -209,7 +223,7 @@ async function runReviewReminders(tenantId, cycle, today, from, kindName) {
   // says "your reportees have not submitted", which is only true while
   // they still could.
   let manager = 0;
-  if (byManager.size && pm.phaseAllows(cycle.phase, k.selfPhaseAction)) {
+  if (byManager.size && cycle.phase === k.remindPhase) {
     manager = await fireCalendarRule({
       tenantId, rule: k.managerRule, today, from, cycleId: cycle.id,
       dates: windowFiscalYears(today).flatMap((fy) => k.managerDates(fy)),
@@ -245,6 +259,10 @@ const CHASE_KINDS = {
     label: 'Mid-Year Review',
     link: '/pms/team/midyear-review',
     phaseAction: 'midyear_manager_submit',
+    // Same reasoning as remindPhase above: the manager can still sign a
+    // mid-year off during Annual Review, but being chased about it then
+    // is not help, it is noise.
+    remindPhase: 'mid_year_review',
     sql: `SELECT mc.employee_id, mc.self_submitted_at, e.name, e.manager_id
             FROM pms.midyear_checkins mc
             JOIN core.employees e ON e.id = mc.employee_id AND e.tenant_id = mc.tenant_id
@@ -310,8 +328,13 @@ const CHASE_KINDS = {
 
 async function runChase(tenantId, cycle, today, kindName) {
   const k = CHASE_KINDS[kindName];
-  // Nothing to chase while the manager cannot act on it anyway.
+  // Nothing to chase while the manager cannot act on it anyway...
   if (!pm.phaseAllows(cycle.phase, k.phaseAction)) return 0;
+  // ...and nothing to chase outside the phase the chase belongs to,
+  // where one is declared. The KRA and growth chases declare none on
+  // purpose: those sheets really are open all cycle, and a submission
+  // sitting unapproved in November is exactly what they exist to catch.
+  if (k.remindPhase && cycle.phase !== k.remindPhase) return 0;
   const rows = (await db.query(k.sql, [tenantId, cycle.id])).rows;
   if (!rows.length) return 0;
 

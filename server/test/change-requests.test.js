@@ -51,10 +51,21 @@ test('A RETURNED PLAN IS EDITABLE AFTER THE CYCLE MOVES ON — the whole point',
   }
 });
 
-test('a plan that was NOT returned stays locked once the phase moves on', () => {
-  for (const status of ['draft', 'submitted', 'approved']) {
-    assert.equal(devplanEditable('mid_year_review', status).ok, false);
+// REVERSED on 28 Sep, at the client's word: "keep phases open till annual
+// review it will locked only once submitted by employee or approved by
+// manager." A draft plan no longer closes because HR advanced the cycle;
+// only the plan's own status closes it.
+test('after the phase moves on, the PLAN\'s status decides — not the phase', () => {
+  assert.equal(devplanEditable('mid_year_review', 'draft').ok, true,
+    'a draft plan is still the employee\'s to write, mid-cycle');
+  assert.equal(devplanEditable('self_appraisal', 'draft').ok, true,
+    'and right through Annual Review, which is the last employee window');
+  for (const status of ['submitted', 'approved']) {
+    assert.equal(devplanEditable('mid_year_review', status).ok, false,
+      `${status} is what locks it now`);
   }
+  // Past Annual Review the cycle belongs to the manager and calibration.
+  assert.equal(devplanEditable('manager_eval', 'draft').ok, false);
 });
 
 test('an approved plan is told how to get unstuck, not just refused', () => {
@@ -171,12 +182,18 @@ test('there is no phase that opens it for everybody any more (036)', () => {
   assert.equal(growthWindow('growth_planning', 'submitted').ok, false, 'the phase itself is gone');
 });
 
-test('a submitted KRA sheet does not open the growth plan in a LATER phase', () => {
-  // kra_submitted is a way to start EARLY, not a permanent key. Past
-  // Growth Planning the plan is agreed and locks like anything else.
-  const w = growthWindow('mid_year_review', 'submitted');
-  assert.equal(w.ok, false);
-  assert.equal(w.reason, 'phase');
+test('past KRA Setting the window no longer asks about the KRA sheet at all', () => {
+  // The sheet condition exists to stop somebody writing a growth plan
+  // against KRAs they are still inventing. Once the cycle has moved on,
+  // that horse has bolted either way — so from Mid-Year to Annual Review
+  // the window is open whatever the sheet says (28 Sep).
+  for (const sheet of ['submitted', 'draft', null]) {
+    assert.equal(growthWindow('mid_year_review', sheet).ok, true);
+    assert.equal(growthWindow('self_appraisal', sheet).ok, true);
+  }
+  // And it does end. Annual Review is the last of it.
+  assert.equal(growthWindow('manager_eval', 'submitted').ok, false);
+  assert.equal(growthWindow('manager_eval', 'submitted').reason, 'phase');
 });
 
 test('the development plan honours the same window, and still refuses a locked plan', () => {

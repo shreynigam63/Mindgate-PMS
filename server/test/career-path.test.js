@@ -208,8 +208,15 @@ test('career path: editing is blocked until the employee submits their KRAs', { 
   const afterSubmit = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'opened by my own submission' }) });
   assert.equal(afterSubmit.status, 200, 'submitting the KRA sheet must open Aspiring Career in kra_open');
 
-  // Still shut once the growth window has passed, submitted or not.
+  // STILL OPEN through Annual Review — 28 Sep, at the client's word. It
+  // used to 409 here, which meant HR advancing the cycle took Aspiring
+  // Career away from everybody mid-sentence.
   await db.query(`UPDATE pms.cycles SET phase='self_appraisal' WHERE tenant_id=$1`, [t]);
+  const inWindow = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'still mine to write' }) });
+  assert.equal(inWindow.status, 200, 'Annual Review is the last employee window, not past it');
+
+  // And it does close after that.
+  await db.query(`UPDATE pms.cycles SET phase='manager_eval' WHERE tenant_id=$1`, [t]);
   const afterWindow = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'too late' }) });
   assert.equal(afterWindow.status, 409);
 

@@ -101,12 +101,55 @@ test('KRA SETTING AND GROWTH PLANNING ARE ONE PHASE (036)', () => {
   assert.equal(pm.growthEditable('kra_open', { sheetStatus: 'submitted' }).ok, true);
 
   // KRA editing no longer closes when the cycle moves on — the sheet's own
-  // status locks it instead (17 Sep). The growth-plan rule is untouched by
-  // that: a submitted sheet is still a way to start EARLY, not a permanent
-  // key, so the growth window still shuts when the phase passes.
+  // status locks it instead (17 Sep). On 28 Sep the growth plan joined it:
+  // "keep phases open till annual review it will locked only once
+  // submitted by employee or approved by manager."
   assert.equal(pm.phaseAllows('mid_year_review', 'kra_edit'), true);
-  assert.equal(pm.growthEditable('mid_year_review', { sheetStatus: 'submitted' }).ok, false,
-    'a submitted sheet is a way to start early, not a permanent key');
+  assert.equal(pm.growthEditable('mid_year_review', { sheetStatus: 'submitted' }).ok, true,
+    'the window stays open when the cycle moves on — only the plan locks it');
+  assert.equal(pm.growthEditable('manager_eval', { sheetStatus: 'submitted' }).ok, false,
+    'and Annual Review is where it ends');
+});
+
+// The 28 Sep request, as one test: "cycle still locks after advancing to
+// next phase, please keep phases open till annual review it will locked
+// only once submitted by employee or approved by manager."
+//
+// Written as a walk through the cycle rather than as a table, because the
+// complaint was about ADVANCING — the bug only shows when you move.
+test('ADVANCING THE CYCLE NEVER SHUTS AN EMPLOYEE OUT BEFORE ANNUAL REVIEW', () => {
+  const employeeWindows = ['kra_open', 'mid_year_review', 'self_appraisal'];
+  const after = ['manager_eval', 'hod_eval', 'calibration', 'publish'];
+
+  // The KRA sheet: open the whole way (17 Sep), and past Annual Review too.
+  for (const phase of [...employeeWindows, ...after]) {
+    assert.equal(pm.phaseAllows(phase, 'kra_edit'), true, `KRA sheet open in ${phase}`);
+  }
+
+  // Mid-year: opens when the cycle reaches it, and does NOT shut when the
+  // cycle moves to Annual Review.
+  assert.equal(pm.phaseAllows('kra_open', 'midyear_self_edit'), false, 'not before its phase');
+  assert.equal(pm.phaseAllows('mid_year_review', 'midyear_self_edit'), true);
+  assert.equal(pm.phaseAllows('self_appraisal', 'midyear_self_edit'), true, 'and not shut by advancing');
+  for (const phase of after) {
+    assert.equal(pm.phaseAllows(phase, 'midyear_self_edit'), false, `closed by ${phase}`);
+  }
+
+  // The growth plan: opens on the employee's own KRA submission, then
+  // stays open. This is the one that was shut in EVERY phase but
+  // kra_open, because its branch tested an action no phase grants.
+  const g = (phase, sheetStatus, planStatus) => pm.growthEditable(phase, { sheetStatus, planStatus });
+  assert.equal(g('kra_open', 'draft', 'draft').ok, false, 'submit your own KRAs first');
+  assert.equal(g('kra_open', 'submitted', 'draft').ok, true);
+  assert.equal(g('mid_year_review', 'submitted', 'draft').ok, true, 'and advancing does not take it away');
+  assert.equal(g('self_appraisal', 'submitted', 'draft').ok, true);
+  assert.equal(g('manager_eval', 'submitted', 'draft').ok, false, 'Annual Review is the end of it');
+
+  // "locked only once submitted by employee or approved by manager" —
+  // the record's own status, in the middle of the open window.
+  assert.equal(g('self_appraisal', 'submitted', 'submitted').ok, false, 'submitted by the employee');
+  assert.equal(g('self_appraisal', 'submitted', 'approved').ok, false, 'approved by the manager');
+  assert.equal(g('self_appraisal', 'submitted', 'returned').ok, true, 'and a return reopens it');
 });
 
 test('weights: exactly 100 with tolerance', () => {
@@ -128,8 +171,18 @@ test('Mid-Year Review only opens once the cycle leaves KRA Setting and Growth Pl
   assert.equal(pm.phaseAllows('mid_year_review', 'midyear_manager_edit'), true);
   assert.equal(pm.phaseAllows('mid_year_review', 'midyear_manager_submit'), true);
 
-  assert.equal(pm.phaseAllows('self_appraisal', 'midyear_self_edit'), false, 'closes again once the cycle moves past it');
-  assert.equal(pm.phaseAllows('self_appraisal', 'midyear_manager_edit'), false);
+  // REVERSED on 28 Sep. September's rule was "editable only after the
+  // cycle is moved into this phase", which also meant it stopped being
+  // editable the moment HR moved on — and HR could not advance the cycle
+  // without shutting a door on everybody still mid-way. It now runs to
+  // the end of Annual Review, and the checkin's own sign-off locks it.
+  assert.equal(pm.phaseAllows('self_appraisal', 'midyear_self_edit'), true,
+    'still open through Annual Review');
+  assert.equal(pm.phaseAllows('self_appraisal', 'midyear_manager_edit'), true);
+  // It does end there. After Annual Review the cycle is the manager's.
+  for (const phase of ['manager_eval', 'hod_eval', 'calibration', 'publish', 'closed']) {
+    assert.equal(pm.phaseAllows(phase, 'midyear_self_edit'), false, `shut in ${phase}`);
+  }
 });
 
 // Confirms the actual reason a separate table was used: signing off the
@@ -137,7 +190,17 @@ test('Mid-Year Review only opens once the cycle leaves KRA Setting and Growth Pl
 // self-appraisal/manager-evaluation gating at all — the two are
 // independent action namespaces entirely.
 test('Mid-Year Review actions are independent of self_appraisal/manager_eval actions', () => {
+  // The half that still matters: reaching Mid-Year must not hand anybody
+  // the ANNUAL self-appraisal early. That is the collision the separate
+  // pms.midyear_checkins table exists to avoid, and it is unaffected by
+  // the 28 Sep change.
   assert.equal(pm.phaseAllows('mid_year_review', 'self_edit'), false, 'mid_year_review does not grant the annual self-appraisal action');
   assert.equal(pm.phaseAllows('mid_year_review', 'manager_edit'), false);
-  assert.equal(pm.phaseAllows('self_appraisal', 'midyear_self_edit'), false, 'and self_appraisal does not grant the midyear action either');
+  // The other half no longer holds, and deliberately: from 28 Sep the
+  // mid-year window runs INTO Annual Review, so somebody who was still
+  // finishing it does not lose it when HR advances. Being able to edit
+  // the mid-year checkin there is not the same as the annual appraisal
+  // being open early — they remain separate tables and separate actions,
+  // which the two assertions above are what prove.
+  assert.equal(pm.phaseAllows('self_appraisal', 'midyear_self_edit'), true);
 });
