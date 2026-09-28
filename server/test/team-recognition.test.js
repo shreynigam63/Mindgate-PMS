@@ -224,3 +224,37 @@ test('another tenant\'s kudos never appear', { skip }, async () => {
   // the convention is worth more than the line, not because anything
   // here would catch its removal.
 });
+
+test('a template added to the library reaches a tenant that already has some', { skip }, async () => {
+  // THE BUG THIS PREVENTS, found on 28 Sep by driving the new template
+  // through the real flow rather than trusting its unit tests. It was
+  // in the code, its own tests passed, and it was invisible on every
+  // tenant that already had templates — which is all of them. The
+  // guard was "does this tenant have ANY", so the first batch a tenant
+  // received was also the last, and migrations cannot help because
+  // they never run twice.
+  const app = require('express')();
+  app.use(require('express').json());
+  app.use((rq, _rs, next) => { rq.tenantId = tenantId; next(); });
+  app.post('/api/v1/auth/dev-login', require('../core/auth').devLogin);
+  app.use('/api/v1/engagement', require('../modules/engagement').router);
+  const srv = app.listen(0);
+  try {
+    const b = `http://localhost:${srv.address().port}/api/v1`;
+    await db.query(`INSERT INTO core.user_permissions (tenant_id,email,permission)
+                    VALUES ($1,'qa@x.com','engagement_admin') ON CONFLICT DO NOTHING`, [tenantId]);
+    const t = (await (await fetch(`${b}/auth/dev-login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'qa@x.com', password: 'pass' }),
+    })).json()).token;
+
+    // Seed the library, then delete ONE key — the shape of "this
+    // tenant has templates, but not the new one".
+    await fetch(`${b}/engagement/templates`, { headers: { Authorization: `Bearer ${t}` } });
+    await db.query(`DELETE FROM engagement.survey_templates WHERE tenant_id=$1 AND key='customer_feedback'`, [tenantId]);
+    const before = (await (await fetch(`${b}/engagement/templates`,
+      { headers: { Authorization: `Bearer ${t}` } })).json()).templates;
+    assert.ok(before.some((x) => x.key === 'customer_feedback'),
+      'the missing template must be seeded back, not skipped because others exist');
+  } finally { srv.close(); }
+});

@@ -18,6 +18,7 @@ const { notify } = require('../../core/notifications');
 const { normaliseRule, audienceSql, describeRule, needsJoiningDate,
         triggerRule, MILESTONES } = require('./audience');
 const { seedTemplates } = require('../../migrations/056-survey-templates');
+const { TEMPLATES: SHIPPED_TEMPLATES } = require('./templates');
 const { seedFlagRules } = require('../../migrations/058-engagement-insights');
 const { flagsFor, groupFlags, worst, scoreByDimension, overallScore, trend,
         newHireIndex, outcomeByBand } = require('./insights');
@@ -425,11 +426,29 @@ router.get('/insights/rules', async (req, res) => {
 // what an API caller or a deep link does — failed on a fresh tenant
 // with "No such template". Idempotent.
 async function ensureTemplates(tenantId) {
-  const have = +(await db.query(
-    `SELECT count(*)::int AS n FROM engagement.survey_templates WHERE tenant_id=$1`, [tenantId])).rows[0].n;
-  if (have) return 0;
+  // PER KEY, not "does this tenant have any".
+  //
+  // Found on 28 Sep by driving the new Customer Feedback template
+  // through the real flow instead of trusting the unit tests: it was
+  // in the code, its tests passed, and it was invisible on every
+  // tenant that already had templates — which is all of them. The old
+  // guard was `if (have) return 0`, so the FIRST template a tenant
+  // ever received was also the last. seedTemplates() has always been
+  // per-key idempotent (ON CONFLICT DO NOTHING, and its header says
+  // so); it simply was never called again.
+  //
+  // Migrations cannot cover this: 056 and 057 seed at migrate time and
+  // never run twice, so a template added in code afterwards has no
+  // other way in.
+  //
+  // A tenant's OWN edits are safe — ON CONFLICT DO NOTHING means an
+  // existing key is left exactly as they have it.
+  const have = new Set((await db.query(
+    `SELECT key FROM engagement.survey_templates WHERE tenant_id=$1`, [tenantId])).rows.map((r) => r.key));
+  const missing = SHIPPED_TEMPLATES.filter((t) => !have.has(t.key)).map((t) => t.key);
+  if (!missing.length) return 0;
   const n = await seedTemplates(db, tenantId);
-  logger.info('survey templates seeded on demand', { tenant: tenantId, inserted: n });
+  logger.info('survey templates seeded on demand', { tenant: tenantId, inserted: n, missing });
   return n;
 }
 
