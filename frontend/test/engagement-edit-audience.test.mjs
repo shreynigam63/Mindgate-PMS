@@ -79,6 +79,14 @@ async function open(path, email) {
 
 const text = (page) => page.evaluate(() => document.body.textContent);
 
+// The open modal. Scoping matters since 28 Sep, when every draft ROW
+// gained its own Edit button: a page-wide getByRole('button',
+// {name:'Edit'}) now resolves to a row button sitting behind the
+// overlay — unclickable, and counted when the point was to count the
+// modal's own. AiModal has no role=dialog, so its fixed overlay is the
+// handle.
+const modal = (page) => page.locator('.fixed.inset-0.z-50');
+
 // EVERY SURVEY THESE TESTS TOUCH GETS A UNIQUE TITLE, and every click
 // is scoped to its own row. The demo tenant accumulates drafts, most of
 // them called "Customer Feedback"; a test that clicked the first
@@ -137,7 +145,7 @@ test('THE REPORTED GAP: a library survey can be retargeted from its preview', as
 
     // 1. THE EDIT BUTTON EXISTS ON THE PREVIEW. This is ask (2), and
     //    the reachability that was missing.
-    const edit = page.getByRole('button', { name: 'Edit', exact: true }).first();
+    const edit = modal(page).getByRole('button', { name: 'Edit', exact: true });
     assert.equal(await edit.count(), 1, 'the preview offers Edit');
     await edit.click();
 
@@ -183,7 +191,7 @@ test('the editor reopens showing the people already picked, by name', async (t) 
   const { ctx, page, errors } = await open('/admin/engagement');
   try {
     await previewOf(page, title);
-    await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
+    await modal(page).getByRole('button', { name: 'Edit', exact: true }).click();
     await page.getByPlaceholder(/Search the employee master/i).waitFor({ timeout: 15000 });
     await page.getByPlaceholder(/Search the employee master/i).fill('arun');
     await page.waitForTimeout(1200);
@@ -193,7 +201,7 @@ test('the editor reopens showing the people already picked, by name', async (t) 
     await page.waitForTimeout(2500);
 
     // Reopen the editor on the saved draft.
-    await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
+    await modal(page).getByRole('button', { name: 'Edit', exact: true }).click();
     await page.getByPlaceholder(/Search the employee master/i).waitFor({ timeout: 15000 });
     await page.waitForTimeout(1500);
     const t2 = await text(page);
@@ -210,7 +218,7 @@ test('the questions are editable too, since the preview shows them', async (t) =
   const { ctx, page, errors } = await open('/admin/engagement');
   try {
     await previewOf(page, title);
-    await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
+    await modal(page).getByRole('button', { name: 'Edit', exact: true }).click();
     await page.getByPlaceholder(/Search the employee master/i).waitFor({ timeout: 15000 });
     await page.waitForTimeout(700);
 
@@ -235,6 +243,81 @@ test('the questions are editable too, since the preview shows them', async (t) =
   } finally { await ctx.close(); }
 });
 
+test('Edit is on the row too, so reaching it needs no preview first', async (t) => {
+  if (needStack(t)) return;
+  // Added 28 Sep on top of the preview's Edit: "yes, add the Edit
+  // button on each survey row too."
+  const title = `ZZ RowEdit ${Date.now()}`;
+  await makeDraft(title);
+  const { ctx, page, errors } = await open('/admin/engagement');
+  try {
+    const row = rowFor(page, title);
+    const edit = row.getByRole('button', { name: /^Edit$/ });
+    assert.equal(await edit.count(), 1, 'the draft row carries Edit');
+
+    // Straight into the editor, with no preview opened on the way.
+    await edit.click();
+    await page.getByPlaceholder(/Search the employee master/i).waitFor({ timeout: 15000 });
+    await page.waitForTimeout(700);
+    const body = await text(page);
+    assert.ok(body.includes(`Edit — ${title}`), 'and it opens the right survey');
+    assert.ok(!body.includes(`${title} — preview`), 'without going through the preview');
+
+    // Retarget and save.
+    await page.getByPlaceholder(/Search the employee master/i).fill('arun');
+    await page.waitForTimeout(1200);
+    await page.locator('button', { hasText: 'emp@shot.in' }).first().click();
+    await page.waitForTimeout(900);
+    await page.getByRole('button', { name: /Save changes/i }).click();
+    await page.waitForTimeout(2500);
+
+    // SAVING FROM A ROW MUST NOT POP A PREVIEW. A modal appearing that
+    // HR never opened is the kind of thing that gets clicked through
+    // without being read.
+    const after = await text(page);
+    assert.ok(!after.includes(`${title} — preview`),
+      'no preview modal appears — it was never opened');
+    assert.ok(!after.includes(`Edit — ${title}`), 'and the editor closed');
+
+    // The change really landed, even though nothing was shown.
+    const t2 = await token();
+    const list = await (await fetch(`${API}/api/v1/engagement/surveys`, {
+      headers: { Authorization: `Bearer ${t2}` } })).json();
+    const mine = list.surveys.find((x) => x.title === title);
+    assert.ok(mine, 'the survey is still listed');
+    const pv = await (await fetch(`${API}/api/v1/engagement/surveys/${mine.id}/preview`, {
+      headers: { Authorization: `Bearer ${t2}` } })).json();
+    assert.equal(pv.audience.count, 1, 'saved from the row without a preview in sight');
+    assert.equal(pv.audience.description, 'the 1 person picked by name');
+
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally { await ctx.close(); }
+});
+
+test('saving from the PREVIEW does return to the preview', async (t) => {
+  if (needStack(t)) return;
+  // The other half of the same rule. Without this the row test above
+  // would also pass if the preview never came back at all.
+  const title = `ZZ FromPreview ${Date.now()}`;
+  await makeDraft(title);
+  const { ctx, page, errors } = await open('/admin/engagement');
+  try {
+    await previewOf(page, title);
+    await modal(page).getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByPlaceholder(/Search the employee master/i).waitFor({ timeout: 15000 });
+    await page.getByPlaceholder(/Search the employee master/i).fill('arun');
+    await page.waitForTimeout(1200);
+    await page.locator('button', { hasText: 'emp@shot.in' }).first().click();
+    await page.waitForTimeout(900);
+    await page.getByRole('button', { name: /Save changes/i }).click();
+    await page.waitForTimeout(2600);
+    const after = await text(page);
+    assert.ok(after.includes(`${title} — preview`), 'the preview comes back');
+    assert.match(after, /the 1 person picked by name/, 'showing what was just saved');
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally { await ctx.close(); }
+});
+
 test('an OPEN survey offers no Edit button at all', async (t) => {
   if (needStack(t)) return;
   // The server refuses the edit either way. Offering a button that
@@ -250,8 +333,11 @@ test('an OPEN survey offers no Edit button at all', async (t) => {
     await previewOf(page, title);
     const body = await text(page);
     assert.ok(body.includes(title), 'the preview really is the opened survey');
-    assert.equal(await page.getByRole('button', { name: 'Edit', exact: true }).count(), 0,
+    assert.equal(await modal(page).getByRole('button', { name: 'Edit', exact: true }).count(), 0,
       'no Edit on a survey people have already been invited to');
+    // …and its row does not carry one either.
+    assert.equal(await rowFor(page, title).getByRole('button', { name: /^Edit$/ }).count(), 0,
+      'nor on its row');
     // And the draft case is the control: without this the assertion
     // above would also pass if Edit had never been built.
     const draftTitle = `ZZ Control ${Date.now()}`;
@@ -259,7 +345,7 @@ test('an OPEN survey offers no Edit button at all', async (t) => {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForTimeout(1200);
     await previewOf(page, draftTitle);
-    assert.equal(await page.getByRole('button', { name: 'Edit', exact: true }).count(), 1,
+    assert.equal(await modal(page).getByRole('button', { name: 'Edit', exact: true }).count(), 1,
       'but a draft does offer it');
     assert.deepEqual(errors, [], 'no page errors');
   } finally { await ctx.close(); }

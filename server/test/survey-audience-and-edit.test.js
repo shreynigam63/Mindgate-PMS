@@ -324,10 +324,20 @@ test('every edit is audited, naming the audience it moved to', { skip }, async (
   await api(`/engagement/surveys/${id}`, { method: 'PUT', body: JSON.stringify({
     audience_rule: { employee_ids: [emp.a, emp.b] },
     questions: [{ qtype: 'scale', prompt: 'Rate us' }] }) });
-  const rows = (await db.query(
-    `SELECT details FROM core.audit_log
-      WHERE tenant_id=$1 AND action='SURVEY_UPDATED' AND details->>'survey'=$2`, [tenantId, id])).rows;
-  assert.equal(rows.length, 1);
+  // POLLED, not read once. audit() is deliberately fire-and-forget —
+  // `.catch()` without an await — so a failed audit cannot fail the
+  // request the user made. That means the row lands shortly AFTER the
+  // PUT returns, and a single immediate read passes alone and fails
+  // under a loaded full-suite run. Waiting for it tests the same
+  // guarantee without pretending the write is synchronous.
+  let rows = [];
+  for (let i = 0; i < 40 && rows.length === 0; i++) {
+    rows = (await db.query(
+      `SELECT details FROM core.audit_log
+        WHERE tenant_id=$1 AND action='SURVEY_UPDATED' AND details->>'survey'=$2`, [tenantId, id])).rows;
+    if (!rows.length) await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.equal(rows.length, 1, 'the edit was audited within 2s');
   assert.equal(rows[0].details.audience, 'the 2 people picked by name');
   assert.equal(rows[0].details.questions, 1);
 });

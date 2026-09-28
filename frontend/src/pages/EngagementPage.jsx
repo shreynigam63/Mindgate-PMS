@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Sparkles, Play, Square, Trash2, Eye } from 'lucide-react';
+import { Plus, Sparkles, Play, Square, Trash2, Eye, Pencil } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
@@ -152,7 +152,11 @@ export function EngagementAdminPage() {
   const [library, setLibrary] = useState(false);
   const [madeFrom, setMadeFrom] = useState(null);
   const [preview, setPreview] = useState(null);
-  const [editing, setEditing] = useState(null);   // survey id being edited
+  // {id, from} — 'preview' returns to the preview after saving, 'row'
+  // just closes. Popping a preview HR never opened would be a modal
+  // appearing out of nowhere; not showing one after they pressed Edit
+  // ON a preview would lose their place.
+  const [editing, setEditing] = useState(null);
   const [sweep, setSweep] = useState(null);
   const [sweeping, setSweeping] = useState(false);
   const load = () => api('/engagement/surveys').then(setData).catch(e => setErr(e.message));
@@ -235,6 +239,18 @@ export function EngagementAdminPage() {
                 actually ask them?" is a question about a live survey
                 too, and the answer is the same screen. */}
             {data.admin && <button className="btn-sec" onClick={() => viewDraft(s)}><Eye size={12} className="inline mr-1" />Preview</button>}
+            {/* Edit sits between Preview and Open, keeping the row in
+                the order the decision runs: look, change, release.
+                Drafts only, like the one in the preview — the server
+                refuses anything else, and a button that would be
+                refused is a worse screen than no button.
+                Added 28 Sep on top of the preview's Edit: reaching it
+                should not require previewing first. */}
+            {data.admin && s.status === 'draft' && (
+              <button className="btn-sec" onClick={() => setEditing({ id: s.id, from: 'row' })}>
+                <Pencil size={12} className="inline mr-1" />Edit
+              </button>
+            )}
             {data.admin && s.status === 'draft' && <button className="btn-sec" onClick={() => openSurvey(s)}><Play size={12} className="inline mr-1" />Open</button>}
             {data.admin && s.status === 'open' && <button className="btn-sec" onClick={async () => { await api(`/engagement/surveys/${s.id}/close`, { method: 'POST' }); load(); }}><Square size={12} className="inline mr-1" />Close</button>}
             {data.admin && <button className="btn-sec" onClick={() => viewResults(s)}>Results</button>}
@@ -276,12 +292,15 @@ export function EngagementAdminPage() {
       {/* Straight back into the preview once saved, so the change can
           be read in the same place it was asked for. */}
       {editing && (
-        <SurveyEditor surveyId={editing}
+        <SurveyEditor surveyId={editing.id}
           onClose={() => setEditing(null)}
           onSaved={async () => {
-            const id = editing;
+            const { id, from } = editing;
             setEditing(null);
             load();
+            if (from !== 'preview') return;
+            // Straight back into the preview, so the change can be read
+            // in the same place it was asked for.
             try { setPreview(await api(`/engagement/surveys/${id}/preview`)); } catch (e) { /* the list still refreshed */ }
           }} />
       )}
@@ -303,7 +322,7 @@ export function EngagementAdminPage() {
                   refused is worse than not offering it. */}
               {preview.survey.status === 'draft' && (
                 <button className="btn-sec !py-1.5"
-                  onClick={() => { setEditing(preview.survey.id); setPreview(null); }}>
+                  onClick={() => { setEditing({ id: preview.survey.id, from: 'preview' }); setPreview(null); }}>
                   Edit
                 </button>
               )}
