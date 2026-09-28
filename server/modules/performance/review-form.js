@@ -86,8 +86,18 @@ function mergeAnswers({ questions, incoming, scale }) {
 // a blank.
 function missingRequired(questions, answers) {
   const byQ = new Map((answers || []).map((a) => [String(a.question_id), a]));
+  // A question nobody can see cannot be answered, so it cannot be
+  // missing. Without this, adding a required question behind a "no"
+  // would lock somebody out of signing their own review with a
+  // refusal naming a box that is not on their screen.
+  const visible = (q) => {
+    if (!q.depends_on) return true;
+    const gate = byQ.get(String(q.depends_on));
+    const held = gate && (gate.answer_text != null ? String(gate.answer_text) : null);
+    return held != null && held.toLowerCase() === String(q.depends_value || '').toLowerCase();
+  };
   return (questions || [])
-    .filter((q) => q.required && q.active !== false)
+    .filter((q) => q.required && q.active !== false && visible(q))
     .filter((q) => {
       const a = byQ.get(String(q.id));
       if (!a) return true;
@@ -114,6 +124,10 @@ function assemble({ sections, questions, answers }) {
           const a = ansByQ.get(String(q.id));
           return {
             id: q.id, label: q.label, kind: q.kind, required: q.required,
+            // What reveals this question, where anything does. The page
+            // hides it until the named question holds the named answer.
+            depends_on: q.depends_on || null,
+            depends_value: q.depends_value || null,
             rating: a && a.rating != null ? Number(a.rating) : null,
             answer_text: (a && a.answer_text) || null,
           };

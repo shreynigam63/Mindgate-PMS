@@ -3411,7 +3411,7 @@ async function loadReviewForm(tenantId, cycleId, employeeId, formKey = 'midyear'
   if (!sections.length) return { sections: [], questions: [] };
   const ids = sections.map((x) => x.id);
   const questions = (await db.query(
-    `SELECT id, section_id, label, kind, required, sort_order, active
+    `SELECT id, section_id, label, kind, required, sort_order, active, depends_on, depends_value
        FROM pms.review_form_questions
       WHERE tenant_id=$1 AND section_id = ANY($2) AND active=true ORDER BY sort_order`,
     [tenantId, ids])).rows;

@@ -102,19 +102,13 @@ async function up(db) {
   //
   // [title, blurb, [[label, kind, required], ...]]
   //
-  // "About you" carries the two columns from the identity block that the
-  // employee master genuinely cannot answer. Everything else in that
-  // block — name, code, joining date, designation, reporting manager,
-  // delivery head — is already on record and is shown at the top of the
-  // page as fact, not asked again. Total experience is a whole CAREER,
-  // which the master does not hold (it holds a joining date, which is
-  // tenure here and a different number); technology used is not on the
-  // master at all.
+  // "About you" was here and is gone — Mindgate asked for it to be
+  // removed on 28 Sep ("About you as shown in screenshot is not
+  // needed"). Migration 062 deactivates it on tenants that already ran
+  // this one; removing it here is what stops a NEW tenant ever seeing
+  // it. Both are needed: a migration runs once, and this list is what a
+  // fresh install seeds from.
   const FORM = [
-    ['About you', 'Two things the employee record cannot answer for you.', [
-      ['Total Years of Experience', 'text', true],
-      ['Technology Used', 'text', false],
-    ]],
     ['Attitude & Drive', 'Rate yourself on each, on the same scale as your KRAs.', [
       ['Go Getter', 'rating', false],
       ['Availability during critical deliverables', 'rating', false],

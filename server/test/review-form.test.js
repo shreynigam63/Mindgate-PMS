@@ -107,6 +107,42 @@ test('a required question is missing until it is actually answered', () => {
     [{ question_id: 'b', rating: 0 }]), []);
 });
 
+test('a required question nobody can see is not "missing"', () => {
+  // Asked for on 28 Sep: the team boxes appear on "Yes" and vanish on
+  // "No". If one of them were ever marked required, a person with no
+  // team would be refused their own signature with a message naming a
+  // box that is not on their screen.
+  const gate = { id: 'g', label: 'Are you handling Team?', kind: 'yes_no', required: false };
+  const child = { id: 'c', label: 'Mentoring and Grooming within Team', kind: 'text',
+    required: true, depends_on: 'g', depends_value: 'yes' };
+
+  // Gate unanswered — the child is not on screen, so not missing.
+  assert.deepEqual(rf.missingRequired([gate, child], []), []);
+  // Gate says no — same.
+  assert.deepEqual(rf.missingRequired([gate, child], [{ question_id: 'g', answer_text: 'no' }]), []);
+  // Gate says yes — now it IS on screen, and it IS missing.
+  assert.deepEqual(rf.missingRequired([gate, child], [{ question_id: 'g', answer_text: 'yes' }]),
+    ['Mentoring and Grooming within Team']);
+  // …and answered, it is not.
+  assert.deepEqual(rf.missingRequired([gate, child],
+    [{ question_id: 'g', answer_text: 'YES' }, { question_id: 'c', answer_text: 'two juniors' }]), []);
+});
+
+test('assemble carries the dependency to the page', () => {
+  const sections = [{ id: 's1', title: 'Team', sort_order: 10, active: true }];
+  const questions = [
+    { id: 'g', section_id: 's1', label: 'Are you handling Team?', kind: 'yes_no', sort_order: 10, active: true },
+    { id: 'c', section_id: 's1', label: 'Mentoring', kind: 'text', sort_order: 20, active: true,
+      depends_on: 'g', depends_value: 'yes' },
+  ];
+  const out = rf.assemble({ sections, questions, answers: [] });
+  const child = out[0].questions.find((q) => q.id === 'c');
+  assert.equal(child.depends_on, 'g');
+  assert.equal(child.depends_value, 'yes');
+  // The page cannot hide anything it was not told about.
+  assert.equal(out[0].questions.find((q) => q.id === 'g').depends_on, null);
+});
+
 test('assemble reads in form order, and drops what is switched off', () => {
   const sections = [
     { id: 's2', title: 'Second', sort_order: 20, active: true },
@@ -166,6 +202,9 @@ before(async () => {
   // The form is seeded per tenant by 061, which ran before this tenant
   // existed — so seed this one the same way the migration does.
   await require('../migrations/061-review-form').up(db);
+  // 062 as well, for the same reason: it ran during runMigrations()
+  // before this tenant existed, so its changes have to be applied here.
+  await require('../migrations/062-review-form-conditional').up(db);
 
   const mk = async (name, email, managerId) => (await db.query(
     `INSERT INTO core.employees (tenant_id,name,email,status,designation,department,manager_id,emp_code,date_of_joining)
@@ -214,8 +253,10 @@ test('the whole of their form is there, in their words', { skip }, async () => {
   const r = await req('GET', '/pms/my/midyear-review', tok.emp);
   assert.equal(r.status, 200);
   const titles = r.body.form.map((s) => s.title);
+  // "About you" was retired on 28 Sep ("not needed"). Migration 062
+  // deactivates it; a section with no live questions does not appear.
   assert.deepEqual(titles,
-    ['About you', 'Attitude & Drive', 'Discipline & Quality', 'Learning & Training', 'Team & Capability Building']);
+    ['Attitude & Drive', 'Discipline & Quality', 'Learning & Training', 'Team & Capability Building']);
   const labels = r.body.form.flatMap((s) => s.questions.map((q) => q.label));
   // Spot-checked against PMS_Form.xlsx verbatim, including the tool name
   // and the years, which are theirs and not to be tidied up here.
@@ -228,7 +269,46 @@ test('the whole of their form is there, in their words', { skip }, async () => {
     'Contribute towards capability building initiatives']) {
     assert.ok(labels.includes(l), `the form lost "${l}"`);
   }
-  assert.equal(labels.length, 20);
+  assert.equal(labels.length, 18, 'twenty, less the two that went with "About you"');
+  for (const gone of ['Total Years of Experience', 'Technology Used']) {
+    assert.ok(!labels.includes(gone), `"${gone}" was removed and must not come back`);
+  }
+});
+
+test('the team boxes hang off the Yes/No, in the data', { skip }, async () => {
+  // Asked for on 28 Sep. Stored as a dependency rather than read off
+  // the gate's wording, because HR may reword it — and a page matching
+  // on "Are you handling Team?" would then leave five boxes on screen
+  // for people with no team, silently.
+  const form = (await req('GET', '/pms/my/midyear-review', tok.emp)).body.form;
+  const team = form.find((s) => s.title === 'Team & Capability Building');
+  const gate = team.questions.find((q) => q.kind === 'yes_no');
+  assert.ok(gate, 'the section still has its Yes/No');
+  assert.equal(gate.depends_on, null, 'the gate itself hangs off nothing');
+
+  const rest = team.questions.filter((q) => q.id !== gate.id);
+  assert.equal(rest.length, 5);
+  for (const q of rest) {
+    assert.equal(q.depends_on, gate.id, `"${q.label}" must hang off the gate`);
+    assert.equal(q.depends_value, 'yes');
+  }
+});
+
+test('a reworded gate still gates — the dependency is an id, not a phrase', { skip }, async () => {
+  const form = (await req('GET', '/pms/my/midyear-review', tok.emp)).body.form;
+  const team = form.find((s) => s.title === 'Team & Capability Building');
+  const gate = team.questions.find((q) => q.kind === 'yes_no');
+  await db.query(`UPDATE pms.review_form_questions SET label='Do you lead anybody?' WHERE id=$1`, [gate.id]);
+  try {
+    const after = (await req('GET', '/pms/my/midyear-review', tok.emp)).body.form
+      .find((s) => s.title === 'Team & Capability Building');
+    const g2 = after.questions.find((q) => q.kind === 'yes_no');
+    assert.equal(g2.label, 'Do you lead anybody?');
+    assert.equal(after.questions.filter((q) => q.depends_on === g2.id).length, 5,
+      'all five still hang off it after the rewording');
+  } finally {
+    await db.query(`UPDATE pms.review_form_questions SET label='Are you handling Team?' WHERE id=$1`, [gate.id]);
+  }
 });
 
 test('what is already on record is never asked for again', { skip }, async () => {
@@ -249,16 +329,18 @@ test('what is already on record is never asked for again', { skip }, async () =>
   }
   assert.equal(r.body.profile, undefined, 'and the payload does not carry what no screen shows');
 
-  // The two the master genuinely cannot answer ARE questions.
-  assert.ok(labels.includes('Total Years of Experience'));
-  assert.ok(labels.includes('Technology Used'));
+  // The two that once WERE questions went with "About you" on 28 Sep.
+  // Asserted here as well as above, because this is the test somebody
+  // would reach for if they were thinking of putting them back.
+  assert.ok(!labels.includes('Total Years of Experience'));
+  assert.ok(!labels.includes('Technology Used'));
 });
 
 test('answers save, come back, and a bad one is refused by name', { skip }, async () => {
   const form = (await req('GET', '/pms/my/midyear-review', tok.emp)).body.form;
   const ok = await req('PUT', '/pms/my/midyear-review/form', tok.emp, {
     answers: {
-      [qid(form, 'Total Years of Experience')]: { answer_text: '9 years' },
+      [qid(form, 'Training attended year 2024-2025')]: { answer_text: 'Kafka streams (internal)' },
       [qid(form, 'Go Getter')]: { rating: 4 },
       [qid(form, 'Are you handling Team?')]: { answer_text: 'yes' },
     },
@@ -268,7 +350,7 @@ test('answers save, come back, and a bad one is refused by name', { skip }, asyn
 
   const back = (await req('GET', '/pms/my/midyear-review', tok.emp)).body.form;
   const find = (label) => back.flatMap((s) => s.questions).find((q) => q.label === label);
-  assert.equal(find('Total Years of Experience').answer_text, '9 years');
+  assert.equal(find('Training attended year 2024-2025').answer_text, 'Kafka streams (internal)');
   assert.equal(find('Go Getter').rating, 4);
   assert.equal(find('Are you handling Team?').answer_text, 'yes');
 
@@ -292,31 +374,42 @@ test('saving one section does not blank the others', { skip }, async () => {
   const back = (await req('GET', '/pms/my/midyear-review', tok.emp)).body.form.flatMap((s) => s.questions);
   assert.equal(back.find((q) => q.label === 'Quality Focus').rating, 5);
   assert.equal(back.find((q) => q.label === 'Go Getter').rating, 4, 'the earlier section survived');
-  assert.equal(back.find((q) => q.label === 'Total Years of Experience').answer_text, '9 years');
+  assert.equal(back.find((q) => q.label === 'Training attended year 2024-2025').answer_text, 'Kafka streams (internal)');
 });
 
 test('a required question stops the signature, by name', { skip }, async () => {
-  // Clear the one required answer and rate the KRA, so the ONLY thing
-  // standing between this person and a signature is the form.
-  await db.query(`DELETE FROM pms.review_form_answers a USING pms.review_form_questions q
-                   WHERE a.question_id=q.id AND q.label='Total Years of Experience'
-                     AND a.tenant_id=$1 AND a.employee_id=$2`, [tenantId, empId]);
-  const kra = (await db.query(`SELECT id FROM pms.kras WHERE sheet_id=$1`, [sheetId])).rows[0].id;
-  await req('PUT', '/pms/my/midyear-review', tok.emp, {
-    entries: { [kra]: { rating: 4, narrative: 'went well' } }, self_narrative: 'A good half.',
-  });
+  // NOTHING IN THE SEEDED FORM IS REQUIRED any more — the one that was
+  // went with "About you" on 28 Sep. So this test makes its own, which
+  // is the better shape anyway: it now exercises the gate rather than a
+  // coincidence of what the template happens to ship.
+  const section = (await db.query(
+    `SELECT s.id FROM pms.review_form_sections s
+      WHERE s.tenant_id=$1 AND s.form_key='midyear' AND s.title='Learning & Training'`,
+    [tenantId])).rows[0].id;
+  const q = (await db.query(
+    `INSERT INTO pms.review_form_questions (tenant_id, section_id, label, kind, required, sort_order)
+     VALUES ($1,$2,'Certification you are working towards','text',true,90) RETURNING id`,
+    [tenantId, section])).rows[0].id;
 
-  const refused = await req('POST', '/pms/my/midyear-review/submit', tok.emp);
-  assert.equal(refused.status, 422);
-  assert.match(refused.body.error, /Total Years of Experience/,
-    'it names the question — "one answer missing" sends somebody hunting through five sections');
+  try {
+    const kra = (await db.query(`SELECT id FROM pms.kras WHERE sheet_id=$1`, [sheetId])).rows[0].id;
+    await req('PUT', '/pms/my/midyear-review', tok.emp, {
+      entries: { [kra]: { rating: 4, narrative: 'went well' } }, self_narrative: 'A good half.',
+    });
 
-  const form = (await req('GET', '/pms/my/midyear-review', tok.emp)).body.form;
-  await req('PUT', '/pms/my/midyear-review/form', tok.emp, {
-    answers: { [qid(form, 'Total Years of Experience')]: { answer_text: '9 years' } },
-  });
-  const signed = await req('POST', '/pms/my/midyear-review/submit', tok.emp);
-  assert.equal(signed.status, 200, JSON.stringify(signed.body));
+    const refused = await req('POST', '/pms/my/midyear-review/submit', tok.emp);
+    assert.equal(refused.status, 422);
+    assert.match(refused.body.error, /Certification you are working towards/,
+      'it names the question — "one answer missing" sends somebody hunting through four sections');
+
+    await req('PUT', '/pms/my/midyear-review/form', tok.emp, {
+      answers: { [q]: { answer_text: 'AWS Solutions Architect' } },
+    });
+    const signed = await req('POST', '/pms/my/midyear-review/submit', tok.emp);
+    assert.equal(signed.status, 200, JSON.stringify(signed.body));
+  } finally {
+    await db.query(`DELETE FROM pms.review_form_questions WHERE id=$1`, [q]);
+  }
 });
 
 test('a signed review is closed to further answers', { skip }, async () => {
@@ -348,5 +441,63 @@ test('the form is shut when the phase is shut', { skip }, async () => {
     assert.match(r.body.error, /not open/);
   } finally {
     await db.query(`UPDATE pms.cycles SET phase='mid_year_review' WHERE id=$1`, [cycleId]);
+  }
+});
+
+test('MIGRATION 062 retires "About you" where it already exists', { skip }, async () => {
+  // THE GAP THIS CLOSES. 061 no longer seeds the section, so on a fresh
+  // tenant it never exists and the deactivation in 062 is never
+  // exercised — a poison that stopped it deactivating anything passed
+  // every test. But production DID run the old 061, so the
+  // deactivation is precisely the half that matters there. This
+  // recreates the old shape and then runs 062 against it.
+  const sec = (await db.query(
+    `INSERT INTO pms.review_form_sections (tenant_id, form_key, title, blurb, sort_order)
+     VALUES ($1,'midyear','About you','Two things the employee record cannot answer for you.',10)
+     RETURNING id`, [tenantId])).rows[0].id;
+  await db.query(
+    `INSERT INTO pms.review_form_questions (tenant_id, section_id, label, kind, required, sort_order)
+     VALUES ($1,$2,'Total Years of Experience','text',true,10),
+            ($1,$2,'Technology Used','text',false,20)`, [tenantId, sec]);
+
+  // It really is on the form before 062 touches it.
+  const before = (await req('GET', '/pms/my/midyear-review', tok.emp)).body.form;
+  assert.ok(before.some((x) => x.title === 'About you'), 'the old shape is in place');
+
+  await require('../migrations/062-review-form-conditional').up(db);
+
+  const after = (await req('GET', '/pms/my/midyear-review', tok.emp)).body.form;
+  assert.ok(!after.some((x) => x.title === 'About you'), 'and 062 takes it off the form');
+
+  // DEACTIVATED, NOT DELETED — anything already answered survives.
+  const rows = (await db.query(
+    `SELECT active FROM pms.review_form_questions WHERE section_id=$1`, [sec])).rows;
+  assert.equal(rows.length, 2, 'the questions are still there');
+  assert.ok(rows.every((r) => r.active === false), 'just switched off');
+});
+
+test('MIGRATION 062 finds the gate by its kind, not its wording', { skip }, async () => {
+  // A tenant may have reworded "Are you handling Team?" before 062 ever
+  // ran. Finding it by label would miss, and the five boxes would then
+  // show for everybody with no dependency at all — silently. So the
+  // migration looks for the one yes_no question in that section.
+  const sec = (await db.query(
+    `SELECT id FROM pms.review_form_sections
+      WHERE tenant_id=$1 AND form_key='midyear' AND title='Team & Capability Building'`,
+    [tenantId])).rows[0].id;
+  const gate = (await db.query(
+    `SELECT id, label FROM pms.review_form_questions WHERE section_id=$1 AND kind='yes_no'`, [sec])).rows[0];
+
+  // Reword it, and clear the dependencies as though 062 had not run.
+  await db.query(`UPDATE pms.review_form_questions SET label='Do you lead a squad?' WHERE id=$1`, [gate.id]);
+  await db.query(`UPDATE pms.review_form_questions SET depends_on=NULL, depends_value=NULL WHERE section_id=$1`, [sec]);
+  try {
+    await require('../migrations/062-review-form-conditional').up(db);
+    const n = +(await db.query(
+      `SELECT count(*)::int AS n FROM pms.review_form_questions
+        WHERE section_id=$1 AND depends_on=$2 AND depends_value='yes'`, [sec, gate.id])).rows[0].n;
+    assert.equal(n, 5, 'all five hang off the reworded gate');
+  } finally {
+    await db.query(`UPDATE pms.review_form_questions SET label=$2 WHERE id=$1`, [gate.id, gate.label]);
   }
 });

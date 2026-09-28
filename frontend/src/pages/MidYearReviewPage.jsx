@@ -307,6 +307,18 @@ export function ReviewFormSections({ form, scale, editable, onSave, readOnly }) 
     setDraft((d) => ({ ...d, [q.id]: { ...valueFor(q), ...patch } }));
   };
 
+  // Whether a question is on screen at all, given what is currently
+  // answered — draft included, so the boxes appear and disappear as the
+  // Yes/No is clicked rather than after a save.
+  const byId = new Map(form.flatMap((s) => s.questions).map((q) => [String(q.id), q]));
+  const visible = (q) => {
+    if (!q.depends_on) return true;
+    const gate = byId.get(String(q.depends_on));
+    if (!gate) return true;   // a dependency pointing nowhere hides nothing
+    const held = valueFor(gate).answer_text;
+    return !!held && String(held).toLowerCase() === String(q.depends_value || '').toLowerCase();
+  };
+
   const save = async () => {
     setState('saving'); setErr(null);
     try {
@@ -329,7 +341,15 @@ export function ReviewFormSections({ form, scale, editable, onSave, readOnly }) 
             <p className="text-[10px] uppercase font-bold text-navy-400">{sec.title}</p>
             {sec.blurb && <p className="text-[10px] text-navy-400">{sec.blurb}</p>}
           </div>
-          {sec.questions.map((q) => (
+          {/* A question with a dependency appears only once the
+              question it names holds the answer it names. Asked for on
+              28 Sep: the five team boxes should be there on "Yes" and
+              gone on "No".
+              Read from the DATA, not from the gate's wording — HR may
+              reword any of these, and a page matching on "Are you
+              handling Team?" would quietly leave five boxes on screen
+              for people with no team. */}
+          {sec.questions.filter((q) => visible(q)).map((q) => (
             <FormQuestion key={q.id} q={q} scale={scale} editable={editable && !readOnly}
               value={valueFor(q)} onChange={(patch) => change(q, patch)} />
           ))}
