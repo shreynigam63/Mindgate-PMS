@@ -385,11 +385,16 @@ export function TeamRecognition() {
       {r.ratings.length > 0 && (
         <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-xs">
           {r.ratings.map((x) => (
-            <div key={x.dimension} className="flex items-center gap-2">
-              <span className="text-navy-600 flex-1 min-w-0 truncate" title={x.label}>{x.label}</span>
-              <span className="text-amber-600">{stars(x.average)}</span>
-              <span className="font-semibold tabular-nums w-7 text-right">{x.average}</span>
-              <span className="text-navy-400 tabular-nums w-10 text-right">n={x.n}</span>
+            // WRAPS ON A PHONE. The star string cannot shrink, so with
+            // everything on one line this row pushed My KRAs 4px past a
+            // 390px viewport and the whole page scrolled sideways —
+            // caught by the KRA table's phone test. The label takes its
+            // own line below `sm`, the numbers sit under it.
+            <div key={x.dimension} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="text-navy-600 basis-full sm:basis-auto sm:flex-1 min-w-0 truncate" title={x.label}>{x.label}</span>
+              <span className="text-amber-600 shrink-0">{stars(x.average)}</span>
+              <span className="font-semibold tabular-nums w-7 text-right shrink-0">{x.average}</span>
+              <span className="text-navy-400 tabular-nums w-10 text-right shrink-0">n={x.n}</span>
             </div>
           ))}
         </div>
@@ -398,7 +403,13 @@ export function TeamRecognition() {
       {r.kudos.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {r.kudos.map((k) => (
-            <span key={k.kind} className="chip bg-leaf-50 text-leaf-700">{k.kind} ×{k.count}</span>
+            // "x1" on every chip is noise, and a row of identical
+            // multipliers reads as a stuck counter — it was mistaken for
+            // a bug within a minute of being shown. The number earns its
+            // place only when something was picked more than once.
+            <span key={k.kind} className="chip bg-leaf-50 text-leaf-700">
+              {k.kind}{k.count > 1 && <span className="font-bold"> ×{k.count}</span>}
+            </span>
           ))}
         </div>
       )}
