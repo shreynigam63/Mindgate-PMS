@@ -908,6 +908,103 @@ router.post('/surveys/:id/respond', async (req, res) => {
 });
 
 // ---- Results ----------------------------------------------------------------
+// The kudos and service ratings YOUR TEAM received.
+//
+// Asked for on 28 Sep as step three of the Customer Feedback flow:
+// once the form is filled in, what it produced "will be displayed on
+// My KRAs page" — confirmed as the recognition a person's own team
+// received, not a receipt of what they themselves submitted.
+//
+// "Your team" is the caller's DEPARTMENT on the employee master, which
+// is why the team question takes its options from the master (see the
+// template): the two have to be the same strings or nothing ever
+// matches. Compared case-insensitively and trimmed, because HR editing
+// an option to "  Delivery" should not silently empty somebody's
+// panel.
+//
+// READ BY DIMENSION, never by question wording. HR may reword any of
+// these, and matching on prompts would break the panel the first time
+// they did, silently.
+//
+// Anonymity needs no special handling here and that is by construction,
+// not by care: an anonymous response carries employee_id NULL, so the
+// join for "who said it" yields nothing to leak.
+router.get('/my/recognition', async (req, res) => {
+  try {
+    const me = (await db.query(
+      `SELECT department FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.user.id, T(req)])).rows[0];
+    const dept = me && me.department ? String(me.department).trim() : '';
+    // No department on the master is not an error, and not an empty
+    // panel with no explanation either — the page says why.
+    if (!dept) return res.json({ department: null, reason: 'no_department', responses: 0, ratings: [], kudos: [], messages: [] });
+
+    // Every response that NAMED this department in a recognition_team
+    // answer. One query for the set, then the detail hangs off it.
+    const named = (await db.query(
+      `SELECT DISTINCT a.response_id
+         FROM engagement.answers a
+         JOIN engagement.questions q ON q.id = a.question_id
+         JOIN engagement.responses r ON r.id = a.response_id
+        WHERE q.tenant_id=$1 AND q.dimension='recognition_team'
+          AND r.tenant_id=$1
+          AND EXISTS (SELECT 1 FROM unnest(coalesce(a.value_list,'{}'::text[])) t
+                       WHERE lower(trim(t)) = lower($2))`,
+      [T(req), dept])).rows.map((x) => x.response_id);
+    if (!named.length) {
+      return res.json({ department: dept, responses: 0, ratings: [], kudos: [], messages: [], overall: [] });
+    }
+
+    // Service ratings: the 1-5 questions, averaged per dimension.
+    const ratings = (await db.query(
+      `SELECT q.dimension, min(q.prompt) AS label,
+              round(avg(a.value_num)::numeric, 1)::float AS average, count(*)::int AS n
+         FROM engagement.answers a JOIN engagement.questions q ON q.id=a.question_id
+        WHERE a.response_id = ANY($1) AND q.dimension LIKE 'service_%'
+          AND a.value_num IS NOT NULL
+        GROUP BY q.dimension ORDER BY q.dimension`, [named])).rows;
+
+    // The satisfaction bands, counted.
+    const overall = (await db.query(
+      `SELECT a.value_text AS option, count(*)::int AS count
+         FROM engagement.answers a JOIN engagement.questions q ON q.id=a.question_id
+        WHERE a.response_id = ANY($1) AND q.dimension='service_overall' AND a.value_text IS NOT NULL
+        GROUP BY a.value_text ORDER BY count DESC`, [named])).rows;
+
+    // What people appreciated, tallied. A closed list is the reason
+    // this is a sentence a manager can act on rather than a pile of
+    // differently-worded compliments.
+    const kudos = (await db.query(
+      `SELECT kind, count(*)::int AS count FROM (
+         SELECT unnest(coalesce(a.value_list,'{}'::text[])) AS kind
+           FROM engagement.answers a JOIN engagement.questions q ON q.id=a.question_id
+          WHERE a.response_id = ANY($1) AND q.dimension='recognition_kind'
+       ) k WHERE trim(k.kind) <> '' GROUP BY kind ORDER BY count DESC, kind`, [named])).rows;
+
+    // The messages, newest first, with the sender WHERE THERE IS ONE.
+    const messages = (await db.query(
+      `SELECT a.value_text AS text, r.submitted_at AS at,
+              e.name AS from_name, e.department AS from_department
+         FROM engagement.answers a
+         JOIN engagement.questions q ON q.id=a.question_id
+         JOIN engagement.responses r ON r.id=a.response_id
+         LEFT JOIN core.employees e ON e.id = r.employee_id
+        WHERE a.response_id = ANY($1) AND q.dimension='recognition_message'
+          AND coalesce(trim(a.value_text),'') <> ''
+        ORDER BY r.submitted_at DESC LIMIT 20`, [named])).rows;
+
+    const scored = ratings.filter((x) => x.average != null);
+    res.json({
+      department: dept,
+      responses: named.length,
+      avg_service: scored.length
+        ? Math.round((scored.reduce((t, x) => t + x.average * x.n, 0) / scored.reduce((t, x) => t + x.n, 0)) * 10) / 10
+        : null,
+      ratings, overall, kudos, messages,
+    });
+  } catch (e) { logger.error('my recognition', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
 router.get('/surveys/:id/results', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });

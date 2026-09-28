@@ -6,6 +6,7 @@ import KraSuggestPanel from './KraSuggestPanel';
 import PageHead from '../PageHead';
 import KraTable from '../KraTable';
 import Grade from '../grade';
+import { Award, MessageSquareQuote } from 'lucide-react';
 
 // Whitespace counts as empty. An imported cell can carry a stray space or
 // newline, and treating that as content would put the box back on exactly
@@ -330,6 +331,93 @@ export default function MyKRASheetPage() {
             ? 'Your manager has this sheet. It is locked until they approve it or return it with feedback.'
             : 'This sheet is approved and locked. Ask HR to reopen it if something needs to change.'}
         </p>
+      )}
+
+      {/* Below the sheet, not above it: the KRAs are what this page is
+          for, and recognition is evidence beside them rather than the
+          headline. Renders nothing at all until somebody has actually
+          been thanked. */}
+      <TeamRecognition />
+    </div>
+  );
+}
+
+
+// WHAT OTHER TEAMS SAID ABOUT YOURS.
+//
+// Asked for on 28 Sep as step three of the Customer Feedback flow:
+// once the form is filled in, the result "will be displayed on My KRAs
+// page" — the recognition a person's own team received, beside the
+// KRAs it speaks to.
+//
+// Read from the engagement module's own endpoint rather than folded
+// into the KRA sheet payload: the performance module does not reach
+// into engagement's tables, and a panel is not worth coupling two
+// modules for. Its failure is swallowed — an employee whose KRA sheet
+// loads must not lose it because a recognition query fell over.
+export function TeamRecognition() {
+  const [r, setR] = useState(null);
+  useEffect(() => { api('/engagement/my/recognition').then(setR).catch(() => setR(null)); }, []);
+
+  // Nothing yet is not a panel. An empty box headed "Recognition" on
+  // the appraisal screen of somebody nobody has thanked is worse than
+  // no box at all.
+  if (!r || !r.responses) return null;
+
+  const stars = (n) => '★'.repeat(Math.round(n)) + '☆'.repeat(Math.max(0, 5 - Math.round(n)));
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Award size={15} className="text-amber-500" />
+        <p className="text-sm font-bold flex-1">What other teams said about {r.department}</p>
+        <span className="chip bg-navy-50 text-navy-600">
+          {r.responses} {r.responses === 1 ? 'response' : 'responses'}
+        </span>
+        {r.avg_service != null && (
+          <span className="chip bg-amber-50 text-amber-700" title={`${r.avg_service} out of 5`}>
+            {stars(r.avg_service)} {r.avg_service}
+          </span>
+        )}
+      </div>
+
+      {/* Per dimension, because "responsiveness 3.1, expertise 4.8" is
+          an actionable sentence and one averaged number is not. */}
+      {r.ratings.length > 0 && (
+        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-xs">
+          {r.ratings.map((x) => (
+            <div key={x.dimension} className="flex items-center gap-2">
+              <span className="text-navy-600 flex-1 min-w-0 truncate" title={x.label}>{x.label}</span>
+              <span className="text-amber-600">{stars(x.average)}</span>
+              <span className="font-semibold tabular-nums w-7 text-right">{x.average}</span>
+              <span className="text-navy-400 tabular-nums w-10 text-right">n={x.n}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {r.kudos.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {r.kudos.map((k) => (
+            <span key={k.kind} className="chip bg-leaf-50 text-leaf-700">{k.kind} ×{k.count}</span>
+          ))}
+        </div>
+      )}
+
+      {r.messages.length > 0 && (
+        <div className="space-y-1.5 border-t border-navy-100 pt-2">
+          {r.messages.map((m, i) => (
+            <div key={i} className="text-xs">
+              <MessageSquareQuote size={12} className="inline mr-1 text-navy-300" />
+              <span className="italic">“{m.text}”</span>
+              {/* Named where the survey was attributed; silent where it
+                  was anonymous, because there is genuinely nobody to
+                  name — the response carries no identity at all. */}
+              <span className="text-navy-400">
+                {' — '}{m.from_name ? `${m.from_name}${m.from_department ? `, ${m.from_department}` : ''}` : 'anonymous'}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

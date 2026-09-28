@@ -6,6 +6,7 @@ import {
   Target, TrendingUp, MessageCircle, Clock, ClipboardList, Award, Star, History,
   LayoutDashboard, Users, CheckCircle2, Library, BarChart3, ArrowRight, Lock,
   Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck, Send, Hourglass, Gauge, CalendarClock,
+  HeartHandshake,
 } from 'lucide-react';
 
 // The landing screen.
@@ -125,7 +126,26 @@ const PHASE_LABEL = {
 export default function HomePage() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
+  // Surveys waiting on this person, asked for on 28 Sep: a form HR
+  // opens "will be available on homepage of employee under self >>
+  // homepage".
+  //
+  // Read straight from the engagement module's own endpoint rather
+  // than folded into /pms/home. Performance would otherwise have to
+  // reach into engagement's tables, which is the one thing the module
+  // rule in this repo forbids — and the endpoint already answers
+  // exactly this question.
+  //
+  // Its failure is swallowed ON PURPOSE. An employee whose engagement
+  // module is unreachable should still get their home page; a survey
+  // prompt is an addition to it, not a precondition for it.
+  const [surveys, setSurveys] = useState([]);
   useEffect(() => { api('/pms/home').then(setD).catch(e => setErr(e.message)); }, []);
+  useEffect(() => {
+    api('/engagement/my/invitations')
+      .then((r) => setSurveys((r.invitations || []).filter((i) => !i.completed_at)))
+      .catch(() => setSurveys([]));
+  }, []);
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
   if (!d) return <p className="text-sm text-navy-400">Loading…</p>;
@@ -264,6 +284,39 @@ export default function HomePage() {
           )}
         </div>
       </div>
+
+
+      {/* SURVEYS WAITING ON YOU. Listed, not counted: "2 surveys" is a
+          number, "Customer Feedback — under 15 seconds" is a thing
+          somebody will actually click. Sits under the one action the
+          server picked, because a survey is rarely more urgent than a
+          KRA sheet that has been returned. */}
+      {surveys.length > 0 && (
+        <div>
+          <SecHead icon={HeartHandshake} hue="leaf" title="Surveys waiting on you"
+            sub={`${surveys.length} open ${surveys.length === 1 ? 'form has' : 'forms have'} not been answered yet`} />
+          <div className="card divide-y divide-navy-100">
+            {surveys.map((s) => (
+              <NavLink key={`${s.id}-${s.subject_employee_id || 'self'}`} to="/engagement"
+                className="p-3 flex flex-wrap items-center gap-2 hover:bg-navy-50/60">
+                <span className="text-sm font-semibold flex-1 min-w-0">
+                  {s.title}
+                  {/* A manager assessment names its subject, or a
+                      manager with six reports sees six identical rows. */}
+                  {s.subject_name && <span className="text-navy-500 font-normal"> — about {s.subject_name}</span>}
+                  {s.description && <span className="block text-[11px] text-navy-400 font-normal">{s.description}</span>}
+                </span>
+                <span className={`chip ${s.anonymity_default ? 'bg-navy-50 text-navy-600' : 'bg-lagoon-50 text-lagoon-700'}`}>
+                  {s.anonymity_default ? 'anonymous' : 'attributed'}
+                </span>
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-navy-700">
+                  Answer <ArrowRight size={13} />
+                </span>
+              </NavLink>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* WHAT THIS PERSON HAS ASKED FOR AND IS WAITING ON. Listed rather
           than counted: "2 requests" tells an employee nothing they can act
