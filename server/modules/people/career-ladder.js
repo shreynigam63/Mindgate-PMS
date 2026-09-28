@@ -337,5 +337,142 @@ function row(department, { from, to }, note_) {
   };
 }
 
-module.exports = { suggestTransitions, ladder, rankOf, familyOf, tenure, competenciesFor,
-                   GENERIC, SPINE, nextRung, WHY, CHECK };
+
+
+// ===================================================================
+// THE COMPANY'S OWN GRADE LADDER
+// ===================================================================
+//
+// Asked for on 28 Sep with the "Grade and Level - Designation wise"
+// sheet attached: the suggested matrix must name grades and levels from
+// THAT, and step one rung along IT, using ITS role names.
+//
+// Everything above this line infers a ladder from the words in a job
+// title, which is what there was before the sheet existed. This reads
+// the real one. The two are kept apart rather than merged because they
+// answer different questions and only one of them is authoritative:
+// if a designation is not on the sheet, the honest answer is "no grade
+// yet", not a grade guessed from its title. Mindgate chose that
+// explicitly when asked — 51 of their 78 live designations are not on
+// the sheet, and a grade nobody agreed to is worse on an appraisal
+// sheet than a blank somebody has to fill in.
+//
+// Pure: the caller reads the four tables (migration 060) and passes
+// them in, so every rule below is testable by stating the answer.
+//
+//   rungs      [{ grade, grade_label, band, sort_order, exp_range, generic_role }] in order
+//   roles      Map "grade|family" -> role name
+//   gradeOf    Map lower(designation) -> { grade, family }
+//   familyOf   Map lower(department)  -> family
+
+// "3-7 yrs" -> 3. The sheet's own experience bands, which are what say
+// how long a rung takes: an E2 (1-3 yrs) becomes an E3 (3-7 yrs) after
+// about two years, and that number is the company's, not ours.
+const yearsFrom = (range) => {
+  const m = /(\d+)/.exec(String(range || ''));
+  return m ? Number(m[1]) : null;
+};
+
+function timeInRung(from, to) {
+  const a = yearsFrom(from && from.exp_range);
+  const b = yearsFrom(to && to.exp_range);
+  if (a != null && b != null && b > a) {
+    const min = (b - a) * 12;
+    return [min, Math.round(min * 1.5)];
+  }
+  // The top of the ladder is all "15+ yrs" / "20+ yrs", so there is no
+  // width to read. Fall back to the size-of-move table.
+  return tenure(6, 8);
+}
+
+// The competency list is keyed on the old 1-8 rank scale. Mapping the
+// grade onto it keeps one vocabulary on the sheet instead of inventing
+// a second set of competencies for the same moves.
+const RANK_FOR_GRADE = {
+  B8: 2, E1: 1, E2: 2, E3: 3, E4: 4, E5: 5, E6: 6, E7: 7, E8: 7,
+  E9: 8, E10: 8, E11: 8, E12: 8, E13: 8, E14: 8, UGO: 8,
+};
+
+// A Corporate Functions rung is written "Executive -", "Sr Manager -",
+// "Asst Mgr -" on the sheet: the role, then a dash waiting for the
+// function name. The dash comes off and the role stands — using the
+// generic column instead would call a Corporate Functions E4 "Lead"
+// when the sheet plainly calls it Asst Mgr.
+const trimPrefix = (name) => String(name || '').replace(/\s*[-–]\s*$/, '').trim();
+
+function roleAt(ladder, grade, family) {
+  const named = family ? trimPrefix(ladder.roles.get(`${grade.grade}|${family}`)) : '';
+  return named || grade.generic_role || null;
+}
+
+const levelLabel = (g) => (!g ? '' : [g.grade_label, g.band].filter(Boolean).join(' · '));
+
+const NO_GRADE = 'PLEASE CHECK — this designation is not on the Grade and Level sheet, so it has no grade and no next rung. Add it to the sheet (or fill this row in by hand) and re-download.';
+
+// One row per designation held in a department: where it sits on the
+// ladder, and the single rung above it.
+function suggestFromGrades(rows, ladder) {
+  const order = [...(ladder.rungs || [])].sort((a, b) => a.sort_order - b.sort_order);
+  const byGrade = new Map(order.map((g) => [g.grade, g]));
+  const key = (v) => String(v || '').trim().toLowerCase();
+
+  const byDept = new Map();
+  for (const r of rows || []) {
+    const designation = String(r.designation || '').trim();
+    if (!designation) continue;
+    const dept = String(r.department || '').trim() || '(no department on the employee record)';
+    if (!byDept.has(dept)) byDept.set(dept, new Map());
+    const m = byDept.get(dept);
+    m.set(designation, (m.get(designation) || 0) + (Number(r.headcount) || 0));
+  }
+
+  const out = [];
+  for (const [department, held] of [...byDept.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const designation of [...held.keys()].sort()) {
+      const mapped = ladder.gradeOf.get(key(designation));
+      const from = mapped ? byGrade.get(mapped.grade) : null;
+
+      // Not on the sheet. The row still comes out — HR has to see WHICH
+      // titles need grading, and a title silently missing from its own
+      // draft is the thing that gets noticed six months later.
+      if (!from) {
+        out.push({
+          department, from_role: designation, from_level: '', to_role: '', to_level: '',
+          expected_level_change: 1, min_time_months: null, typical_time_months: null,
+          required_competencies: [], notes: NO_GRADE,
+        });
+        continue;
+      }
+
+      const family = mapped.family || ladder.familyOf.get(key(department)) || null;
+      const i = order.findIndex((g) => g.grade === from.grade);
+      const to = i >= 0 ? order[i + 1] : null;
+      if (!to) continue;                       // top of the ladder: nothing above
+
+      const [min, typical] = timeInRung(from, to);
+      const toRole = roleAt(ladder, to, family);
+      out.push({
+        department,
+        from_role: designation,
+        from_level: levelLabel(from),
+        to_role: toRole,
+        to_level: levelLabel(to),
+        // Always 1 by construction: one step along the sheet's own
+        // grades, never a jump. The column means "rungs", not the
+        // arithmetic difference of two grade numbers.
+        expected_level_change: 1,
+        min_time_months: min,
+        typical_time_months: typical,
+        required_competencies: competenciesFor(RANK_FOR_GRADE[to.grade] || 8),
+        notes: family
+          ? `${from.grade_label || from.band} → ${to.grade_label || to.band} on the Grade and Level sheet, ${family} column`
+          : `${from.grade_label || from.band} → ${to.grade_label || to.band} on the Grade and Level sheet · no job family for ${department}, so the rung is the sheet's generic column`,
+      });
+    }
+  }
+  return out;
+}
+
+module.exports = { suggestTransitions, suggestFromGrades, ladder, rankOf, familyOf, tenure,
+                   competenciesFor, timeInRung, roleAt, levelLabel, trimPrefix,
+                   GENERIC, SPINE, nextRung, WHY, CHECK, NO_GRADE };

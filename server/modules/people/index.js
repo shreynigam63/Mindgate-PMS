@@ -22,7 +22,7 @@ const { parseExcelSheets, parseCsv, detectFormat } = require('../../core/employe
 const {
   validateCareerTransitionRows, COLUMNS: CT_COLUMNS, rowKey: ctRowKey,
 } = require('./career-transitions-import');
-const { suggestTransitions } = require('./career-ladder');
+const { suggestTransitions, suggestFromGrades } = require('./career-ladder');
 
 // One line per configuration change that a person would later ask
 // about. The upload route has written to this table since 17 Sep; the
@@ -590,7 +590,27 @@ router.get('/career/transitions/template.xlsx', async (req, res) => {
 // master changes. It writes NOTHING — the output is the importer's own
 // sheet, which HR edits and uploads through Validate/Publish like any
 // other. See career-ladder.js for the three rules it uses.
-const SUGGESTED_BANNER = 'SUGGESTED career pathing matrix, built from the departments and designations on your employee master RIGHT NOW — re-download it after you change the employee list and it changes with it. Every row names a department, and EVERY ROW IS ONE RUNG: the step directly above, never a jump of two or more, so Expected Level Change is always 1. Where a department has nobody on the rung above yet, the rung is named from the company ladder and the Notes say so — that is what a career path is for. It is a DRAFT: read it, edit it, delete what does not apply, then upload it through Validate and Publish on this same page. Rows whose Notes start with "PLEASE CHECK" are the ones to look at first — the master has no senior form of that role, so the rung is the plain ladder rather than a real next step. The importer still treats a BLANK Department as "every department", so you can blank a cell by hand to make one rung company-wide. Nothing is saved until you publish.';
+const SUGGESTED_BANNER = 'SUGGESTED career pathing matrix. Every rung is read from your own GRADE AND LEVEL sheet — the Level columns carry the grade and band (E3 · Band 6), and the To Role is the role that sheet names at the next grade, in the job family the department belongs to. EVERY ROW IS ONE GRADE UP, never a jump, so Expected Level Change is always 1, and the times come from the sheet\'s own experience bands. It is built from the employee master RIGHT NOW — re-download it after you change the employee list and it changes with it. It is a DRAFT: read it, edit it, delete what does not apply, then upload it through Validate and Publish on this same page. Rows marked PLEASE CHECK are designations that are NOT ON THE GRADE SHEET AT ALL — they have no grade and no next rung, and the file will not upload until you either give them one here or add them to the grade sheet. The importer treats a BLANK Department as "every department", so you can blank a cell by hand to make one rung company-wide. Nothing is saved until you publish.';
+
+// The grade ladder (migration 060), read as one object the pure
+// generator can work from. Four small tables; the whole thing is about
+// 120 rows, so it is fetched whole rather than joined per designation.
+async function gradeLadder(tenantId) {
+  const q = (sql) => db.query(sql, [tenantId]).then((r) => r.rows);
+  const [rungs, roles, desigs, depts] = await Promise.all([
+    q(`SELECT grade, grade_label, band, sort_order, exp_range, generic_role
+         FROM pms.grade_ladder WHERE tenant_id=$1 ORDER BY sort_order`),
+    q(`SELECT grade, family, role_name FROM pms.grade_roles WHERE tenant_id=$1`),
+    q(`SELECT lower_designation, grade, family FROM pms.designation_grade WHERE tenant_id=$1`),
+    q(`SELECT lower_department, family FROM pms.department_family WHERE tenant_id=$1`),
+  ]);
+  return {
+    rungs,
+    roles: new Map(roles.map((r) => [`${r.grade}|${r.family}`, r.role_name])),
+    gradeOf: new Map(desigs.map((d) => [d.lower_designation, { grade: d.grade, family: d.family }])),
+    familyOf: new Map(depts.map((d) => [d.lower_department, d.family])),
+  };
+}
 
 async function suggestedTransitionRows(tenantId) {
   const grid = (await db.query(
@@ -598,7 +618,12 @@ async function suggestedTransitionRows(tenantId) {
        FROM core.employees
       WHERE tenant_id=$1 AND status='active' AND designation IS NOT NULL AND btrim(designation) <> ''
       GROUP BY 1,2`, [tenantId])).rows;
-  return suggestTransitions(grid).map((t) => [
+  // The published ladder if this tenant has one, the inferred one if
+  // not. A tenant whose grade tables were never seeded must still get a
+  // usable draft rather than a sheet of PLEASE CHECK.
+  const ladder = await gradeLadder(tenantId);
+  const suggest = ladder.rungs.length ? (g) => suggestFromGrades(g, ladder) : suggestTransitions;
+  return suggest(grid).map((t) => [
     t.department, t.from_role, t.from_level, t.to_role, t.to_level,
     t.expected_level_change, t.min_time_months, t.typical_time_months,
     (t.required_competencies || []).join('\n'), t.notes,

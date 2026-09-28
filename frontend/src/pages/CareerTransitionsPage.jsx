@@ -121,13 +121,17 @@ export default function CareerTransitionsPage() {
       <div className="card p-4 space-y-2 border-l-4 border-leaf-500">
         <p className="lbl">Start from a suggested matrix</p>
         <p className="text-[11.5px] text-navy-500">
-          Built from the <b>departments and designations on your employee master right now</b> — every row
-          names a department, and <b>every row is one rung</b>: the step directly above, never a jump of two
-          or more, so Expected Level Change is always 1. The senior form of each role where one exists, the
-          standard rung otherwise. Where a department has nobody on the rung above yet, the rung is named
-          from the company ladder and the Notes say so — pointing at a rung you have not filled is what a
-          career path is for. It is a <b>draft to edit</b>, not a decision: nothing is saved until you upload
-          it below and publish. Rows whose Notes start with <b>PLEASE CHECK</b> are the ones to look at first.
+          Every rung is read from your own <b>Grade and Level sheet</b>. The Level columns carry the grade
+          and band (<span className="font-mono">E3 · Band 6</span>), the To Role is the role that sheet names
+          at the <b>next grade</b> in the job family the department belongs to, and the times come from its
+          own experience bands. Every row names a department, and <b>every row is one grade up</b> — one
+          rung, never a jump — so Expected Level Change is always 1. Which designations sit on which grade
+          is built from the
+          <b> departments and designations on your employee master right now</b>. It is a <b>draft to
+          edit</b>, not a decision: nothing is saved until you upload it below and publish. Rows marked
+          <b> PLEASE CHECK</b> are designations that are <b>not on the grade sheet at all</b> — they have no
+          grade and no next rung, and the file will not upload until you fill them in here or add them to
+          the sheet.
         </p>
         {/* The live-derivation guarantee, on screen. Asked for on 25 Sep:
             "if we update employee list in PMS, then suggested matrix

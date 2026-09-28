@@ -122,9 +122,15 @@ test('the Career Pathing Matrix says what the suggested draft is built from', as
   // Point 2: and it no longer promises blank departments.
   assert.match(main, /every row\s*names a department/i);
   // 25 Sep, second report: "suggested matrix should only show 1 level
-  // of matrix not more than one level."
-  assert.match(main, /every row is one rung/i);
+  // of matrix not more than one level." Reworded on 28 Sep when the
+  // rungs became the client's own GRADES rather than an inferred
+  // ladder — same guarantee, and the page still has to say it.
+  assert.match(main, /every row is one grade up/i);
+  assert.match(main, /one rung, never a jump/i);
   assert.match(main, /Expected Level Change is always 1/i);
+  // 28 Sep: and that the grades are theirs, not ours.
+  assert.match(main, /Grade and Level sheet/i);
+  assert.match(main, /not on the grade sheet at all/i);
   assert.deepEqual(errors, []);
   await ctx.close();
 });

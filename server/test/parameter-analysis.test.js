@@ -277,10 +277,23 @@ test('opening it is audited, not only running it', { skip }, async () => {
     `SELECT count(*)::int AS n FROM pms.audit_log WHERE tenant_id=$1 AND action='PARAMETER_ANALYSIS_VIEWED'`, [tenantId])).rows[0].n;
   const token = await login('pa-hr@x.com');
   await api(`/agentic/parameter-analysis?employee_id=${empId}`, token);
+
+  // POLLED. audit() in the performance module is deliberately not
+  // awaited — the handler answers the caller and lets the row land
+  // behind it — so reading the count the instant the response arrives
+  // can beat the write and report "not audited" about something that
+  // audits perfectly well. It does, under a full-suite run; this file
+  // alone passes every time. Second test to hit it; whether the
+  // product should await its own audit writes is a real question and a
+  // bigger one than this file.
+  let after = before;
+  for (let i = 0; i < 50 && after === before; i++) {
+    after = (await db.query(
+      `SELECT count(*)::int AS n FROM pms.audit_log WHERE tenant_id=$1 AND action='PARAMETER_ANALYSIS_VIEWED'`, [tenantId])).rows[0].n;
+    if (after === before) await new Promise((r) => setTimeout(r, 50));
+  }
   const rows = await db.query(
     `SELECT actor_email, employee_id FROM pms.audit_log WHERE tenant_id=$1 AND action='PARAMETER_ANALYSIS_VIEWED' ORDER BY id DESC LIMIT 1`, [tenantId]);
-  const after = (await db.query(
-    `SELECT count(*)::int AS n FROM pms.audit_log WHERE tenant_id=$1 AND action='PARAMETER_ANALYSIS_VIEWED'`, [tenantId])).rows[0].n;
   assert.equal(after, before + 1, 'a confidential report nobody can trace being read is unanswerable later');
   assert.equal(rows.rows[0].actor_email, 'pa-hr@x.com');
   assert.equal(rows.rows[0].employee_id, empId);
