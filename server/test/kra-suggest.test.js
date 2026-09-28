@@ -188,7 +188,16 @@ test('an empty library no longer refuses — it drafts for the role instead', { 
                    WHERE id=$1`, [nakedId]);
   const r = await post('/agentic/kra-suggest', tok.naked);
   assert.equal(r.status, 503, 'it reaches the AI call rather than refusing early');
-  assert.match(r.body.error, /not configured|ANTHROPIC_API_KEY/i);
+  // Pinned on the machine-readable reason, not on the sentence. The
+  // sentence changed on 28 Sep when AI failures stopped quoting the
+  // provider at users, and an assertion on English would have to change
+  // with every rewording while proving nothing extra.
+  assert.equal(r.body.reason, 'not_configured');
+  // AND the wording is a guarantee in its own right now: which
+  // environment variable is unset is an operator's business, so it must
+  // not appear on a screen.
+  assert.ok(!/ANTHROPIC_API_KEY/.test(r.body.error),
+    `the env var name must not reach the user: ${r.body.error}`);
 });
 
 test('a DRAFTED KRA never carries a weight, whatever the model says', { skip }, async () => {
@@ -211,5 +220,7 @@ test('with candidates it proceeds as far as the AI call, and fails THERE', { ski
   // thing left to stop it is the missing key.
   const r = await post('/agentic/kra-suggest', tok.sales);
   assert.equal(r.status, 503);
-  assert.match(r.body.error, /not configured|ANTHROPIC_API_KEY/i);
+  assert.equal(r.body.reason, 'not_configured', 'the reason, not the wording — see the note above');
+  assert.ok(!/ANTHROPIC_API_KEY/.test(r.body.error),
+    `the env var name must not reach the user: ${r.body.error}`);
 });
