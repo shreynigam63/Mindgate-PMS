@@ -10,6 +10,8 @@ Two documents are published this way:
 | `docs/E2E-TESTING-GUIDE.md` | `docs/Agentic-PMS-E2E-Testing-Guide.pdf` |
 | `docs/CHANGE-LOG-SEP-2026.md` | `docs/Agentic-PMS-Change-Log-Sep-2026.pdf` |
 | `docs/PENDING-ITEMS-29Sep2026.md` | `docs/Agentic-PMS-Pending-Items-29Sep2026.pdf` |
+| `docs/MANUAL-EMPLOYEE.md` | `docs/Agentic-PMS-Employee-Manual.pdf` |
+| `docs/MANUAL-HR.md` | `docs/Agentic-PMS-HR-Manual.pdf` |
 
 ## Rendering
 
@@ -50,6 +52,32 @@ OUT=$PWD/docs/Agentic-PMS-Pending-Items-29Sep2026.pdf \
 FOOTER="Agentic PMS — Pending items, 29 September 2026" \
   node docs/tools/topdf.js
 ```
+
+```bash
+# The two user manuals
+python3 docs/tools/md2html.py \
+        docs/MANUAL-EMPLOYEE.md /tmp/man-emp.html \
+        "Agentic PMS — Employee Manual"
+
+IN=/tmp/man-emp.html \
+OUT=$PWD/docs/Agentic-PMS-Employee-Manual.pdf \
+FOOTER="Agentic PMS — Employee Manual · 29 September 2026" \
+  node docs/tools/topdf.js
+
+python3 docs/tools/md2html.py \
+        docs/MANUAL-HR.md /tmp/man-hr.html \
+        "Agentic PMS — HR Manual"
+
+IN=/tmp/man-hr.html \
+OUT=$PWD/docs/Agentic-PMS-HR-Manual.pdf \
+FOOTER="Agentic PMS — HR Manual · 29 September 2026" \
+  node docs/tools/topdf.js
+```
+
+**Keep every list item on ONE line.** `md2html.py` reads the markdown line by
+line, so a bullet wrapped across two lines loses its continuation: the second
+line falls out of the `<li>` and renders as a stray paragraph underneath the
+list. Both manuals were caught by this on their first render.
 
 `IN` and `OUT` must be **absolute** paths — Chromium loads the input as a
 `file://` URL.
