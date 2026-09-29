@@ -85,6 +85,16 @@ test('the panel shows coverage and says nothing is scored yet', async (t) => {
     // The most important sentence on the screen right now.
     assert.match(body, /Nothing is scored from them yet/,
       'HR must not think a rating already moves when they type here');
+    // AND THE OTHER HALF OF THE TRUTH, added when phase 2 shipped. The
+    // copy used to say the keywords "will be matched ... once the
+    // monthly rating engine is switched on", which stopped being true
+    // the moment the keyword pass went in: HR would not have realised
+    // their keywords were already placing hours. Matched now, scored
+    // never (yet), and the screen has to say both.
+    assert.match(body, /matched against, under Timesheet/,
+      'the matching is live today and the panel says where to see it');
+    assert.ok(!/will be matched against (when|once)/.test(body),
+      'the old future-tense promise is gone');
     assert.ok(body.includes('Value-add words'), 'the org-wide A+ list is here too');
     assert.deepEqual(errors, [], 'no page errors');
   } finally { await ctx.close(); }

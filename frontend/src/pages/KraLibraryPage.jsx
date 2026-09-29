@@ -481,8 +481,8 @@ function ShelfDetail({ designation, department, onChanged }) {
             <input className="inp !text-xs" value={draft.keywords || ''} onChange={set('keywords')}
               placeholder="Timesheet keywords — e.g. Development, Bug Fixing, Code Review" />
             <p className="text-[10px] text-navy-400">
-              Comma-separated. These are what Zoho task names will be matched against once the
-              monthly rating engine is switched on — nothing is scored from them yet.
+              Comma-separated. Zoho task names are matched against these <b>today</b>, under
+              Timesheet → KRA coverage — nothing is scored from them yet.
             </p>
             <div className="flex items-center gap-2">
               <button className="btn-pri !py-1 !text-xs" disabled={busy} onClick={() => save(r.id)}>
@@ -756,10 +756,14 @@ function AddKra({ departments, designations, onDone, onClose }) {
 // over hundreds of rows that cannot be inspected first is one typo away
 // from a day of cleanup — and "add" only looks safe.
 //
-// NOTHING IS SCORED FROM THESE YET, and the panel says so. Phase 2
-// matches them against Zoho task text; until then this is data entry,
-// and pretending otherwise would have HR believing a rating already
-// moves when they type here.
+// NOTHING IS SCORED FROM THESE YET, and the panel says so — but the
+// MATCHING is live, and the copy had to be corrected for that when
+// phase 2 shipped. It used to read "will be matched ... once the
+// monthly rating engine is switched on", which was true on 29 Sep and
+// false the moment the keyword pass went in: HR reading it would not
+// have realised their keywords were already placing hours on the KRA
+// coverage tab. Matched now, scored never (yet) — the two are
+// different and the screen has to keep them apart.
 function KeywordPanel() {
   const [sum, setSum] = useState(null);
   const [err, setErr] = useState(null);
@@ -807,9 +811,9 @@ function KeywordPanel() {
         </button>
       </div>
       <p className="text-[11px] text-navy-500">
-        What Zoho task names will be matched against when the monthly rating engine is switched on.
-        <b> Nothing is scored from them yet</b> — this is the data entry that has to happen first,
-        and coverage is the number to watch.
+        What Zoho task names are matched against, under Timesheet → KRA coverage.
+        <b> Nothing is scored from them yet</b> — a keyword places an item against a KRA, it does
+        not produce a rating, and coverage is the number to watch.
       </p>
       {err && <p className="text-xs text-rose-600">{err}</p>}
 
