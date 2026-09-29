@@ -9,6 +9,7 @@ Two documents are published this way:
 |---|---|
 | `docs/E2E-TESTING-GUIDE.md` | `docs/Agentic-PMS-E2E-Testing-Guide.pdf` |
 | `docs/CHANGE-LOG-SEP-2026.md` | `docs/Agentic-PMS-Change-Log-Sep-2026.pdf` |
+| `docs/PENDING-ITEMS-29Sep2026.md` | `docs/Agentic-PMS-Pending-Items-29Sep2026.pdf` |
 
 ## Rendering
 
@@ -38,8 +39,37 @@ FOOTER="Agentic PMS — Changes shipped 17–22 September 2026" \
   node docs/tools/topdf.js
 ```
 
+```bash
+# The pending-items list
+python3 docs/tools/md2html.py \
+        docs/PENDING-ITEMS-29Sep2026.md /tmp/pending.html \
+        "Agentic PMS — Pending Items"
+
+IN=/tmp/pending.html \
+OUT=$PWD/docs/Agentic-PMS-Pending-Items-29Sep2026.pdf \
+FOOTER="Agentic PMS — Pending items, 29 September 2026" \
+  node docs/tools/topdf.js
+```
+
 `IN` and `OUT` must be **absolute** paths — Chromium loads the input as a
 `file://` URL.
+
+**Finding playwright in this repo.** `topdf.js` searches the usual places
+and gives up if it cannot find one. There IS a copy under
+`frontend/node_modules`, so from a checked-out repo the two variables it
+needs are:
+
+```bash
+PW=$PWD/frontend/node_modules/playwright-core \
+CHROME=/opt/pw-browsers/chromium-1194/chrome-linux/chrome \
+  node docs/tools/topdf.js
+```
+
+**Checking the result.** `pdftotext` is not installed here, and parsing
+the PDF's own streams does NOT work — Chromium subsets its fonts, so the
+glyph codes are not ASCII and a grep for your own headings comes back
+empty on a perfectly good file. Do not read that as a broken render.
+Open the PDF in Chromium and screenshot it instead.
 
 ## What you need
 
