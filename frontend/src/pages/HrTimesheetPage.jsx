@@ -20,8 +20,226 @@ import { TimesheetRoster } from './TeamTimesheetPage';
 import SearchBox from '../SearchBox';
 import {
   Users, CheckCircle2, AlertTriangle, XCircle, Clock, ChevronLeft, SlidersHorizontal, Save,
-  Link2Off, Target, ClipboardList,
+  Link2Off, Target, ClipboardList, Lock, FileSearch,
 } from 'lucide-react';
+
+// ---- closing a period, and the year-end rollup (phase 4) --------------
+//
+// PREVIEW FIRST, ALWAYS. Closing writes the numbers that reach
+// calibration, and it is the one action in this feature that would be
+// genuinely awkward to undo. The server defaults dry_run to true; this
+// screen makes that visible by refusing to offer Close until a preview
+// has been run, and dropping the preview the moment the period changes.
+//
+// The same safety rail as the KRA keyword bulk editor, for the same
+// reason.
+function ClosePeriod({ windows, onClosed }) {
+  const [win, setWin] = useState('');
+  const [prev, setPrev] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [done, setDone] = useState(null);
+
+  const chosen = (windows || []).find((w) => w.from === win) || null;
+  const pick = (v) => { setWin(v); setPrev(null); setErr(null); setDone(null); };
+
+  const run = async (dry) => {
+    if (!chosen) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await api('/pms/timesheet/kra/close', {
+        method: 'POST',
+        body: JSON.stringify({ from: chosen.from, to: chosen.to, dry_run: dry }),
+      });
+      if (dry) { setPrev(r); setDone(null); }
+      else { setPrev(null); setDone(r); onClosed(); }
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="card p-4 space-y-2">
+      <p className="lbl"><Lock size={12} className="inline mr-1" />Close a period</p>
+      <p className="text-[11px] text-navy-500">
+        Closing settles everybody who logged time in that period: the numbers are snapshotted with
+        the configuration that produced them and <b>stop moving</b>, which is what makes them safe
+        to carry into calibration. A period that is not over yet cannot be closed.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <select className="inp !text-xs !w-auto" value={win} onChange={(e) => pick(e.target.value)}>
+          <option value="">— pick a period —</option>
+          {(windows || []).map((w) => (
+            <option key={w.from} value={w.from}>{w.from} – {w.to} · {w.hours}h</option>
+          ))}
+        </select>
+        <button className="btn-sec !py-1 !text-xs" disabled={!chosen || busy} onClick={() => run(true)}>
+          <FileSearch size={12} className="inline mr-1" />Preview
+        </button>
+        {/* Dead until a preview has run, and it says which. */}
+        {prev ? (
+          <button className="btn-pri !py-1 !text-xs" disabled={busy} onClick={() => run(false)}>
+            {/* N PEOPLE, ONE PERIOD. The first version read "Close 3
+                months", which describes something this button has never
+                done — a close settles one period for everybody who
+                logged time in it. */}
+            <Lock size={12} className="inline mr-1" />
+            Close for {prev.would_close} {prev.would_close === 1 ? 'person' : 'people'}
+          </button>
+        ) : (
+          <button className="btn-pri !py-1 !text-xs" disabled title="Run a preview first">Preview first</button>
+        )}
+      </div>
+
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      {done && (
+        <p className="text-[11.5px] text-teal-700">
+          Settled {done.closed} {done.closed === 1 ? 'person' : 'people'} for {done.window.from} – {done.window.to}.
+          {!!(done.skipped || []).length && <> {done.skipped.length} skipped.</>}
+        </p>
+      )}
+
+      {prev && (
+        <div className="rounded-lg border border-navy-100 p-3 space-y-2">
+          <p className="text-[11.5px] font-semibold text-navy-900">
+            {prev.would_close} {prev.would_close === 1 ? 'person' : 'people'} would be settled for{' '}
+            {chosen && `${chosen.from} – ${chosen.to}`} · nothing saved yet
+            {!!(prev.skipped || []).length && (
+              <span className="font-normal text-navy-500"> · {prev.skipped.length} already closed</span>
+            )}
+          </p>
+          {!prev.would_close && (
+            <p className="text-[11px] text-navy-400">
+              Nobody logged time in that period, or every one of them is already closed.
+            </p>
+          )}
+          {!!prev.would_close && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="text-left text-navy-400 uppercase text-[10px] border-b border-navy-100">
+                    <th className="px-2 py-1">Employee</th>
+                    <th className="px-2 py-1 text-right">Hours</th>
+                    <th className="px-2 py-1 text-right">Placed</th>
+                    <th className="px-2 py-1 text-right">Coverage</th>
+                    <th className="px-2 py-1 text-right">Compliance</th>
+                    <th className="px-2 py-1 text-right">Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {prev.rows.map((r) => (
+                    <tr key={r.employee.id} className="border-b border-navy-50">
+                      <td className="px-2 py-1">{r.employee.name}
+                        <span className="block text-[10px] text-navy-400">{r.employee.department || '—'}</span></td>
+                      <td className="px-2 py-1 text-right">{r.hours}</td>
+                      <td className={`px-2 py-1 text-right ${r.mapped_pct < 50 ? 'text-rose-600' : ''}`}>{r.mapped_pct}%</td>
+                      <td className="px-2 py-1 text-right">{r.coverage_pct == null ? '—' : `${r.coverage_pct}%`}</td>
+                      <td className="px-2 py-1 text-right">{r.compliance_pct == null ? '—' : `${r.compliance_pct}%`}</td>
+                      <td className="px-2 py-1 text-right">
+                        {r.score == null
+                          ? <span className="text-navy-300">no score · {r.withheld} reason{r.withheld === 1 ? '' : 's'}</span>
+                          : <b>{r.grade || r.score}</b>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The year-end view, from the settled months. Read-only: the numbers
+// come from snapshots and the only way to change one is to override the
+// month it came from, which is done on that person's own page.
+function Rollup({ reloadKey }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [q, setQ] = useState('');
+  useEffect(() => { setD(null); api('/pms/timesheet/kra/rollup').then(setD).catch((e) => setErr(e.message)); }, [reloadKey]);
+  if (err) return <p className="text-sm text-rose-600">{err}</p>;
+  if (!d) return null;
+  const people = (d.people || []).filter((p) => {
+    if (!q.trim()) return true;
+    const x = q.trim().toLowerCase();
+    return [p.employee.name, p.employee.emp_code, p.employee.department]
+      .filter(Boolean).some((v) => String(v).toLowerCase().includes(x));
+  });
+  if (!(d.people || []).length) {
+    return (
+      <div className="card p-4">
+        <p className="lbl mb-1">Year-end rollup</p>
+        <p className="text-[11.5px] text-navy-400">
+          Nothing is settled for this cycle yet. Close a period above and it appears here.
+        </p>
+      </div>
+    );
+  }
+  const t = d.totals || {};
+  return (
+    <div className="card p-4 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="lbl">Year-end rollup · {d.cycle && d.cycle.name}</p>
+        <SearchBox value={q} onChange={setQ} placeholder="Search a person"
+          shown={people.length} total={d.people.length} />
+      </div>
+      <p className="text-[11px] text-navy-500">
+        {t.periods_closed} of {d.periods_in_cycle} periods closed · {t.hours}h settled ·{' '}
+        <b>{t.readable}</b> of {t.people} thick enough to read
+        {!!t.overrides && <> · {t.overrides} month{t.overrides === 1 ? '' : 's'} overridden</>}.
+        Percentages are weighted by the hours behind them, not averaged across months.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-navy-400 uppercase text-[10px] border-b border-navy-100">
+              <th className="px-2 py-1.5">Employee</th>
+              <th className="px-2 py-1.5">Department</th>
+              <th className="px-2 py-1.5 text-right">Months</th>
+              <th className="px-2 py-1.5 text-right">Hours</th>
+              <th className="px-2 py-1.5 text-right">Placed</th>
+              <th className="px-2 py-1.5 text-right">Coverage</th>
+              <th className="px-2 py-1.5">Reads as</th>
+            </tr>
+          </thead>
+          <tbody>
+            {people.map((p) => (
+              <tr key={p.employee.id} className="border-b border-navy-50">
+                <td className="px-2 py-1.5 font-semibold">{p.employee.name}</td>
+                <td className="px-2 py-1.5 text-navy-500">{p.employee.department || '—'}</td>
+                <td className="px-2 py-1.5 text-right">
+                  {p.rollup.months}
+                  <span className="text-[10px] text-navy-400"> / {p.rollup.periods_in_cycle}</span>
+                </td>
+                <td className="px-2 py-1.5 text-right">{p.rollup.hours}</td>
+                <td className={`px-2 py-1.5 text-right ${p.rollup.mapped_pct != null && p.rollup.mapped_pct < 50 ? 'text-rose-600' : ''}`}>
+                  {p.rollup.mapped_pct == null ? '—' : `${p.rollup.mapped_pct}%`}
+                </td>
+                <td className="px-2 py-1.5 text-right">
+                  {p.rollup.weighted_coverage_pct == null ? '—' : `${p.rollup.weighted_coverage_pct}%`}
+                </td>
+                <td className="px-2 py-1.5 text-[10.5px] text-navy-600">
+                  {p.rollup.label}
+                  {!!p.rollup.overrides && (
+                    <span className="block text-[10px] text-amber-700">
+                      {p.rollup.overrides} overridden
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-navy-400">
+        This is context for a calibration conversation. It does not feed the proposed rating, the
+        distribution or the increment kitty.
+      </p>
+    </div>
+  );
+}
 
 // The mapping backlog.
 //
@@ -33,6 +251,9 @@ import {
 // needs a mapping session".
 function Backlog({ onOpen }) {
   const [b, setB] = useState(null);
+  // Bumped when a period is closed, so the backlog and the rollup both
+  // re-read rather than showing what was true a moment ago.
+  const [closedAt, setClosedAt] = useState(0);
   const [err, setErr] = useState(null);
   const [q, setQ] = useState('');
   // Same period control as the per-person view, for the same reason: a
@@ -43,7 +264,7 @@ function Backlog({ onOpen }) {
     setB(null);
     api(`/pms/timesheet/kra/backlog${win ? `?from=${win.from}&to=${win.to}` : ''}`)
       .then(setB).catch((e) => setErr(e.message));
-  }, [win && win.from]);
+  }, [win && win.from, closedAt]);
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
   if (!b) return <p className="text-sm text-navy-400">Loading…</p>;
   const t = b.totals;
@@ -68,6 +289,8 @@ function Backlog({ onOpen }) {
     return (
       <div className="space-y-3">
         <Period />
+        <ClosePeriod windows={b.windows} onClosed={() => setClosedAt((n) => n + 1)} />
+        <Rollup reloadKey={closedAt} />
         <div className="card p-8 text-center text-sm text-navy-400">
           Nobody logged time in {b.window.from} – {b.window.to}
           {(b.windows || []).length ? '. Pick a period above that has logs.' : ', so there is nothing to map yet.'}
@@ -84,6 +307,8 @@ function Backlog({ onOpen }) {
   return (
     <div className="space-y-4">
       <Period />
+      <ClosePeriod windows={b.windows} onClosed={() => setClosedAt((n) => n + 1)} />
+      <Rollup reloadKey={closedAt} />
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat icon={Target} hue="violet" n={`${t.mapped_pct}%`} label="Hours placed"
           sub={`${t.mapped_hours} of ${t.hours} logged`} />

@@ -21,7 +21,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from './utils/api';
 import {
-  Link2, Link2Off, HelpCircle, Ban, Target, AlertTriangle, Save, Info, Sparkles,
+  Link2, Link2Off, HelpCircle, Ban, Target, AlertTriangle, Save, Info, Sparkles, X,
 } from 'lucide-react';
 
 // One vocabulary for how an item came to be placed, used by the chip,
@@ -66,6 +66,189 @@ function ShareBar({ share, target }) {
       <div className="h-1.5 rounded bg-navy-50 overflow-hidden">
         <div className="h-full bg-navy-300" style={{ width: w(target) }} />
       </div>
+    </div>
+  );
+}
+
+// ---- the settled months (phase 4) --------------------------------------
+//
+// A month that has been CLOSED keeps the numbers it was closed with,
+// even when a KRA is reweighted or an item remapped afterwards. That is
+// the whole reason the snapshot exists, so this panel shows the closed
+// figures and says plainly that they no longer move.
+//
+// THE OVERRIDE IS THE MANAGER'S, NOT THE EMPLOYEE'S, and it is on the
+// MONTH rather than on the year-end number: a sprint run outside Zoho,
+// a secondment, a month mostly on leave. Correcting the rollup directly
+// would leave no record of WHICH month was disputed.
+function ClosedMonths({ employeeId, canMap, reloadKey }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [open, setOpen] = useState(null);       // month id being overridden
+  const [f, setF] = useState({ score: '', grade: '', reason: '' });
+  const [busy, setBusy] = useState(false);
+  const [saveErr, setSaveErr] = useState(null);
+
+  const path = employeeId ? `/pms/timesheet/kra/months/${employeeId}` : '/pms/timesheet/kra/months/me';
+  const load = () => api(path).then(setD).catch((e) => setErr(e.message));
+  useEffect(() => { setD(null); load(); }, [employeeId, reloadKey]);
+
+  if (err) return <p className="text-sm text-rose-600">{err}</p>;
+  if (!d) return null;
+  const months = d.months || [];
+  if (!months.length) {
+    return (
+      <div className="card p-4">
+        <p className="lbl mb-1">Closed months</p>
+        <p className="text-[11.5px] text-navy-400">
+          No month has been settled for this cycle yet. HR closes a period once it is over, from
+          the HR Timesheet tab; until then every figure above is live and moves whenever a KRA or
+          a mapping changes.
+        </p>
+      </div>
+    );
+  }
+  const r = d.rollup || {};
+
+  const start = (m) => {
+    setSaveErr(null);
+    setOpen(m.id);
+    setF({
+      score: m.override_score == null ? '' : m.override_score,
+      grade: m.override_grade || '',
+      reason: m.override_reason || '',
+    });
+  };
+  const save = async (clear) => {
+    setBusy(true); setSaveErr(null);
+    try {
+      await api(`/pms/timesheet/kra/month/${open}/override`,
+        { method: 'PUT', body: JSON.stringify(clear ? { clear: true } : f) });
+      setOpen(null); load();
+    } catch (e) { setSaveErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="lbl">Closed months</p>
+        <span className="text-[10.5px] text-navy-400">
+          {r.months} of {r.periods_in_cycle || '?'} periods · {r.hours}h
+          {r.mapped_pct != null && <> · {r.mapped_pct}% placed across the cycle</>}
+        </span>
+      </div>
+      {/* The sentence that stops somebody reading a stale figure as a
+          bug. A closed month is meant to disagree with the live view
+          once its inputs change. */}
+      <p className="text-[11px] text-navy-500">
+        These are settled. They keep the numbers they were closed with even if a KRA is reweighted
+        or an item remapped afterwards — which is what makes them safe to carry into calibration.
+      </p>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-navy-400 uppercase text-[10px] border-b border-navy-100">
+              <th className="px-2 py-1.5">Period</th>
+              <th className="px-2 py-1.5 text-right">Hours</th>
+              <th className="px-2 py-1.5 text-right">Placed</th>
+              <th className="px-2 py-1.5 text-right">Coverage</th>
+              <th className="px-2 py-1.5 text-right">Compliance</th>
+              <th className="px-2 py-1.5 text-right">Result</th>
+              {canMap && <th className="px-2 py-1.5"></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {months.map((m) => {
+              const overridden = m.override_score != null || m.override_grade != null;
+              return (
+                <tr key={m.id} className={`border-b border-navy-50 ${overridden ? 'bg-amber-50/40' : ''}`}>
+                  <td className="px-2 py-1.5">
+                    <span className="font-semibold text-navy-900">{m.period_start}</span>
+                    <span className="block text-[10px] text-navy-400">to {m.period_end}</span>
+                  </td>
+                  <td className="px-2 py-1.5 text-right">{Number(m.hours_logged)}</td>
+                  <td className="px-2 py-1.5 text-right">{m.mapped_pct == null ? '—' : `${Number(m.mapped_pct)}%`}</td>
+                  <td className="px-2 py-1.5 text-right">{m.weighted_coverage_pct == null ? '—' : `${Number(m.weighted_coverage_pct)}%`}</td>
+                  <td className="px-2 py-1.5 text-right">{m.compliance_pct == null ? '—' : `${Number(m.compliance_pct)}%`}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {overridden ? (
+                      <span className="chip bg-amber-100 text-amber-700 !text-[10px]">
+                        {m.override_grade || `${Number(m.override_score)}`} · overridden
+                      </span>
+                    ) : m.score != null ? (
+                      <span className="font-semibold">{m.grade || Number(m.score)}</span>
+                    ) : (
+                      // Today this is every month: auto_score ships off.
+                      <span className="text-[10px] text-navy-300">no score</span>
+                    )}
+                  </td>
+                  {canMap && (
+                    <td className="px-2 py-1.5 text-right">
+                      <button className="text-[11px] text-lagoon-700 hover:text-lagoon-900"
+                        onClick={() => start(m)}>{overridden ? 'Change' : 'Override'}</button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Why an overridden month was overridden, under the table rather
+          than behind a hover — it is the answer to "why did my rating
+          change" once this reaches calibration. */}
+      {months.filter((m) => m.override_reason).map((m) => (
+        <p key={m.id} className="text-[11px] text-amber-800">
+          <b>{m.period_start}</b> — {m.override_reason}
+          {m.overridden_by && <span className="text-navy-400"> · {m.overridden_by}</span>}
+        </p>
+      ))}
+
+      {canMap && open && (
+        <div className="rounded-lg border border-lagoon-300 bg-lagoon-50/40 p-3 space-y-2">
+          <p className="text-[11.5px] font-semibold text-navy-900">
+            Override {(months.find((m) => m.id === open) || {}).period_start}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-[11px] text-navy-500">Score
+              <input className="inp !py-1 !px-2 w-20 ml-1 !text-xs" type="number" min="0" max="100" step="0.1"
+                value={f.score} onChange={(e) => setF({ ...f, score: e.target.value })} />
+            </label>
+            <label className="text-[11px] text-navy-500">Grade
+              <input className="inp !py-1 !px-2 w-20 ml-1 !text-xs" value={f.grade}
+                onChange={(e) => setF({ ...f, grade: e.target.value })} placeholder="A" />
+            </label>
+          </div>
+          {/* Required by the server too. Asking here as well means the
+              manager is not told off by a 422 after typing everything
+              else. */}
+          <input className="inp !text-xs" value={f.reason}
+            placeholder="Why is this month being overridden? (required)"
+            onChange={(e) => setF({ ...f, reason: e.target.value })} />
+          <p className="text-[10.5px] text-navy-400">
+            This is the permanent answer to &ldquo;why did my rating change&rdquo;. It is audited, and it
+            travels with the month into the year-end rollup.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn-pri !py-1 !text-xs" disabled={busy} onClick={() => save(false)}>
+              <Save size={12} className="inline mr-1" />Save override
+            </button>
+            <button className="btn-sec !py-1 !text-xs" disabled={busy} onClick={() => { setOpen(null); setSaveErr(null); }}>
+              <X size={12} className="inline mr-1" />Cancel
+            </button>
+            {/* Clearing needs no reason of its own: the audit already
+                carries the one being removed. */}
+            {(months.find((m) => m.id === open) || {}).override_reason && (
+              <button className="text-[11px] text-rose-600 hover:text-rose-800 ml-auto"
+                disabled={busy} onClick={() => save(true)}>Remove the override</button>
+            )}
+          </div>
+          {saveErr && <p className="text-xs text-rose-600">{saveErr}</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -399,6 +582,9 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
         )}
         {saveErr && <p className="text-xs text-rose-600">{saveErr}</p>}
       </div>
+
+      {/* The settled months, and the manager's override. */}
+      <ClosedMonths employeeId={employeeId} canMap={canMap} reloadKey={d.window.from} />
 
       {/* The value-add scan, with its evidence. Self-declared and
           gameable, so the defence is to show the text that triggered it

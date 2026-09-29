@@ -283,3 +283,148 @@ test('the Compliance tab still works and is the default', { skip: false }, async
     assert.deepEqual(errors, [], 'no page errors');
   } finally { await ctx.close(); }
 });
+
+// ---- the phase 4 operator screens ---------------------------------------
+//
+// These three shipped a release after the engine behind them, so until
+// now HR could not close a month and a manager could not override one
+// without an API call. The tests below are about the two safety rails
+// that carry over from the rest of this feature: preview before a write
+// that is hard to undo, and a reason before a number that reaches
+// calibration.
+
+const closeAll = async (from, to) => {
+  const t = await token('admin@shot.in');
+  await fetch(`${API}/api/v1/pms/timesheet/kra/close`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+    body: JSON.stringify({ from, to, dry_run: false }) });
+};
+
+test('CLOSING IS DEAD UNTIL A PREVIEW HAS RUN', { skip: false }, async (t) => {
+  if (needStack(t)) return;
+  // Closing writes the numbers that reach calibration. It is the one
+  // action in this feature that would be genuinely awkward to undo, so
+  // it gets the same rail as the KRA keyword bulk edit.
+  const { ctx, page, errors } = await open('admin@shot.in', '/admin/timesheet');
+  try {
+    await toKra(page);
+    const body = await text(page);
+    assert.match(body, /Close a period/);
+    assert.match(body, /A period that is not over yet cannot be closed/);
+
+    const blocked = page.getByRole('button', { name: /Preview first/ });
+    assert.equal(await blocked.count(), 1, 'the button says what it wants');
+    assert.equal(await blocked.isDisabled(), true, 'and is genuinely disabled');
+
+    await page.locator('select').filter({ hasText: 'pick a period' }).first().selectOption({ index: 1 });
+    await page.waitForTimeout(400);
+    assert.equal(await page.getByRole('button', { name: /Preview first/ }).count(), 1,
+      'picking a period is not enough on its own');
+
+    await page.getByRole('button', { name: /^Preview$/ }).click();
+    await page.waitForTimeout(2500);
+    assert.match(await text(page), /would be settled for .* nothing saved yet/,
+      'the preview says what would happen and that nothing has');
+    assert.equal(await page.getByRole('button', { name: /Close for \d+ (person|people)/ }).count(), 1,
+      'and only now is Close live');
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally { await ctx.close(); }
+});
+
+test('the close button counts PEOPLE, not months', { skip: false }, async (t) => {
+  if (needStack(t)) return;
+  // It read "Close 3 months", which describes something this button has
+  // never done: a close settles ONE period for everybody who logged
+  // time in it.
+  const { ctx, page, errors } = await open('admin@shot.in', '/admin/timesheet');
+  try {
+    await toKra(page);
+    await page.locator('select').filter({ hasText: 'pick a period' }).first().selectOption({ index: 1 });
+    await page.getByRole('button', { name: /^Preview$/ }).click();
+    await page.waitForTimeout(2500);
+    const label = await page.getByRole('button', { name: /Close for/ }).textContent();
+    assert.match(label, /Close for \d+ (person|people)/, `reads: ${label.trim()}`);
+    assert.ok(!/month/i.test(label), 'never "months"');
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally { await ctx.close(); }
+});
+
+test('AN EMPLOYEE SEES THEIR CLOSED MONTHS AND CANNOT OVERRIDE ONE', { skip: false }, async (t) => {
+  if (needStack(t)) return;
+  await closeAll('2026-08-21', '2026-09-20');
+  const { ctx, page, errors } = await open('emp@shot.in', '/my/timesheet');
+  try {
+    await toKra(page);
+    const body = await text(page);
+    assert.match(body, /Closed months/);
+    assert.match(body, /They keep the numbers they were closed with/,
+      'and it says why a settled figure may disagree with the live one');
+    assert.equal(await page.getByRole('button', { name: /^Override$/ }).count(), 0,
+      'no override control for the person being measured');
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally { await ctx.close(); }
+});
+
+test('OVERRIDING ASKS FOR THE REASON ON THE SCREEN, not in a 422', { skip: false }, async (t) => {
+  if (needStack(t)) return;
+  await closeAll('2026-08-21', '2026-09-20');
+  const { ctx, page, errors } = await open('mgr@shot.in', '/team/timesheet');
+  try {
+    await openPerson(page, 'Arun Employee');
+    await toKra(page);
+    assert.match(await text(page), /Closed months/);
+    await page.getByRole('button', { name: /^Override$/ }).first().click();
+    await page.waitForTimeout(700);
+    assert.equal(await page.getByPlaceholder(/Why is this month being overridden/).count(), 1);
+    assert.match(await text(page), /permanent answer to/,
+      'and it says what the reason is for');
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally { await ctx.close(); }
+});
+
+test('a manager overrides a month and the reason is shown afterwards', { skip: false }, async (t) => {
+  if (needStack(t)) return;
+  await closeAll('2026-08-21', '2026-09-20');
+  const { ctx, page, errors } = await open('mgr@shot.in', '/team/timesheet');
+  try {
+    await openPerson(page, 'Arun Employee');
+    await toKra(page);
+    await page.getByRole('button', { name: /^Override$/ }).first().click();
+    await page.waitForTimeout(700);
+    await page.locator('input[type="number"]').last().fill('78');
+    await page.getByPlaceholder(/Why is this month being overridden/)
+      .fill('Two sprints ran in the client own Jira that month');
+    await page.getByRole('button', { name: /Save override/ }).click();
+    await page.waitForTimeout(2600);
+
+    const body = await text(page);
+    assert.match(body, /overridden/, 'the month is marked');
+    assert.match(body, /Two sprints ran in the client own Jira/,
+      'and the reason is printed under the table, not hidden behind a hover');
+
+    // And it is gone again when removed, so the test leaves no residue.
+    await page.getByRole('button', { name: /^Change$/ }).first().click();
+    await page.waitForTimeout(700);
+    await page.getByRole('button', { name: /Remove the override/ }).click();
+    await page.waitForTimeout(2400);
+    assert.ok(!/Two sprints ran in the client own Jira/.test(await text(page)));
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally { await ctx.close(); }
+});
+
+test('the HR rollup appears once something is settled', { skip: false }, async (t) => {
+  if (needStack(t)) return;
+  await closeAll('2026-08-21', '2026-09-20');
+  const { ctx, page, errors } = await open('admin@shot.in', '/admin/timesheet');
+  try {
+    await toKra(page);
+    const body = await text(page);
+    assert.match(body, /Year-end rollup/);
+    assert.match(body, /periods closed/);
+    assert.match(body, /weighted by the hours behind them, not averaged across months/,
+      'the weighting rule is stated, because it is the one that surprises people');
+    assert.match(body, /does not feed the proposed rating/,
+      'and so is the fact that none of this moves a rating');
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally { await ctx.close(); }
+});
