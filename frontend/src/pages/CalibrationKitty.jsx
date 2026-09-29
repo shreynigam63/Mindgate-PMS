@@ -38,6 +38,55 @@ function short(n) {
   return money(v);
 }
 
+// A collapsible section. Asked for on 29 Sep: "can we have dropdown for
+// kitty, calibration and increment allocation" — the page had grown to
+// three full-width blocks stacked down a single scroll.
+//
+// THE STATE STICKS, per section, in localStorage. A panel that springs
+// back open on every reload is worse than no panel at all: HR collapses
+// the grid to work on the kitty, saves an allocation, the page reloads
+// and they are back where they started.
+//
+// THE HEADER KEEPS THE HEADLINE FIGURE. Collapsing a section must not
+// hide the number somebody collapsed it to get past — the summary prop
+// stays visible either way, so a closed kitty still says what is left.
+export function Section({ id, title, summary, actions, children, defaultOpen = true }) {
+  const key = `apms.cal.section.${id}`;
+  const [open, setOpen] = useState(() => {
+    // Wrapped, because localStorage throws in a private window and a
+    // crash here would take the whole page with it.
+    try {
+      const v = localStorage.getItem(key);
+      return v == null ? defaultOpen : v === '1';
+    } catch { return defaultOpen; }
+  });
+  const toggle = () => {
+    setOpen((x) => {
+      try { localStorage.setItem(key, x ? '0' : '1'); } catch { /* not worth failing over */ }
+      return !x;
+    });
+  };
+  return (
+    <div className="card">
+      <div className="px-4 py-3 flex flex-wrap items-center gap-2">
+        {/* The whole title is the control, not just the chevron: a
+            6px target is a miss on a laptop trackpad. */}
+        <button type="button" onClick={toggle} aria-expanded={open}
+          className="flex items-center gap-1.5 text-left flex-1 min-w-0">
+          {open ? <ChevronDown size={14} className="text-navy-400 shrink-0" />
+                : <ChevronRight size={14} className="text-navy-400 shrink-0" />}
+          <span className="lbl !mb-0">{title}</span>
+          {summary && <span className="text-[11px] text-navy-400 font-normal truncate">· {summary}</span>}
+        </button>
+        {/* Buttons in the header must not toggle the section they sit
+            in — pressing Export should export, not fold the grid away. */}
+        {actions && <span onClick={(e) => e.stopPropagation()}>{actions}</span>}
+      </div>
+      {open && <div className="px-4 pb-4">{children}</div>}
+    </div>
+  );
+}
+
 export const BRACKETS = [
   { v: 'all', label: 'All employees' },
   { v: 'above', label: 'Above the bracket' },
@@ -100,14 +149,19 @@ export function KittyPanel({ view, onSaved, onError }) {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  // What the header says when the section is folded away: the two
+  // numbers somebody would otherwise open it to read.
+  const summary = `${short(view.pools.kitty.approved)} kitty · ${short(view.pools.kitty.remaining)} left`
+    + (view.warnings.length ? ` · ${view.warnings.length} to check` : '');
+
   return (
-    <div className="card p-4 space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="lbl flex-1">Kitty &amp; budget</p>
+    <Section id="kitty" title="Kitty & budget" summary={summary}
+      actions={(
         <button className="btn-sec !py-1" onClick={() => setEditing((x) => !x)}>
           {editing ? 'Cancel' : 'Set the kitty'}
         </button>
-      </div>
+      )}>
+      <div className="space-y-3">
 
       {editing && (
         <div className="bg-navy-50 rounded-lg p-3 space-y-2">
@@ -224,7 +278,8 @@ export function KittyPanel({ view, onSaved, onError }) {
         Nothing here changes anybody&rsquo;s pay. These are modelled figures against the ratings and
         salaries on record — the system has no route that turns one into a stored salary.
       </p>
-    </div>
+      </div>
+    </Section>
   );
 }
 

@@ -5,7 +5,7 @@ import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
 import Grade from '../grade';
 import SearchBox, { matches } from '../SearchBox';
-import { KittyPanel, BracketFilter, AllocationRow, short } from './CalibrationKitty';
+import { KittyPanel, BracketFilter, AllocationRow, Section, short } from './CalibrationKitty';
 
 const NINE_BOX = ['low-low', 'low-mid', 'low-high', 'mid-low', 'mid-mid', 'mid-high', 'high-low', 'high-mid', 'high-high'];
 
@@ -125,7 +125,12 @@ export default function CalibrationPage() {
       )}
       <SearchBox value={q} onChange={setQ} placeholder="Search by employee, department or adjustment reason…"
         shown={rowsShown.length} total={(data && data.rows ? data.rows : []).length} />
-      <div className="card overflow-x-auto">
+      {/* Collapsible since 29 Sep, like the two money sections: three
+          full-width blocks down one scroll was more page than anybody
+          needed at once. */}
+      <Section id="ratings" title="Ratings & adjustments"
+        summary={`${rowsShown.length} ${rowsShown.length === 1 ? 'person' : 'people'}`}>
+      <div className="overflow-x-auto">
         {/* table-fixed + explicit widths on the header row: with auto
             layout, the browser infers each column's width from ALL rows
             (including the wide colSpan=7 adjustment-reason row below),
@@ -151,6 +156,7 @@ export default function CalibrationPage() {
         </table>
       </div>
       <p className="text-[11px] text-navy-400">Every adjustment requires a reason — it is the permanent answer to "why did my rating change".</p>
+      </Section>
 
       {/* ---- the allocation grid (29 Sep) ----------------------------
           Below the rating table rather than merged into it: the rating
@@ -158,13 +164,14 @@ export default function CalibrationPage() {
           and a single table carrying both would be twenty columns wide
           before anybody could read either. */}
       {kitty && !noComp && (
-        <div className="card overflow-x-auto">
-          <div className="p-3 flex flex-wrap items-center gap-2">
-            <p className="lbl flex-1">Increment allocation</p>
+        <Section id="allocation" title="Increment allocation"
+          summary={`${kitty.lines.length} ${kitty.lines.length === 1 ? 'person' : 'people'} · ${short(kitty.total_spend)} allocated`}
+          actions={(
             <a className="btn-sec !py-1" href={`/api/v1/pms/calibration/export?bracket=${bracket}&token=${encodeURIComponent(localStorage.getItem('apms_token') || '')}`}>
               <Download size={12} className="inline mr-1" />Export to Excel
             </a>
-          </div>
+          )}>
+          <div className="overflow-x-auto">
           {kitty.counts.ctc_missing > 0 && kitty.counts.ctc_missing === kitty.counts.employees && (
             // The state the client instance is actually in today: 1,427
             // people and no salary on record for any of them. An empty
@@ -201,12 +208,13 @@ export default function CalibrationPage() {
                 ))}
             </tbody>
           </table>
-          <p className="p-3 text-[11px] text-navy-400">
+          </div>
+          <p className="pt-3 text-[11px] text-navy-400">
             Open a row to set a market correction, a promotion or a retention offer — each needs its
             reason, the same way a rating adjustment does. <b>*</b> marks a standard hike overridden
             from the band.
           </p>
-        </div>
+        </Section>
       )}
     </div>
   );

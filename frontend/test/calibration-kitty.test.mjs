@@ -242,3 +242,81 @@ test('the page still works for somebody without the compensation permission', as
     assert.deepEqual(errors, [], 'no page errors');
   } finally { await ctx.close(); }
 });
+
+test('the three sections collapse, and remember it across a reload', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 29 Sep: "can we have dropdown for kitty, calibration
+  // and increment allocation". Three full-width blocks down one scroll
+  // was more page than anybody needed at once.
+  await setKitty({ kitty_pct: 8, bracket_threshold: 5000000,
+    retention_pool: 500000, market_pool: 300000, promotion_pool: 400000 });
+  const { ctx, page, errors } = await open();
+  try {
+    // All three open to begin with: a page that hid its own contents on
+    // first visit would look broken rather than tidy.
+    let body = await text(page);
+    for (const inside of ['Total salary pool', 'Adjust Rating', 'Revised CTC']) {
+      assert.ok(body.includes(inside), `"${inside}" is visible before collapsing`);
+    }
+
+    const header = (name) => page.getByRole('button', { name: new RegExp(name) }).first();
+
+    await header('Kitty & budget').click();
+    await page.waitForTimeout(400);
+    body = await text(page);
+    assert.ok(!body.includes('Total salary pool'), 'the kitty folded away');
+    assert.ok(body.includes('Kitty & budget'), 'but its header stays');
+    // The headline figure survives the fold — it is the number somebody
+    // collapsed the section to get past.
+    assert.match(body, /kitty · .* left/, 'and the header still says what is left');
+    assert.ok(body.includes('Revised CTC'), 'the other sections are untouched');
+
+    await header('Ratings & adjustments').click();
+    await page.waitForTimeout(400);
+    body = await text(page);
+    assert.ok(!body.includes('Adjust Rating'), 'the ratings table folded away');
+
+    await header('Increment allocation').click();
+    await page.waitForTimeout(400);
+    body = await text(page);
+    assert.ok(!body.includes('Revised CTC'), 'the allocation grid folded away');
+    assert.ok(body.includes('Increment allocation'), 'its header stays too');
+
+    // THE STATE STICKS. A panel that springs back open on every reload
+    // is worse than no panel: HR collapses the grid to work on the
+    // kitty, saves, the page reloads and they are back where they were.
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForTimeout(2200);
+    body = await text(page);
+    assert.ok(!body.includes('Total salary pool'), 'kitty still closed after a reload');
+    assert.ok(!body.includes('Revised CTC'), 'allocation still closed after a reload');
+
+    // And they open again.
+    await header('Increment allocation').click();
+    await page.waitForTimeout(600);
+    assert.ok((await text(page)).includes('Revised CTC'), 'reopening works');
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally {
+    // Left open for the next test, and for anyone using the demo.
+    await page.evaluate(() => {
+      try { ['kitty', 'ratings', 'allocation'].forEach((k) => localStorage.removeItem(`apms.cal.section.${k}`)); } catch { /* ignore */ }
+    });
+    await ctx.close();
+  }
+});
+
+test('a button in a section header does its job without folding the section', async (t) => {
+  if (needStack(t)) return;
+  // Export sits in the allocation header and Set the kitty in the
+  // kitty header. Clicking either must not collapse the thing it acts
+  // on — the commonest way a click-to-toggle header goes wrong.
+  const { ctx, page, errors } = await open();
+  try {
+    await page.getByRole('button', { name: /Set the kitty/ }).click();
+    await page.waitForTimeout(500);
+    const body = await text(page);
+    assert.ok(body.includes('Total salary pool'), 'the kitty section is still open');
+    assert.ok(body.includes('Approved kitty'), 'and the editor opened');
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally { await ctx.close(); }
+});
