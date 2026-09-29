@@ -25,6 +25,7 @@ const { compliance } = require('./timesheet-rules');
 const match = require('./timesheet-kra-match');
 const score = require('./timesheet-kra-score');
 const { activeCycle } = require('./active-cycle');
+const rollupRules = require('./timesheet-rollup');
 const { ensureScoringSettings, DEFAULT_SCORING } = require('../../migrations/065-timesheet-kra-map');
 const { ensureValueAddKeywords } = require('../../migrations/064-kra-keywords');
 
@@ -679,4 +680,338 @@ router.put('/scoring', async (req, res) => {
   }
 });
 
-module.exports = { router, reportFor, validateMapping, scoringFor, windowFor };
+// ---------------------------------------------------------------------------
+// Phase 4 — closing a month, overriding one, and the year-end rollup.
+
+// How many periods a cycle contains, so the rollup can say what
+// fraction of the year it speaks for.
+//
+// PERIODS THAT OVERLAP THE CYCLE, not whole months in it. A fiscal year
+// of 1 Apr - 31 Mar against a cycle start day of 21 genuinely touches
+// THIRTEEN periods: 21 Mar - 20 Apr at one end and 21 Mar - 20 Apr at
+// the other. Counting twelve would leave a closed month sitting outside
+// its own denominator, and coverage above 100%. Thirteen reads oddly
+// for a twelve-month year, which is a real consequence of a start day
+// that does not align with the fiscal year, and saying so beats
+// rounding it away.
+function periodsInCycle(cycle, startDay) {
+  const { cycleOf, key } = require('./timesheet-rules');
+  if (!cycle || !cycle.opens_at || !cycle.closes_at) return 12;
+  const a = new Date(cycle.opens_at);
+  const b = new Date(cycle.closes_at);
+  if (!(a < b)) return 12;
+  let n = 0;
+  let c = cycleOf(a, startDay);
+  for (let guard = 0; c.start <= b && guard < 60; guard++) {
+    n += 1;
+    c = cycleOf(new Date(c.end.getFullYear(), c.end.getMonth(), c.end.getDate() + 1), startDay);
+  }
+  return n || 12;
+}
+
+const numOrNull = (v) => (v == null ? null : Number(v));
+
+// One snapshot row from a live report.
+function snapshotOf(r) {
+  return {
+    hours_logged: r.totals.logged,
+    hours_considered: r.totals.considered,
+    hours_attributed: r.totals.attributed,
+    hours_excluded: r.totals.excluded,
+    items: r.totals.items,
+    mapped_pct: r.totals.mapped_pct,
+    weighted_coverage_pct: r.summary.weighted_coverage_pct,
+    alignment_pct: r.summary.alignment_pct,
+    value_add_pct: r.summary.value_add_pct,
+    compliance_pct: r.summary.compliance_pct,
+    score: r.summary.score,
+    grade: r.summary.grade,
+    withheld: r.summary.withheld,
+    scoring: r.scoring,
+    by_kra: r.by_kra,
+  };
+}
+
+// POST /timesheet/kra/close — settle a period for everybody who logged
+// time in it.
+//
+// DRY RUN FIRST, ALWAYS, the same discipline as the keyword bulk edit:
+// this writes the numbers that will reach calibration, and a close that
+// cannot be inspected beforehand is the one thing in this feature that
+// would be genuinely hard to undo.
+//
+// A PERIOD THAT IS NOT OVER CANNOT BE CLOSED. Closing mid-month freezes
+// a partial month as if it were a whole one, and the compliance figure
+// in particular would be permanently wrong.
+router.post('/close', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const { settingsFor } = require('./timesheet');
+    const settings = await settingsFor(T(req));
+    const b = req.body || {};
+    const dry = b.dry_run !== false;          // closing is opt-in, previewing is the default
+    const force = b.force === true;
+
+    const windows = await cyclesWithData(T(req), null, Number(settings.cycle_start_day) || 21);
+    const win = pickWindow(windowFor(b, settings, b.as_of), windows);
+    const today = b.as_of && /^\d{4}-\d{2}-\d{2}$/.test(b.as_of) ? b.as_of
+      : new Date().toISOString().slice(0, 10);
+    if (win.to >= today) {
+      return res.status(422).json({
+        error: `That period runs to ${win.to} and is not over yet. Closing it now would freeze a partial month — `
+          + 'wait until it ends, or close an earlier one.' });
+    }
+    const cycle = await activeCycle(T(req));
+    if (!cycle) return res.status(422).json({ error: 'There is no active performance cycle to close a month against.' });
+
+    // Only people who logged time in the window. Somebody with no logs
+    // has nothing to snapshot, and a row of zeroes against their name
+    // would read as a bad month rather than as no data.
+    const people = (await db.query(
+      `SELECT ${EMP} FROM core.employees e
+        WHERE e.tenant_id=$1 AND EXISTS (
+          SELECT 1 FROM pms.timesheet_entries t
+           WHERE t.tenant_id=$1 AND t.employee_id=e.id
+             AND t.log_date >= $2::date AND t.log_date <= $3::date)
+        ORDER BY e.name`, [T(req), win.from, win.to])).rows;
+
+    const already = new Set((await db.query(
+      `SELECT employee_id FROM pms.timesheet_month
+        WHERE tenant_id=$1 AND cycle_id=$2 AND period_start=$3::date`,
+      [T(req), cycle.id, win.from])).rows.map((r) => r.employee_id));
+
+    const would = [];
+    const skipped = [];
+    for (const p of people) {
+      if (already.has(p.id) && !force) {
+        skipped.push({ employee: p.name, reason: 'already closed for this period — pass force to recompute' });
+        continue;
+      }
+      const r = await reportFor(req, p, { from: win.from, to: win.to });
+      would.push({ employee: { id: p.id, name: p.name, department: p.department }, snap: snapshotOf(r) });
+    }
+
+    if (dry) {
+      return res.json({
+        dry_run: true, window: win, cycle: { id: cycle.id, name: cycle.name },
+        would_close: would.length, skipped,
+        rows: would.map((w) => ({
+          employee: w.employee,
+          hours: w.snap.hours_logged, mapped_pct: w.snap.mapped_pct,
+          coverage_pct: w.snap.weighted_coverage_pct, compliance_pct: w.snap.compliance_pct,
+          score: w.snap.score, grade: w.snap.grade, withheld: w.snap.withheld.length,
+        })),
+      });
+    }
+
+    // TRANSACTIONAL. A half-closed month is a calibration input that
+    // matches nothing anybody saw.
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      for (const w of would) {
+        const s = w.snap;
+        await client.query(
+          `INSERT INTO pms.timesheet_month
+             (tenant_id, employee_id, cycle_id, period_start, period_end,
+              hours_logged, hours_considered, hours_attributed, hours_excluded, items,
+              mapped_pct, weighted_coverage_pct, alignment_pct, value_add_pct, compliance_pct,
+              score, grade, withheld, scoring, by_kra, closed_by)
+           VALUES ($1,$2,$3,$4::date,$5::date,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+                   $18::jsonb,$19::jsonb,$20::jsonb,$21)
+           ON CONFLICT (tenant_id, employee_id, cycle_id, period_start) DO UPDATE SET
+             period_end=EXCLUDED.period_end,
+             hours_logged=EXCLUDED.hours_logged, hours_considered=EXCLUDED.hours_considered,
+             hours_attributed=EXCLUDED.hours_attributed, hours_excluded=EXCLUDED.hours_excluded,
+             items=EXCLUDED.items, mapped_pct=EXCLUDED.mapped_pct,
+             weighted_coverage_pct=EXCLUDED.weighted_coverage_pct,
+             alignment_pct=EXCLUDED.alignment_pct, value_add_pct=EXCLUDED.value_add_pct,
+             compliance_pct=EXCLUDED.compliance_pct, score=EXCLUDED.score, grade=EXCLUDED.grade,
+             withheld=EXCLUDED.withheld, scoring=EXCLUDED.scoring, by_kra=EXCLUDED.by_kra,
+             closed_by=EXCLUDED.closed_by, closed_at=now()`,
+          [T(req), w.employee.id, cycle.id, win.from, win.to,
+           s.hours_logged, s.hours_considered, s.hours_attributed, s.hours_excluded, s.items,
+           s.mapped_pct, s.weighted_coverage_pct, s.alignment_pct, s.value_add_pct, s.compliance_pct,
+           s.score, s.grade, JSON.stringify(s.withheld), JSON.stringify(s.scoring),
+           JSON.stringify(s.by_kra), req.user.email]);
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+
+    audit(req, force ? 'TIMESHEET_MONTH_RECLOSED' : 'TIMESHEET_MONTH_CLOSED', null, {
+      cycle_id: cycle.id, period_start: win.from, period_end: win.to,
+      closed: would.length, skipped: skipped.length,
+    });
+    res.json({ ok: true, window: win, closed: would.length, skipped });
+  } catch (e) {
+    logger.error('timesheet-kra close', { error: e.message });
+    res.status(500).json({ error: 'Could not close that period' });
+  }
+});
+
+// The closed months for one person, plus their rollup.
+async function monthsFor(req, target) {
+  const { settingsFor } = require('./timesheet');
+  const settings = await settingsFor(T(req));
+  const cycle = await activeCycle(T(req));
+  if (!cycle) return { cycle: null, months: [], rollup: rollupRules.rollup([], {}) };
+  // m.period_start, not period_start: the to_char alias below has the
+  // same name as the real column, and an unqualified ORDER BY on it is
+  // rejected as ambiguous by Postgres.
+  const months = (await db.query(
+    `SELECT m.*, to_char(m.period_start,'YYYY-MM-DD') AS period_start,
+            to_char(m.period_end,'YYYY-MM-DD') AS period_end
+       FROM pms.timesheet_month m
+      WHERE m.tenant_id=$1 AND m.employee_id=$2 AND m.cycle_id=$3
+      ORDER BY m.period_start`, [T(req), target.id, cycle.id])).rows;
+  return {
+    cycle: { id: cycle.id, name: cycle.name },
+    months,
+    rollup: rollupRules.rollup(months, {
+      periods_in_cycle: periodsInCycle(cycle, Number(settings.cycle_start_day) || 21),
+    }),
+  };
+}
+
+router.get('/months/me', async (req, res) => {
+  try {
+    const me = await employeeOr404(req, res, req.user.id);
+    if (!me) return;
+    res.json({ employee: me, ...(await monthsFor(req, me)) });
+  } catch (e) {
+    logger.error('timesheet-kra months me', { error: e.message });
+    res.status(500).json({ error: 'Could not load your closed months' });
+  }
+});
+
+router.get('/months/:id', async (req, res) => {
+  try {
+    const target = await employeeOr404(req, res, req.params.id);
+    if (!target) return;
+    if (!(await canRead(req, target))) {
+      return res.status(403).json({ error: 'You can only open the timesheet of someone who reports to you' });
+    }
+    res.json({ employee: target, ...(await monthsFor(req, target)) });
+  } catch (e) {
+    logger.error('timesheet-kra months', { error: e.message });
+    res.status(500).json({ error: 'Could not load the closed months' });
+  }
+});
+
+// PUT /timesheet/kra/month/:id/override — a manager disputing one month.
+//
+// ON THE MONTH, NOT ON THE ROLLUP. A sprint run outside Zoho, a
+// secondment, a month mostly on leave: the correction belongs against
+// the month that was wrong, with its reason, where the rollup will read
+// it and the audit will keep it. Overriding the year-end figure
+// directly would leave no record of WHICH month was disputed.
+router.put('/month/:id/override', async (req, res) => {
+  try {
+    const row = (await db.query(
+      `SELECT m.*, to_char(m.period_start,'YYYY-MM-DD') AS period_start
+         FROM pms.timesheet_month m WHERE m.id=$1 AND m.tenant_id=$2`,
+      [req.params.id, T(req)])).rows[0];
+    if (!row) return res.status(404).json({ error: 'No closed month with that id' });
+    const target = await employeeOr404(req, res, row.employee_id);
+    if (!target) return;
+    if (!(await canWrite(req, target))) {
+      return res.status(403).json({ error: 'Only this person\'s manager or HR can override their month' });
+    }
+    const b = req.body || {};
+    // Clearing an override is a legitimate instruction and needs no
+    // reason of its own — the audit already carries the one it removes.
+    if (b.clear === true) {
+      const cleared = (await db.query(
+        `UPDATE pms.timesheet_month
+            SET override_score=NULL, override_grade=NULL, override_reason=NULL,
+                overridden_by=NULL, overridden_at=NULL
+          WHERE id=$1 RETURNING *`, [row.id])).rows[0];
+      audit(req, 'TIMESHEET_MONTH_OVERRIDE_CLEARED', target.id, {
+        month_id: row.id, period_start: row.period_start,
+        was: { score: row.override_score, grade: row.override_grade, reason: row.override_reason },
+      });
+      return res.json({ ok: true, month: cleared });
+    }
+    const bad = rollupRules.validateOverride(b);
+    if (bad) return res.status(422).json({ error: bad });
+
+    const saved = (await db.query(
+      `UPDATE pms.timesheet_month
+          SET override_score=$2, override_grade=$3, override_reason=$4,
+              overridden_by=$5, overridden_at=now()
+        WHERE id=$1 RETURNING *`,
+      [row.id, b.score == null || b.score === '' ? null : Number(b.score),
+       String(b.grade || '').trim() || null, String(b.reason).trim(), req.user.email])).rows[0];
+
+    // Audited with what it was, because this is the record that answers
+    // "why did my rating change" once it reaches calibration.
+    audit(req, 'TIMESHEET_MONTH_OVERRIDDEN', target.id, {
+      month_id: row.id, period_start: row.period_start,
+      from: { score: row.score, grade: row.grade },
+      to: { score: saved.override_score, grade: saved.override_grade },
+      reason: saved.override_reason,
+    });
+    res.json({ ok: true, month: saved });
+  } catch (e) {
+    logger.error('timesheet-kra override', { error: e.message });
+    res.status(500).json({ error: 'Could not save the override' });
+  }
+});
+
+// GET /timesheet/kra/rollup — everybody's year-end view, HR only.
+//
+// ONE QUERY PLUS A PURE ROLLUP PER PERSON. The rows are already
+// snapshots, so nothing is recomputed here — which is the whole point
+// of having closed them.
+router.get('/rollup', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const { settingsFor } = require('./timesheet');
+    const settings = await settingsFor(T(req));
+    const cycle = await activeCycle(T(req));
+    if (!cycle) return res.json({ cycle: null, people: [], totals: { people: 0 } });
+    const periods = periodsInCycle(cycle, Number(settings.cycle_start_day) || 21);
+
+    const rows = (await db.query(
+      `SELECT m.*, to_char(m.period_start,'YYYY-MM-DD') AS period_start,
+              e.name, e.emp_code, e.department, e.designation
+         FROM pms.timesheet_month m JOIN core.employees e ON e.id = m.employee_id
+        WHERE m.tenant_id=$1 AND m.cycle_id=$2
+        ORDER BY e.name, m.period_start`, [T(req), cycle.id])).rows;
+
+    const by = new Map();
+    for (const r of rows) {
+      if (!by.has(r.employee_id)) {
+        by.set(r.employee_id, { employee: { id: r.employee_id, name: r.name, emp_code: r.emp_code,
+          department: r.department, designation: r.designation }, months: [] });
+      }
+      by.get(r.employee_id).months.push(r);
+    }
+    const people = [...by.values()]
+      .map((p) => ({ employee: p.employee, rollup: rollupRules.rollup(p.months, { periods_in_cycle: periods }) }))
+      .sort((a, b) => b.rollup.hours - a.rollup.hours || a.employee.name.localeCompare(b.employee.name));
+
+    const closedPeriods = [...new Set(rows.map((r) => r.period_start))].sort();
+    res.json({
+      cycle: { id: cycle.id, name: cycle.name },
+      periods_in_cycle: periods,
+      closed_periods: closedPeriods,
+      people,
+      totals: {
+        people: people.length,
+        periods_closed: closedPeriods.length,
+        hours: Math.round(people.reduce((t, p) => t + p.rollup.hours, 0) * 10) / 10,
+        overrides: people.reduce((t, p) => t + p.rollup.overrides, 0),
+        // The honest headline: how many of these are thick enough to
+        // read at all.
+        readable: people.filter((p) => p.rollup.mapped_pct != null && p.rollup.mapped_pct >= 50).length,
+      },
+    });
+  } catch (e) {
+    logger.error('timesheet-kra rollup', { error: e.message });
+    res.status(500).json({ error: 'Could not build the rollup' });
+  }
+});
+
+module.exports = { router, reportFor, validateMapping, scoringFor, windowFor,
+                   periodsInCycle, snapshotOf, monthsFor };

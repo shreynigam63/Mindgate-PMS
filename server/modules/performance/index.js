@@ -4194,7 +4194,62 @@ router.get('/calibration', async (req, res) => {
         WHERE e.tenant_id=$2 ORDER BY e.department, e.name`, [c.id, T(req)])).rows;
     const dist = {};
     for (const r of rows) { const k = r.proposed == null ? 'unrated' : String(Math.round(r.proposed)); dist[k] = (dist[k] || 0) + 1; }
-    res.json({ cycle: cycleForClient(c, { bell_curve: c.bell_curve }), rows, distribution: dist });
+
+    // ---- the timesheet rollup, as CONTEXT ONLY (phase 4, 29 Sep) ------
+    //
+    // The spec asked for the year-end timesheet number to reach
+    // calibration as a pre-populated suggestion. This attaches it to
+    // each row and DOES NOTHING ELSE WITH IT:
+    //
+    //   - `proposed` above is untouched. It is still the HOD rating, or
+    //     the manager's, or an explicit adjustment — computed before
+    //     this block runs and not read by it.
+    //   - the distribution is computed before this block too, so the
+    //     bell curve cannot move because somebody closed a month.
+    //   - the kitty maths is a separate route over a separate query and
+    //     never sees this field.
+    //
+    // That separation is the point. Rolling timesheet hygiene into an
+    // annual performance rating silently merges two different
+    // measurements, and the client's own spec says this should be a
+    // suggestion. It is attached under its own key so a reader of this
+    // handler can see it is not an input.
+    let timesheet = {};
+    try {
+      const tsRows = (await db.query(
+        `SELECT m.*, to_char(m.period_start,'YYYY-MM-DD') AS period_start
+           FROM pms.timesheet_month m
+          WHERE m.tenant_id=$1 AND m.cycle_id=$2`, [T(req), c.id])).rows;
+      if (tsRows.length) {
+        const { settingsFor } = require('./timesheet');
+        const tk = require('./timesheet-kra');
+        const rollupRules = require('./timesheet-rollup');
+        const st = await settingsFor(T(req));
+        const periods = tk.periodsInCycle(c, Number(st.cycle_start_day) || 21);
+        const by = new Map();
+        for (const r of tsRows) {
+          if (!by.has(r.employee_id)) by.set(r.employee_id, []);
+          by.get(r.employee_id).push(r);
+        }
+        for (const [empId, months] of by) {
+          timesheet[empId] = rollupRules.rollup(months, { periods_in_cycle: periods });
+        }
+      }
+    } catch (e) {
+      // NOT FATAL, and not silent. Calibration is the page a company
+      // runs its increments from; it must open even if the timesheet
+      // side is broken or mid-migration. The failure is logged and the
+      // absence is visible on screen as "no timesheet data" rather than
+      // as a zero.
+      logger.warn('calibration timesheet rollup unavailable', { error: e.message });
+      timesheet = {};
+    }
+
+    res.json({ cycle: cycleForClient(c, { bell_curve: c.bell_curve }), rows, distribution: dist,
+               timesheet,
+               // Said in the payload so the screen cannot present it as
+               // anything else.
+               timesheet_note: 'Timesheet coverage is context for the conversation. It does not feed the proposed rating, the distribution or the increment kitty.' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -147,7 +147,7 @@ export default function CalibrationPage() {
       <div className="overflow-x-auto">
         {/* table-fixed + explicit widths on the header row: with auto
             layout, the browser infers each column's width from ALL rows
-            (including the wide colSpan=7 adjustment-reason row below),
+            (including the wide colSpan=8 adjustment-reason row below),
             which could shift column boundaries in ways not visible just
             from reading the code. Fixed layout makes widths deterministic
             from these header cells alone — every other row, including
@@ -159,17 +159,26 @@ export default function CalibrationPage() {
               <th className="text-left px-3 py-2 w-[10%]">Dept</th>
               <th className="text-right px-3 py-2 w-[8%]">Mgr</th>
               <th className="text-right px-3 py-2 w-[12%]">Delivery Head</th>
-              <th className="text-right px-3 py-2 w-[14%]">Final Rating</th>
-              <th className="text-left px-3 py-2 w-[16%]">9-box</th>
-              <th className="text-left px-3 py-2 w-[24%]">Adjust Rating</th>
+              <th className="text-right px-3 py-2 w-[12%]">Final Rating</th>
+              {/* CONTEXT, NOT AN INPUT. The header says so, because a
+                  column sitting next to Final Rating will be read as
+                  feeding it unless it says otherwise. */}
+              <th className="text-left px-3 py-2 w-[14%]">Timesheet <span className="normal-case font-normal">(context)</span></th>
+              <th className="text-left px-3 py-2 w-[14%]">9-box</th>
+              <th className="text-left px-3 py-2 w-[22%]">Adjust Rating</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-navy-100">
-            {rowsShown.map(r => <CalRow key={r.employee_id} r={r} reload={load} scale={data.cycle.rating_scale} />)}
+            {rowsShown.map(r => <CalRow key={r.employee_id} r={r} reload={load} scale={data.cycle.rating_scale}
+              ts={(data.timesheet || {})[r.employee_id]} />)}
           </tbody>
         </table>
       </div>
       <p className="text-[11px] text-navy-400">Every adjustment requires a reason — it is the permanent answer to "why did my rating change".</p>
+      {/* Verbatim from the server, so the screen cannot soften it. */}
+      {data.timesheet_note && (
+        <p className="text-[11px] text-navy-500 mt-1"><b>Timesheet:</b> {data.timesheet_note}</p>
+      )}
       </Section>
 
       {/* ---- the allocation grid (29 Sep) ----------------------------
@@ -236,7 +245,7 @@ export default function CalibrationPage() {
   );
 }
 
-function CalRow({ r, reload, scale }) {
+function CalRow({ r, reload, scale, ts }) {
   const [to, setTo] = useState('');
   const [box, setBox] = useState(r.nine_box_cell || '');
   const [err, setErr] = useState(null);
@@ -270,6 +279,29 @@ function CalRow({ r, reload, scale }) {
         <td className="px-3 py-2 text-right font-mono"><Grade value={r.manager_rating} scale={scale} /></td>
         <td className="px-3 py-2 text-right font-mono"><Grade value={r.hod_rating} scale={scale} /></td>
         <td className="px-3 py-2 text-right font-mono font-bold"><Grade value={r.proposed} scale={scale} /></td>
+        {/* THE TIMESHEET ROLLUP. Deliberately not a grade and not a
+            number in the same typeface as the ratings beside it: it is
+            a statement about how much evidence there is, which is all
+            this can honestly support while most logged hours are
+            unplaced. */}
+        <td className="px-3 py-2">
+          {!ts ? <span className="text-[10.5px] text-navy-300">no closed month</span> : (
+            <>
+              <div className="text-[10.5px] text-navy-600">{ts.label}</div>
+              <div className="text-[10px] text-navy-400 mt-0.5">
+                {ts.hours}h · {ts.months} of {ts.periods_in_cycle || '?'} months
+                {ts.weighted_coverage_pct != null && <> · {ts.weighted_coverage_pct}% KRA coverage</>}
+              </div>
+              {/* An overridden month is named here, because by the time
+                  this reaches calibration the override IS the number. */}
+              {!!ts.overrides && (
+                <div className="text-[10px] text-amber-700 mt-0.5">
+                  {ts.overrides} month{ts.overrides === 1 ? '' : 's'} overridden by a manager
+                </div>
+              )}
+            </>
+          )}
+        </td>
         <td className="px-3 py-2">
           <select className="inp !py-1 !text-[11px] w-auto" value={box} onChange={e => saveBox(e.target.value)}>
             <option value="">—</option>{NINE_BOX.map(b => <option key={b}>{b}</option>)}
@@ -300,7 +332,10 @@ function CalRow({ r, reload, scale }) {
           rather than gone from the page entirely. */}
       {wasAdjusted && (
         <tr className="bg-amber-50/40">
-          <td colSpan={7} className="px-3 pb-2 -mt-1">
+          {/* Eight columns since the Timesheet one was added (phase 4).
+              A stale colSpan here leaves the reason row narrower than
+              the table and pushes an empty cell onto the end. */}
+          <td colSpan={8} className="px-3 pb-2 -mt-1">
             <p className="text-[11px] text-amber-800" title={`${r.adjustment_reason} — ${r.adjusted_by}${r.adjusted_at ? `, ${new Date(r.adjusted_at).toLocaleDateString()}` : ''}`}>
               adjusted <b>{preAdjustment} → {r.proposed}</b>
             </p>
