@@ -119,6 +119,8 @@ export default function KraLibraryPage() {
         when writing their KRAs — everything they add stays fully editable.
         </>} />
 
+      <KeywordPanel />
+
       <div className="card p-4 space-y-2">
         <p className="lbl">Publish a shelf — one row per KRA, keyed on Designation, dry run first</p>
         <div className="flex flex-wrap items-center gap-2">
@@ -131,8 +133,8 @@ export default function KraLibraryPage() {
         </div>
         <p className="text-[11px] text-navy-400">
           Columns: <b>Department</b>, Designation, Parameters, KRA (S.M.A.R.T GOALS), KPIs
-          (Measuring Metrics &amp; Data Source), Suggested Weightage, Comments. Every worksheet is
-          read, so a multi-tab role workbook publishes in one go.
+          (Measuring Metrics &amp; Data Source), Suggested Weightage, Comments, and optionally
+          <b>Keywords</b>. Every worksheet is read, so a multi-tab role workbook publishes in one go.
           {' '}<b>Department is optional</b> and behaves like Designation: written once it carries
           down the rows beneath it, and a new Designation clears it. Blank on a designation's
           first row publishes a company-wide shelf everyone with that title sees; naming one
@@ -390,13 +392,16 @@ function ShelfDetail({ designation, department, onChanged }) {
       title: r.title || '', category: r.category || '',
       suggested_weight: r.suggested_weight == null ? '' : String(Number(r.suggested_weight)),
       measures: r.measures || '', description: r.description || '',
+      // Phase 1 of the timesheet rating engine (29 Sep). Shown as the
+      // comma-separated list HR types; the server normalises it.
+      keywords: (r.keywords || []).join(', '),
     });
   };
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
 
   const startAdd = () => {
     setErr(null); setEditing(null); setAdding(true);
-    setDraft({ title: '', category: '', suggested_weight: '', measures: '', description: '' });
+    setDraft({ title: '', category: '', suggested_weight: '', measures: '', description: '', keywords: '' });
   };
 
   const add = async () => {
@@ -470,6 +475,15 @@ function ShelfDetail({ designation, department, onChanged }) {
             <textarea className="inp !text-xs" rows={2} value={draft.description} onChange={set('description')}
               placeholder="Comments (optional)" />
             <input className="inp !text-xs !w-44" value={draft.category} onChange={set('category')} placeholder="Parameter" />
+            {/* Timesheet keywords. Phase 1 stores them; nothing scores
+                anything from them yet, and the hint says so rather than
+                letting HR think a rating already depends on this. */}
+            <input className="inp !text-xs" value={draft.keywords || ''} onChange={set('keywords')}
+              placeholder="Timesheet keywords — e.g. Development, Bug Fixing, Code Review" />
+            <p className="text-[10px] text-navy-400">
+              Comma-separated. These are what Zoho task names will be matched against once the
+              monthly rating engine is switched on — nothing is scored from them yet.
+            </p>
             <div className="flex items-center gap-2">
               <button className="btn-pri !py-1 !text-xs" disabled={busy} onClick={() => save(r.id)}>
                 <Save size={12} className="inline mr-1" />Save
@@ -487,6 +501,17 @@ function ShelfDetail({ designation, department, onChanged }) {
           <>
             <span className="whitespace-pre-line">{r.measures || <i className="text-navy-300">no KPI recorded</i>}</span>
             {r.description && <div className="text-navy-400 mt-1">{r.description}</div>}
+            {/* Visible at a glance, because coverage is the number that
+                decides whether phase 2 can work at all. A KRA with none
+                says so rather than showing an empty space that reads
+                like a rendering gap. */}
+            <div className="mt-1 flex flex-wrap gap-1 items-center">
+              {(r.keywords || []).length
+                ? (r.keywords || []).map((w) => (
+                    <span key={w} className="chip bg-lagoon-50 text-lagoon-700 !text-[10px]">{w}</span>
+                  ))
+                : <span className="text-[10px] text-navy-300">no timesheet keywords</span>}
+            </div>
           </>
         ))}
         renderWeight={({ k: r }) => (editing === r.id ? (
@@ -716,6 +741,190 @@ function AddKra({ departments, designations, onDone, onClose }) {
       </p>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {done && <p className="text-xs text-leaf-600 font-semibold">{done} Add another, or Close.</p>}
+    </div>
+  );
+}
+
+// ---- timesheet keywords (29 Sep, phase 1) --------------------------------
+//
+// The shelf on the client instance carries 2,360 rows. Typing keywords
+// into each one is not a feature, so this applies a set across
+// everything matching a filter.
+//
+// PREVIEW BEFORE WRITE, ALWAYS. Apply is disabled until a preview has
+// run, and the preview lists the rows that would change. A bulk edit
+// over hundreds of rows that cannot be inspected first is one typo away
+// from a day of cleanup — and "add" only looks safe.
+//
+// NOTHING IS SCORED FROM THESE YET, and the panel says so. Phase 2
+// matches them against Zoho task text; until then this is data entry,
+// and pretending otherwise would have HR believing a rating already
+// moves when they type here.
+function KeywordPanel() {
+  const [sum, setSum] = useState(null);
+  const [err, setErr] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [f, setF] = useState({ designation: '', category: '', title_contains: '',
+    mode: 'add', keywords: '', confirm_clear: false });
+  const [vaEdit, setVaEdit] = useState(null);
+
+  const load = () => api('/pms/hr/kra-library/keywords/summary').then(setSum).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+
+  // Any change to the filter or the words invalidates a preview — the
+  // dangerous version of this screen is one where Apply uses a preview
+  // taken against different criteria.
+  const set = (k) => (e) => {
+    const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    setF((x) => ({ ...x, [k]: v }));
+    setPreview(null);
+  };
+
+  const run = async (dry) => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api('/pms/hr/kra-library/keywords/bulk', { method: 'POST', body: JSON.stringify({ ...f, dry_run: dry }) });
+      if (dry) setPreview(r);
+      else { setPreview(null); setF((x) => ({ ...x, keywords: '', confirm_clear: false })); load(); }
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  if (!sum) return null;
+  const designations = (sum.by_designation || []).map((d) => d.designation);
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="lbl flex-1">Timesheet keywords</p>
+        <span className="chip bg-navy-50 text-navy-600">
+          {sum.with_keywords} of {sum.total} KRAs · {sum.coverage_pct}% covered
+        </span>
+        <button className="btn-sec !py-1" onClick={() => setOpen((x) => !x)}>
+          {open ? 'Close' : 'Apply in bulk'}
+        </button>
+      </div>
+      <p className="text-[11px] text-navy-500">
+        What Zoho task names will be matched against when the monthly rating engine is switched on.
+        <b> Nothing is scored from them yet</b> — this is the data entry that has to happen first,
+        and coverage is the number to watch.
+      </p>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+
+      {open && (
+        <div className="bg-navy-50 rounded-lg p-3 space-y-2">
+          <div className="grid sm:grid-cols-3 gap-2">
+            <div>
+              <label className="lbl">Designation</label>
+              <select className="inp !text-xs" value={f.designation} onChange={set('designation')}>
+                <option value="">Every designation</option>
+                {designations.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="lbl">Parameter</label>
+              <select className="inp !text-xs" value={f.category} onChange={set('category')}>
+                <option value="">Every parameter</option>
+                {(sum.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="lbl">KRA title contains</label>
+              <input className="inp !text-xs" value={f.title_contains} onChange={set('title_contains')}
+                placeholder="e.g. Delivery" />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="lbl">Mode</label>
+              <select className="inp !text-xs !w-auto" value={f.mode} onChange={set('mode')}>
+                <option value="add">Add to what is there</option>
+                <option value="replace">Replace</option>
+                <option value="remove">Remove these</option>
+              </select>
+            </div>
+            <div className="flex-1 min-w-[240px]">
+              <label className="lbl">Keywords</label>
+              <input className="inp !text-xs" value={f.keywords} onChange={set('keywords')}
+                placeholder="Development, Bug Fixing, Code Review" />
+            </div>
+          </div>
+          {f.mode === 'replace' && !f.keywords.trim() && (
+            <label className="flex items-center gap-2 text-[11px] text-rose-700">
+              <input type="checkbox" checked={f.confirm_clear} onChange={set('confirm_clear')} />
+              Yes — clear the keywords on every matching KRA
+            </label>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn-sec !py-1" disabled={busy} onClick={() => run(true)}>
+              {busy ? 'Checking…' : 'Preview'}
+            </button>
+            {/* Genuinely disabled until a preview has run against these
+                exact criteria — see the note on `set` above. */}
+            <button className="btn-pri !py-1" disabled={busy || !preview || !preview.changing}
+              onClick={() => run(false)}>
+              {preview ? `Apply to ${preview.changing} KRA${preview.changing === 1 ? '' : 's'}` : 'Preview first'}
+            </button>
+          </div>
+          {preview && (
+            <div className="bg-white rounded-lg border border-navy-100 p-2 max-h-56 overflow-y-auto">
+              <p className="text-[11px] text-navy-600 mb-1">
+                {preview.matched} matched · <b>{preview.changing}</b> would change
+                {preview.changing === 0 && ' — nothing to do'}
+              </p>
+              {preview.changes.map((c) => (
+                <div key={c.id} className="text-[11px] py-0.5 border-t border-navy-50 first:border-0">
+                  <span className="font-semibold">{c.title}</span>
+                  <span className="text-navy-400"> · {c.designation}</span>
+                  <div className="text-navy-500">
+                    {c.before.join(', ') || <i>none</i>} → <b>{c.after.join(', ') || 'none'}</b>
+                  </div>
+                </div>
+              ))}
+              {preview.truncated && <p className="text-[11px] text-navy-400 pt-1">…and more, not listed.</p>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* The org-wide A+ list. Separate from a KRA's own keywords
+          because it applies to everybody whatever their role. */}
+      <div className="border-t border-navy-100 pt-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-[10px] uppercase font-bold text-navy-400 flex-1">
+            Value-add words — the A+ trigger
+          </p>
+          <button className="btn-sec !py-1 !text-[11px]"
+            onClick={() => setVaEdit(vaEdit == null ? (sum.value_add_keywords || []).join(', ') : null)}>
+            {vaEdit == null ? 'Edit' : 'Cancel'}
+          </button>
+        </div>
+        {vaEdit == null ? (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {(sum.value_add_keywords || []).length
+              ? sum.value_add_keywords.map((w) => (
+                  <span key={w} className="chip bg-amber-50 text-amber-800 !text-[10px]">{w}</span>
+                ))
+              : <span className="text-[11px] text-navy-400">none set</span>}
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            <input className="inp !text-xs flex-1 min-w-[240px]" value={vaEdit}
+              onChange={(e) => setVaEdit(e.target.value)} />
+            <button className="btn-pri !py-1 !text-[11px]" disabled={busy} onClick={async () => {
+              setBusy(true); setErr(null);
+              try {
+                await api('/pms/hr/kra-library/value-add-keywords',
+                  { method: 'PUT', body: JSON.stringify({ keywords: vaEdit }) });
+                setVaEdit(null); load();
+              } catch (e) { setErr(e.message); }
+              setBusy(false);
+            }}>Save</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1286,6 +1286,11 @@ const KRA_HEADER_ALIASES = {
   // at all, and rejects our own template — caught by the tests.
   suggested_weightage: 'weight', suggested_weight: 'weight', suggested_weightage_pct: 'weight',
   comments: 'description', comment: 'description', description: 'description', remarks: 'description',
+  // Phase 1 of the timesheet rating engine (29 Sep). Optional: a shelf
+  // uploaded without it keeps working and simply carries no keywords,
+  // which is what every existing file does.
+  keywords: 'keywords', keyword: 'keywords', tags: 'keywords', tag: 'keywords',
+  zoho_keywords: 'keywords', task_keywords: 'keywords', matching_keywords: 'keywords',
 };
 
 // Parentheses are dropped before matching so the long qualifiers in the
@@ -2163,23 +2168,171 @@ router.put('/hr/kra-library/entry/:id', async (req, res) => {
     if (!before) return res.status(404).json({ error: 'KRA not found' });
 
     const txt = (v) => (v == null || String(v).trim() === '' ? null : String(v).trim());
+    // Absent means leave them alone; an empty string or [] means clear
+    // them. A PUT that only renamed a KRA must not wipe its keywords.
+    const kws = b.keywords === undefined ? before.keywords : kw.parseKeywords(b.keywords);
     const row = (await db.query(
       `UPDATE pms.kra_library
-          SET title=$3, measures=$4, description=$5, category=$6, suggested_weight=$7
+          SET title=$3, measures=$4, description=$5, category=$6, suggested_weight=$7, keywords=$8
         WHERE id=$1 AND tenant_id=$2 RETURNING *`,
-      [req.params.id, T(req), title, txt(b.measures), txt(b.description), txt(b.category), weight])).rows[0];
+      [req.params.id, T(req), title, txt(b.measures), txt(b.description), txt(b.category), weight,
+       kws])).rows[0];
 
     // A published shelf is configuration that shapes everybody's
     // objectives, so an edit to one is audited with what it was before.
     audit(req, 'KRA_LIBRARY_ENTRY_EDITED', null, null, {
       id: row.id, designation: row.designation, department: row.department,
       before: { title: before.title, measures: before.measures, description: before.description,
-                category: before.category, suggested_weight: before.suggested_weight },
+                category: before.category, suggested_weight: before.suggested_weight,
+                keywords: before.keywords },
       after: { title: row.title, measures: row.measures, description: row.description,
-               category: row.category, suggested_weight: row.suggested_weight },
+               category: row.category, suggested_weight: row.suggested_weight,
+               keywords: row.keywords },
     });
     res.json({ ok: true, entry: row });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---- keywords in bulk (29 Sep, phase 1) ---------------------------------
+//
+// The client instance carries 2,360 library rows. Typing keywords into
+// each one is not a feature, so this applies a set across everything
+// matching a filter — a designation, a category, or a word in the
+// title.
+//
+// PREVIEW FIRST, ALWAYS. dry_run returns exactly what WOULD change, row
+// by row, without writing. A bulk edit over 800 rows that cannot be
+// inspected beforehand is one typo away from a day of cleanup, and
+// "add" is only safe-looking: adding "development" to every row in the
+// library is just as wrong as clearing them.
+router.post('/hr/kra-library/keywords/bulk', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const b = req.body || {};
+    const bad = kw.validateBulk(b);
+    if (bad) return res.status(422).json({ error: bad });
+
+    // Every filter is optional and they AND together. No filter at all
+    // means the whole shelf, which is legitimate — "tag everything
+    // Delivery" — but the preview makes the size of that obvious
+    // before it happens.
+    const where = ['tenant_id=$1'];
+    const params = [T(req)];
+    const add = (sql, v) => { params.push(v); where.push(sql.replace('$$', `$${params.length}`)); };
+    if (b.designation) add('designation = $$', String(b.designation));
+    if (b.department) add('department = $$', String(b.department));
+    if (b.category) add('category = $$', String(b.category));
+    if (b.title_contains) add('title ILIKE $$', `%${String(b.title_contains).replace(/[%_]/g, (c) => `\\${c}`)}%`);
+    if (Array.isArray(b.ids) && b.ids.length) add('id = ANY($$::uuid[])', b.ids.slice(0, 5000));
+
+    const rows = (await db.query(
+      `SELECT id, designation, department, category, title, keywords
+         FROM pms.kra_library WHERE ${where.join(' AND ')} ORDER BY designation, sort_order`, params)).rows;
+
+    const changes = [];
+    for (const r of rows) {
+      const next = kw.applyMode(r.keywords, b.keywords, b.mode);
+      const before = kw.parseKeywords(r.keywords);
+      // Only rows that actually move. A preview listing 800 rows of
+      // which 40 change is a preview nobody reads.
+      if (before.join('\u0000') === next.join('\u0000')) continue;
+      changes.push({ id: r.id, designation: r.designation, category: r.category,
+        title: r.title, before, after: next });
+    }
+
+    if (b.dry_run) {
+      return res.json({ ok: true, dry_run: true, matched: rows.length,
+        changing: changes.length, changes: changes.slice(0, 200),
+        truncated: changes.length > 200 });
+    }
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      for (const c of changes) {
+        await client.query(`UPDATE pms.kra_library SET keywords=$2 WHERE id=$1`, [c.id, c.after]);
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+
+    // A published shelf shapes everybody's objectives, so a bulk change
+    // to it is audited like a single edit — with the filter that was
+    // used, because "which rows did this touch" is the question asked
+    // afterwards.
+    audit(req, 'KRA_LIBRARY_KEYWORDS_BULK', null, null, {
+      mode: b.mode, keywords: kw.parseKeywords(b.keywords),
+      filter: { designation: b.designation || null, department: b.department || null,
+        category: b.category || null, title_contains: b.title_contains || null,
+        ids: Array.isArray(b.ids) ? b.ids.length : 0 },
+      matched: rows.length, changed: changes.length });
+
+    res.json({ ok: true, matched: rows.length, changed: changes.length });
+  } catch (e) {
+    logger.error('kra keyword bulk', { error: e.message });
+    res.status(500).json({ error: 'Could not apply the keywords' });
+  }
+});
+
+// What is on the shelf, for the filter dropdowns and the coverage line.
+// Coverage is the number worth watching in phase 1: matching in phase 2
+// can only be as good as how much of the library carries keywords.
+router.get('/hr/kra-library/keywords/summary', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    await ensureValueAddKeywords(db, T(req));
+    const r = (await db.query(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE cardinality(keywords) > 0)::int AS with_keywords
+         FROM pms.kra_library WHERE tenant_id=$1`, [T(req)])).rows[0];
+    const byDesignation = (await db.query(
+      `SELECT designation,
+              count(*)::int AS total,
+              count(*) FILTER (WHERE cardinality(keywords) > 0)::int AS with_keywords
+         FROM pms.kra_library WHERE tenant_id=$1
+        GROUP BY designation ORDER BY designation`, [T(req)])).rows;
+    const words = (await db.query(
+      `SELECT k AS keyword, count(*)::int AS kras
+         FROM pms.kra_library, unnest(keywords) AS k
+        WHERE tenant_id=$1 GROUP BY k ORDER BY kras DESC, k LIMIT 60`, [T(req)])).rows;
+    const categories = (await db.query(
+      `SELECT DISTINCT category FROM pms.kra_library
+        WHERE tenant_id=$1 AND coalesce(btrim(category),'') <> '' ORDER BY 1`, [T(req)])).rows.map((x) => x.category);
+
+    const st = (await db.query(
+      `SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='timesheet'`, [T(req)])).rows[0];
+    res.json({
+      total: r.total, with_keywords: r.with_keywords,
+      coverage_pct: r.total ? Math.round((r.with_keywords / r.total) * 1000) / 10 : 0,
+      by_designation: byDesignation, keywords: words, categories,
+      value_add_keywords: ((st && st.value) || {}).value_add_keywords || [],
+    });
+  } catch (e) {
+    logger.error('kra keyword summary', { error: e.message });
+    res.status(500).json({ error: 'Could not load the keyword summary' });
+  }
+});
+
+// The org-wide value-add list — the words that will mark a task as
+// extraordinary in phase 2. Stored beside the other timesheet settings
+// because it is the same kind of configuration and the same screen
+// edits it.
+router.put('/hr/kra-library/value-add-keywords', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const list = kw.parseKeywords((req.body || {}).keywords);
+    const cur = (await db.query(
+      `SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='timesheet'`, [T(req)])).rows[0];
+    const next = { ...(((cur && cur.value)) || {}), value_add_keywords: list };
+    await db.query(
+      `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'timesheet',$2::jsonb)
+       ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value`,
+      [T(req), JSON.stringify(next)]);
+    audit(req, 'TIMESHEET_VALUE_ADD_KEYWORDS_SET', null, null, { count: list.length, keywords: list });
+    res.json({ ok: true, value_add_keywords: list });
+  } catch (e) {
+    logger.error('value-add keywords', { error: e.message });
+    res.status(500).json({ error: 'Could not save the list' });
+  }
 });
 
 // Remove one published KRA from a shelf.
@@ -2249,10 +2402,10 @@ router.post('/hr/kra-library/entry', async (req, res) => {
 
     const row = (await db.query(
       `INSERT INTO pms.kra_library (tenant_id, department, designation, category, title,
-                                    measures, description, suggested_weight, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+                                    measures, description, suggested_weight, sort_order, keywords)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [T(req), department, designation, txt(b.category), title,
-       txt(b.measures), txt(b.description), weight, next])).rows[0];
+       txt(b.measures), txt(b.description), weight, next, kw.parseKeywords(b.keywords)])).rows[0];
 
     audit(req, 'KRA_LIBRARY_ENTRY_ADDED', null, null, {
       id: row.id, designation: row.designation, department: row.department, title: row.title });
@@ -2401,10 +2554,11 @@ router.post('/hr/kra-library/upload', (req, res, next) => kraUpload.single('file
         for (const k of rows) {
           await client.query(
             `INSERT INTO pms.kra_library
-               (tenant_id, designation, department, category, title, measures, description, suggested_weight, sort_order, uploaded_by)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+               (tenant_id, designation, department, category, title, measures, description, suggested_weight, sort_order, uploaded_by, keywords)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
             [T(req), label, department, k.category || null, k.kra_title, k.measures, k.description,
-             Number.isFinite(k.weight) ? k.weight : null, (i += 10), req.user.email]);
+             Number.isFinite(k.weight) ? k.weight : null, (i += 10), req.user.email,
+             kw.parseKeywords(k.keywords)]);
         }
       }
       await client.query('COMMIT');
@@ -4583,6 +4737,9 @@ const incr = require('./increment-rules');
 // The calibration kitty maths, pure and unit tested — see the routes
 // above. Required here beside incr because both read pms.increment_matrix.
 const kitty = require('./calibration-budget');
+// KRA keywords — phase 1 of the timesheet rating engine (29 Sep).
+const kw = require('./kra-keywords');
+const { ensureValueAddKeywords } = require('../../migrations/064-kra-keywords');
 const { ensureBands } = require('../../migrations/063-calibration-kitty');
 
 async function requireComp(req, res) {
