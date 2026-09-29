@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Sparkles, SlidersHorizontal } from 'lucide-react';
+import { Sparkles, SlidersHorizontal, Download } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
 import Grade from '../grade';
 import SearchBox, { matches } from '../SearchBox';
+import { KittyPanel, BracketFilter, AllocationRow, short } from './CalibrationKitty';
 
 const NINE_BOX = ['low-low', 'low-mid', 'low-high', 'mid-low', 'mid-mid', 'mid-high', 'high-low', 'high-mid', 'high-high'];
 
@@ -15,8 +16,21 @@ export default function CalibrationPage() {
   const [brief, setBrief] = useState(null);
   const [briefOpen, setBriefOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // ---- the kitty (29 Sep) ------------------------------------------
+  // Fetched SEPARATELY, and a 403 here is not an error on this page:
+  // money is gated on pms_compensation while the rest of calibration is
+  // pms_admin, so a user with one and not the other must still get the
+  // ratings screen rather than a red box. `noComp` records which it was.
+  const [kitty, setKitty] = useState(null);
+  const [noComp, setNoComp] = useState(false);
+  const [bracket, setBracket] = useState('all');
+
   const load = () => api('/pms/calibration').then(setData).catch(e => setErr(e.message));
+  const loadKitty = (b = bracket) => api(`/pms/calibration/kitty?bracket=${b}`)
+    .then((r) => { setKitty(r); setNoComp(false); })
+    .catch((e) => { if (/pms_compensation/.test(e.message)) setNoComp(true); else setErr(e.message); });
   useEffect(() => { load(); }, []);
+  useEffect(() => { loadKitty(bracket); }, [bracket]);
 
   const askBrief = async () => {
     setBusy(true); setErr(null);
@@ -72,21 +86,43 @@ export default function CalibrationPage() {
           {brief.outstanding && <p className="text-amber-700">{brief.outstanding}</p>}
         </AiModal>
       )}
-      <div className="card p-4">
-        <p className="lbl">Distribution vs bell-curve targets</p>
-        {/* 5-point letter-grade scale (A+=5..C=1) — briefly had a '6'
-            bucket for an earlier 6-grade version, reverted along with
-            narrowing the default scale back down. */}
-        <div className="flex gap-3 flex-wrap">
-          {['5', '4', '3', '2', '1', 'unrated'].map(k => (
-            <div key={k} className="text-center">
-              <p className="text-lg font-bold">{dist[k] || 0}</p>
-              <p className="text-[10px] text-navy-400">rating {k}</p>
-              <p className="text-[10px] text-navy-500">{Math.round(((dist[k] || 0) / total) * 100)}% {targets[k] != null && <span className="text-navy-400">/ tgt {targets[k]}%</span>}</p>
-            </div>
-          ))}
+      {/* THE DISTRIBUTION, still here when there is no kitty to show.
+          Once the kitty loads, its grade table says the same thing with
+          the letters, the ranges and the money beside it — two tables
+          of the same counts would just disagree eventually. */}
+      {(!kitty || noComp) && (
+        <div className="card p-4">
+          <p className="lbl">Distribution vs bell-curve targets</p>
+          <div className="flex gap-3 flex-wrap">
+            {['5', '4', '3', '2', '1', 'unrated'].map(k => (
+              <div key={k} className="text-center">
+                <p className="text-lg font-bold">{dist[k] || 0}</p>
+                <p className="text-[10px] text-navy-400">rating {k}</p>
+                <p className="text-[10px] text-navy-500">{Math.round(((dist[k] || 0) / total) * 100)}% {targets[k] != null && <span className="text-navy-400">/ tgt {targets[k]}%</span>}</p>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {noComp && (
+        <p className="text-[11.5px] text-navy-500 bg-navy-50 rounded-lg px-3 py-2">
+          The kitty and budget panel needs the <b>pms_compensation</b> permission, which is granted
+          separately from the rest of HR so that salary can be withheld without withholding this page.
+        </p>
+      )}
+
+      {kitty && !noComp && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <BracketFilter value={bracket} onChange={setBracket} threshold={kitty.bracket_threshold} />
+            <span className="text-[11px] text-navy-400">
+              {kitty.counts.employees} of {kitty.counts.of_total} shown
+            </span>
+          </div>
+          <KittyPanel view={kitty} onSaved={() => loadKitty()} onError={setErr} />
+        </>
+      )}
       <SearchBox value={q} onChange={setQ} placeholder="Search by employee, department or adjustment reason…"
         shown={rowsShown.length} total={(data && data.rows ? data.rows : []).length} />
       <div className="card overflow-x-auto">
@@ -115,6 +151,63 @@ export default function CalibrationPage() {
         </table>
       </div>
       <p className="text-[11px] text-navy-400">Every adjustment requires a reason — it is the permanent answer to "why did my rating change".</p>
+
+      {/* ---- the allocation grid (29 Sep) ----------------------------
+          Below the rating table rather than merged into it: the rating
+          conversation and the money conversation happen in that order,
+          and a single table carrying both would be twenty columns wide
+          before anybody could read either. */}
+      {kitty && !noComp && (
+        <div className="card overflow-x-auto">
+          <div className="p-3 flex flex-wrap items-center gap-2">
+            <p className="lbl flex-1">Increment allocation</p>
+            <a className="btn-sec !py-1" href={`/api/v1/pms/calibration/export?bracket=${bracket}&token=${encodeURIComponent(localStorage.getItem('apms_token') || '')}`}>
+              <Download size={12} className="inline mr-1" />Export to Excel
+            </a>
+          </div>
+          {kitty.counts.ctc_missing > 0 && kitty.counts.ctc_missing === kitty.counts.employees && (
+            // The state the client instance is actually in today: 1,427
+            // people and no salary on record for any of them. An empty
+            // state that says so beats a grid of dashes and zeros.
+            <p className="px-3 pb-3 text-[11.5px] text-amber-800">
+              No CTC is on record for anybody here, so every figure below is blank rather than zero.
+              Upload compensation on the Increment Simulation page and these fill in.
+            </p>
+          )}
+          <table className="w-full text-xs">
+            <thead className="bg-navy-50 text-[10px] uppercase tracking-wide text-navy-500">
+              <tr>
+                <th className="text-left px-2 py-2">Employee</th>
+                <th className="text-left px-2 py-2">Dept / Delivery head</th>
+                <th className="text-left px-2 py-2">Grade</th>
+                <th className="text-right px-2 py-2">Current CTC</th>
+                <th className="text-left px-2 py-2">Status</th>
+                <th className="text-right px-2 py-2">Std %</th>
+                <th className="text-right px-2 py-2">Mkt %</th>
+                <th className="text-right px-2 py-2">Promo %</th>
+                <th className="text-right px-2 py-2">Reten %</th>
+                <th className="text-right px-2 py-2">Total %</th>
+                <th className="text-right px-2 py-2">Revised CTC</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-navy-100">
+              {kitty.lines
+                .filter(l => matches(q, l.name, l.department, l.designation, l.emp_code))
+                .map(l => (
+                  <AllocationRow key={l.employee_id} line={l} bracket={bracket}
+                    currency={kitty.currency}
+                    onSaved={(r) => setKitty(k => ({ ...k, ...r }))}
+                    onError={setErr} />
+                ))}
+            </tbody>
+          </table>
+          <p className="p-3 text-[11px] text-navy-400">
+            Open a row to set a market correction, a promotion or a retention offer — each needs its
+            reason, the same way a rating adjustment does. <b>*</b> marks a standard hike overridden
+            from the band.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

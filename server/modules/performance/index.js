@@ -4044,6 +4044,267 @@ router.get('/calibration', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---- the calibration kitty (29 Sep) --------------------------------------
+//
+// Asked for as a spec for this page: a salary-bracket filter, a live
+// kitty and budget panel, per-grade increment ranges, three dedicated
+// pools, and a grid that computes a revised CTC per person.
+//
+// GATED ON pms_compensation, NOT pms_admin. The rest of Calibration is
+// pms_admin — ratings, the bell curve, the 9-box. Salary is the one
+// thing migration 030 deliberately split into its own grant, so that HR
+// can lose compensation access without losing their role. Hanging money
+// off the existing pms_admin check would have quietly handed every
+// calibration user the entire payroll, which is exactly the leak that
+// separate permission exists to prevent. A pms_admin without it still
+// gets the page they have today; they just get no money on it.
+//
+// The maths lives in calibration-budget.js, pure and unit tested. These
+// routes only fetch, delegate and persist.
+
+// The population a calibration kitty is computed over: everyone rated
+// in this cycle, with what they are paid and whether they are leaving.
+async function kittyPopulation(tenantId, cycleId) {
+  return (await db.query(
+    `SELECT e.id AS employee_id, e.name, e.emp_code, e.department, e.designation,
+            e.resignation_date, e.last_working_date,
+            dh.name AS delivery_head,
+            COALESCE(adj.to_rating, he.overall_rating, me.overall_rating) AS final_rating,
+            c.annual_ctc AS current_ctc
+       FROM core.employees e
+       LEFT JOIN pms.manager_evaluations me ON me.employee_id=e.id AND me.cycle_id=$2 AND me.status='submitted'
+       LEFT JOIN pms.hod_evaluations he ON he.employee_id=e.id AND he.cycle_id=$2 AND he.status='submitted'
+       LEFT JOIN LATERAL (SELECT to_rating FROM pms.rating_adjustments ra
+                           WHERE ra.cycle_id=$2 AND ra.employee_id=e.id ORDER BY at DESC LIMIT 1) adj ON true
+       LEFT JOIN core.employees dh ON dh.id = e.manager_id
+       LEFT JOIN (${CURRENT_CTC_SQL}) c ON c.employee_id=e.id
+      WHERE e.tenant_id=$1 AND e.status='active' AND e.archived_at IS NULL
+      ORDER BY e.name`, [tenantId, cycleId])).rows;
+}
+
+async function budgetFor(tenantId, cycleId) {
+  const r = await db.query(
+    `SELECT * FROM pms.calibration_budget WHERE tenant_id=$1 AND cycle_id=$2`, [tenantId, cycleId]);
+  // No row yet is not an error — it is a kitty nobody has set, which
+  // reads as zero everywhere and says so on screen.
+  return r.rows[0] || { kitty_pct: 0, bracket_threshold: 5000000,
+    retention_pool: 0, market_pool: 0, promotion_pool: 0, currency: 'INR' };
+}
+
+async function kittyView(tenantId, cycleId, bracket, cycle) {
+  // A tenant created after migration 063 ran has no bands, because the
+  // migration's own loop saw an empty core.tenants — see ensureBands
+  // for the whole story. Ensured here so the page is never a grid of
+  // blanks on a fresh install.
+  await ensureBands(db, tenantId);
+  const [employees, budget, matrixRows, allocRows] = await Promise.all([
+    kittyPopulation(tenantId, cycleId),
+    budgetFor(tenantId, cycleId),
+    matrixFor(tenantId, cycleId),
+    db.query(`SELECT * FROM pms.calibration_allocations WHERE tenant_id=$1 AND cycle_id=$2`, [tenantId, cycleId]),
+  ]);
+  const allocs = Object.fromEntries(allocRows.rows.map((a) => [a.employee_id, a]));
+  const view = kitty.summarise({
+    employees, allocs, matrix: matrixRows, budget,
+    bellCurve: (cycle && cycle.bell_curve) || {},
+    bracket,
+  });
+  return { ...view, budget, currency: budget.currency || 'INR' };
+}
+
+router.get('/calibration/kitty', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const c = await activeCycle(T(req));
+    if (!c) return res.json({ cycle: null });
+    const bracket = kitty.BRACKETS.includes(req.query.bracket) ? req.query.bracket : 'all';
+    const view = await kittyView(T(req), c.id, bracket, c);
+    res.json({ cycle: cycleForClient(c, { bell_curve: c.bell_curve }), ...view });
+  } catch (e) {
+    logger.error('calibration kitty', { error: e.message });
+    res.status(500).json({ error: 'Could not load the calibration budget' });
+  }
+});
+
+router.put('/calibration/kitty', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const b = req.body || {};
+    const bad = kitty.validateBudget(b);
+    if (bad) return res.status(422).json({ error: bad });
+    const cur = await budgetFor(T(req), c.id);
+    const pick = (k, d) => (b[k] === undefined || b[k] === null || b[k] === '' ? d : Number(b[k]));
+    const row = (await db.query(
+      `INSERT INTO pms.calibration_budget
+         (tenant_id, cycle_id, kitty_pct, bracket_threshold, retention_pool, market_pool, promotion_pool, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (tenant_id, cycle_id) DO UPDATE SET
+         kitty_pct=EXCLUDED.kitty_pct, bracket_threshold=EXCLUDED.bracket_threshold,
+         retention_pool=EXCLUDED.retention_pool, market_pool=EXCLUDED.market_pool,
+         promotion_pool=EXCLUDED.promotion_pool, updated_by=EXCLUDED.updated_by, updated_at=now()
+       RETURNING *`,
+      [T(req), c.id, pick('kitty_pct', cur.kitty_pct), pick('bracket_threshold', cur.bracket_threshold),
+       pick('retention_pool', cur.retention_pool), pick('market_pool', cur.market_pool),
+       pick('promotion_pool', cur.promotion_pool), req.user.email])).rows[0];
+    audit(req, 'CALIBRATION_BUDGET_SET', c.id, null, {
+      kitty_pct: Number(row.kitty_pct), retention: Number(row.retention_pool),
+      market: Number(row.market_pool), promotion: Number(row.promotion_pool),
+      threshold: Number(row.bracket_threshold) });
+    res.json({ ok: true, budget: row });
+  } catch (e) {
+    logger.error('calibration kitty write', { error: e.message });
+    res.status(500).json({ error: 'Could not save the calibration budget' });
+  }
+});
+
+// One person's allocation. Every special hike needs its reason, for the
+// same reason a rating adjustment does: "why did this person get 14%"
+// must have a queryable answer, not a remembered one.
+router.put('/calibration/allocation/:employeeId', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const emp = (await db.query(
+      `SELECT id, name, resignation_date FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.params.employeeId, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee not found' });
+
+    const cur = (await db.query(
+      `SELECT * FROM pms.calibration_allocations WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, emp.id])).rows[0] || {};
+    const merged = kitty.mergeAllocation(cur, req.body || {});
+    const bad = kitty.validateAllocation(merged, { resigned: !!emp.resignation_date });
+    if (bad) return res.status(422).json({ error: bad });
+
+    const row = (await db.query(
+      `INSERT INTO pms.calibration_allocations
+         (tenant_id, cycle_id, employee_id, standard_pct, standard_reason,
+          market_pct, market_reason, promoted, proposed_designation, proposed_band,
+          promotion_pct, promotion_reason, retention_approved, retention_pct,
+          retention_lumpsum, retention_reason, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (tenant_id, cycle_id, employee_id) DO UPDATE SET
+         standard_pct=EXCLUDED.standard_pct, standard_reason=EXCLUDED.standard_reason,
+         market_pct=EXCLUDED.market_pct, market_reason=EXCLUDED.market_reason,
+         promoted=EXCLUDED.promoted, proposed_designation=EXCLUDED.proposed_designation,
+         proposed_band=EXCLUDED.proposed_band, promotion_pct=EXCLUDED.promotion_pct,
+         promotion_reason=EXCLUDED.promotion_reason, retention_approved=EXCLUDED.retention_approved,
+         retention_pct=EXCLUDED.retention_pct, retention_lumpsum=EXCLUDED.retention_lumpsum,
+         retention_reason=EXCLUDED.retention_reason, updated_by=EXCLUDED.updated_by, updated_at=now()
+       RETURNING *`,
+      [T(req), c.id, emp.id, merged.standard_pct, merged.standard_reason,
+       merged.market_pct, merged.market_reason, merged.promoted, merged.proposed_designation,
+       merged.proposed_band, merged.promotion_pct, merged.promotion_reason,
+       merged.retention_approved, merged.retention_pct, merged.retention_lumpsum,
+       merged.retention_reason, req.user.email])).rows[0];
+
+    audit(req, 'CALIBRATION_ALLOCATION_SET', c.id, emp.id, {
+      standard: merged.standard_pct, market: merged.market_pct,
+      promotion: merged.promotion_pct, retention: merged.retention_pct,
+      promoted: merged.promoted, retention_approved: merged.retention_approved });
+
+    // The whole view back, not just the row: every pool total and every
+    // warning moves when one person changes, and a client that patched
+    // one row locally would drift from the server's arithmetic.
+    const bracket = kitty.BRACKETS.includes(req.body.bracket) ? req.body.bracket : 'all';
+    const view = await kittyView(T(req), c.id, bracket, c);
+    res.json({ ok: true, allocation: row, ...view });
+  } catch (e) {
+    logger.error('calibration allocation', { error: e.message });
+    res.status(500).json({ error: 'Could not save the allocation' });
+  }
+});
+
+// The calibration sheet, as a spreadsheet. Asked for alongside the
+// panel: a compensation round is signed off in a meeting, and a
+// meeting runs on a file somebody can sort.
+//
+// Every figure comes from the SAME summarise() the screen uses, so the
+// export and the page can never disagree — the alternative, a second
+// query shaped for Excel, is how a "why does the sheet say something
+// different" bug starts.
+router.get('/calibration/export', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const bracket = kitty.BRACKETS.includes(req.query.bracket) ? req.query.bracket : 'all';
+    const view = await kittyView(T(req), c.id, bracket, c);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Calibration');
+    ws.columns = [
+      { header: 'Emp code', key: 'emp_code', width: 12 },
+      { header: 'Name', key: 'name', width: 26 },
+      { header: 'Designation', key: 'designation', width: 24 },
+      { header: 'Department', key: 'department', width: 18 },
+      { header: 'Delivery head', key: 'delivery_head', width: 20 },
+      { header: 'Grade', key: 'band_label', width: 8 },
+      { header: 'Rating', key: 'final_rating', width: 8 },
+      { header: 'CTC bracket', key: 'bracket', width: 14 },
+      { header: 'Current CTC', key: 'current_ctc', width: 14 },
+      { header: 'Status', key: 'status', width: 12 },
+      { header: 'Retention approved', key: 'retention_approved', width: 18 },
+      { header: 'Promoted', key: 'promoted', width: 10 },
+      { header: 'New designation', key: 'proposed_designation', width: 22 },
+      { header: 'New band', key: 'proposed_band', width: 12 },
+      { header: 'Standard %', key: 'standard_pct', width: 11 },
+      { header: 'Market %', key: 'market_pct', width: 10 },
+      { header: 'Promotion %', key: 'promotion_pct', width: 12 },
+      { header: 'Retention %', key: 'retention_pct', width: 12 },
+      { header: 'Retention lump sum', key: 'retention_lumpsum', width: 18 },
+      { header: 'Total %', key: 'total_pct', width: 9 },
+      { header: 'Revised CTC', key: 'revised_ctc', width: 14 },
+      { header: 'Reasons', key: 'reasons', width: 50 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    for (const l of view.lines) {
+      ws.addRow({
+        ...l,
+        bracket: l.current_ctc == null ? 'not on record'
+          : (l.current_ctc > view.bracket_threshold ? 'above' : 'at or below'),
+        // Written as words, not blanks: a spreadsheet cell that is
+        // empty reads as zero to whoever sums the column.
+        current_ctc: l.ctc_missing ? 'not on record' : l.current_ctc,
+        revised_ctc: l.ctc_missing ? 'not on record' : l.revised_ctc,
+        status: l.frozen ? 'leaving — frozen' : (l.resigned ? 'leaving' : 'active'),
+        retention_approved: l.retention_approved ? 'yes' : '',
+        promoted: l.promoted ? 'yes' : '',
+        reasons: Object.entries(l.reasons).filter(([, v]) => v).map(([k2, v]) => `${k2}: ${v}`).join(' | '),
+      });
+    }
+
+    // The budget, on its own sheet, so the numbers the sheet was signed
+    // off against travel with it.
+    const bs = wb.addWorksheet('Budget');
+    bs.columns = [{ header: 'Pool', key: 'p', width: 26 }, { header: 'Approved', key: 'a', width: 16 },
+      { header: 'Allocated', key: 's', width: 16 }, { header: 'Remaining', key: 'r', width: 16 }];
+    bs.getRow(1).font = { bold: true };
+    for (const [key, label] of [['kitty', `Incremental kitty (${view.kitty_pct}%)`],
+      ['retention', 'Retention'], ['market', 'Market correction'], ['promotion', 'Promotion']]) {
+      const pool = view.pools[key];
+      bs.addRow({ p: label, a: pool.approved, s: pool.spent, r: pool.remaining });
+    }
+    bs.addRow({});
+    bs.addRow({ p: 'Total salary pool', a: view.total_ctc });
+    bs.addRow({ p: 'Employees included', a: view.counts.employees });
+    bs.addRow({ p: 'No CTC on record', a: view.counts.ctc_missing });
+    bs.addRow({ p: 'Frozen (leaving, not retained)', a: view.counts.frozen });
+
+    const buf = await wb.xlsx.writeBuffer();
+    audit(req, 'CALIBRATION_EXPORTED', c.id, null, { bracket, rows: view.lines.length });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="calibration_${bracket}.xlsx"`);
+    res.send(Buffer.from(buf));
+  } catch (e) {
+    logger.error('calibration export', { error: e.message });
+    res.status(500).json({ error: 'Could not build the export' });
+  }
+});
+
 router.post('/calibration/adjust', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
@@ -4319,6 +4580,10 @@ router.post('/publish', async (req, res) => {
 // become somebody's actual pay is a far more dangerous feature than the
 // one asked for.
 const incr = require('./increment-rules');
+// The calibration kitty maths, pure and unit tested — see the routes
+// above. Required here beside incr because both read pms.increment_matrix.
+const kitty = require('./calibration-budget');
+const { ensureBands } = require('../../migrations/063-calibration-kitty');
 
 async function requireComp(req, res) {
   if (await hasPermission(req.user, 'pms_compensation')) return true;

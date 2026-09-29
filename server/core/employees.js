@@ -83,7 +83,12 @@ function flexDate(v) {
 // ---------- Validation (pure) ----------------------------------------------
 const REQUIRED = ['name', 'email'];
 const KNOWN = ['emp_code','name','email','department','designation','role_band',
-  'manager_email','manager_name','hod_name','date_of_joining','status'];
+  'manager_email','manager_name','hod_name','date_of_joining','status',
+  // Parsed since the first version to warn about leavers, and STORED
+  // since 29 Sep: the calibration retention bucket has to know who is
+  // on notice, and ticking that by hand for 1,427 people is not a
+  // feature. One upload now answers it for the whole company.
+  'resignation_date','last_working_date'];
 
 // The header spellings an HRMS export actually uses, mapped onto the names
 // above. The client's report calls them "Full Name" and "Office Email"; the
@@ -246,6 +251,10 @@ function validateEmployeeRows(rows) {
       hod_name: get('hod_name') || null,
       date_of_joining_raw: get('date_of_joining') || null,
       date_of_joining: flexDate(get('date_of_joining')),
+      resignation_date_raw: get('resignation_date') || null,
+      resignation_date: flexDate(get('resignation_date')),
+      last_working_date_raw: get('last_working_date') || null,
+      last_working_date: flexDate(get('last_working_date')),
       status: (get('status') || 'active').toLowerCase(),
     };
     if (!rec.name) errors.push({ line, error: 'name is empty' });
@@ -282,6 +291,13 @@ function validateEmployeeRows(rows) {
     }
 
     if (rec.date_of_joining_raw && !rec.date_of_joining) warnings.push({ line, warning: `unparseable date_of_joining "${rec.date_of_joining_raw}" — will be stored empty` });
+    for (const f of ['resignation_date', 'last_working_date']) {
+      // Reported for the same reason as the joining date, and it matters
+      // more: a date that fails to parse leaves somebody reading as NOT
+      // resigned, and the calibration page would then offer them a full
+      // increment.
+      if (rec[`${f}_raw`] && !rec[f]) warnings.push({ line, warning: `unparseable ${f.replace(/_/g, ' ')} "${rec[`${f}_raw`]}" — will be stored empty, so they will not show as leaving` });
+    }
     if (!['active', 'inactive'].includes(rec.status)) { warnings.push({ line, warning: `status "${rec.status}" not active|inactive — treated as active` }); rec.status = 'active'; }
     // A leaving date with no status column says the HRMS knows this person
     // has gone and the file does not. Importing them as active would put a
@@ -570,12 +586,14 @@ async function loadEmployees(tenantId, rows, opts = {}) {
       // from "onboarding" everyone in it.
       if (!beforeByEmail.has(String(r.email || '').toLowerCase())) newHireEmails.push(r.email);
       await client.query(
-        `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, status, resignation_date, last_working_date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          ON CONFLICT (tenant_id, email) DO UPDATE SET
            emp_code=EXCLUDED.emp_code, name=EXCLUDED.name, department=EXCLUDED.department,
            designation=EXCLUDED.designation, role_band=EXCLUDED.role_band,
-           date_of_joining=EXCLUDED.date_of_joining, status=EXCLUDED.status, updated_at=now(),
+           date_of_joining=EXCLUDED.date_of_joining, status=EXCLUDED.status,
+           resignation_date=EXCLUDED.resignation_date,
+           last_working_date=EXCLUDED.last_working_date, updated_at=now(),
            -- BACK ON THE LIST. This is what makes "clear the list, then
            -- upload a fresh sheet" work the way it was asked for on
            -- 25 Sep: archiving takes people off the list and keeps
@@ -585,7 +603,8 @@ async function loadEmployees(tenantId, rows, opts = {}) {
            -- the re-uploaded person would stay invisible and the
            -- feature would look broken.
            archived_at=NULL, archived_by=NULL`,
-        [tenantId, r.emp_code, r.name, r.email, r.department, r.designation, r.role_band, r.date_of_joining, r.status]);
+        [tenantId, r.emp_code, r.name, r.email, r.department, r.designation, r.role_band,
+         r.date_of_joining, r.status, r.resignation_date || null, r.last_working_date || null]);
     }
     // Pass 2: manager links by email.
     for (const r of rows) {
