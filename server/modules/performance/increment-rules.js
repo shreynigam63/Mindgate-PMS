@@ -40,6 +40,29 @@ function validateMatrix(bands) {
     else if (lo > hi) errors.push({ row, error: `rating range is backwards (${lo} to ${hi})` });
     if (!Number.isFinite(pct) || pct < 0) errors.push({ row, error: 'increment % must be zero or more' });
     else if (pct > 100) errors.push({ row, error: `increment of ${pct}% looks like a typo — more than doubling a salary` });
+
+    // THE BAND'S OWN RANGE (063). Optional — a matrix saved before the
+    // range existed has none, and a tenant that does not use ranges
+    // never sets them — but if one end is given the other must be too,
+    // or the calibration guardrail that reads them can never fire.
+    const lo2 = b.increment_pct_min, hi2 = b.increment_pct_max;
+    const has = (v) => v != null && v !== '';
+    if (has(lo2) !== has(hi2)) {
+      errors.push({ row, error: 'an increment range needs both a minimum and a maximum, or neither' });
+    } else if (has(lo2)) {
+      const a = Number(lo2), z = Number(hi2);
+      if (!Number.isFinite(a) || !Number.isFinite(z)) errors.push({ row, error: 'the increment range must be numeric' });
+      else if (a < 0 || z < 0) errors.push({ row, error: 'an increment range cannot be negative' });
+      else if (a > z) errors.push({ row, error: `increment range is backwards (${a}% to ${z}%)` });
+      else if (z > 100) errors.push({ row, error: `an increment range topping out at ${z}% looks like a typo` });
+      // The standard sitting outside its own band is how a grade table
+      // comes to contradict the guardrail computed from it: every row
+      // would report out_of_band against a figure the table itself
+      // shows as standard.
+      else if (Number.isFinite(pct) && (pct < a || pct > z)) {
+        errors.push({ row, error: `the standard ${pct}% sits outside this band's own ${a}–${z}% range` });
+      }
+    }
   });
   for (let i = 0; i < bands.length; i++) {
     for (let j = i + 1; j < bands.length; j++) {

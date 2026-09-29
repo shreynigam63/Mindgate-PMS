@@ -4368,6 +4368,105 @@ router.put('/calibration/kitty', async (req, res) => {
   }
 });
 
+// ---- the grade bands, from the page that argues about them ------------
+//
+// Target %, the increment range and the standard were readable on
+// Calibration and editable nowhere near it: the range could not be set
+// from anywhere at all (the Increment Simulation route silently dropped
+// it), and the bell-curve target could only be changed on the Cycles
+// page. A calibration session is exactly where somebody says "A+ should
+// top out at 22 this year", so the numbers have to be editable where
+// that sentence is said.
+//
+// TWO TABLES, ONE SAVE, and they cannot be allowed to diverge:
+//
+//   pms.increment_matrix   the money - standard %, and the band's own
+//                          min-max range.
+//   pms.cycles.bell_curve  the distribution target per rating.
+//
+// WRITTEN CYCLE-SCOPED. matrixFor prefers a cycle-scoped matrix over the
+// standing one, so writing this cycle's bands here leaves the standing
+// company policy alone - which is what "A+ tops out at 22 THIS YEAR"
+// means. The standing matrix is still edited on Increment Simulation.
+router.put('/calibration/bands', async (req, res) => {
+  try {
+    if (!(await requireComp(req, res))) return;
+    const c = await activeCycle(T(req));
+    if (!c) return res.status(409).json({ error: 'No active cycle' });
+    const bands = Array.isArray((req.body || {}).bands) ? req.body.bands : null;
+    if (!bands || !bands.length) return res.status(422).json({ error: 'Give at least one band.' });
+
+    // Validated BEFORE anything is deleted. This route replaces the
+    // cycle's matrix wholesale, so a band rejected halfway through
+    // would leave the cycle with fewer grades than it started with.
+    const errors = incr.validateMatrix(bands);
+    if (errors.length) return res.status(422).json({ error: 'The bands are not usable yet', errors });
+
+    // The bell-curve targets, keyed the way calibration-budget.js reads
+    // them: by the integer rating a band tops out at. Absent means
+    // "leave this cycle's curve alone" rather than "set it to zero".
+    const curve = { ...(c.bell_curve || {}) };
+    let curveTouched = false;
+    for (const b of bands) {
+      if (b.target_pct === undefined || b.target_pct === null || b.target_pct === '') continue;
+      const t = Number(b.target_pct);
+      if (!Number.isFinite(t) || t < 0 || t > 100) {
+        return res.status(422).json({ error: `Target for ${b.label || 'a band'} must be between 0 and 100 - got "${b.target_pct}"` });
+      }
+      curve[String(Math.floor(Number(b.rating_max)))] = t;
+      curveTouched = true;
+    }
+    // Named rather than silently normalised: targets that do not total
+    // 100 are a bell curve that cannot be met, and scaling them would
+    // hide the mistake behind a distribution nobody chose.
+    if (curveTouched) {
+      const total = Object.values(curve).reduce((x, v) => x + Number(v || 0), 0);
+      if (Math.round(total) !== 100) {
+        return res.status(422).json({
+          error: `The distribution targets must add up to 100% - they add up to ${Math.round(total * 10) / 10}%.` });
+      }
+    }
+
+    const before = await matrixFor(T(req), c.id);
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM pms.increment_matrix WHERE tenant_id=$1 AND cycle_id=$2`, [T(req), c.id]);
+      let order = 0;
+      const rng = (v) => (v == null || v === '' ? null : Number(v));
+      for (const b of bands) {
+        await client.query(
+          `INSERT INTO pms.increment_matrix (tenant_id, cycle_id, label, rating_min, rating_max,
+             increment_pct, increment_pct_min, increment_pct_max, sort_order, updated_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [T(req), c.id, String(b.label || '').trim() || null, b.rating_min, b.rating_max,
+           b.increment_pct, rng(b.increment_pct_min), rng(b.increment_pct_max),
+           (order += 10), req.user.email]);
+      }
+      if (curveTouched) {
+        await client.query(`UPDATE pms.cycles SET bell_curve=$2::jsonb, updated_at=now() WHERE id=$1`,
+          [c.id, JSON.stringify(curve)]);
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+
+    // Audited with what it was. These numbers decide what every grade is
+    // worth in money, so "why did A+ change to 22%" has to have the same
+    // queryable answer a rating adjustment does.
+    audit(req, 'CALIBRATION_BANDS_SET', c.id, null, {
+      before: before.map((b) => ({ label: b.label, increment_pct: b.increment_pct,
+        min: b.increment_pct_min, max: b.increment_pct_max })),
+      after: bands.map((b) => ({ label: b.label, increment_pct: b.increment_pct,
+        min: b.increment_pct_min, max: b.increment_pct_max, target_pct: b.target_pct })),
+      bell_curve: curveTouched ? curve : null,
+    });
+    res.json({ ok: true, bands: bands.length, bell_curve: curveTouched ? curve : null });
+  } catch (e) {
+    logger.error('calibration bands write', { error: e.message });
+    res.status(500).json({ error: 'Could not save the grade bands' });
+  }
+});
+
 // One person's allocation. Every special hike needs its reason, for the
 // same reason a rating adjustment does: "why did this person get 14%"
 // must have a queryable answer, not a remembered one.
@@ -4950,11 +5049,22 @@ router.put('/increment-matrix', async (req, res) => {
         cycle_scoped ? [T(req), c.id] : [T(req)]);
       let order = 0;
       for (const b of bands) {
+        // increment_pct_min/max CARRIED THROUGH, and this is a fix.
+        // This route DELETEs the matrix and re-INSERTs it, and the
+        // insert did not name the two range columns migration 063
+        // added — so saving the matrix from Increment Simulation,
+        // even with nothing changed, nulled every increment range.
+        // Calibration's "Increment range" column went to "—" and the
+        // out-of-band guardrail computed from it silently stopped
+        // firing. Reproduced against a running instance before the fix.
+        const rng = (v) => (v == null || v === '' ? null : Number(v));
         await client.query(
-          `INSERT INTO pms.increment_matrix (tenant_id, cycle_id, label, rating_min, rating_max, increment_pct, sort_order, updated_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          `INSERT INTO pms.increment_matrix (tenant_id, cycle_id, label, rating_min, rating_max,
+             increment_pct, increment_pct_min, increment_pct_max, sort_order, updated_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [T(req), cycle_scoped ? c.id : null, (b.label || '').trim() || null,
-           b.rating_min, b.rating_max, b.increment_pct, (order += 10), req.user.email]);
+           b.rating_min, b.rating_max, b.increment_pct,
+           rng(b.increment_pct_min), rng(b.increment_pct_max), (order += 10), req.user.email]);
       }
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }

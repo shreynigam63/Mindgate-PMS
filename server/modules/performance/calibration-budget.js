@@ -274,6 +274,12 @@ function summarise({ employees, allocs = {}, matrix = [], budget = {}, bellCurve
     gradeRows.push({
       label: b.label || key,
       rating: Number(key),
+      // The band's own rating range, carried so the grade table can be
+      // EDITED and saved back without inventing it. Without these the
+      // editor round-trips undefined and every save is rejected as
+      // "rating range must be numeric".
+      rating_min: b.rating_min == null ? null : Number(b.rating_min),
+      rating_max: b.rating_max == null ? null : Number(b.rating_max),
       target_pct: bellCurve[key] == null ? null : Number(bellCurve[key]),
       count: g.count,
       actual_pct: rated ? Math.round((g.count / rated) * 1000) / 10 : 0,

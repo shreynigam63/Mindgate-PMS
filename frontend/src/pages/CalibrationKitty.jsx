@@ -14,7 +14,7 @@
 // locally would drift from the server's arithmetic, and the first
 // person to notice would be whoever reconciled the budget afterwards.
 import { useState } from 'react';
-import { AlertTriangle, Save, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertTriangle, Save, X, ChevronDown, ChevronRight, Pencil } from 'lucide-react';
 import { api } from '../utils/api';
 
 const money = (n) => (n == null ? '—' : `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
@@ -132,6 +132,13 @@ function Pool({ label, pool, hue }) {
 
 export function KittyPanel({ view, onSaved, onError }) {
   const [editing, setEditing] = useState(false);
+  // The grade table. Editable here because a calibration session is
+  // exactly where "A+ should top out at 22 this year" gets said, and
+  // until now the target could only be changed on the Cycles page and
+  // the range nowhere at all.
+  const [bandEdit, setBandEdit] = useState(null);   // null = not editing
+  const [bandErr, setBandErr] = useState(null);
+  const [bandBusy, setBandBusy] = useState(false);
   const b = view.budget || {};
   const [form, setForm] = useState({
     kitty_pct: b.kitty_pct ?? 0, bracket_threshold: b.bracket_threshold ?? 5000000,
@@ -148,6 +155,40 @@ export function KittyPanel({ view, onSaved, onError }) {
   };
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const startBands = () => {
+    setBandErr(null);
+    setBandEdit((view.grades || []).map((g) => ({
+      label: g.label,
+      rating_min: g.rating_min, rating_max: g.rating_max,
+      target_pct: g.target_pct == null ? '' : g.target_pct,
+      increment_pct: g.standard_pct == null ? '' : g.standard_pct,
+      increment_pct_min: g.increment_min_pct == null ? '' : g.increment_min_pct,
+      increment_pct_max: g.increment_max_pct == null ? '' : g.increment_max_pct,
+    })));
+  };
+  const setBand = (i, k) => (e) => setBandEdit((rows) =>
+    rows.map((r, j) => (j === i ? { ...r, [k]: e.target.value } : r)));
+
+  const saveBands = async () => {
+    setBandBusy(true); setBandErr(null);
+    try {
+      await api('/pms/calibration/bands', { method: 'PUT', body: JSON.stringify({ bands: bandEdit }) });
+      setBandEdit(null);
+      onSaved();
+    } catch (e) {
+      // The server returns a per-row list for a bad matrix. Shown as
+      // the list it is, so HR fixes every clash at once rather than
+      // one save at a time.
+      const rows = (e.data && e.data.errors) || [];
+      setBandErr(rows.length ? `${e.message}: ${rows.map((r) => `row ${r.row} — ${r.error}`).join('; ')}` : e.message);
+    }
+    setBandBusy(false);
+  };
+  // The targets have to total 100, and saying so while they are being
+  // typed beats a 422 after the fact.
+  const targetTotal = (bandEdit || [])
+    .reduce((t, r) => t + (r.target_pct === '' ? 0 : Number(r.target_pct) || 0), 0);
 
   // What the header says when the section is folded away: the two
   // numbers somebody would otherwise open it to read.
@@ -227,6 +268,33 @@ export function KittyPanel({ view, onSaved, onError }) {
       ))}
 
       {/* ---- the grade table ---- */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="lbl">Grades, targets and what each is worth</p>
+        {!bandEdit ? (
+          <button className="btn-sec !py-1 !text-xs" onClick={startBands}>
+            <Pencil size={12} className="inline mr-1" />Edit bands
+          </button>
+        ) : (
+          <span className="flex items-center gap-2">
+            <span className={`text-[11px] ${Math.round(targetTotal) === 100 ? 'text-navy-400' : 'text-amber-700'}`}>
+              targets total {Math.round(targetTotal * 10) / 10}%
+            </span>
+            <button className="btn-pri !py-1 !text-xs" disabled={bandBusy} onClick={saveBands}>
+              <Save size={12} className="inline mr-1" />Save bands
+            </button>
+            <button className="btn-sec !py-1 !text-xs" disabled={bandBusy} onClick={() => { setBandEdit(null); setBandErr(null); }}>
+              <X size={12} className="inline mr-1" />Cancel
+            </button>
+          </span>
+        )}
+      </div>
+      {bandErr && <p className="text-[11.5px] text-rose-600">{bandErr}</p>}
+      {bandEdit && (
+        <p className="text-[11px] text-navy-500">
+          These are <b>this cycle's</b> bands. The standing company matrix on Increment Simulation is
+          left alone. Changing them is audited with what they were.
+        </p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-navy-50 text-[10px] uppercase tracking-wide text-navy-500">
@@ -241,21 +309,44 @@ export function KittyPanel({ view, onSaved, onError }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-navy-100">
-            {view.grades.map((g) => {
+            {view.grades.map((g, i) => {
               // Over target is what a calibration session is looking
               // for, so it is coloured rather than left to be worked
               // out from two numbers side by side.
               const over = g.target_pct != null && g.actual_pct > g.target_pct;
+              const e = bandEdit && bandEdit[i];
+              // Count, actual and spend stay read-only in edit mode:
+              // they are COMPUTED from the ratings and salaries on
+              // record, and an input over a derived number invites
+              // somebody to try to type a different answer.
               return (
                 <tr key={g.label}>
                   <td className="px-2 py-1.5 font-bold">{g.label}</td>
-                  <td className="px-2 py-1.5 text-right text-navy-400">{g.target_pct == null ? '—' : `${g.target_pct}%`}</td>
+                  <td className="px-2 py-1.5 text-right text-navy-400">
+                    {e
+                      ? <input className="inp !py-0.5 !px-1 w-16 text-right !text-xs" type="number" min="0" max="100" step="0.1"
+                          value={e.target_pct} onChange={setBand(i, 'target_pct')} />
+                      : (g.target_pct == null ? '—' : `${g.target_pct}%`)}
+                  </td>
                   <td className="px-2 py-1.5 text-right">{g.count}</td>
                   <td className={`px-2 py-1.5 text-right font-semibold ${over ? 'text-amber-700' : ''}`}>{g.actual_pct}%</td>
                   <td className="px-2 py-1.5 text-right text-navy-500">
-                    {g.increment_min_pct == null ? '—' : `${g.increment_min_pct}–${g.increment_max_pct}%`}
+                    {e ? (
+                      <span className="inline-flex items-center gap-1 justify-end">
+                        <input className="inp !py-0.5 !px-1 w-14 text-right !text-xs" type="number" min="0" max="100" step="0.1"
+                          value={e.increment_pct_min} onChange={setBand(i, 'increment_pct_min')} />
+                        <span className="text-navy-300">–</span>
+                        <input className="inp !py-0.5 !px-1 w-14 text-right !text-xs" type="number" min="0" max="100" step="0.1"
+                          value={e.increment_pct_max} onChange={setBand(i, 'increment_pct_max')} />
+                      </span>
+                    ) : (g.increment_min_pct == null ? '—' : `${g.increment_min_pct}–${g.increment_max_pct}%`)}
                   </td>
-                  <td className="px-2 py-1.5 text-right">{g.standard_pct == null ? '—' : `${g.standard_pct}%`}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {e
+                      ? <input className="inp !py-0.5 !px-1 w-16 text-right !text-xs" type="number" min="0" max="100" step="0.1"
+                          value={e.increment_pct} onChange={setBand(i, 'increment_pct')} />
+                      : (g.standard_pct == null ? '—' : `${g.standard_pct}%`)}
+                  </td>
                   <td className="px-2 py-1.5 text-right font-mono">{short(g.spend)}</td>
                 </tr>
               );
