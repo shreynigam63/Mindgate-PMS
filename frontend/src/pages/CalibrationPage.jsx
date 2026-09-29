@@ -11,6 +11,12 @@ const NINE_BOX = ['low-low', 'low-mid', 'low-high', 'mid-low', 'mid-mid', 'mid-h
 
 export default function CalibrationPage() {
   const [q, setQ] = useState('');
+  // A SEARCH PER SECTION, since 29 Sep when both became collapsible.
+  // One shared box filtered both tables, and moving it inside the
+  // Ratings panel would have left the allocation grid filtered by a
+  // query nobody could see once that panel was folded away. Two boxes,
+  // each inside the table it filters, cannot do that.
+  const [qa, setQa] = useState('');
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [brief, setBrief] = useState(null);
@@ -56,6 +62,12 @@ export default function CalibrationPage() {
   const rowsShown = (data && data.rows ? data.rows : [])
 
     .filter(r => matches(q, r.name, r.department, r.adjustment_reason));
+
+  // The allocation grid's own filter, on its own query. Same reasoning
+  // as above: the rows are already loaded to compute the panel, so a
+  // round trip per keystroke would buy nothing.
+  const allocShown = (kitty && kitty.lines ? kitty.lines : [])
+    .filter(l => matches(qa, l.name, l.department, l.designation, l.emp_code));
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
@@ -123,13 +135,15 @@ export default function CalibrationPage() {
           <KittyPanel view={kitty} onSaved={() => loadKitty()} onError={setErr} />
         </>
       )}
-      <SearchBox value={q} onChange={setQ} placeholder="Search by employee, department or adjustment reason…"
-        shown={rowsShown.length} total={(data && data.rows ? data.rows : []).length} />
       {/* Collapsible since 29 Sep, like the two money sections: three
           full-width blocks down one scroll was more page than anybody
           needed at once. */}
       <Section id="ratings" title="Ratings & adjustments"
         summary={`${rowsShown.length} ${rowsShown.length === 1 ? 'person' : 'people'}`}>
+      <div className="mb-3">
+        <SearchBox value={q} onChange={setQ} placeholder="Search by employee, department or adjustment reason…"
+          shown={rowsShown.length} total={(data && data.rows ? data.rows : []).length} />
+      </div>
       <div className="overflow-x-auto">
         {/* table-fixed + explicit widths on the header row: with auto
             layout, the browser infers each column's width from ALL rows
@@ -165,12 +179,16 @@ export default function CalibrationPage() {
           before anybody could read either. */}
       {kitty && !noComp && (
         <Section id="allocation" title="Increment allocation"
-          summary={`${kitty.lines.length} ${kitty.lines.length === 1 ? 'person' : 'people'} · ${short(kitty.total_spend)} allocated`}
+          summary={`${allocShown.length} ${allocShown.length === 1 ? 'person' : 'people'} · ${short(kitty.total_spend)} allocated`}
           actions={(
             <a className="btn-sec !py-1" href={`/api/v1/pms/calibration/export?bracket=${bracket}&token=${encodeURIComponent(localStorage.getItem('apms_token') || '')}`}>
               <Download size={12} className="inline mr-1" />Export to Excel
             </a>
           )}>
+          <div className="mb-3">
+            <SearchBox value={qa} onChange={setQa} placeholder="Search by employee, code, designation or department…"
+              shown={allocShown.length} total={kitty.lines.length} />
+          </div>
           <div className="overflow-x-auto">
           {kitty.counts.ctc_missing > 0 && kitty.counts.ctc_missing === kitty.counts.employees && (
             // The state the client instance is actually in today: 1,427
@@ -198,14 +216,12 @@ export default function CalibrationPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-navy-100">
-              {kitty.lines
-                .filter(l => matches(q, l.name, l.department, l.designation, l.emp_code))
-                .map(l => (
-                  <AllocationRow key={l.employee_id} line={l} bracket={bracket}
-                    currency={kitty.currency}
-                    onSaved={(r) => setKitty(k => ({ ...k, ...r }))}
-                    onError={setErr} />
-                ))}
+              {allocShown.map(l => (
+                <AllocationRow key={l.employee_id} line={l} bracket={bracket}
+                  currency={kitty.currency}
+                  onSaved={(r) => setKitty(k => ({ ...k, ...r }))}
+                  onError={setErr} />
+              ))}
             </tbody>
           </table>
           </div>

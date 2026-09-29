@@ -320,3 +320,51 @@ test('a button in a section header does its job without folding the section', as
     assert.deepEqual(errors, [], 'no page errors');
   } finally { await ctx.close(); }
 });
+
+test('each section has its own search, inside the section it filters', async (t) => {
+  if (needStack(t)) return;
+  // Asked for on 29 Sep: "please provide search bar under ratings &
+  // adjustments". It had been floating between the two sections.
+  //
+  // SPLIT INTO TWO BOXES rather than moved. One shared query filtered
+  // both tables, so tucking it inside the Ratings panel would have
+  // left the allocation grid filtered by a query nobody could see the
+  // moment that panel was folded away — a grid quietly showing three
+  // of nine people with no visible reason.
+  const { ctx, page, errors } = await open();
+  try {
+    const boxes = page.getByPlaceholder(/^Search by/);
+    assert.equal(await boxes.count(), 2, 'one search per section');
+
+    const ratings = page.getByPlaceholder(/adjustment reason/);
+    const alloc = page.getByPlaceholder(/code, designation/);
+    assert.equal(await ratings.count(), 1);
+    assert.equal(await alloc.count(), 1);
+
+    // Typing in one must not filter the other.
+    const rowsIn = (name) => page.locator('table').filter({ hasText: name }).first()
+      .locator('tbody tr').count();
+    const allocBefore = await rowsIn('Revised CTC');
+    await ratings.fill('Arun');
+    await page.waitForTimeout(600);
+    assert.equal(await rowsIn('Revised CTC'), allocBefore,
+      'searching the ratings table leaves the allocation grid alone');
+
+    await alloc.fill('Arun');
+    await page.waitForTimeout(600);
+    assert.ok(await rowsIn('Revised CTC') < allocBefore, 'and its own box does filter it');
+
+    // Folding a section takes its search with it, which is the point:
+    // no filter can be left applied out of sight.
+    await page.getByRole('button', { name: /Increment allocation/ }).first().click();
+    await page.waitForTimeout(500);
+    assert.equal(await page.getByPlaceholder(/code, designation/).count(), 0,
+      'the allocation search folds away with its grid');
+    assert.deepEqual(errors, [], 'no page errors');
+  } finally {
+    await page.evaluate(() => {
+      try { ['kitty', 'ratings', 'allocation'].forEach((k) => localStorage.removeItem(`apms.cal.section.${k}`)); } catch { /* ignore */ }
+    });
+    await ctx.close();
+  }
+});
