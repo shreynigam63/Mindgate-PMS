@@ -1,0 +1,543 @@
+// Timesheet -> KRA: the mapping a human maintains, and the monthly read.
+//
+// Phase 2 of the Zoho timesheet rating engine. The maths is in two pure
+// modules beside this one (timesheet-kra-match, timesheet-kra-score);
+// this file is the wiring, the permissions and the audit trail.
+//
+// PHASE 2 REPORTS COVERAGE. It does not rate anybody and it writes
+// nothing into any appraisal. The score and the letter grade exist in
+// the engine, are computed from HR-editable weights, and stay null
+// until somebody turns auto_score on AND enough hours are mapped for a
+// number to mean anything. Both gates are described on screen in
+// sentences rather than being silent.
+//
+// WHY EVERY WRITE IS A MANAGER'S OR HR'S, NEVER THE EMPLOYEE'S. Saying
+// "this item belongs to that KRA" moves hours between objectives, and
+// "this item is not KRA work" removes them from the denominator
+// entirely. Either would be self-marking if the employee could do it.
+// They can read every number about themselves — that transparency is
+// the point — but the assertion is the manager's, with a note, audited.
+const express = require('express');
+const db = require('../../core/db');
+const logger = require('../../core/logger');
+const { hasPermission } = require('../../core/permissions');
+const { compliance } = require('./timesheet-rules');
+const match = require('./timesheet-kra-match');
+const score = require('./timesheet-kra-score');
+const { activeCycle } = require('./active-cycle');
+const { ensureScoringSettings, DEFAULT_SCORING } = require('../../migrations/065-timesheet-kra-map');
+const { ensureValueAddKeywords } = require('../../migrations/064-kra-keywords');
+
+const router = express.Router();
+const T = (req) => req.user.tenant_id;
+
+const audit = (req, action, employeeId, details) => db.query(
+  `INSERT INTO pms.audit_log (tenant_id, actor_email, action, employee_id, details)
+   VALUES ($1,$2,$3,$4,$5)`,
+  [T(req), req.user.email, action, employeeId || null, details ? JSON.stringify(details) : null])
+  .catch((e) => logger.warn('timesheet-kra audit failed', { error: e.message }));
+
+// ---------------------------------------------------------------------------
+// Who may look, and who may assert.
+
+// Reading is self, your manager, or HR. The same rule as the rest of the
+// Timesheet tab.
+async function canRead(req, target) {
+  if (target.id === req.user.id) return true;
+  if (target.manager_id === req.user.id) return true;
+  return hasPermission(req.user, 'pms_admin');
+}
+// Writing is your manager or HR. Never yourself — see the header.
+async function canWrite(req, target) {
+  if (target.manager_id === req.user.id) return true;
+  return hasPermission(req.user, 'pms_admin');
+}
+
+const EMP = `e.id, e.emp_code, e.name, e.email, e.department, e.designation, e.manager_id`;
+
+async function employeeOr404(req, res, id) {
+  const row = (await db.query(
+    `SELECT ${EMP} FROM core.employees e WHERE e.tenant_id=$1 AND e.id=$2`, [T(req), id])).rows[0];
+  if (!row) { res.status(404).json({ error: 'employee not found' }); return null; }
+  return row;
+}
+
+// The scoring configuration, with the seeded defaults underneath.
+// ensureScoringSettings is called here as well as in the migration
+// because core.tenants is empty while migrations run on a fresh
+// database — the trap that cost 056 a boot loop and 063 a silent no-op.
+async function scoringFor(tenantId) {
+  await ensureScoringSettings(db, tenantId);
+  // 064's list too. It was only ensured on the KRA-library keyword
+  // routes, so a tenant whose HR had never opened that screen read an
+  // empty value-add list here and the scan silently found nothing —
+  // the same core.tenants trap, one route further along. Caught by the
+  // HTTP test, which had never touched that screen.
+  await ensureValueAddKeywords(db, tenantId);
+  const row = (await db.query(
+    `SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='timesheet'`, [tenantId])).rows[0];
+  const v = (row && row.value) || {};
+  return {
+    scoring: { ...DEFAULT_SCORING, ...(v.scoring || {}) },
+    value_add_keywords: Array.isArray(v.value_add_keywords) ? v.value_add_keywords : [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The window.
+//
+// Defaults to the CURRENT compliance cycle rather than a calendar month,
+// because the cycle start day is configurable (21st here) and reporting
+// a KRA split over 1–30 September against a compliance figure for 21 Aug
+// – 20 Sep would be two different months on one screen.
+function windowFor(q, settings, asOf) {
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(q.from || '') ? q.from : null;
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(q.to || '') ? q.to : null;
+  if (from && to) return { from, to, source: 'explicit' };
+  const { cycleOf, key } = require('./timesheet-rules');
+  const base = asOf ? new Date(`${asOf}T00:00:00`) : new Date();
+  const c = cycleOf(base, Number(settings.cycle_start_day) || 21);
+  return { from: key(c.start), to: key(c.end), source: 'current-cycle' };
+}
+
+// ---------------------------------------------------------------------------
+// Keywords a KRA has not been given, taken from the shelf it came from.
+//
+// WHY THIS EXISTS, and it is a correction to phase 1. 064's header says
+// an employee's KRA inherits the shelf's keywords "when one is picked".
+// It does not: there are three separate paths that write pms.kras (the
+// sheet save, the bulk sheet import and the new-hire auto-assign) and
+// none of them carries the column. Measured on a live database: 9 of 18
+// library rows carry keywords, 0 of 7 KRAs do. So the keyword half of
+// the engine would have matched nothing for everybody, forever, and the
+// only visible symptom would have been coverage that never moved.
+//
+// INHERITED AT READ TIME rather than backfilled by copying, for three
+// reasons: it works for the 89 sheets and 2,360 shelf rows already on
+// the client instance with no migration; HR editing a shelf is
+// immediately reflected instead of needing every sheet rewritten; and
+// nothing is scored from keywords yet, so 064's worry — that editing a
+// shelf would rewrite what last month was scored against — cannot bite.
+// When a KRA carries its own keywords they win, so a future per-KRA
+// edit overrides the shelf rather than being overwritten by it.
+//
+// Matched on designation + title, which is the only key the two tables
+// share. A department-specific shelf row beats a company-wide one, the
+// same precedence the library itself uses.
+async function inheritFromShelf(tenantId, target, kras) {
+  const need = kras.filter((k) => !(k.keywords || []).length);
+  if (!need.length || !target.designation) return;
+  const shelf = (await db.query(
+    `SELECT title, keywords, department, timesheet_tracked, timesheet_untracked_reason
+       FROM pms.kra_library
+      WHERE tenant_id=$1 AND lower(btrim(designation))=lower(btrim($2))`,
+    [tenantId, target.designation])).rows;
+  if (!shelf.length) return;
+  const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const byTitle = new Map();
+  for (const r of shelf) {
+    const key = norm(r.title);
+    const prev = byTitle.get(key);
+    // A row naming this person's department beats a company-wide one.
+    const better = !prev || (r.department && norm(r.department) === norm(target.department));
+    if (better) byTitle.set(key, r);
+  }
+  for (const k of need) {
+    const r = byTitle.get(norm(k.title));
+    if (!r) continue;
+    if ((r.keywords || []).length) {
+      k.keywords = r.keywords;
+      k.keywords_from_shelf = true;
+    }
+    // The tracked flag inherits too, but only while the KRA still holds
+    // the default: an explicit decision on the KRA is never overridden
+    // by the shelf.
+    if (k.timesheet_tracked !== false && r.timesheet_tracked === false) {
+      k.timesheet_tracked = false;
+      k.timesheet_untracked_reason = r.timesheet_untracked_reason;
+      k.tracked_from_shelf = true;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The monthly read: one person, one window.
+
+async function reportFor(req, target, q) {
+  const { settingsFor } = require('./timesheet');
+  const settings = await settingsFor(T(req));
+  const cfg = await scoringFor(T(req));
+  const win = windowFor(q || {}, settings, q && q.as_of);
+
+  const cycle = await activeCycle(T(req));
+  const kras = cycle ? (await db.query(
+    `SELECT k.id, k.title, k.weight, k.keywords, k.timesheet_tracked, k.timesheet_untracked_reason
+       FROM pms.kras k JOIN pms.kra_sheets s ON s.id = k.sheet_id
+      WHERE s.tenant_id=$1 AND s.employee_id=$2 AND s.cycle_id=$3
+      ORDER BY k.sort_order, k.title`, [T(req), target.id, cycle.id])).rows : [];
+  await inheritFromShelf(T(req), target, kras);
+
+  const entries = (await db.query(
+    `SELECT to_char(log_date,'YYYY-MM-DD') AS log_date, hours, item_id, item_name,
+            item_type, sprint, description
+       FROM pms.timesheet_entries
+      WHERE tenant_id=$1 AND employee_id=$2 AND log_date >= $3::date AND log_date <= $4::date
+      ORDER BY log_date, item_id`, [T(req), target.id, win.from, win.to])).rows
+    .map((r) => ({ ...r, hours: Number(r.hours) }));
+
+  const map = cycle ? (await db.query(
+    `SELECT item_key, item_label, decision, kra_id, note, mapped_by_email, updated_at
+       FROM pms.timesheet_kra_map
+      WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id=$3`, [T(req), target.id, cycle.id])).rows : [];
+
+  const att = match.attribute(entries, kras, map);
+  const va = match.valueAdd(entries, cfg.value_add_keywords);
+
+  // The compliance figure for THIS window, not the person's all-time
+  // number: the two components of any eventual score have to describe
+  // the same month or the score describes neither.
+  //
+  // THE CYCLE IS PICKED BY MATCHING THE WINDOW, and falling back to the
+  // AGGREGATE rather than to the last cycle. The first version took
+  // `cycles[last]` when nothing matched, which for any window not
+  // starting exactly on a cycle boundary meant the newest cycle —
+  // usually one still in progress with no logs in it yet. Asked for
+  // 1 May to 30 Sep it reported 0% compliance for somebody at 82.8%.
+  // A wrong number that looks like a real one is worse than no number.
+  const comp = compliance(entries, settings, win.to);
+  const cyc = comp.cycles.find((c) => c.start === win.from) || null;
+  const agg = cyc || comp.total;
+  // Null rather than 0 when there are no logs, and also when the window
+  // contains no working days at all: somebody who uploaded nothing has
+  // not scored zero, and 0/0 is not 0%.
+  const compliancePct = entries.length && agg && agg.work > 0 ? agg.pct : null;
+
+  const sum = score.summarise(att, va, compliancePct, cfg.scoring);
+
+  return {
+    employee: target,
+    window: win,
+    cycle: cycle ? { id: cycle.id, name: cycle.name, phase: cycle.phase } : null,
+    has_kras: kras.length > 0,
+    has_entries: entries.length > 0,
+    items: att.items,
+    by_kra: att.by_kra,
+    unscorable: att.unscorable,
+    uncovered: att.uncovered,
+    totals: att.totals,
+    value_add: va,
+    compliance: cyc || comp.total,
+    compliance_is_cycle: !!cyc,
+    summary: sum,
+    scoring: cfg.scoring,
+  };
+}
+
+router.get('/me', async (req, res) => {
+  try {
+    const me = await employeeOr404(req, res, req.user.id);
+    if (!me) return;
+    res.json(await reportFor(req, me, req.query));
+  } catch (e) {
+    logger.error('timesheet-kra me', { error: e.message });
+    res.status(500).json({ error: 'Could not build your KRA timesheet view' });
+  }
+});
+
+router.get('/employee/:id', async (req, res) => {
+  try {
+    const target = await employeeOr404(req, res, req.params.id);
+    if (!target) return;
+    if (!(await canRead(req, target))) {
+      return res.status(403).json({ error: 'You can only open the timesheet of someone who reports to you' });
+    }
+    res.json(await reportFor(req, target, req.query));
+  } catch (e) {
+    logger.error('timesheet-kra employee', { error: e.message });
+    res.status(500).json({ error: 'Could not build the KRA timesheet view' });
+  }
+});
+
+// The manager's roster: one line per reportee, headline numbers only.
+// Enough to see who needs a mapping session, without loading six
+// full reports.
+router.get('/team', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_team_eval'))) {
+      return res.status(403).json({ error: "Requires 'pms_team_eval'" });
+    }
+    const people = (await db.query(
+      `SELECT ${EMP} FROM core.employees e
+        WHERE e.tenant_id=$1 AND e.manager_id=$2 AND e.status='active' ORDER BY e.name`,
+      [T(req), req.user.id])).rows;
+    const out = [];
+    for (const p of people) {
+      const r = await reportFor(req, p, req.query);
+      out.push({
+        employee: p,
+        has_kras: r.has_kras,
+        has_entries: r.has_entries,
+        totals: r.totals,
+        mapped_pct: r.summary.mapped_pct,
+        weighted_coverage_pct: r.summary.weighted_coverage_pct,
+        alignment_pct: r.summary.alignment_pct,
+        compliance_pct: r.summary.compliance_pct,
+        score: r.summary.score,
+        grade: r.summary.grade,
+        withheld: r.summary.withheld,
+        unmapped_items: r.items.filter((i) => i.how === 'unmapped' || i.how === 'ambiguous').length,
+      });
+    }
+    res.json({ team: out });
+  } catch (e) {
+    logger.error('timesheet-kra team', { error: e.message });
+    res.status(500).json({ error: 'Could not build the team view' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The mapping itself.
+
+// A sentence, or null.
+function validateMapping(b) {
+  const key = String(b.item_key == null ? '' : b.item_key).trim();
+  if (!key) return 'Which work item? item_key is required.';
+  if (key.length > 200) return 'That item key is too long to be one.';
+  if (b.decision === 'excluded') {
+    // A mandatory reason, because excluding hours takes them out of the
+    // denominator. Without one, "not KRA work" becomes the quiet way to
+    // make any month look fully mapped.
+    if (!String(b.note || '').trim()) {
+      return 'Say why this item is not KRA work — excluded hours are left out of the coverage figure.';
+    }
+    if (b.kra_id) return 'An excluded item cannot also be mapped to a KRA.';
+    return null;
+  }
+  if (b.decision !== 'kra') return `Unknown decision "${b.decision}" — use kra or excluded.`;
+  if (!b.kra_id) return 'Pick the KRA this item belongs to.';
+  return null;
+}
+
+// `q` is the pool by default and a transaction client inside a bulk
+// write — without threading it through, the bulk path's ROLLBACK would
+// roll back nothing, because every statement would have run on a
+// different connection.
+async function writeMapping(req, target, cycleId, b, client = null) {
+  const q = client || db;
+  const key = String(b.item_key).trim().toLowerCase();
+  if (b.decision === 'kra') {
+    // The KRA must be on THIS person's sheet for THIS cycle. Without
+    // this check a manager could map a reportee's hours onto somebody
+    // else's objective by passing its id.
+    const ok = (await q.query(
+      `SELECT 1 FROM pms.kras k JOIN pms.kra_sheets s ON s.id=k.sheet_id
+        WHERE k.id=$1 AND s.tenant_id=$2 AND s.employee_id=$3 AND s.cycle_id=$4`,
+      [b.kra_id, T(req), target.id, cycleId])).rows[0];
+    if (!ok) return { error: 'That KRA is not on this person\'s sheet for the current cycle.' };
+  }
+  const row = (await q.query(
+    `INSERT INTO pms.timesheet_kra_map
+       (tenant_id, employee_id, cycle_id, item_key, item_label, decision, kra_id, note, mapped_by_email)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (tenant_id, employee_id, cycle_id, item_key) DO UPDATE
+       SET item_label=EXCLUDED.item_label, decision=EXCLUDED.decision, kra_id=EXCLUDED.kra_id,
+           note=EXCLUDED.note, mapped_by_email=EXCLUDED.mapped_by_email, updated_at=now()
+     RETURNING *`,
+    [T(req), target.id, cycleId, key, b.item_label || null, b.decision,
+     b.decision === 'kra' ? b.kra_id : null, b.note || null, req.user.email])).rows[0];
+  return { row };
+}
+
+router.put('/employee/:id/map', async (req, res) => {
+  try {
+    const target = await employeeOr404(req, res, req.params.id);
+    if (!target) return;
+    if (!(await canWrite(req, target))) {
+      return res.status(403).json({ error: 'Only this person\'s manager or HR can map their work items' });
+    }
+    const cycle = await activeCycle(T(req));
+    if (!cycle) return res.status(422).json({ error: 'There is no active performance cycle to map against.' });
+    const b = req.body || {};
+    const bad = validateMapping(b);
+    if (bad) return res.status(422).json({ error: bad });
+    const { error, row } = await writeMapping(req, target, cycle.id, b);
+    if (error) return res.status(422).json({ error });
+    audit(req, 'TIMESHEET_KRA_MAPPED', target.id, {
+      item_key: row.item_key, item_label: row.item_label,
+      decision: row.decision, kra_id: row.kra_id, note: row.note, cycle_id: cycle.id,
+    });
+    res.json({ ok: true, mapping: row });
+  } catch (e) {
+    logger.error('timesheet-kra map', { error: e.message });
+    res.status(500).json({ error: 'Could not save the mapping' });
+  }
+});
+
+// Several at once — the realistic shape of the work, because a month
+// arrives as a handful of items and mapping them one request at a time
+// is a screen nobody will finish.
+//
+// TRANSACTIONAL: either every mapping in the call lands or none does.
+// A half-applied batch would leave a coverage figure that matches
+// neither what the manager saw nor what they pressed.
+router.post('/employee/:id/map/bulk', async (req, res) => {
+  try {
+    const target = await employeeOr404(req, res, req.params.id);
+    if (!target) return;
+    if (!(await canWrite(req, target))) {
+      return res.status(403).json({ error: 'Only this person\'s manager or HR can map their work items' });
+    }
+    const cycle = await activeCycle(T(req));
+    if (!cycle) return res.status(422).json({ error: 'There is no active performance cycle to map against.' });
+    const list = Array.isArray((req.body || {}).mappings) ? req.body.mappings : [];
+    if (!list.length) return res.status(422).json({ error: 'Nothing to map.' });
+    // Validated BEFORE anything is written, so a bad row at position
+    // nine does not leave rows one to eight applied.
+    for (let i = 0; i < list.length; i++) {
+      const bad = validateMapping(list[i]);
+      if (bad) return res.status(422).json({ error: `Item ${i + 1}: ${bad}` });
+    }
+    // The KRA-belongs-to-this-sheet check runs inside writeMapping, and
+    // it can still refuse mid-batch, so the whole batch is one
+    // transaction: a half-applied mapping would leave a coverage figure
+    // matching neither what the manager saw nor what they pressed.
+    const done = [];
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      for (const b of list) {
+        const { error, row } = await writeMapping(req, target, cycle.id, b, client);
+        if (error) { await client.query('ROLLBACK'); return res.status(422).json({ error }); }
+        done.push(row);
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+
+    audit(req, 'TIMESHEET_KRA_MAPPED_BULK', target.id, {
+      count: done.length, cycle_id: cycle.id,
+      items: done.map((r) => ({ item_key: r.item_key, decision: r.decision, kra_id: r.kra_id })),
+    });
+    res.json({ ok: true, saved: done.length, mappings: done });
+  } catch (e) {
+    logger.error('timesheet-kra bulk map', { error: e.message });
+    res.status(500).json({ error: 'Could not save the mappings' });
+  }
+});
+
+router.delete('/employee/:id/map/:itemKey', async (req, res) => {
+  try {
+    const target = await employeeOr404(req, res, req.params.id);
+    if (!target) return;
+    if (!(await canWrite(req, target))) {
+      return res.status(403).json({ error: 'Only this person\'s manager or HR can map their work items' });
+    }
+    const cycle = await activeCycle(T(req));
+    if (!cycle) return res.status(422).json({ error: 'There is no active performance cycle.' });
+    const gone = (await db.query(
+      `DELETE FROM pms.timesheet_kra_map
+        WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id=$3 AND item_key=$4 RETURNING *`,
+      [T(req), target.id, cycle.id, String(req.params.itemKey).toLowerCase()])).rows[0];
+    if (!gone) return res.status(404).json({ error: 'No mapping for that item' });
+    audit(req, 'TIMESHEET_KRA_UNMAPPED', target.id, {
+      item_key: gone.item_key, was: { decision: gone.decision, kra_id: gone.kra_id, note: gone.note },
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    logger.error('timesheet-kra unmap', { error: e.message });
+    res.status(500).json({ error: 'Could not remove the mapping' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// "This KRA is not measurable from a timesheet."
+//
+// The opt-out that keeps weighted coverage honest. Default is tracked;
+// turning it off needs a reason, because it removes that KRA's weight
+// from the denominator for good.
+router.put('/kra/:kraId/tracked', async (req, res) => {
+  try {
+    const k = (await db.query(
+      `SELECT k.id, k.title, k.timesheet_tracked, s.employee_id
+         FROM pms.kras k JOIN pms.kra_sheets s ON s.id=k.sheet_id
+        WHERE k.id=$1 AND s.tenant_id=$2`, [req.params.kraId, T(req)])).rows[0];
+    if (!k) return res.status(404).json({ error: 'KRA not found' });
+    const target = await employeeOr404(req, res, k.employee_id);
+    if (!target) return;
+    if (!(await canWrite(req, target))) {
+      return res.status(403).json({ error: 'Only this person\'s manager or HR can change this' });
+    }
+    const tracked = (req.body || {}).tracked !== false;
+    const reason = String((req.body || {}).reason || '').trim();
+    if (!tracked && !reason) {
+      return res.status(422).json({ error: 'Say why this KRA cannot be measured from timesheets — its weight is dropped from the coverage figure.' });
+    }
+    const row = (await db.query(
+      `UPDATE pms.kras SET timesheet_tracked=$2, timesheet_untracked_reason=$3
+        WHERE id=$1 RETURNING id, title, timesheet_tracked, timesheet_untracked_reason`,
+      [k.id, tracked, tracked ? null : reason])).rows[0];
+    audit(req, 'TIMESHEET_KRA_TRACKED_SET', target.id, {
+      kra_id: k.id, title: k.title, was: k.timesheet_tracked, now: tracked, reason: tracked ? null : reason,
+    });
+    res.json({ ok: true, kra: row });
+  } catch (e) {
+    logger.error('timesheet-kra tracked', { error: e.message });
+    res.status(500).json({ error: 'Could not save that' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The scoring configuration. HR only.
+
+router.get('/scoring', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    res.json(await scoringFor(T(req)));
+  } catch (e) {
+    logger.error('timesheet-kra scoring get', { error: e.message });
+    res.status(500).json({ error: 'Could not load the scoring settings' });
+  }
+});
+
+router.put('/scoring', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const cur = await scoringFor(T(req));
+    const b = req.body || {};
+    const next = {
+      ...cur.scoring,
+      ...b,
+      auto_score: b.auto_score === true,
+      weight_coverage: Number(b.weight_coverage == null ? cur.scoring.weight_coverage : b.weight_coverage),
+      weight_compliance: Number(b.weight_compliance == null ? cur.scoring.weight_compliance : b.weight_compliance),
+      weight_value_add: Number(b.weight_value_add == null ? cur.scoring.weight_value_add : b.weight_value_add),
+      min_mapped_pct: Number(b.min_mapped_pct == null ? cur.scoring.min_mapped_pct : b.min_mapped_pct),
+      bands: b.bands === undefined ? cur.scoring.bands : b.bands,
+    };
+    const bad = score.validateScoring(next);
+    if (bad) return res.status(422).json({ error: bad });
+
+    // MERGED, not replaced. The blob also holds the compliance
+    // thresholds, the holidays and 064's value-add words, and writing
+    // only this object over it would silently delete them — exactly the
+    // defect this phase found in PUT /timesheet/settings.
+    const row = (await db.query(
+      `SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='timesheet'`, [T(req)])).rows[0];
+    const value = { ...((row && row.value) || {}), scoring: next };
+    await db.query(
+      `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'timesheet',$2::jsonb)
+       ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
+      [T(req), JSON.stringify(value)]);
+    // Turning automatic scoring on is the single most consequential
+    // switch in this feature, so it is called out in the audit rather
+    // than buried in a settings diff.
+    audit(req, next.auto_score !== cur.scoring.auto_score
+      ? (next.auto_score ? 'TIMESHEET_AUTO_SCORE_ENABLED' : 'TIMESHEET_AUTO_SCORE_DISABLED')
+      : 'TIMESHEET_SCORING_CHANGED', null, { was: cur.scoring, now: next });
+    res.json({ ok: true, scoring: next });
+  } catch (e) {
+    logger.error('timesheet-kra scoring put', { error: e.message });
+    res.status(500).json({ error: 'Could not save the scoring settings' });
+  }
+});
+
+module.exports = { router, reportFor, validateMapping, scoringFor, windowFor };

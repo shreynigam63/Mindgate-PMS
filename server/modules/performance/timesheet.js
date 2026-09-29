@@ -63,6 +63,12 @@ async function settingsFor(tenantId) {
     green_pct: v.green_pct == null ? DEFAULTS.green_pct : Number(v.green_pct),
     amber_pct: v.amber_pct == null ? DEFAULTS.amber_pct : Number(v.amber_pct),
     holidays: Array.isArray(v.holidays) ? v.holidays : [],
+    // Read-only here, and owned by their own routes — 064's value-add
+    // words and 065's scoring configuration. They are returned so the
+    // compliance screen can show them, and named so the PUT below can
+    // see what it must not trample.
+    value_add_keywords: Array.isArray(v.value_add_keywords) ? v.value_add_keywords : [],
+    scoring: v.scoring && typeof v.scoring === 'object' ? v.scoring : null,
   };
 }
 
@@ -93,10 +99,22 @@ router.put('/settings', async (req, res) => {
     const bad = holidays.find((h) => !/^\d{4}-\d{2}-\d{2}$/.test(h));
     if (bad) return res.status(422).json({ error: `holiday "${bad}" is not a date — use YYYY-MM-DD` });
     const value = { cycle_start_day: day, green_pct: green, amber_pct: amber, holidays: [...new Set(holidays)].sort() };
+    // MERGED, NOT REPLACED, and this is a fix rather than a nicety.
+    //
+    // This blob is shared: it has always held the compliance thresholds
+    // and holidays, 064 added the org-wide value-add keyword list, and
+    // 065 the scoring configuration. Writing only this object over it
+    // silently deleted both — so an HR user changing the cycle start
+    // day wiped the value-add list with no error and nothing on screen
+    // to say it had happened. Reproduced against a running instance
+    // before the fix, and there is a test that fails without it.
+    const prev = (await db.query(
+      `SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='timesheet'`, [T(req)])).rows[0];
+    const merged = { ...((prev && prev.value) || {}), ...value };
     await db.query(
       `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'timesheet',$2)
        ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
-      [T(req), JSON.stringify(value)]);
+      [T(req), JSON.stringify(merged)]);
     audit(req, 'TIMESHEET_SETTINGS_CHANGED', null, value);
     res.json({ ok: true, settings: value });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -438,5 +456,10 @@ router.get('/batches', async (req, res) => {
     res.json({ batches: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// Phase 2 of the rating engine, in its own file so this one does not
+// grow a second subject. Mounted last so /kra/... cannot shadow an
+// existing route.
+router.use('/kra', require('./timesheet-kra').router);
 
 module.exports = { router, settingsFor };
