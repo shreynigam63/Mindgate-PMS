@@ -100,6 +100,40 @@ function windowFor(q, settings, asOf) {
   return { from: key(c.start), to: key(c.end), source: 'current-cycle' };
 }
 
+// Which cycles this person actually logged anything in, newest first.
+//
+// THE DEFAULT WINDOW IS THE LATEST CYCLE WITH DATA, not the calendar's
+// current one. A timesheet is uploaded after the month it covers, so
+// the current cycle is empty for most of its length — the first version
+// of this screen defaulted to it and greeted a manager reviewing
+// September with "no timesheet logged in 21 Sep – 20 Oct". Worse, there
+// was no way from that screen to reach the month they had come to look
+// at.
+// employeeId null means the whole tenant, which is what the HR backlog
+// needs. Shared rather than written twice: the first version only gave
+// the per-person view this fallback, so HR's own screen still opened on
+// an empty current cycle and announced "nothing to map yet" over 1,302
+// logged hours.
+async function cyclesWithData(tenantId, employeeId, startDay) {
+  const { cycleOf, key } = require('./timesheet-rules');
+  const rows = (await db.query(
+    `SELECT to_char(log_date,'YYYY-MM-DD') AS d, count(*)::int n, round(sum(hours)::numeric,2) h
+       FROM pms.timesheet_entries
+      WHERE tenant_id=$1 ${employeeId ? 'AND employee_id=$2' : ''}
+      GROUP BY 1 ORDER BY 1`, employeeId ? [tenantId, employeeId] : [tenantId])).rows;
+  const by = new Map();
+  for (const r of rows) {
+    const [y, m, dd] = r.d.split('-').map(Number);
+    const c = cycleOf(new Date(y, m - 1, dd), startDay);
+    const k = key(c.start);
+    if (!by.has(k)) by.set(k, { from: k, to: key(c.end), logs: 0, hours: 0 });
+    const x = by.get(k);
+    x.logs += r.n;
+    x.hours = Math.round((x.hours + Number(r.h)) * 100) / 100;
+  }
+  return [...by.values()].sort((a, b) => (a.from < b.from ? 1 : -1));
+}
+
 // ---------------------------------------------------------------------------
 // Keywords a KRA has not been given, taken from the shelf it came from.
 //
@@ -167,7 +201,9 @@ async function reportFor(req, target, q) {
   const { settingsFor } = require('./timesheet');
   const settings = await settingsFor(T(req));
   const cfg = await scoringFor(T(req));
-  const win = windowFor(q || {}, settings, q && q.as_of);
+  const startDay = Number(settings.cycle_start_day) || 21;
+  const windows = await cyclesWithData(T(req), target.id, startDay);
+  const win = pickWindow(windowFor(q || {}, settings, q && q.as_of), windows);
 
   const cycle = await activeCycle(T(req));
   const kras = cycle ? (await db.query(
@@ -217,6 +253,9 @@ async function reportFor(req, target, q) {
   return {
     employee: target,
     window: win,
+    // Every cycle this person has logs in, so the screen can offer them
+    // rather than stranding a reader on one month.
+    windows,
     cycle: cycle ? { id: cycle.id, name: cycle.name, phase: cycle.phase } : null,
     has_kras: kras.length > 0,
     has_entries: entries.length > 0,
@@ -292,6 +331,106 @@ router.get('/team', async (req, res) => {
   } catch (e) {
     logger.error('timesheet-kra team', { error: e.message });
     res.status(500).json({ error: 'Could not build the team view' });
+  }
+});
+
+// Only when the caller did not name a window: land on the latest cycle
+// that has logs, rather than on an empty current month.
+function pickWindow(win, windows) {
+  if (win.source !== 'current-cycle') return win;
+  if (!windows.length || windows.some((w) => w.from === win.from)) return win;
+  return { ...windows[0], source: 'latest-with-data' };
+}
+
+// ---------------------------------------------------------------------------
+// Where the whole company stands. HR only.
+//
+// COMPUTED IN SQL, NOT BY BUILDING A REPORT PER PERSON. The manager
+// roster above calls reportFor once per reportee, which is fine for six
+// people and would be about six thousand queries for the client's
+// 1,427. This answers the only question HR actually has at this stage —
+// how much of the logged work has been placed, and who still needs a
+// mapping session — as four aggregates.
+router.get('/backlog', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
+    const { settingsFor } = require('./timesheet');
+    const settings = await settingsFor(T(req));
+    const startDay = Number(settings.cycle_start_day) || 21;
+    const windows = await cyclesWithData(T(req), null, startDay);
+    const win = pickWindow(windowFor(req.query || {}, settings, req.query && req.query.as_of), windows);
+    const cycle = await activeCycle(T(req));
+
+    // One row per (person, item) in the window, left-joined to their
+    // mapping. Deliberately NOT filtered to people with a KRA sheet:
+    // "logged work, nobody to credit it to" is the finding, not a row
+    // to hide.
+    const rows = (await db.query(
+      `WITH items AS (
+         SELECT t.employee_id,
+                lower(coalesce(nullif(btrim(t.item_id),''), btrim(t.item_name))) AS item_key,
+                sum(t.hours) AS hours
+           FROM pms.timesheet_entries t
+          WHERE t.tenant_id=$1 AND t.log_date >= $2::date AND t.log_date <= $3::date
+          GROUP BY 1,2)
+       SELECT e.id, e.name, e.emp_code, e.department, e.designation,
+              count(*) AS items,
+              count(m.id) FILTER (WHERE m.decision='kra') AS mapped_items,
+              count(m.id) FILTER (WHERE m.decision='excluded') AS excluded_items,
+              round(sum(i.hours)::numeric, 2) AS hours,
+              round(sum(i.hours) FILTER (WHERE m.decision='kra')::numeric, 2) AS mapped_hours,
+              -- KRAs, NOT A SHEET ROW. Two of the three demo employees
+              -- carry a sheet whose status is 'approved' or 'returned'
+              -- with zero KRAs on it, so testing for the sheet reported
+              -- "0 people without a sheet" on the HR screen while the
+              -- per-person screen next to it said "this person has no
+              -- KRAs for this cycle". Both were true and they read as a
+              -- contradiction. For this feature an empty sheet is the
+              -- same as no sheet: there is nothing to credit hours to.
+              EXISTS (SELECT 1 FROM pms.kra_sheets s JOIN pms.kras k ON k.sheet_id = s.id
+                       WHERE s.tenant_id=$1 AND s.employee_id=e.id AND s.cycle_id=$4) AS has_kras
+         FROM items i
+         JOIN core.employees e ON e.id = i.employee_id
+         LEFT JOIN pms.timesheet_kra_map m
+                ON m.tenant_id=$1 AND m.employee_id=i.employee_id
+               AND m.cycle_id=$4 AND m.item_key=i.item_key
+        GROUP BY e.id, e.name, e.emp_code, e.department, e.designation
+        ORDER BY (count(*) - count(m.id)) DESC, e.name`,
+      [T(req), win.from, win.to, cycle ? cycle.id : null])).rows
+      .map((r) => ({
+        employee: { id: r.id, name: r.name, emp_code: r.emp_code, department: r.department, designation: r.designation },
+        has_kras: r.has_kras,
+        items: Number(r.items),
+        mapped_items: Number(r.mapped_items),
+        excluded_items: Number(r.excluded_items),
+        unmapped_items: Number(r.items) - Number(r.mapped_items) - Number(r.excluded_items),
+        hours: Number(r.hours),
+        mapped_hours: Number(r.mapped_hours || 0),
+      }));
+
+    const sum = (f) => rows.reduce((t, r) => t + f(r), 0);
+    const hours = sum((r) => r.hours);
+    const mapped = sum((r) => r.mapped_hours);
+    res.json({
+      window: win,
+      windows,
+      cycle: cycle ? { id: cycle.id, name: cycle.name } : null,
+      people: rows,
+      totals: {
+        people: rows.length,
+        // The cap on this entire feature, stated rather than implied.
+        without_kras: rows.filter((r) => !r.has_kras).length,
+        needing_mapping: rows.filter((r) => r.unmapped_items > 0).length,
+        items: sum((r) => r.items),
+        unmapped_items: sum((r) => r.unmapped_items),
+        hours: Math.round(hours * 100) / 100,
+        mapped_hours: Math.round(mapped * 100) / 100,
+        mapped_pct: hours > 0 ? Math.round((mapped / hours) * 1000) / 10 : 0,
+      },
+    });
+  } catch (e) {
+    logger.error('timesheet-kra backlog', { error: e.message });
+    res.status(500).json({ error: 'Could not build the mapping backlog' });
   }
 });
 

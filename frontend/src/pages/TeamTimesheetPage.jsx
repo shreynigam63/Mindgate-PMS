@@ -15,6 +15,8 @@ import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox from '../SearchBox';
 import TimesheetDashboard, { RatingChip } from '../TimesheetDashboard';
+import TimesheetTabs from '../TimesheetTabs';
+import TimesheetKra from '../TimesheetKra';
 import { Users, CheckCircle2, AlertTriangle, XCircle, ChevronLeft } from 'lucide-react';
 
 function Stat({ icon: Icon, hue, n, label, sub }) {
@@ -110,6 +112,7 @@ export default function TeamTimesheetPage() {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(null);
   const [report, setReport] = useState(null);
+  const [view, setView] = useState('compliance');
 
   useEffect(() => { api('/pms/timesheet/team').then(setD).catch((e) => setErr(e.message)); }, []);
   useEffect(() => {
@@ -133,7 +136,13 @@ export default function TeamTimesheetPage() {
             <ChevronLeft size={13} className="inline mr-1" />Back to the team
           </button>
         </PageHead>
-        {report ? <TimesheetDashboard report={report} /> : <p className="text-sm text-navy-400">Loading…</p>}
+        <TimesheetTabs value={view} onChange={setView} />
+        {view === 'kra'
+          /* A manager may assert the mapping for their own reportees.
+             The server checks it again on every write — this flag only
+             decides whether the controls are drawn. */
+          ? <TimesheetKra employeeId={open.id} canMap />
+          : report ? <TimesheetDashboard report={report} /> : <p className="text-sm text-navy-400">Loading…</p>}
       </div>
     );
   }

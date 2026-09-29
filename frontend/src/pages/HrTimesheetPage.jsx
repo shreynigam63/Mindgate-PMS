@@ -14,10 +14,147 @@ import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import TimesheetDashboard from '../TimesheetDashboard';
+import TimesheetTabs from '../TimesheetTabs';
+import TimesheetKra from '../TimesheetKra';
 import { TimesheetRoster } from './TeamTimesheetPage';
+import SearchBox from '../SearchBox';
 import {
   Users, CheckCircle2, AlertTriangle, XCircle, Clock, ChevronLeft, SlidersHorizontal, Save,
+  Link2Off, Target, ClipboardList,
 } from 'lucide-react';
+
+// The mapping backlog.
+//
+// READ FROM ONE AGGREGATE QUERY, not from a report per person. The
+// manager roster builds a full report for each reportee, which is right
+// for six people and would be several thousand queries for the client's
+// 1,427. HR's question at this stage is not "what is everyone's score",
+// it is "how much of the logged work has been placed, and who still
+// needs a mapping session".
+function Backlog({ onOpen }) {
+  const [b, setB] = useState(null);
+  const [err, setErr] = useState(null);
+  const [q, setQ] = useState('');
+  // Same period control as the per-person view, for the same reason: a
+  // timesheet is uploaded after the month it covers, so the calendar's
+  // current cycle is empty for most of its length.
+  const [win, setWin] = useState(null);
+  useEffect(() => {
+    setB(null);
+    api(`/pms/timesheet/kra/backlog${win ? `?from=${win.from}&to=${win.to}` : ''}`)
+      .then(setB).catch((e) => setErr(e.message));
+  }, [win && win.from]);
+  if (err) return <p className="text-sm text-rose-600">{err}</p>;
+  if (!b) return <p className="text-sm text-navy-400">Loading…</p>;
+  const t = b.totals;
+  const Period = () => (!(b.windows || []).length ? null : (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[11px] text-navy-400">Period</span>
+      <select className="inp !text-xs !w-auto" value={b.window.from}
+        onChange={(e) => {
+          const w = (b.windows || []).find((x) => x.from === e.target.value);
+          if (w) setWin({ from: w.from, to: w.to });
+        }}>
+        {!(b.windows || []).some((w) => w.from === b.window.from) && (
+          <option value={b.window.from}>{b.window.from} – {b.window.to} · nothing logged</option>
+        )}
+        {(b.windows || []).map((w) => (
+          <option key={w.from} value={w.from}>{w.from} – {w.to} · {w.hours}h</option>
+        ))}
+      </select>
+    </div>
+  ));
+  if (!t.people) {
+    return (
+      <div className="space-y-3">
+        <Period />
+        <div className="card p-8 text-center text-sm text-navy-400">
+          Nobody logged time in {b.window.from} – {b.window.to}
+          {(b.windows || []).length ? '. Pick a period above that has logs.' : ', so there is nothing to map yet.'}
+        </div>
+      </div>
+    );
+  }
+  const rows = b.people.filter((r) => {
+    if (!q.trim()) return true;
+    const x = q.trim().toLowerCase();
+    return [r.employee.name, r.employee.emp_code, r.employee.department, r.employee.designation]
+      .filter(Boolean).some((v) => String(v).toLowerCase().includes(x));
+  });
+  return (
+    <div className="space-y-4">
+      <Period />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat icon={Target} hue="violet" n={`${t.mapped_pct}%`} label="Hours placed"
+          sub={`${t.mapped_hours} of ${t.hours} logged`} />
+        <Stat icon={Link2Off} hue="amber" n={t.unmapped_items} label="Items unplaced"
+          sub={`of ${t.items} logged in this window`} />
+        <Stat icon={ClipboardList} hue="lagoon" n={t.needing_mapping} label="Need a mapping session"
+          sub={`of ${t.people} who logged time`} />
+        <Stat icon={AlertTriangle} hue="red" n={t.without_kras} label="No KRAs"
+          sub="logged time with nothing to credit it to" />
+      </div>
+
+      {/* The cap on this whole feature, stated rather than implied. */}
+      {!!t.without_kras && (
+        <p className="card p-3 text-[11.5px] text-navy-600 border-l-4 border-rose-400">
+          <b>{t.without_kras}</b> {t.without_kras === 1 ? 'person has' : 'people have'} logged time but
+          {t.without_kras === 1 ? ' has' : ' have'} no KRAs on their sheet for this cycle. Their hours cannot
+          be placed against anything until they do — that is a KRA problem, not a mapping one.
+        </p>
+      )}
+
+      <div className="card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <p className="lbl">Who needs a mapping session</p>
+          <SearchBox value={q} onChange={setQ} placeholder="Search a person"
+            shown={rows.length} total={b.people.length} />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-navy-400 uppercase text-[10px] border-b border-navy-100">
+                <th className="px-3 py-2">Employee</th>
+                <th className="px-3 py-2">Department</th>
+                <th className="px-3 py-2 text-right">Hours</th>
+                <th className="px-3 py-2 text-right">Items</th>
+                <th className="px-3 py-2 text-right">Unplaced</th>
+                <th className="px-3 py-2">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.employee.id} onClick={() => onOpen(r.employee)}
+                  className="border-b border-navy-50 cursor-pointer hover:bg-navy-50/60">
+                  <td className="px-3 py-2">
+                    <span className="font-semibold text-navy-900">{r.employee.name}</span>
+                    <span className="block text-navy-400">{r.employee.designation || '—'}</span>
+                  </td>
+                  <td className="px-3 py-2 text-navy-500">{r.employee.department || '—'}</td>
+                  <td className="px-3 py-2 text-right">{r.hours}</td>
+                  <td className="px-3 py-2 text-right">{r.items}</td>
+                  <td className={`px-3 py-2 text-right ${r.unmapped_items ? 'text-rose-600 font-semibold' : 'text-navy-400'}`}>
+                    {r.unmapped_items}
+                  </td>
+                  <td className="px-3 py-2">
+                    {!r.has_kras
+                      ? <span className="chip bg-rose-50 text-rose-600 !text-[10px]">no KRAs</span>
+                      : r.unmapped_items
+                        ? <span className="chip bg-amber-100 text-amber-700 !text-[10px]">{r.unmapped_items} to place</span>
+                        : <span className="chip bg-teal-100 text-teal-700 !text-[10px]">fully placed</span>}
+                  </td>
+                </tr>
+              ))}
+              {!rows.length && (
+                <tr><td colSpan="6" className="px-3 py-8 text-center text-navy-400">Nobody matches that search.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Stat({ icon: Icon, hue, n, label, sub }) {
   return (
@@ -92,6 +229,7 @@ export default function HrTimesheetPage() {
   const [open, setOpen] = useState(null);
   const [report, setReport] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [view, setView] = useState('compliance');
 
   const load = () => api(`/pms/timesheet/all${dept ? `?department=${encodeURIComponent(dept)}` : ''}`)
     .then(setD).catch((e) => setErr(e.message));
@@ -114,7 +252,10 @@ export default function HrTimesheetPage() {
             <ChevronLeft size={13} className="inline mr-1" />Back to everyone
           </button>
         </PageHead>
-        {report ? <TimesheetDashboard report={report} /> : <p className="text-sm text-navy-400">Loading…</p>}
+        <TimesheetTabs value={view} onChange={setView} />
+        {view === 'kra'
+          ? <TimesheetKra employeeId={open.id} canMap />
+          : report ? <TimesheetDashboard report={report} /> : <p className="text-sm text-navy-400">Loading…</p>}
       </div>
     );
   }
@@ -136,6 +277,8 @@ export default function HrTimesheetPage() {
 
       {showSettings && <Settings settings={d.settings} onSaved={() => load()} />}
 
+      <TimesheetTabs value={view} onChange={setView} />
+      {view === 'kra' ? <Backlog onOpen={setOpen} /> : <>
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <Stat icon={Users} hue="violet" n={t.employees ?? 0} label="Employees in scope"
           sub={`${t.with_data ?? 0} have uploaded`} />
@@ -154,6 +297,7 @@ export default function HrTimesheetPage() {
       )}
 
       <TimesheetRoster rows={d.employees || []} onOpen={setOpen} q={q} setQ={setQ} showDepartment />
+      </>}
     </div>
   );
 }

@@ -10,6 +10,8 @@ import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import TimesheetDashboard, { RatingChip } from '../TimesheetDashboard';
+import TimesheetTabs from '../TimesheetTabs';
+import TimesheetKra from '../TimesheetKra';
 import { Upload, FileSpreadsheet, Info } from 'lucide-react';
 
 export default function MyTimesheetPage() {
@@ -19,6 +21,7 @@ export default function MyTimesheetPage() {
   const [up, setUp] = useState(null);
   const [upErr, setUpErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState('compliance');
 
   const load = () => api('/pms/timesheet/me').then(setReport).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
@@ -121,7 +124,13 @@ export default function MyTimesheetPage() {
                 {' '}· {new Date(report.last_upload.created_at).toLocaleString()}
               </p>
             )}
-            <TimesheetDashboard report={report} />
+            <TimesheetTabs value={view} onChange={setView} />
+            {view === 'compliance'
+              ? <TimesheetDashboard report={report} />
+              /* Read-only: canMap is false and there is no path that
+                 sets it true here. An employee mapping their own hours
+                 would be self-marking, and the server refuses it too. */
+              : <TimesheetKra canMap={false} />}
           </>
         )}
     </div>
