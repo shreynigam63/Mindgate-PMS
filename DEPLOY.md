@@ -124,10 +124,11 @@ curl https://<your-api-host>/api/v1/health
 # {"ok":true,"service":"agentic-pms"}
 ```
 
-All 32 migrations in `server/migrations/` run automatically at boot, in
-filename order. **A migration failure fails the boot** — deliberately, so a
-half-migrated schema can never serve traffic. If the API will not start,
-read its Render logs before anything else.
+Every migration in `server/migrations/` — 66 of them at the time of
+writing — runs automatically at boot, in filename order. **A migration
+failure fails the boot** — deliberately, so a half-migrated schema can
+never serve traffic. If the API will not start, read its Render logs
+before anything else.
 
 ---
 
