@@ -12,6 +12,7 @@ Two documents are published this way:
 | `docs/PENDING-ITEMS-29Sep2026.md` | `docs/Agentic-PMS-Pending-Items-29Sep2026.pdf` |
 | `docs/MANUAL-EMPLOYEE.md` | `docs/Agentic-PMS-Employee-Manual.pdf` |
 | `docs/MANUAL-HR.md` | `docs/Agentic-PMS-HR-Manual.pdf` |
+| `docs/MANUAL-MANAGER.md` | `docs/Agentic-PMS-Manager-Manual.pdf` |
 
 ## Rendering
 
@@ -71,6 +72,15 @@ python3 docs/tools/md2html.py \
 IN=/tmp/man-hr.html \
 OUT=$PWD/docs/Agentic-PMS-HR-Manual.pdf \
 FOOTER="Agentic PMS — HR Manual · 29 September 2026" \
+  node docs/tools/topdf.js
+
+python3 docs/tools/md2html.py \
+        docs/MANUAL-MANAGER.md /tmp/man-mgr.html \
+        "Agentic PMS — Manager Manual"
+
+IN=/tmp/man-mgr.html \
+OUT=$PWD/docs/Agentic-PMS-Manager-Manual.pdf \
+FOOTER="Agentic PMS — Manager Manual · 30 September 2026" \
   node docs/tools/topdf.js
 ```
 
