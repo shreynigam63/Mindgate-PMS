@@ -728,6 +728,10 @@ export default function DirectoryPage() {
                   <th className="text-left px-3 py-2 cursor-pointer hover:bg-navy-100 select-none" onClick={() => clickHeader('name')}>Name<SortIcon column="name" /></th>
                   <th className="text-left px-3 py-2 cursor-pointer hover:bg-navy-100 select-none" onClick={() => clickHeader('email')}>Email<SortIcon column="email" /></th>
                   <th className="text-left px-3 py-2 cursor-pointer hover:bg-navy-100 select-none" onClick={() => clickHeader('department')}>Department<SortIcon column="department" /></th>
+                  {/* Location drives what an HRBP sees, so it belongs on the
+                      list HR actually reads — a blank one is a person no
+                      HRBP will ever be shown. */}
+                  <th className="text-left px-3 py-2 cursor-pointer hover:bg-navy-100 select-none" onClick={() => clickHeader('location')}>Location<SortIcon column="location" /></th>
                   <th className="text-left px-3 py-2 cursor-pointer hover:bg-navy-100 select-none" onClick={() => clickHeader('manager_email')}>Manager's Email<SortIcon column="manager_email" /></th>
                   <th className="text-left px-3 py-2 cursor-pointer hover:bg-navy-100 select-none" onClick={() => clickHeader('status')}>Status<SortIcon column="status" /></th>
                   <th className="text-left px-3 py-2">Login</th>
@@ -737,7 +741,7 @@ export default function DirectoryPage() {
               </thead>
               <tbody className="divide-y divide-navy-100">
                 {displayedRows.length === 0 ? (
-                  <tr><td colSpan={10} className="px-3 py-8 text-center text-navy-400">
+                  <tr><td colSpan={11} className="px-3 py-8 text-center text-navy-400">
                     {query ? `No employees match "${query}".` : 'No employees yet.'}
                   </td></tr>
                 ) : displayedRows.map(r => (
@@ -761,6 +765,11 @@ export default function DirectoryPage() {
                       <td className="px-3 py-2">
                         {r.department || '—'}
                         {r.archived_at && <span className="chip bg-navy-50 text-navy-500 ml-1.5">off the list</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        {r.location
+                          ? r.location
+                          : <span className="text-navy-300" title="No location on record — this person falls outside every HRBP remit">—</span>}
                       </td>
                       <td className="px-3 py-2">{r.manager_email || '—'}</td><td className="px-3 py-2">{r.status}</td>
                       <td className="px-3 py-2 whitespace-nowrap">
@@ -836,7 +845,7 @@ function Field({ label, value, onChange, type = 'text', placeholder, hint }) {
 function AddEmployee({ onClose, onSaved }) {
   const [f, setF] = useState({
     name: '', email: '', emp_code: '', department: '', designation: '',
-    role_band: '', manager_email: '', date_of_joining: '',
+    role_band: '', manager_email: '', date_of_joining: '', location: '', hod_name: '',
   });
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -866,6 +875,10 @@ function AddEmployee({ onClose, onSaved }) {
         <Field label="Role band" value={f.role_band} onChange={set('role_band')} placeholder="Band 6" />
         <Field label="Manager's email" value={f.manager_email} onChange={set('manager_email')} placeholder="priya.menon@mindgate.in"
           hint="Must already be on file. Leave blank for the top of the organisation." />
+        <Field label="Location" value={f.location} onChange={set('location')} placeholder="Pune"
+          hint="The site they work from. Decides which HRBP sees them — spell it as the rest of the master spells it." />
+        <Field label="HOD" value={f.hod_name} onChange={set('hod_name')} placeholder="Rajesh Kulkarni"
+          hint="Their head of department, by full name." />
         <Field label="Date of joining" value={f.date_of_joining} onChange={set('date_of_joining')} type="date" />
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}

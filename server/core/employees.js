@@ -83,7 +83,7 @@ function flexDate(v) {
 // ---------- Validation (pure) ----------------------------------------------
 const REQUIRED = ['name', 'email'];
 const KNOWN = ['emp_code','name','email','department','designation','role_band',
-  'manager_email','manager_name','hod_name','date_of_joining','status',
+  'manager_email','manager_name','hod_name','location','date_of_joining','status',
   // Parsed since the first version to warn about leavers, and STORED
   // since 29 Sep: the calibration retention bucket has to know who is
   // on notice, and ticking that by hand for 1,427 people is not a
@@ -107,6 +107,12 @@ const HEADER_ALIASES = {
   reporting_manager: 'manager_name', reporting_manager_name: 'manager_name', manager: 'manager_name',
   managers_email: 'manager_email', manager_email_id: 'manager_email', reporting_manager_email: 'manager_email',
   hod: 'hod_name', head_of_department: 'hod_name', department_head: 'hod_name',
+  // STORED SINCE 1 OCT, and the reason is the HRBP tab: an HRBP's remit is
+  // a set of locations, so the column the export already carries has to
+  // land somewhere. branch_code stays ignored on purpose — a code and a
+  // name in one column would make the filter match neither reliably.
+  branch: 'location', branch_name: 'location', site_location: 'location',
+  work_location: 'location', base_location: 'location', office_location: 'location',
   doj: 'date_of_joining', joining_date: 'date_of_joining', date_of_join: 'date_of_joining',
 };
 
@@ -120,7 +126,7 @@ const HEADER_ALIASES = {
 // appraisal system holds, the better.
 const IGNORED_COLUMNS = new Set([
   'company', 'salutation', 'date_of_birth', 'dob', 'gender', 'marital_status',
-  'branch', 'branchcode', 'branch_code', 'sub_department', 'site_location', 'location',
+  'branchcode', 'branch_code', 'sub_department',
   'business_hr', 'qualification', 'currentexperiance', 'current_experience', 'experience',
   'resignation_date', 'last_working_date',
 ]);
@@ -249,6 +255,7 @@ function validateEmployeeRows(rows) {
       manager_email: get('manager_email').replace(/\s+/g, '').toLowerCase() || null,
       manager_name: get('manager_name') || null,
       hod_name: get('hod_name') || null,
+      location: get('location') || null,
       date_of_joining_raw: get('date_of_joining') || null,
       date_of_joining: flexDate(get('date_of_joining')),
       resignation_date_raw: get('resignation_date') || null,
@@ -586,14 +593,18 @@ async function loadEmployees(tenantId, rows, opts = {}) {
       // from "onboarding" everyone in it.
       if (!beforeByEmail.has(String(r.email || '').toLowerCase())) newHireEmails.push(r.email);
       await client.query(
-        `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, status, resignation_date, last_working_date)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, status, resignation_date, last_working_date, location, hod_name)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          ON CONFLICT (tenant_id, email) DO UPDATE SET
            emp_code=EXCLUDED.emp_code, name=EXCLUDED.name, department=EXCLUDED.department,
            designation=EXCLUDED.designation, role_band=EXCLUDED.role_band,
            date_of_joining=EXCLUDED.date_of_joining, status=EXCLUDED.status,
            resignation_date=EXCLUDED.resignation_date,
-           last_working_date=EXCLUDED.last_working_date, updated_at=now(),
+           last_working_date=EXCLUDED.last_working_date,
+           -- Overwritten, not coalesced: the HRMS is the source of truth
+           -- for both, so a person who moved site must not keep the old
+           -- one because the new export left the cell blank.
+           location=EXCLUDED.location, hod_name=EXCLUDED.hod_name, updated_at=now(),
            -- BACK ON THE LIST. This is what makes "clear the list, then
            -- upload a fresh sheet" work the way it was asked for on
            -- 25 Sep: archiving takes people off the list and keeps
@@ -604,7 +615,8 @@ async function loadEmployees(tenantId, rows, opts = {}) {
            -- feature would look broken.
            archived_at=NULL, archived_by=NULL`,
         [tenantId, r.emp_code, r.name, r.email, r.department, r.designation, r.role_band,
-         r.date_of_joining, r.status, r.resignation_date || null, r.last_working_date || null]);
+         r.date_of_joining, r.status, r.resignation_date || null, r.last_working_date || null,
+         r.location || null, r.hod_name || null]);
     }
     // Pass 2: manager links by email.
     for (const r of rows) {
@@ -807,6 +819,7 @@ const TEMPLATE_COLUMNS = [
   ['Designation',       'Senior Software Engineer', 'Decides which KRA library shelf this employee is offered. Spell it as it appears in the KRA library.'],
   ['Reporting Manager', 'Priya Menon',              'The manager\u2019s FULL NAME as written in this same file. Leave blank for the top of the organisation.'],
   ['HOD',               'Rajesh Kulkarni',          'Head of this employee\u2019s department, by full name. Where every row in a department agrees, the department head is set automatically.'],
+  ['Location',          'Pune',                     'The site this person works from. Drives what an HRBP sees, so spell it consistently \u2014 "Pune" and "Pune - Kharadi" are two different locations.'],
   ['Date of Joining',   '15/01/2024',               'dd/mm/yyyy, or yyyy-mm-dd, or a real Excel date.'],
   ['Status',            'active',                   'active or inactive. Defaults to active if the column is absent.'],
 ];
@@ -849,7 +862,8 @@ router.get('/import-template.xlsx', async (req, res) => {
     help.addRow([]);
     help.addRow(['Row 2 of the Employees sheet is an example — delete it before uploading.']);
     help.addRow(['Your HRMS export can be uploaded as it comes: its own column names are recognised.']);
-    help.addRow(['Columns the PMS does not use (Date of Birth, Gender, Salutation, Branch, Qualification) are ignored.']);
+    help.addRow(['Columns the PMS does not use (Date of Birth, Gender, Salutation, Qualification) are ignored.']);
+    help.addRow(['Branch / Site Location / Work Location are all read as Location.']);
     help.addRow(['Upload validates first and shows you every problem row. Nothing is saved until you commit.']);
     help.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
     help.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3B6F' } };
@@ -878,6 +892,7 @@ router.get('/', async (req, res) => {
     const showArchived = req.query.include_archived === 'true';
     const r = await db.query(
       `SELECT e.id, e.emp_code, e.name, e.email, e.department, e.designation, e.role_band,
+              e.location, e.hod_name,
               e.status, e.date_of_joining, e.archived_at, e.archived_by,
               m.name AS manager_name, m.email AS manager_email,
               (lc.email IS NOT NULL) AS has_login, COALESCE(ur.role, 'employee') AS role
@@ -924,6 +939,8 @@ const EXPORT_COLUMNS = [
   ['Email', 'email', 34],
   ['Department', 'department', 22],
   ['Designation', 'designation', 26],
+  ['Location', 'location', 20],
+  ['HOD', 'hod_name', 26],
   ['Role band', 'role_band', 14],
   ['Manager', 'manager_name', 26],
   ["Manager's email", 'manager_email', 34],
@@ -936,6 +953,7 @@ const EXPORT_COLUMNS = [
 async function exportRows(tenantId) {
   const r = await db.query(
     `SELECT e.emp_code, e.name, e.email, e.department, e.designation, e.role_band,
+            e.location, e.hod_name,
             e.status, e.date_of_joining, m.name AS manager_name, m.email AS manager_email,
             (lc.email IS NOT NULL) AS has_login, COALESCE(ur.role, 'employee') AS role
        FROM core.employees e LEFT JOIN core.employees m ON m.id = e.manager_id
@@ -1011,7 +1029,8 @@ router.put('/:employeeId', async (req, res) => {
       [req.params.employeeId, req.user.tenant_id])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
 
-    const { name, department, designation, role_band, manager_email, date_of_joining, status } = req.body || {};
+    const { name, department, designation, role_band, manager_email, date_of_joining, status,
+      location, hod_name } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
 
     let managerId = null;
@@ -1026,10 +1045,22 @@ router.put('/:employeeId', async (req, res) => {
     if (date_of_joining && !dojParsed) return res.status(422).json({ error: `date_of_joining "${date_of_joining}" isn't a recognisable date` });
 
     await db.query(
+      // location and hod_name are TOUCHED ONLY IF SENT, which COALESCE
+      // cannot express: COALESCE($9,location) keeps the old value when
+      // $9 is null, so clearing a location on purpose would silently do
+      // nothing. A flag per field separates the two cases — absent from
+      // the body means leave it alone, present and empty means clear it.
+      // Getting this wrong drops somebody out of an HRBP remit, or keeps
+      // them in one, with no sign either way.
       `UPDATE core.employees SET name=$1, department=$2, designation=$3, role_band=$4,
-              manager_id=$5, date_of_joining=$6, status=COALESCE($7,status), updated_at=now()
+              manager_id=$5, date_of_joining=$6, status=COALESCE($7,status),
+              location = CASE WHEN $9 THEN $10 ELSE location END,
+              hod_name = CASE WHEN $11 THEN $12 ELSE hod_name END,
+              updated_at=now()
         WHERE id=$8`,
-      [name.trim(), department || null, designation || null, role_band || null, managerId, dojParsed, status || null, emp.id]);
+      [name.trim(), department || null, designation || null, role_band || null, managerId, dojParsed, status || null, emp.id,
+       location !== undefined, location === undefined ? null : (String(location).trim() || null),
+       hod_name !== undefined, hod_name === undefined ? null : (String(hod_name).trim() || null)]);
 
     // BR-1.5 propagation, widened on 24 Sep: "Reporting manager change
     // will also lead to open KRA changes." It always moved the KRA
@@ -1212,11 +1243,15 @@ router.post('/', async (req, res) => {
     }
 
     const row = (await db.query(
-      `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, manager_id, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'active')
-       RETURNING id, emp_code, name, email, department, designation, role_band, date_of_joining, status`,
+      // Location and HOD are accepted here too. A person added by hand
+      // with no location falls outside every HRBP remit silently, which
+      // is exactly the quiet gap the rest of this file is written to
+      // avoid — so the form asks, and blank stays blank and visible.
+      `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, manager_id, status, location, hod_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'active',$10,$11)
+       RETURNING id, emp_code, name, email, department, designation, role_band, date_of_joining, status, location, hod_name`,
       [T, str('emp_code') || null, name, address, str('department') || null, str('designation') || null,
-        str('role_band') || null, doj, managerId])).rows[0];
+        str('role_band') || null, doj, managerId, str('location') || null, str('hod_name') || null])).rows[0];
 
     await db.query(
       `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
