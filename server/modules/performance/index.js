@@ -4978,6 +4978,74 @@ function validateCompRows(rows, knownEmails) {
     summary: { total_rows: out.length, errors: errors.length, warnings: warnings.length } };
 }
 
+// THE ONE BULK UPLOAD THAT HAD NO TEMPLATE. Every other importer in this
+// product hands out the sheet it expects — employees, KRA sheets, the KRA
+// library, the career matrix, prior ratings. Salary did not, so the only
+// statement of its columns was a line of help text on the page, and the
+// first thing an HR user does with an upload box is look for the download
+// beside it. Found by round-tripping every template through its own
+// importer; this was the gap that exercise exists to catch.
+//
+// Same columns the importer requires, same two optional ones, and it says
+// to delete the sample row — the convention the other templates follow.
+const COMP_TEMPLATE_HEADERS = ['employee_email', 'annual_ctc', 'currency', 'effective_from'];
+const COMP_TEMPLATE_SAMPLE = ['jane.sample@example.com', 1200000, 'INR', '2026-04-01'];
+
+router.get('/compensation/template.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_compensation'))) return res.status(403).json({ error: "Requires 'pms_compensation'" });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Compensation');
+    // THE HEADER IS ROW 1, and the guidance lives on a second sheet.
+    // validateCompRows reads rows[0] as the header — it does not hunt for
+    // it the way the employee and KRA importers do — so a banner row here
+    // makes the product reject the template the product just handed out.
+    // Caught by round-tripping this file through its own importer, which
+    // is the only reason it is not shipping broken.
+    const header = ws.addRow(COMP_TEMPLATE_HEADERS);
+    header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3B6F' } };
+    ws.addRow(COMP_TEMPLATE_SAMPLE).font = { italic: true, color: { argb: 'FF8894A8' } };
+    ws.columns.forEach((col, i) => { col.width = [34, 16, 12, 18][i] || 18; });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+    const help = wb.addWorksheet('How to fill this in');
+    help.addRow(['Column', 'What it is']);
+    for (const r of [
+      ['employee_email', 'Required. Must match an active employee exactly.'],
+      ['annual_ctc', 'Required. The full annual figure in whole units — digits only, no commas, no currency symbol.'],
+      ['currency', 'Optional. Defaults to INR.'],
+      ['effective_from', 'Optional, yyyy-mm-dd. Defaults to today. A raise is a NEW row with a later date; the old row stays, so past scenarios still reconcile.'],
+    ]) help.addRow(r);
+    help.addRow([]);
+    help.addRow(['Row 2 of the Compensation sheet is an example — delete it before uploading.']);
+    help.addRow(['Re-uploading an employee for the same effective date UPDATES their salary rather than adding a second row.']);
+    help.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    help.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3B6F' } };
+    help.getColumn(1).width = 20; help.getColumn(2).width = 104;
+    help.getColumn(2).alignment = { wrapText: true, vertical: 'top' };
+
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="compensation_template.xlsx"');
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('compensation template xlsx', { error: e.message }); res.status(500).json({ error: 'Could not build the template file' }); }
+});
+
+router.get('/compensation/template.csv', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_compensation'))) return res.status(403).json({ error: "Requires 'pms_compensation'" });
+    // No banner row in the CSV: the importer reads row 1 as the header,
+    // so a comment line here would be read as column names and the file
+    // the product handed out would be rejected by the product.
+    const q = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+    const csv = [COMP_TEMPLATE_HEADERS.join(','), COMP_TEMPLATE_SAMPLE.map(q).join(',')].join('\n') + '\n';
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="compensation_template.csv"');
+    res.send(csv);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/compensation/upload', (req, res, next) => compUpload.single('file')(req, res, (err) => {
   if (err) return res.status(400).json({ error: err.message });
   next();
@@ -5953,7 +6021,7 @@ router.post('/watchlist/recompute', async (req, res) => {
 // loads what the client appraised on BEFORE this product, so Super 50
 // can answer on day one instead of in three years.
 const PRIOR_HEADERS = ['Employee Code', 'Email', 'Employee Name', 'Fiscal Year', 'Rating'];
-const PRIOR_BANNER = 'One row per employee per past appraisal year. Match on Employee Code OR Email — whichever your old records carry; Employee Name is only there so you can read the sheet. Fiscal Year is your own label ("FY24-25", "2024") and is sorted by the first four-digit year in it. Rating is the grade as you recorded it (A+, A, B+, B, C) or the number. Re-uploading the same employee and year UPDATES it rather than adding a second row. Only ANNUAL appraisal ratings belong here — this feeds the Super 50 three-year window.';
+const PRIOR_BANNER = 'One row per employee per past appraisal year. Match on Employee Code OR Email — whichever your old records carry; Employee Name is only there so you can read the sheet. Fiscal Year is your own label ("FY24-25", "2024") and is sorted by the first four-digit year in it. Rating is the grade as you recorded it (A+, A, B+, B, C) or the number. Re-uploading the same employee and year UPDATES it rather than adding a second row. Only ANNUAL appraisal ratings belong here — this feeds the Super 50 three-year window. Delete the two sample rows before uploading.';
 
 router.get('/watchlist/prior-ratings/template.xlsx', async (req, res) => {
   try {

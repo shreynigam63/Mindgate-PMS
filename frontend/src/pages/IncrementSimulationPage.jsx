@@ -139,6 +139,14 @@ function Salaries() {
           one stays, so past scenarios still reconcile.
         </p>
         <div className="flex flex-wrap items-center gap-2">
+          {/* The download belongs beside the upload box: this was the only
+              bulk importer in the product without one, so the columns
+              above were the only statement of what the file should look
+              like. */}
+          <a className="btn-sec" href={`${API_BASE}/pms/compensation/template.xlsx?token=${localStorage.getItem('apms_token')}`}>
+            Download template (.xlsx)
+          </a>
+          <a className="btn-sec" href={`${API_BASE}/pms/compensation/template.csv?token=${localStorage.getItem('apms_token')}`}>.csv</a>
           <input type="file" accept=".csv,.xlsx" onChange={e => { setFile(e.target.files[0]); setReport(null); }} className="text-xs" />
           <button className="btn-sec" disabled={!file} onClick={() => send(false)}><Upload size={13} className="inline mr-1" />Validate</button>
           <button className="btn-pri" disabled={!file || !(report && report.ok && !report.committed)} onClick={() => send(true)}>Load</button>
