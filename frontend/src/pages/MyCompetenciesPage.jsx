@@ -162,6 +162,45 @@ export default function MyCompetenciesPage() {
         ))}
       </div>
 
+      {/* TECHNICAL SKILLS BY TIER.
+          Asked for: explicit boxes for Primary, Secondary, Tertiary and
+          Basic "rather than free-form selection". This is a different
+          question from the ratings below — those say how good you are at
+          each competency HR defined; none of them says which one is your
+          MAIN skill, and a developer rated Advanced on four of them has
+          still not answered that.
+
+          The list offers the technical competencies HR has defined, so
+          an answer here matches the framework rather than starting a
+          second vocabulary. Typing something not on the list is still
+          allowed: the master is never complete on day one, and refusing
+          an honest answer would push people into picking the nearest
+          wrong one. */}
+      {(d.technical_tiers || []).length > 0 && (
+        <div className="card p-4 space-y-3">
+          <p className="lbl mb-0">Technical skills</p>
+          <p className="text-[11.5px] text-navy-400">
+            Name the skills themselves, strongest first. Pick from the list or type your own —
+            the list is the technical competencies HR has defined.
+          </p>
+          <datalist id="tech-skill-options">
+            {(d.technical_options || []).map((o) => <option key={o} value={o} />)}
+          </datalist>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {d.technical_tiers.map((t) => (
+              <div key={t.key}>
+                <label className="text-[11.5px] text-navy-600 font-semibold block">{t.label}</label>
+                <span className="text-[10.5px] text-navy-400 block mb-1">{t.hint}</span>
+                <input className="inp" list="tech-skill-options" disabled={!editable}
+                  placeholder={t.key === 'tech_basic' ? 'e.g. Docker, Jenkins, SQL' : 'start typing a skill'}
+                  value={field(t.key)}
+                  onChange={(e) => setText((p) => ({ ...p, [t.key]: e.target.value }))} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="card p-3 text-[11.5px] text-navy-500 flex gap-2">
         <Info size={14} className="shrink-0 mt-0.5 text-navy-400" />
         <span>

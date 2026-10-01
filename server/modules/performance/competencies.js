@@ -113,6 +113,40 @@ const NARRATIVE = ['top_responsibilities', 'critical_outcomes', 'strongest_areas
   'develop_next', 'preferred_methods', 'aspiration_2_3_years', 'next_role_competencies',
   'internal_mobility', 'support_needed'];
 
+// Technical skills by tier (migration 071). Asked for: explicit boxes for
+// Primary, Secondary, Tertiary and Basic "rather than free-form
+// selection".
+//
+// KEPT OUT OF `NARRATIVE` ON PURPOSE. These are the employee's statement
+// of their own skills, and NARRATIVE is walked by the manager's save
+// route as well as the employee's — adding them there would have let a
+// manager silently rewrite what somebody said their primary skill is.
+// The manager sees them; they are not the manager's to edit.
+const TECH_TIERS = [
+  ['tech_primary', 'Primary', 'The one you would be staffed on first.'],
+  ['tech_secondary', 'Secondary', 'Your strong second.'],
+  ['tech_tertiary', 'Tertiary', 'Working knowledge — you could be useful on it.'],
+  ['tech_basic', 'Basic', 'Anything else you have touched. More than one is fine, separated by commas.'],
+];
+const TECH_COLUMNS = TECH_TIERS.map(([c]) => c);
+const TECH_MAX = 300;
+
+/**
+ * What the four boxes offer. The technical competencies HR has already
+ * defined, so a skill named here matches the framework rather than
+ * drifting into a second vocabulary nobody can report on. Typing
+ * something not on the list is still allowed — the master is never
+ * complete on day one, and refusing an honest answer because HR has not
+ * catalogued it yet would push people into picking the nearest wrong one.
+ */
+async function technicalOptions(tenantId) {
+  const r = await db.query(
+    `SELECT name FROM pms.competencies
+      WHERE tenant_id=$1 AND active AND category ILIKE '%TECHNICAL%'
+      ORDER BY sort_order, name`, [tenantId]);
+  return r.rows.map((x) => x.name);
+}
+
 // ---------------------------------------------------------------------------
 // The Employee Form
 
@@ -139,6 +173,10 @@ router.get('/me', async (req, res) => {
       editable: a.self_status !== 'submitted',
       rows, scale,
       summary: summarise(rows, { scale }),
+      // The four boxes and what may go in them. Sent with the form so the
+      // page has no second round trip and no hardcoded copy of the tiers.
+      technical_tiers: TECH_TIERS.map(([key, label, hint]) => ({ key, label, hint })),
+      technical_options: await technicalOptions(t),
     });
   } catch (e) { logger.error('competency me', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
@@ -172,9 +210,16 @@ router.put('/me', async (req, res) => {
     }
     const sets = [];
     const vals = [a.id];
-    for (const f of NARRATIVE) {
+    for (const f of [...NARRATIVE, ...TECH_COLUMNS]) {
       if (b[f] === undefined) continue;
-      vals.push(b[f] === null ? null : String(b[f]));
+      // Blank clears it. An employee who typed a skill and then thought
+      // better of it must be able to take it back, so '' is stored as
+      // NULL rather than as an empty string that reads as "answered".
+      const raw = b[f] === null ? null : String(b[f]).trim();
+      if (raw && raw.length > TECH_MAX && TECH_COLUMNS.includes(f)) {
+        return res.status(422).json({ error: `${f} is too long — ${TECH_MAX} characters at most.`, field: f });
+      }
+      vals.push(raw || null);
       sets.push(`${f}=$${vals.length}`);
     }
     await db.query(
@@ -275,6 +320,8 @@ router.get('/team/:employeeId', async (req, res) => {
       editable: a.manager_status !== 'submitted',
       rows, scale,
       summary: summarise(rows, { scale }),
+      technical_tiers: TECH_TIERS.map(([key, label, hint]) => ({ key, label, hint })),
+      technical_options: await technicalOptions(t),
       // The conversation this whole exercise exists to start.
       divergences: divergences(rows),
     });
