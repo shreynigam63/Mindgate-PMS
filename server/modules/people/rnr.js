@@ -280,10 +280,18 @@ async function quotaFor(tenantId, cycle) {
   const approvedRows = (await db.query(
     `SELECT a.level, count(*)::int n FROM rnr.nominations nm JOIN rnr.awards a ON a.id=nm.award_id
       WHERE nm.tenant_id=$1 AND nm.cycle_id=$2 AND nm.status IN ('final_approved','awarded')
+        AND a.counts_towards_quota
       GROUP BY a.level`, [tenantId, cycle.id])).rows;
   const approved = approvedRows.reduce((s, r) => s + r.n, 0);
   const overrides = (await db.query(
     `SELECT count(*)::int n FROM rnr.quota_overrides WHERE cycle_id=$1`, [cycle.id])).rows[0].n;
+  // Approved, but outside the cap — loyalty milestones. Counted and shown
+  // rather than hidden: "42 of 42 approved" beside eleven more awards
+  // nobody can see is how a number stops being trusted.
+  const outside = (await db.query(
+    `SELECT count(*)::int n FROM rnr.nominations nm JOIN rnr.awards a ON a.id=nm.award_id
+      WHERE nm.tenant_id=$1 AND nm.cycle_id=$2 AND nm.status IN ('final_approved','awarded')
+        AND NOT a.counts_towards_quota`, [tenantId, cycle.id])).rows[0].n;
   const allocations = (await db.query(
     `SELECT level, slots FROM rnr.cycle_allocations WHERE cycle_id=$1`, [cycle.id])).rows;
   const st = quota.standing({
@@ -296,7 +304,8 @@ async function quotaFor(tenantId, cycle) {
   st.balance = st.maximum - approved;
   st.exhausted = approved >= st.maximum;
   st.beyond_cap = Math.max(0, approved - st.maximum);
-  return { ...st, by_level: Object.fromEntries(approvedRows.map((r) => [r.level, r.n])),
+  return { ...st, outside_quota: outside,
+    by_level: Object.fromEntries(approvedRows.map((r) => [r.level, r.n])),
     allocations: Object.fromEntries(allocations.map((a) => [a.level, a.slots])) };
 }
 
@@ -542,9 +551,22 @@ router.post('/rnr/nominations/:id/decide', async (req, res) => {
     // one for it would shrink the cycle for everybody else.
     let overrideRow = null;
     if (b.action === 'approve' && t.next === 'final_approved') {
+      const award = (await db.query(`SELECT * FROM rnr.awards WHERE id=$1`, [n.award_id])).rows[0];
+      // A loyalty milestone is a fact about a date, not an award won
+      // against competition. Refusing one because the pool is full would
+      // be refusing to recognise that somebody has worked here ten years.
+      if (award.counts_towards_quota === false) {
+        await db.query(`UPDATE rnr.nominations SET status=$3, updated_at=now() WHERE id=$1 AND tenant_id=$2`,
+          [n.id, T(req), t.next]);
+        await audit(T(req), n.id, req, b.action, n.status, t.next,
+          `${award.name} does not consume an award slot.`);
+        await notifyStage(T(req), { ...n, status: t.next }, award, t.next).catch(() => {});
+        return res.json({ ok: true, status: t.next, status_label: wf.LABELS[t.next],
+          outside_quota: true,
+          note: `${award.name} sits outside the cycle quota, so no slot was used.` });
+      }
       const cycle = (await db.query(`SELECT * FROM rnr.cycles WHERE id=$1`, [n.cycle_id])).rows[0];
       const st = await quotaFor(T(req), cycle);
-      const award = (await db.query(`SELECT * FROM rnr.awards WHERE id=$1`, [n.award_id])).rows[0];
       const may = quota.mayApprove({
         standing: st, level: award.level,
         levelApproved: st.by_level[award.level] || 0,

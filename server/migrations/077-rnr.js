@@ -125,6 +125,9 @@ async function up(db) {
     criteria      text,
     award_value_paise bigint,
     needs_justification boolean NOT NULL DEFAULT true,
+    -- A loyalty milestone is a fact about a date, not an award won
+    -- against competition, so it does not consume a slot. See 079.
+    counts_towards_quota boolean NOT NULL DEFAULT true,
     is_team       boolean NOT NULL DEFAULT false,
     discretionary boolean NOT NULL DEFAULT false,
     active        boolean NOT NULL DEFAULT true,
@@ -255,10 +258,11 @@ async function seedFor(db, tenantId) {
     i += 10;
     await db.query(
       `INSERT INTO rnr.awards (tenant_id, key, name, level, frequency, min_experience_years,
-         max_experience_years, experience_basis, bands, criteria, is_team, discretionary, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING`,
+         max_experience_years, experience_basis, bands, criteria, is_team, discretionary,
+         sort_order, counts_towards_quota)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT DO NOTHING`,
       [tenantId, key, name, level, frequency, minE, maxE, basis, bands,
-       CRITERIA[key] || null, team, key === 'founders_choice', i]);
+       CRITERIA[key] || null, team, key === 'founders_choice', i, !key.startsWith('loyalty_')]);
   }
 }
 

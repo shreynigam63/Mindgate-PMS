@@ -82,8 +82,15 @@ export default function RnrAdminPage() {
           </div>
           <p className="text-[11px] text-navy-400">
             The headcount was counted when the cycle opened and is fixed for its life — a quota that
-            moved with the headcount would change under the people approving against it.
+            moved with the headcount would change under the people approving against it. 3% applies
+            to each cycle, so four quarterly cycles allow up to 12% of the company in a year.
           </p>
+          {quota.quota.outside_quota > 0 && (
+            <p className="text-[11px] text-navy-500">
+              <b>{quota.quota.outside_quota}</b> further award{quota.quota.outside_quota === 1 ? '' : 's'} approved
+              outside the cap — loyalty milestones do not consume a slot.
+            </p>
+          )}
 
           <div className="pt-1">
             <p className="text-[11px] text-navy-500 mb-1">
@@ -210,7 +217,9 @@ export default function RnrAdminPage() {
             <thead className="bg-navy-50 text-[10px] uppercase tracking-wide text-navy-500">
               <tr><th className="text-left px-3 py-2">Award</th><th className="text-left px-3 py-2">Level</th>
                 <th className="text-left px-3 py-2">When</th><th className="text-left px-3 py-2">Experience</th>
-                <th className="text-left px-3 py-2">Measured on</th><th className="text-left px-3 py-2">Criteria</th></tr>
+                <th className="text-left px-3 py-2">Measured on</th>
+                <th className="text-left px-3 py-2">Uses a slot</th>
+                <th className="text-left px-3 py-2">Criteria</th></tr>
             </thead>
             <tbody className="divide-y divide-navy-100">
               {m.awards.map((a) => (
@@ -224,6 +233,11 @@ export default function RnrAdminPage() {
                       : `${a.min_experience_years ?? 0} to under ${a.max_experience_years} yrs`}
                   </td>
                   <td className="px-3 py-2">{a.experience_basis === 'tenure' ? 'Mindgate tenure' : 'total experience'}</td>
+                  <td className="px-3 py-2">
+                    {a.counts_towards_quota === false
+                      ? <span className="chip bg-navy-50 text-navy-500">outside the quota</span>
+                      : <span className="chip bg-amber-50 text-amber-700">yes</span>}
+                  </td>
                   <td className="px-3 py-2 text-navy-500">{a.criteria || '—'}</td>
                 </tr>
               ))}

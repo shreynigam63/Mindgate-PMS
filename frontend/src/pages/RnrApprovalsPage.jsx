@@ -87,6 +87,9 @@ export default function RnrApprovalsPage() {
           <span className={quota.quota.balance <= 0 ? 'text-rose-600 font-semibold' : ''}>
             balance <b>{quota.quota.balance}</b>
           </span>
+          {quota.quota.outside_quota > 0 && (
+            <span className="text-navy-500">+{quota.quota.outside_quota} outside the cap (loyalty)</span>
+          )}
           {quota.quota.exhausted && (
             <span className="text-rose-600 flex items-center gap-1">
               <AlertTriangle size={12} />Quota exhausted — further approval needs an HR override.

@@ -198,6 +198,34 @@ test('a sent-back nomination can be resubmitted; a rejected one cannot', () => {
   assert.equal(wf.transition('rejected', 'submit').ok, false);
 });
 
+test('A LOYALTY MILESTONE DOES NOT CONSUME AN AWARD SLOT', async () => {
+  // Decided after the first build: 3% stays per quarter, and loyalty
+  // comes out of the pool. A 10-year award is a fact about a date, not
+  // something won against competition — and the fifty-first person to
+  // reach ten years in a cycle of forty-two would otherwise be refused
+  // recognition for having worked here, with "quota exhausted" as the
+  // only explanation.
+  const db = require('../core/db');
+  const rows = (await db.query(
+    `SELECT key, counts_towards_quota FROM rnr.awards WHERE key LIKE 'loyalty%' OR key='rising_star'`)).rows;
+  assert.ok(rows.length, 'the award master has to be seeded for this to mean anything');
+  for (const r of rows) {
+    assert.equal(r.counts_towards_quota, !r.key.startsWith('loyalty'),
+      `${r.key}: loyalty sits outside the cap, everything else inside it`);
+  }
+  await db.pool.end();
+});
+
+test('3% IS PER CYCLE, so four quarterly cycles allow four times it', () => {
+  // Confirmed as the intent rather than inferred: each cycle freezes its
+  // own cap when it opens, so a year of quarterly cycles permits 12% of
+  // the company. Written down because it is the kind of number that
+  // surprises somebody in month nine.
+  const perQuarter = quota.capacity(1427, 3, 'down');
+  assert.equal(perQuarter, 42);
+  assert.equal(perQuarter * 4, 168, 'four quarters at 3% each');
+});
+
 test('the allocation cannot exceed the one pool it is split from', () => {
   // The whole reason for a single consolidated quota: the parts must not
   // silently add up to more than the whole.
