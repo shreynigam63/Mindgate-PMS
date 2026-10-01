@@ -12,6 +12,10 @@ import { AlertTriangle, Play, Square, Plus, Save } from 'lucide-react';
 // editable rows rather than constants.
 
 const fmt = (d) => (d ? String(d).slice(0, 10) : '');
+// Stored with an underscore so it is a safe identifier; shown the way a
+// person writes it.
+const KINDS = [['quarterly', 'quarterly'], ['half_yearly', 'half-yearly'], ['annual', 'annual']];
+const kindLabel = (k) => (KINDS.find(([v]) => v === k) || [k, k])[1];
 
 export default function RnrAdminPage() {
   const [m, setM] = useState(null);
@@ -129,7 +133,7 @@ export default function RnrAdminPage() {
           <tbody className="divide-y divide-navy-100">
             {(cycles || []).map((c) => (
               <tr key={c.id}>
-                <td className="px-3 py-2"><b>{c.name}</b><span className="block text-[10px] text-navy-400">{c.kind}</span></td>
+                <td className="px-3 py-2"><b>{c.name}</b><span className="block text-[10px] text-navy-400">{kindLabel(c.kind)}</span></td>
                 <td className="px-3 py-2">{fmt(c.nominations_open)} → {fmt(c.nominations_close)}</td>
                 <td className="px-3 py-2">{fmt(c.award_date) || '—'}</td>
                 <td className="px-3 py-2">{c.quota_total == null ? '—' : `${c.approved}/${c.quota_total}`}</td>
@@ -157,7 +161,7 @@ export default function RnrAdminPage() {
             <label className="text-[10.5px] text-navy-400 block">Kind</label>
             <select className="inp !text-xs !w-auto" value={newCycle.kind}
               onChange={(e) => setNewCycle((p) => ({ ...p, kind: e.target.value }))}>
-              <option value="quarterly">quarterly</option><option value="annual">annual</option>
+              {KINDS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
           </div>
           <button className="btn-sec !py-1.5" onClick={() => act(() =>
@@ -226,7 +230,7 @@ export default function RnrAdminPage() {
                 <tr key={a.id} className={a.active ? '' : 'opacity-50'}>
                   <td className="px-3 py-2 font-semibold">{a.name}</td>
                   <td className="px-3 py-2">{a.level}</td>
-                  <td className="px-3 py-2">{a.frequency}</td>
+                  <td className="px-3 py-2">{kindLabel(a.frequency)}</td>
                   <td className="px-3 py-2">
                     {a.min_experience_years == null && a.max_experience_years == null ? 'any'
                       : a.max_experience_years == null ? `${a.min_experience_years}+ yrs`

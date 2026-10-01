@@ -11,8 +11,9 @@
 // exactly 3.0, and the client flagged it themselves. Half-open windows
 // resolve it, and this pins that they stay resolved.
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
+const db = require('../core/db');
 const elig = require('../modules/people/rnr-eligibility');
 const quota = require('../modules/people/rnr-quota');
 const wf = require('../modules/people/rnr-workflow');
@@ -22,6 +23,8 @@ const bandLevels = BANDS.map(([band, level]) => ({ band, level }));
 const statuses = STATUSES.map(([status, is_active]) => ({ status, is_active }));
 const settings = { ...SETTINGS };
 const AS_OF = '2026-10-01';
+
+after(async () => { await db.pool.end().catch(() => {}); });
 
 // The award master as the migration seeds it, so the tests exercise the
 // shipped rules rather than a convenient copy of them.
@@ -205,7 +208,6 @@ test('A LOYALTY MILESTONE DOES NOT CONSUME AN AWARD SLOT', async () => {
   // reach ten years in a cycle of forty-two would otherwise be refused
   // recognition for having worked here, with "quota exhausted" as the
   // only explanation.
-  const db = require('../core/db');
   const rows = (await db.query(
     `SELECT key, counts_towards_quota FROM rnr.awards WHERE key LIKE 'loyalty%' OR key='rising_star'`)).rows;
   assert.ok(rows.length, 'the award master has to be seeded for this to mean anything');
@@ -213,7 +215,6 @@ test('A LOYALTY MILESTONE DOES NOT CONSUME AN AWARD SLOT', async () => {
     assert.equal(r.counts_towards_quota, !r.key.startsWith('loyalty'),
       `${r.key}: loyalty sits outside the cap, everything else inside it`);
   }
-  await db.pool.end();
 });
 
 test('3% IS PER CYCLE, so four quarterly cycles allow four times it', () => {
@@ -224,6 +225,29 @@ test('3% IS PER CYCLE, so four quarterly cycles allow four times it', () => {
   const perQuarter = quota.capacity(1427, 3, 'down');
   assert.equal(perQuarter, 42);
   assert.equal(perQuarter * 4, 168, 'four quarters at 3% each');
+});
+
+test('A CYCLE CAN BE HALF-YEARLY, and an award can belong to one', async () => {
+  // The brief asked for quarterly, half-yearly and annual; the first
+  // build shipped two of three. BOTH constraints move together: a
+  // half-yearly cycle whose awards are all quarterly would open happily
+  // and then show a manager an empty award picker, which reads as a bug
+  // in the eligibility engine rather than a gap in the master.
+  const { KINDS } = require('../migrations/080-half-yearly-cycles');
+  assert.deepEqual(KINDS, ['quarterly', 'half_yearly', 'annual']);
+  const t = (await db.query(`SELECT id FROM core.tenants LIMIT 1`)).rows[0].id;
+  const c = (await db.query(
+    `INSERT INTO rnr.cycles (tenant_id,name,kind,nominations_open,nominations_close)
+     VALUES ($1,$2,'half_yearly','2026-10-01','2026-10-20') RETURNING id, kind`,
+    [t, `half-yearly probe ${Date.now()}`])).rows[0];
+  assert.equal(c.kind, 'half_yearly');
+  const a = (await db.query(
+    `INSERT INTO rnr.awards (tenant_id,key,name,level,frequency)
+     VALUES ($1,$2,'Probe','mid','half_yearly') RETURNING frequency`,
+    [t, `probe_${Date.now()}`])).rows[0];
+  assert.equal(a.frequency, 'half_yearly', 'an award has to be able to belong to the new cycle kind');
+  await db.query(`DELETE FROM rnr.cycles WHERE id=$1`, [c.id]);
+  await db.query(`DELETE FROM rnr.awards WHERE tenant_id=$1 AND name='Probe'`, [t]);
 });
 
 test('the allocation cannot exceed the one pool it is split from', () => {

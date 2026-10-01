@@ -223,8 +223,9 @@ router.post('/rnr/cycles', async (req, res) => {
     for (const f of ['name', 'kind', 'nominations_open', 'nominations_close']) {
       if (!b[f]) return res.status(422).json({ error: `${f.replace(/_/g, ' ')} is required.` });
     }
-    if (!['quarterly', 'annual'].includes(b.kind)) {
-      return res.status(422).json({ error: 'A cycle is quarterly or annual.' });
+    const KINDS = require('../../migrations/080-half-yearly-cycles').KINDS;
+    if (!KINDS.includes(b.kind)) {
+      return res.status(422).json({ error: `A cycle is one of: ${KINDS.join(', ')}.` });
     }
     if (new Date(b.nominations_close) < new Date(b.nominations_open)) {
       return res.status(422).json({ error: 'Nominations cannot close before they open.' });
