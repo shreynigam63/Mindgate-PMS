@@ -6,7 +6,7 @@ import {
   Target, TrendingUp, MessageCircle, Clock, ClipboardList, Award, Star, History,
   LayoutDashboard, Users, CheckCircle2, Library, BarChart3, ArrowRight, Lock,
   Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck, Send, Hourglass, Gauge, CalendarClock,
-  HeartHandshake,
+  HeartHandshake, ChevronDown,
 } from 'lucide-react';
 
 // The landing screen.
@@ -103,11 +103,9 @@ function Tile({ to, icon: Icon, title, sub, hue = 'navy', locked }) {
 function SecHead({ icon: Icon, hue, title, sub }) {
   return (
     <div className="sechead">
-      <span className={`sechead-i si-${hue}`}><Icon size={15} /></span>
-      <span className="min-w-0">
-        <span className="sechead-t">{title}</span>
-        <span className="sechead-s">{sub}</span>
-      </span>
+      <span className={`sechead-i si-${hue}`}><Icon size={13} /></span>
+      <span className="sechead-t">{title}</span>
+      {sub && <span className="sechead-s">{sub}</span>}
     </div>
   );
 }
@@ -116,7 +114,7 @@ function Section({ icon, hue, title, sub, children }) {
   return (
     <div>
       <SecHead icon={icon} hue={hue} title={title} sub={sub} />
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">{children}</div>
+      <div className="tilerow">{children}</div>
     </div>
   );
 }
@@ -168,6 +166,21 @@ export default function HomePage() {
   // module is unreachable should still get their home page; a survey
   // prompt is an addition to it, not a precondition for it.
   const [surveys, setSurveys] = useState([]);
+  // COLLAPSIBLE, AND IT REMEMBERS. Asked for on 1 Oct: the list should
+  // "be hidden or open in one click". Open by default — a form nobody
+  // has answered is the point of the section, and a section that starts
+  // shut is a section nobody discovers. The choice is kept in
+  // localStorage so someone who shuts it does not have to shut it again
+  // on every visit; it is a per-browser convenience, not state the
+  // server needs to know about, and a browser that refuses to store it
+  // simply gets the default back.
+  const [openSurveys, setOpenSurveys] = useState(() => {
+    try { return localStorage.getItem('apms_home_surveys') !== 'closed'; } catch { return true; }
+  });
+  const toggleSurveys = () => setOpenSurveys((v) => {
+    try { localStorage.setItem('apms_home_surveys', v ? 'closed' : 'open'); } catch { /* private window */ }
+    return !v;
+  });
   useEffect(() => { api('/pms/home').then(setD).catch(e => setErr(e.message)); }, []);
   useEffect(() => {
     api('/engagement/my/invitations')
@@ -321,9 +334,24 @@ export default function HomePage() {
           KRA sheet that has been returned. */}
       {surveys.length > 0 && (
         <div>
-          <SecHead icon={HeartHandshake} hue="leaf" title="Surveys waiting on you"
-            sub={`${surveys.length} open ${surveys.length === 1 ? 'form has' : 'forms have'} not been answered yet`} />
-          <div className="card divide-y divide-navy-100">
+          {/* THE COUNT STAYS VISIBLE WHEN THE LIST IS SHUT. Collapsing is
+              meant to save room, not to hide that two forms are waiting —
+              so the sentence lives in the header, which is also the
+              button. */}
+          <button type="button" onClick={toggleSurveys}
+            className="sechead w-full text-left hover:opacity-80 transition-opacity"
+            aria-expanded={openSurveys}>
+            <span className="sechead-i si-leaf"><HeartHandshake size={13} /></span>
+            <span className="sechead-t">Surveys waiting on you</span>
+            <span className="sechead-s">
+              {surveys.length} open {surveys.length === 1 ? 'form has' : 'forms have'} not been answered yet
+            </span>
+            <span className="sechead-s ml-auto inline-flex items-center gap-0.5 font-semibold">
+              {openSurveys ? 'Hide' : 'Show'}
+              <ChevronDown size={12} className={`transition-transform ${openSurveys ? '' : '-rotate-90'}`} />
+            </span>
+          </button>
+          <div className={`card divide-y divide-navy-100 ${openSurveys ? '' : 'hidden'}`}>
             {surveys.slice(0, SURVEYS_SHOWN).map((s) => (
               <NavLink key={`${s.id}-${s.subject_employee_id || 'self'}`} to="/engagement"
                 className="p-2.5 flex flex-wrap items-center gap-2 hover:bg-navy-50/60">
@@ -379,7 +407,7 @@ export default function HomePage() {
         <div>
           <SecHead icon={Inbox} hue="red" title="My desk"
             sub={`${desk.length} ${desk.length === 1 ? 'thing is' : 'things are'} outstanding`} />
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          <div className="deskrow">
             {/* key pulled OUT of the spread: React warns when a "key"
                 rides in with the rest of the props, and the warning is
                 only ever visible in the console. */}
@@ -394,7 +422,7 @@ export default function HomePage() {
             sub={team.scope === 'all_employees'
               ? 'Submitted across the company and not yet decided'
               : 'Submitted by your reports and not yet decided'} />
-          <div className="grid sm:grid-cols-3 gap-2">
+          <div className="tilerow">
             <Tile to={queueLink} icon={Target} title="KRA sheets" hue="lagoon"
               sub={`${pending.kra} awaiting an approve or a return`} />
             <Tile to={queueLink} icon={TrendingUp} title="Growth plans" hue="leaf"

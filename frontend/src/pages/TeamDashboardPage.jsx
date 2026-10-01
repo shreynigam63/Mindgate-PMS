@@ -98,11 +98,9 @@ function Tile({ to, icon: Icon, title, sub, hue = 'lagoon' }) {
 function SecHead({ icon: Icon, hue, title, sub }) {
   return (
     <div className="sechead">
-      <span className={`sechead-i si-${hue}`}><Icon size={15} /></span>
-      <span className="min-w-0">
-        <span className="sechead-t">{title}</span>
-        <span className="sechead-s">{sub}</span>
-      </span>
+      <span className={`sechead-i si-${hue}`}><Icon size={13} /></span>
+      <span className="sechead-t">{title}</span>
+      {sub && <span className="sechead-s">{sub}</span>}
     </div>
   );
 }
@@ -232,7 +230,7 @@ export default function TeamDashboardPage() {
         <div>
           <SecHead icon={Inbox} hue="red" title="My desk"
             sub={`${desk.length} ${desk.length === 1 ? 'thing is' : 'things are'} outstanding across your team`} />
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          <div className="deskrow">
             {/* key pulled OUT of the spread: React warns when a "key"
                 rides in with the rest of the props, and the warning is
                 only visible in the console. */}
@@ -320,7 +318,7 @@ export default function TeamDashboardPage() {
       <div>
         <SecHead icon={LayoutDashboard} hue="lagoon" title="Manager pages"
           sub="Everything on this tab, with where your team stands on each" />
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        <div className="tilerow">
           <Tile to="/team/overview" icon={LayoutDashboard} title="Team Overview"
             sub={`${stats.reports} ${stats.reports === 1 ? 'person' : 'people'} · every phase at a glance`} />
           <Tile to="/team/kra-sheets" icon={Target} title="Team KRA Sheets"

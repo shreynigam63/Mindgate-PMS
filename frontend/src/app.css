@@ -201,7 +201,12 @@ body {
 .deskt:hover { transform: translateY(-2px); }
 .deskt-i { @apply w-[46px] shrink-0 flex items-center justify-center; background: rgba(0,0,0,0.16); }
 .deskt-b { @apply flex-1 px-3 py-2.5 min-w-0; }
-.deskt-l { @apply block text-[11px] font-bold uppercase tracking-wide truncate; color: rgba(255,255,255,0.92); }
+/* NO truncate. Five tiles now share one row, which makes each narrower
+   than the old three-across, and "EMPLOYEES WITH NO MANAGER" came back as
+   "EMPLOYEES WITH N…". Same rule as the stat strip: a label that clips is
+   a label that lies. It wraps instead, and the flex row stretches every
+   tile to match the tallest. */
+.deskt-l { @apply block text-[10.5px] font-bold uppercase tracking-wide leading-tight; color: rgba(255,255,255,0.92); }
 .deskt-n { @apply block text-[22px] font-extrabold leading-none mt-1 tabular-nums; }
 .deskt-r { @apply block h-[3px] w-10 mt-1.5 rounded-full; background: rgba(255,255,255,0.55); }
 .dk-navy   { background: #2f6fae; }
@@ -216,10 +221,25 @@ body {
    large colour-filled icon badge ("Spot Light", "Employee's Desk") rather
    than a small grey caption, and it is what gives the page its rhythm at a
    glance. Same idea here, in the group's own hue. */
-.sechead { @apply flex items-center gap-2 mb-2; }
-.sechead-i { @apply w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-white; }
-.sechead-t { @apply text-[13.5px] font-extrabold text-navy-900 leading-none; }
-.sechead-s { @apply block text-[10.5px] font-medium text-navy-400 mt-0.5; }
+/* ONE LINE, not two. The title and its caption were stacked, so every
+   heading claimed a two-line band across the full width with nothing
+   beside it — six of those on the home page, and the client marked five
+   of them as gaps. Side by side they read the same and cost one line. */
+.sechead { @apply flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-1.5; }
+.sechead-i { @apply w-6 h-6 rounded-lg flex items-center justify-center shrink-0 text-white self-center; }
+.sechead-t { @apply text-[13px] font-extrabold text-navy-900 leading-none; }
+.sechead-s { @apply text-[10.5px] font-medium text-navy-400 leading-none; }
+
+/* TILE ROWS THAT FILL. These were fixed 3-column grids, so any count that
+   is not a multiple of three left holes in the last row — five desk tiles
+   rendered 3 + 1 and two columns of white space, which is exactly what
+   got circled. Flex with a grow basis instead: the last row's tiles widen
+   to take up what is left, so a row is full whatever the count is, and
+   the basis still decides how many fit per row at a given width. */
+.tilerow { @apply flex flex-wrap gap-2; }
+.tilerow > * { flex: 1 1 240px; min-width: 0; }
+.deskrow { @apply flex flex-wrap gap-2; }
+.deskrow > * { flex: 1 1 190px; min-width: 0; }
 
 /* ---- The one KRA table: Parameters · KRAs · KPIs · Weightage -------------
    Asked for on 23 Sep against the client's own sheet. The parameter is a
