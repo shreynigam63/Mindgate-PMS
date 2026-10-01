@@ -5624,6 +5624,68 @@ router.get('/connects/cadence/:employeeId', async (req, res) => {
 // current KRAs to link against (kra_ids), instead of the manager typing
 // KRA references from memory. Manager-scoped the same way team/kra-sheets
 // is — only for one's own reports (or HR/admin).
+// THE CONNECT FORM'S QUESTIONS, as data rather than as page copy.
+// Asked for: "Make the quarterly connect/discussion forms fully editable
+// for HR admins to update questions." Everyone reads them — the form has
+// to render; only HR writes them.
+//
+// ensureConnectQuestions is called at request time rather than trusted to
+// the migration, because index.js creates the tenant AFTER runMigrations,
+// so a fresh install would otherwise have a form with no questions on it.
+const q072 = require('../../migrations/072-connect-questions');
+async function ensureConnectQuestions(tenantId) {
+  const n = (await db.query(`SELECT count(*)::int n FROM pms.connect_questions WHERE tenant_id=$1`, [tenantId])).rows[0].n;
+  if (!n) await q072.seedFor(db, tenantId);
+}
+
+router.get('/connects/questions', async (req, res) => {
+  try {
+    await ensureConnectQuestions(T(req));
+    const r = await db.query(
+      `SELECT id, key, field, label, hint, sort_order, active FROM pms.connect_questions
+        WHERE tenant_id=$1 ORDER BY sort_order, label`, [T(req)]);
+    res.json({ questions: r.rows, fields: q072.FIELDS,
+      editable_by: 'pms_admin',
+      note: 'HR can retitle, re-hint, reorder or switch off a question. A new box needs a '
+          + 'new column on the connect record, so it is a change to the product, not a setting.' });
+  } catch (e) { logger.error('connect questions', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+router.put('/connects/questions', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) {
+      return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    }
+    await ensureConnectQuestions(T(req));
+    const list = Array.isArray(req.body && req.body.questions) ? req.body.questions : [];
+    if (!list.length) return res.status(422).json({ error: 'Send the questions to save.' });
+    // Validate EVERY row before writing ANY of them — the importer's rule.
+    // A form half-saved because row three had a blank label is worse than
+    // a refusal, because nothing on screen says which half landed.
+    const clean = [];
+    for (const q of list) {
+      const key = String(q && q.key || '').trim();
+      const label = String(q && q.label || '').trim();
+      if (!key) return res.status(422).json({ error: 'Every question needs its key.' });
+      if (!label) return res.status(422).json({ error: `"${key}" has no label — a question with no wording is not a question.`, key });
+      if (label.length > 200) return res.status(422).json({ error: `"${key}" is too long — 200 characters at most.`, key });
+      clean.push({ key, label, hint: q.hint == null ? null : String(q.hint).trim() || null,
+        sort_order: Number.isFinite(Number(q.sort_order)) ? Number(q.sort_order) : 100,
+        active: q.active !== false });
+    }
+    for (const q of clean) {
+      await db.query(
+        `UPDATE pms.connect_questions SET label=$3, hint=$4, sort_order=$5, active=$6, updated_at=now()
+          WHERE tenant_id=$1 AND key=$2`, [T(req), q.key, q.label, q.hint, q.sort_order, q.active]);
+    }
+    audit(req, 'CONNECT_QUESTIONS_SET', null, null, { keys: clean.map((q) => q.key) });
+    const r = await db.query(
+      `SELECT id, key, field, label, hint, sort_order, active FROM pms.connect_questions
+        WHERE tenant_id=$1 ORDER BY sort_order, label`, [T(req)]);
+    res.json({ ok: true, questions: r.rows });
+  } catch (e) { logger.error('connect questions save', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
 router.get('/connects/kra-options/:employeeId', async (req, res) => {
   try {
     const isSelf = req.params.employeeId === req.user.id;

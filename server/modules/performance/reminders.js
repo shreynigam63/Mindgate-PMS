@@ -326,6 +326,106 @@ const CHASE_KINDS = {
   },
 };
 
+// ---------------------------------------------------------------------
+// THE SEVEN-DAY SELF CHASE.
+//
+// Asked for: "auto-trigger email reminders if an appraisal form remains
+// pending at any level (Self/Manager) beyond 7 days."
+//
+// The manager half of that already existed — the four chases above ring
+// a manager three days after an employee submits. What had no mechanism
+// at all was the OTHER level: an employee whose own form has been sittable
+// for a fortnight and is still not submitted. Nothing nudged them, and
+// the manager chase cannot fire either, because it waits on a submission
+// that never comes.
+//
+// THE CLOCK STARTS WHEN THE FORM BECAME FILLABLE, not when the cycle was
+// created. A cycle opened in April whose Annual Review phase starts in
+// March would otherwise ring on day one of that phase claiming the form
+// had been pending for eleven months. The phase advance is in the audit
+// log; a cycle that has never advanced falls back to its creation.
+const SELF_CHASE_AFTER_DAYS = 7;
+
+const SELF_KINDS = {
+  kra: {
+    rule: 'kra_self_chase',
+    label: 'KRA sheet',
+    link: '/my/kras',
+    phaseAction: 'kra_submit',
+    detail: 'It has been open for more than a week and is not yet with your manager.',
+    sql: `SELECT e.id AS employee_id, e.name
+            FROM core.employees e
+            LEFT JOIN pms.kra_sheets ks
+              ON ks.tenant_id = e.tenant_id AND ks.employee_id = e.id AND ks.cycle_id = $2
+           WHERE e.tenant_id = $1 AND e.status = 'active'
+             AND COALESCE(ks.status, 'draft') NOT IN ('submitted','approved')`,
+  },
+  midyear: {
+    rule: 'midyear_self_chase',
+    label: 'Mid-Year Review',
+    link: '/my/midyear-review',
+    phaseAction: 'midyear_self_submit',
+    detail: 'The mid-year window has been open for more than a week and yours is not in yet.',
+    sql: `SELECT e.id AS employee_id, e.name
+            FROM core.employees e
+            LEFT JOIN pms.midyear_checkins mc
+              ON mc.tenant_id = e.tenant_id AND mc.employee_id = e.id AND mc.cycle_id = $2
+           WHERE e.tenant_id = $1 AND e.status = 'active'
+             AND COALESCE(mc.self_status, 'not_started') <> 'submitted'`,
+  },
+  annual: {
+    rule: 'annual_self_chase',
+    label: 'self-appraisal',
+    link: '/my/annual-review',
+    phaseAction: 'self_submit',
+    detail: 'The self-appraisal window has been open for more than a week and yours is not in yet.',
+    sql: `SELECT e.id AS employee_id, e.name
+            FROM core.employees e
+            LEFT JOIN pms.self_appraisals sa
+              ON sa.tenant_id = e.tenant_id AND sa.employee_id = e.id AND sa.cycle_id = $2
+           WHERE e.tenant_id = $1 AND e.status = 'active'
+             AND COALESCE(sa.status, 'not_started') <> 'submitted'`,
+  },
+};
+
+/** When the cycle entered the phase it is in now. */
+async function phaseOpenedAt(tenantId, cycle) {
+  const r = await db.query(
+    `SELECT at FROM pms.audit_log
+      WHERE tenant_id=$1 AND cycle_id=$2 AND action='PHASE_ADVANCE'
+      ORDER BY at DESC LIMIT 1`, [tenantId, cycle.id]);
+  return r.rows.length ? new Date(r.rows[0].at) : new Date(cycle.created_at);
+}
+
+async function runSelfChase(tenantId, cycle, today, kindName) {
+  const k = SELF_KINDS[kindName];
+  // Chasing somebody for a form the phase will not let them submit is
+  // the one thing worse than not chasing them at all.
+  if (!pm.phaseAllows(cycle.phase, k.phaseAction)) return 0;
+  const openedAt = await phaseOpenedAt(tenantId, cycle);
+  const due = sched.chaseDatesSince(openedAt, today, SELF_CHASE_AFTER_DAYS);
+  if (!due.length) return 0;
+
+  const rows = (await db.query(k.sql, [tenantId, cycle.id])).rows;
+  if (!rows.length) return 0;
+  const floor = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+  const already = await sentKeys(tenantId, k.rule, floor);
+
+  let rung = 0;
+  for (const r of rows) {
+    const missed = due.filter((occ) => occ >= floor
+      && !already.has(`${sched.iso(occ)}|${r.employee_id}|${r.employee_id}`));
+    if (!missed.length) continue;
+    // One bell per catch-up, like every other rule here: four missed
+    // weekdays logged, one notification sent.
+    await notify(tenantId, r.employee_id, k.rule,
+      `Your ${k.label} is still pending`, k.detail, k.link);
+    for (const occ of missed) await recordSent(tenantId, k.rule, occ, r.employee_id, r.employee_id, cycle.id);
+    rung++;
+  }
+  return rung;
+}
+
 async function runChase(tenantId, cycle, today, kindName) {
   const k = CHASE_KINDS[kindName];
   // Nothing to chase while the manager cannot act on it anyway...
@@ -396,6 +496,10 @@ async function runReminders(tenantId, now = new Date()) {
     // plan sitting submitted with a manager for more than three days.
     counts.kra_approval_chase = await runChase(tenantId, cycle, today, 'kra');
     counts.growth_approval_chase = await runChase(tenantId, cycle, today, 'growth');
+    // The self half of "pending at any level beyond 7 days".
+    counts.kra_self_chase = await runSelfChase(tenantId, cycle, today, 'kra');
+    counts.midyear_self_chase = await runSelfChase(tenantId, cycle, today, 'midyear');
+    counts.annual_self_chase = await runSelfChase(tenantId, cycle, today, 'annual');
   }
 
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -403,4 +507,5 @@ async function runReminders(tenantId, now = new Date()) {
   return { total, ...counts };
 }
 
-module.exports = { runReminders, runQuarterlyConnect, runReviewReminders, runChase, windowFiscalYears };
+module.exports = { runReminders, runQuarterlyConnect, runReviewReminders, runChase, runSelfChase,
+  windowFiscalYears, SELF_KINDS, SELF_CHASE_AFTER_DAYS, phaseOpenedAt };

@@ -59,6 +59,74 @@ const COPY = {
   },
 };
 
+
+// THE CONNECT FORM'S QUESTIONS, edited here.
+//
+// Asked for: "Make the quarterly connect/discussion forms fully editable
+// for HR admins to update questions." The wording used to live in
+// ConnectsPage.jsx, so rewording a 1:1 form meant a release — the exact
+// thing the house rule about labels in tables exists to prevent.
+//
+// What is editable is the QUESTION, not the storage: each row writes to a
+// column that already exists on the connect record. Switching one off
+// removes the box from the form. Adding a sixth needs somewhere to put
+// its answer, so that stays a change to the product — the page says so
+// rather than leaving somebody hunting for an Add button.
+function ConnectQuestions() {
+  const [qs, setQs] = useState(null);
+  const [err, setErr] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => api('/pms/connects/questions')
+    .then((r) => setQs(r.questions || [])).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+
+  const edit = (key, patch) => setQs((p) => p.map((q) => (q.key === key ? { ...q, ...patch } : q)));
+  const save = async () => {
+    setBusy(true); setErr(null); setMsg(null);
+    try {
+      const r = await api('/pms/connects/questions', { method: 'PUT', body: JSON.stringify({ questions: qs }) });
+      setQs(r.questions); setMsg('Saved. Every connect form uses this wording from now on.');
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  if (!qs) return null;
+  return (
+    <div className="card p-4 space-y-3">
+      <p className="lbl mb-0">Quarterly connect form</p>
+      <p className="text-[11.5px] text-navy-400">
+        The questions managers answer when they log a connect. Reword them, reorder them, or switch
+        one off. A new box would need somewhere to store its answer, so that is a product change
+        rather than a setting.
+      </p>
+      <div className="space-y-2">
+        {qs.map((q) => (
+          <div key={q.key} className={`rounded-xl border p-3 space-y-2 ${q.active ? 'border-navy-100' : 'border-navy-100 bg-navy-50/60'}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="chip bg-navy-50 text-navy-500">{q.key}</span>
+              <input className="inp !text-xs flex-1 !w-auto" value={q.label}
+                onChange={(e) => edit(q.key, { label: e.target.value })} placeholder="The question" />
+              <label className="text-[11px] text-navy-500 flex items-center gap-1">
+                <input type="checkbox" checked={q.active !== false}
+                  onChange={(e) => edit(q.key, { active: e.target.checked })} />
+                on the form
+              </label>
+            </div>
+            <input className="inp !text-[11px]" value={q.hint || ''}
+              onChange={(e) => edit(q.key, { hint: e.target.value })}
+              placeholder="The grey hint under it (optional)" />
+          </div>
+        ))}
+      </div>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      {msg && <p className="text-xs text-leaf-600">{msg}</p>}
+      <button className="btn-pri" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save questions'}</button>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -86,6 +154,8 @@ export default function SettingsPage() {
         sub={<>
         Tenant-wide configuration. Changes take effect immediately for everyone.
         </>} />
+
+      <ConnectQuestions />
 
       {Object.entries(data.settings).map(([key, s]) => {
         const copy = COPY[key] || { title: key, blurb: '', options: {} };

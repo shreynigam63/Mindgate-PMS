@@ -73,6 +73,19 @@ function NewConnectForm({ me, team, onSaved }) {
   // per a direct follow-up request, reverted from the AI-draft-first flow
   // (the /connect-extract endpoint that used to fill these still exists
   // and works, just isn't called from this form anymore).
+  // The wording comes from HR, not from this file. Asked for: "Make the
+  // quarterly connect/discussion forms fully editable for HR admins to
+  // update questions." Falls back to the shipped wording if the fetch
+  // fails — a form with no labels is worse than a form with the old ones.
+  const [questions, setQuestions] = useState(null);
+  useEffect(() => {
+    api('/pms/connects/questions').then((r) => setQuestions(r.questions || [])).catch(() => setQuestions([]));
+  }, []);
+  const ask = (key, fallbackLabel, fallbackHint) => {
+    const q = (questions || []).find((x) => x.key === key);
+    if (q && q.active === false) return null;
+    return { label: q ? q.label : fallbackLabel, hint: q ? (q.hint || '') : fallbackHint };
+  };
   const [achievements, setAchievements] = useState('');
   const [blockers, setBlockers] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -140,10 +153,13 @@ function NewConnectForm({ me, team, onSaved }) {
           <input className="inp" type="number" min="0" step="5" value={durationMin} onChange={e => setDurationMin(e.target.value)} />
         </div>
       </div>
-      <div>
-        <label className="lbl">Topic (optional)</label>
-        <input className="inp" value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. Mid-quarter check-in" />
-      </div>
+      {ask('topic', 'Topic', 'e.g. Mid-quarter check-in') && (
+        <div>
+          <label className="lbl">{ask('topic', 'Topic', '').label} (optional)</label>
+          <input className="inp" value={topic} onChange={e => setTopic(e.target.value)}
+            placeholder={ask('topic', 'Topic', 'e.g. Mid-quarter check-in').hint} />
+        </div>
+      )}
       {employeeId && cadence && (
         <div className="grid sm:grid-cols-3 gap-2 bg-navy-50 rounded-xl p-3 text-xs">
           <div>
@@ -197,18 +213,20 @@ function NewConnectForm({ me, team, onSaved }) {
           value={discussionNotes} onChange={e => setDiscussionNotes(e.target.value)} />
       </div>
       <div className="grid sm:grid-cols-3 gap-2">
-        <div>
-          <label className="lbl text-emerald-600">Achievements</label>
-          <textarea className="inp border-emerald-200" rows={3} placeholder="What went well…" value={achievements} onChange={e => setAchievements(e.target.value)} />
-        </div>
-        <div>
-          <label className="lbl text-amber-600">Blockers</label>
-          <textarea className="inp border-amber-200" rows={3} placeholder="What's stuck…" value={blockers} onChange={e => setBlockers(e.target.value)} />
-        </div>
-        <div>
-          <label className="lbl text-blue-600">Feedback</label>
-          <textarea className="inp border-blue-200" rows={3} placeholder="Coaching / direction…" value={feedback} onChange={e => setFeedback(e.target.value)} />
-        </div>
+        {[['achievements', 'Achievements', 'What went well…', 'emerald', achievements, setAchievements],
+          ['blockers', 'Blockers', "What's stuck…", 'amber', blockers, setBlockers],
+          ['feedback', 'Feedback', 'Coaching / direction…', 'blue', feedback, setFeedback],
+        ].map(([key, fallback, hint, hue, value, set]) => {
+          const q = ask(key, fallback, hint);
+          if (!q) return null;   // HR switched this one off
+          return (
+            <div key={key}>
+              <label className={`lbl text-${hue}-600`}>{q.label}</label>
+              <textarea className={`inp border-${hue}-200`} rows={3} placeholder={q.hint}
+                value={value} onChange={(e) => set(e.target.value)} />
+            </div>
+          );
+        })}
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       <button className="btn-pri" onClick={save}>Save connect</button>
