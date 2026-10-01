@@ -52,10 +52,7 @@ function DevelopmentPlanCard() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const load = () => api('/pms/my/development-plan').then(setData).catch(e => setErr(e.message));
-  // Reloaded per horizon: the two tabs hold different answers and
-  // different milestones, so switching has to refetch rather than
-  // re-render the one already in hand.
-  useEffect(() => { setSaved(false); setErr(null); load(horizon); }, [horizon]);
+  useEffect(() => { load(); }, []);
 
   if (err) return <div className="card p-4"><p className="text-sm text-rose-600">{err}</p></div>;
   if (!data) return <div className="card p-4"><p className="text-sm text-navy-400">Loading…</p></div>;
