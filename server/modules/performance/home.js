@@ -336,7 +336,7 @@ function teamAction({ phase, s }) {
     return { kind: 'connects', tone: 'todo',
              title: `${s.no_connect} of your reports ${s.no_connect === 1 ? 'has' : 'have'} no connect logged`,
              detail: 'A quarterly 1-on-1 has never been recorded for them.',
-             cta: 'Open Quarterly Connects', to: '/team/connects' };
+             cta: 'Open Connects', to: '/team/connects' };
   return { kind: 'clear', tone: 'clear', title: 'Nothing is waiting on you',
            detail: 'Every submission from your team has been decided.',
            cta: null, to: null };

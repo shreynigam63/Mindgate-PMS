@@ -31,7 +31,7 @@ password" link.
 
 Along the top you will see a row of coloured tabs. **Most employees see only
 one: `Self`.** If you manage people you will also see `Manager`; department
-heads see `Delivery Head`; HR sees `HR`. You only ever see the tabs your
+heads see `HOD`; HR sees `HR`. You only ever see the tabs your
 account is entitled to — a tab you cannot use does not appear at all.
 
 Under the tab is the menu for that tab. Everything in this manual lives under
@@ -42,7 +42,7 @@ Under the tab is the menu for that tab. Everything in this manual lives under
 | **Home** | Your landing page: what you owe, and what is waiting on someone else. |
 | **My KRAs** | Your goals for the year, and where you write them. |
 | **My Growth** | Your target achievements for the year, and the role you are aiming at. |
-| **Quarterly Connects** | Your quarterly conversations with your manager. |
+| **Connects** | Your quarterly conversations with your manager. |
 | **Mid-Year Review** | Your own mid-year checkpoint against each KRA. |
 | **Annual Review** | Your self-appraisal at the end of the year. |
 | **Final Rating** | The consolidated rating once the cycle closes. |
@@ -156,7 +156,7 @@ aiming at next. You can ask the system to draft suggestions from your KRAs;
 anything it writes is **clearly labelled as a draft** and is yours to edit,
 replace or delete before it counts as yours.
 
-**Quarterly Connects** — the record of your quarterly conversations. Both you
+**Connects** — the record of your quarterly conversations. Both you
 and your manager can see and add to these.
 
 **Mid-Year Review** — a checkpoint against each KRA at the halfway mark. You

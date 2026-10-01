@@ -18,7 +18,7 @@ own KRAs, your own appraisal and your own timesheet live under **Self** — you
 are an employee too, and the Employee Manual covers that half. This manual
 covers the **Manager** tab.
 
-If you also head a department you will see a third tab, **Delivery Head**,
+If you also head a department you will see a third tab, **HOD**,
 which is a different job: acting on a whole department rather than on your own
 reports. It sits behind its own permission.
 
@@ -37,7 +37,7 @@ reports. It sits behind its own permission.
 | **Team Competencies** | Assess each report against what their role needs. |
 | **Timesheet** | Their compliance, and the KRA mapping session. |
 
-**Quarterly Connects** is not in this list — it sits under **Self**, because
+**Connects** is not in this list — it sits under **Self**, because
 the page is two-sided: the same screen shows the connects where you are the
 employee and the ones where you are the manager.
 
@@ -84,7 +84,7 @@ rate and comment on themselves; you do the same. **The overall is computed
 from the per-KRA ratings — you do not type it.** That is deliberate: the
 overall should follow from the parts, and it stays traceable to them.
 
-**Quarterly Connects** (under Self) records the conversation: achievements,
+**Connects** (under Self) records the conversation: achievements,
 blockers, feedback, and which KRAs it touched. Both of you can see and add to
 it. Keeping these current is what makes the annual evaluation a summary rather
 than an invention.
@@ -210,7 +210,7 @@ Worth knowing so you do not go looking:
 
 - **Salary and increments.** Increment Simulation sits behind its own permission, held by HR. You will not see it, and that is deliberate.
 - **Publishing ratings.** HR publishes; until then your report's *My Rating* stays greyed out.
-- **The 9-Box grid** is visible to HR and Delivery Head only. Your *Potential* rating feeds it; you do not see the grid.
+- **The 9-Box grid** is visible to HR and HOD only. Your *Potential* rating feeds it; you do not see the grid.
 - **Closing a timesheet period.** HR does that. You override afterwards if you must.
 - **The KRA Library.** HR publishes the shelves; your reports pick from them.
 

@@ -6,7 +6,7 @@ import SearchBox, { matches } from '../SearchBox';
 
 // Moved to its own HR Admin tab, per a direct request — was previously a
 // panel embedded inside the Employees page. Giving someone the "hod"
-// role only grants access to the Delivery Head Review screen; this is
+// role only grants access to the HOD Review screen; this is
 // what actually scopes which department's evaluations they see
 // (core.department_heads), and nothing in this app had a UI for it
 // before an earlier round's fix.
@@ -52,7 +52,7 @@ export default function DepartmentHeadsPage() {
   // explanation, not the guard.
   const removeDept = async (d) => {
     if (!window.confirm(`Remove "${d.department}" from the list?\n\n`
-      + (d.head ? `Its Delivery Head assignment (${d.head.name}) is cleared too.\n\n` : '')
+      + (d.head ? `Its HOD assignment (${d.head.name}) is cleared too.\n\n` : '')
       + 'No employee record is changed.')) return;
     setErr(null); setMsg(null); setBusy(true);
     try {
@@ -71,7 +71,7 @@ export default function DepartmentHeadsPage() {
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="Department Heads" hue="navy"
         sub={<>
-        Who each department's Delivery Head Review queue belongs to. Giving someone the "hod" role only grants access to the screen; this is what actually scopes which department's evaluations they see.
+        Who each department's HOD Review queue belongs to. Giving someone the "hod" role only grants access to the screen; this is what actually scopes which department's evaluations they see.
         </>} />
       <div className="card p-3">
         <p className="lbl mb-1">Add a department</p>
@@ -83,7 +83,7 @@ export default function DepartmentHeadsPage() {
             <Plus size={12} className="inline mr-1" />Add
           </button>
           <span className="text-[11px] text-navy-400">
-            Added here it can be given a Delivery Head before anyone is in it. It does
+            Added here it can be given a HOD before anyone is in it. It does
             <b> not</b> restrict what the HRMS import may send — employee departments stay free text.
           </span>
         </div>
@@ -103,7 +103,7 @@ export default function DepartmentHeadsPage() {
             // Application" is 24 characters and there were eight names
             // reading "Accou...", "Applic...", "Devel..." on the live page,
             // which is exactly the department you need to identify before
-            // assigning it a Delivery Head. The count also wrapped to its
+            // assigning it a HOD. The count also wrapped to its
             // own line in the squeeze.
             <div key={d.department} className="bg-navy-50 rounded-lg px-3 py-2 space-y-1.5">
               <div className="flex items-baseline justify-between gap-2">
@@ -136,7 +136,7 @@ export default function DepartmentHeadsPage() {
         <p className="text-[11px] text-navy-400 pt-2">
           A department can only be removed once nobody is in it — otherwise those employees
           would be left pointing at something no longer on the list. Removing one clears its
-          Delivery Head assignment and changes no employee record.
+          HOD assignment and changes no employee record.
         </p>
       </div>
       )}

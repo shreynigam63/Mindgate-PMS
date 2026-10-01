@@ -8,7 +8,7 @@
 //   "Final publish rights should remain only with HR and Super Admin."
 //
 // The reason is the whole point: a manager's number is NOT final. The
-// Delivery Head can change it and calibration can change it again, so an
+// HOD can change it and calibration can change it again, so an
 // employee who saw the first version reads every later one as a demotion.
 //
 // WITHHELD AT THE API, not hidden in the page — a field the browser

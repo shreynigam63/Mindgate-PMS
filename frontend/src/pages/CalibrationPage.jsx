@@ -158,7 +158,7 @@ export default function CalibrationPage() {
               <th className="text-left px-3 py-2 w-[16%]">Employee</th>
               <th className="text-left px-3 py-2 w-[10%]">Dept</th>
               <th className="text-right px-3 py-2 w-[8%]">Mgr</th>
-              <th className="text-right px-3 py-2 w-[12%]">Delivery Head</th>
+              <th className="text-right px-3 py-2 w-[12%]">HOD</th>
               <th className="text-right px-3 py-2 w-[12%]">Final Rating</th>
               {/* CONTEXT, NOT AN INPUT. The header says so, because a
                   column sitting next to Final Rating will be read as

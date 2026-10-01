@@ -253,7 +253,7 @@ router.put('/cycles/:id/pip-threshold', async (req, res) => {
 // Phase transitions: advance / rollback / cancel — audited, machine-checked.
 // Requested: phase changes (KRA Setting opening, Self-Appraisal opening,
 // etc.) sent NO notification to anyone — audit-logged, but nothing told
-// employees, managers, Delivery Heads, or HR that something had opened
+// employees, managers, HODs, or HR that something had opened
 // for them. Scoped role-wise per a confirmed mapping: only people who
 // actually have something to do in a phase get notified about it, not
 // the whole tenant every time.
@@ -272,7 +272,7 @@ const PHASE_OPEN_NOTICES = {
   // audit entry and notification ever sent, to change a word.
   self_appraisal: [{ audience: 'all', title: 'Annual Review is now open', body: 'Annual Review is now open for this cycle.' }],
   manager_eval: [{ audience: 'managers', title: 'Team Evaluation is now open', body: 'Team Evaluation is open for your direct reports.' }],
-  hod_eval: [{ audience: 'delivery_heads', title: 'Delivery Head Review is now open', body: 'Delivery Head Review is now open for your department.' }],
+  hod_eval: [{ audience: 'delivery_heads', title: 'HOD Review is now open', body: 'HOD Review is now open for your department.' }],
   calibration: [{ audience: 'hr_admin', title: 'Calibration is now open', body: 'Calibration is now open for this cycle.' }],
 };
 
@@ -4127,7 +4127,7 @@ router.get('/hod/queue', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Requested: the Delivery Head Review view should show ratings by BOTH
+// Requested: the HOD Review view should show ratings by BOTH
 // the employee (self) and the manager against EACH KRA, not just the two
 // flat overall numbers — so the DH can see exactly what's behind the
 // manager's rating before finalising their own.
@@ -4154,7 +4154,7 @@ router.put('/hod/queue/:employeeId', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_hod'))) return res.status(403).json({ error: "Requires 'pms_hod'" });
     const c = await activeCycle(T(req));
-    if (!c || !pm.phaseAllows(c.phase, 'hod_edit')) return res.status(409).json({ error: `Delivery Head evaluation is not open (phase: ${c ? c.phase : 'none'})` });
+    if (!c || !pm.phaseAllows(c.phase, 'hod_edit')) return res.status(409).json({ error: `HOD evaluation is not open (phase: ${c ? c.phase : 'none'})` });
     const { overall_rating, comment, submit } = req.body || {};
     await db.query(
       `INSERT INTO pms.hod_evaluations (tenant_id, cycle_id, employee_id, hod_id, overall_rating, comment, status, submitted_at)
@@ -4642,7 +4642,7 @@ router.post('/calibration/adjust', async (req, res) => {
 // Aggregates pms.top_talent entries (nine_box_cell values already captured
 // via the existing top-talent endpoint above) into the grid, at whichever
 // of the three levels the BRD names: org-wide, per-department, or per
-// reporting-line (each employee's direct manager). HR and Delivery Head
+// reporting-line (each employee's direct manager). HR and HOD
 // both get view access, per BR-6.4's stated audience — unlike /watchlist
 // (BR-6.5/6.6), which is HR/Management only.
 //
@@ -5326,7 +5326,7 @@ router.delete('/increment-simulations/:id/overrides/:employeeId', async (req, re
 //    it is changed at HOD stage."
 //
 // That is the whole point: the manager's number is NOT final. The
-// Delivery Head can change it, calibration can change it again, and an
+// HOD can change it, calibration can change it again, and an
 // employee who saw the first version reads every later one as a demotion.
 // The parameter scores were already withheld for exactly this reason; the
 // per-KRA manager ratings and the manager's overall/strengths/improvement
@@ -6382,7 +6382,7 @@ const COMPLETION_COLUMNS = [
   ['Target achievements', 'devplan_status', 20],
   ['Annual Review', 'self_appraisal_status', 18],
   ['Manager evaluation', 'manager_eval_status', 20],
-  ['Delivery Head', 'hod_status', 16],
+  ['HOD', 'hod_status', 16],
   ['Overall', 'overall', 14],
 ];
 
@@ -6496,7 +6496,7 @@ router.get('/team/overview', async (req, res) => {
 // JOIN), but nothing pre-creates that row — this proactively ensures one
 // exists (status 'pending') for every employee whose manager evaluation is
 // submitted, so the queue is fully seeded rather than relying on lazy
-// creation the first time a Delivery Head opens each one. ON CONFLICT DO
+// creation the first time a HOD opens each one. ON CONFLICT DO
 // NOTHING — never overwrites an existing decision, safe to re-run anytime.
 router.post('/hod/re-seed', async (req, res) => {
   try {

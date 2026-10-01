@@ -3,7 +3,7 @@
 **Product:** Agentic PMS · **Environment:** https://pms.agentichumans.in
 **Written for:** UAT testers, HR reviewers, and anyone signing off a release
 **As of:** 22 September 2026 · covers everything through commit `6e4913b`,
-plus the Quarterly Connects menu move (pending deploy at the time of writing)
+plus the Connects menu move (pending deploy at the time of writing)
 
 This guide walks the product the way a real appraisal year runs, in order.
 Work top to bottom and each section leaves the data the next one needs.
@@ -86,8 +86,8 @@ expectation is wrong** — it was changed on request. See `KRA-07`.
 | `SMK-03` | any | Open every nav item visible to you | No blank screens, no error banners |
 | `SMK-04` | employee | Sign in as a plain employee | **HR Admin** items (Employees, KRA Library, Settings, Increment Simulation, Review Analysis, Department Heads, Career Pathing Matrix, Completion Report) are **not visible** |
 | `SMK-05` | employee | Type `/admin/directory` directly in the URL bar | Blocked — not rendered. Hiding a link is not access control; this checks the guard |
-| `SMK-06` | any | Read the **My Performance** group top to bottom | Order is **My KRAs · My Growth · Quarterly Connects · Mid-Year Review · Annual Review · Final Rating · My Rating · Past Cycles**. Quarterly Connects is **no longer** under Team |
-| `SMK-07` | any | Open an old bookmark or notification link to `/team/connects` | Still opens Quarterly Connects. Only the menu position moved, not the URL |
+| `SMK-06` | any | Read the **My Performance** group top to bottom | Order is **My KRAs · My Growth · Connects · Mid-Year Review · Annual Review · Final Rating · My Rating · Past Cycles**. Connects is **no longer** under Team |
+| `SMK-07` | any | Open an old bookmark or notification link to `/team/connects` | Still opens Connects. Only the menu position moved, not the URL |
 
 > **Expected, not a defect:** an employee's nav still lists **Cycles, KRA
 > Overview, Calibration, 9-Box Grid, Closure Letters and Super 50**. Those
@@ -216,7 +216,7 @@ Growth opens **per employee, on their own KRA submission** — not on a phase.
 
 ---
 
-## 5. Quarterly Connects — through the year
+## 5. Connects — through the year
 
 **Moved on request (22 Sep):** this tab now sits in the **My Performance**
 group, between **My Growth** and **Mid-Year Review** — in the menu and in
@@ -229,7 +229,7 @@ reports, and an employee sees their own. The URL is unchanged
 
 | ID | Role | Steps | Expected |
 |---|---|---|---|
-| `CON-01` | manager | Quarterly Connects → log a connect with a report | Saved with date and notes |
+| `CON-01` | manager | Connects → log a connect with a report | Saved with date and notes |
 | `CON-02` | manager | Add a **meeting link and date** | Accepted here (this is the tab that owns scheduling) |
 | `CON-03` | manager | **AI assist** on connect notes | Draft summary, editable |
 | `CON-04` | manager | Sign off a connect | Recorded |
@@ -251,7 +251,7 @@ reports, and an employee sees their own. The URL is unchanged
 | `MID-06` | employee | Look at the **From the manager** panel | **"Not shared yet"** — the manager's rating is withheld until HR publishes. You still see *whether* they have completed theirs |
 | `MID-07` | employee | Check My KRAs | The mid-year strip per KRA shows **your** rating only |
 | `MID-08` | hr | Change the employee's department now | Mid-Year reopens too, back to `in_progress`, with the reason |
-| `MID-09` | any | Look for meeting links / dates on Mid-Year | **Not here.** Meeting scheduling lives in Quarterly Connects |
+| `MID-09` | any | Look for meeting links / dates on Mid-Year | **Not here.** Meeting scheduling lives in Connects |
 
 ---
 
@@ -271,7 +271,7 @@ reports, and an employee sees their own. The URL is unchanged
 
 ---
 
-## 8. Manager evaluation → Delivery Head → Calibration
+## 8. Manager evaluation → HOD → Calibration
 
 | ID | Role | Steps | Expected |
 |---|---|---|---|
@@ -280,7 +280,7 @@ reports, and an employee sees their own. The URL is unchanged
 | `EVL-03` | manager | Submit the evaluation | Locked |
 | `EVL-04` | manager | Try to submit without scoring | Refused |
 | `EVL-05` | employee | Check Final Rating / My Rating | **Nothing from the manager is visible** |
-| `HOD-01` | hr | Advance to `hod_eval` | Delivery Head Review opens |
+| `HOD-01` | hr | Advance to `hod_eval` | HOD Review opens |
 | `HOD-02` | hod | Open the queue | Only **your departments'** employees |
 | `HOD-03` | hod | Change a manager's rating and submit | Recorded as the HOD rating; the manager's original is kept |
 | `HOD-04` | employee | Check your rating | **Still nothing visible** |
@@ -306,7 +306,7 @@ check the network response, not just the screen.
 | `PUB-02` | manager | Try to publish | **403.** Publishing is HR and Super Admin only |
 | `PUB-03` | employee | **Before** publishing: My KRAs, Mid-Year, Annual Review, Final Rating, My Rating | Only **your own** ratings. Manager / HOD / calibration ratings absent everywhere, each with an explanation rather than a blank dash |
 | `PUB-04` | hr | Publish | Ratings written to history; letters created; employees notified |
-| `PUB-05` | employee | Re-open the same five tabs | **Everything now visible** — manager, Delivery Head and final rating |
+| `PUB-05` | employee | Re-open the same five tabs | **Everything now visible** — manager, HOD and final rating |
 | `PUB-06` | employee | Final Rating tab | Consolidated view of all levels |
 | `PUB-07` | hr | Closure Letters | Letter per employee, downloadable |
 | `PUB-08` | hr | Advance to `closed` | Cycle closed; Past Cycles shows it |
@@ -345,7 +345,7 @@ check the network response, not just the screen.
 | `ADM-03` | admin | Find **yourself** in those lists | **You are there** |
 | `ADM-04` | admin | Submit your own KRAs, then approve your own sheet | Allowed |
 | `ADM-05` | admin | Approve at manager level for someone who is not your report | Allowed |
-| `ADM-06` | admin | Delivery Head Review | All departments, not just yours |
+| `ADM-06` | admin | HOD Review | All departments, not just yours |
 | `ADM-07` | **manager** | Open the same four team tabs | **Only your own reports.** No chip. This is the leak test — it matters more than `ADM-02` |
 | `ADM-08` | employee | Open the same four tabs | **403** |
 | `ADM-09` | hr | Ask your DBA to run the query below after `ADM-04` | Your self-approval is listed |
@@ -473,7 +473,7 @@ the single most common false report.
 | 2 HR setup + auto-assign | 18 | | | |
 | 3 KRA setting | 37 | | | |
 | 4 My Growth | 10 | | | |
-| 5 Quarterly Connects | 7 | | | |
+| 5 Connects | 7 | | | |
 | 6 Mid-Year | 9 | | | |
 | 7 Annual Review | 5 | | | |
 | 8 Evaluation → Calibration | 15 | | | |

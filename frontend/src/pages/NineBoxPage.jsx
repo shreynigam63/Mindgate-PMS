@@ -55,7 +55,7 @@ export default function NineBoxPage() {
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="9-Box Grid" hue="leaf"
-        sub="Performance against potential. Visible to HR and Delivery Head." />
+        sub="Performance against potential. Visible to HR and HOD." />
 
       <div className="flex flex-wrap gap-1">
         {SOURCES.map((s) => (

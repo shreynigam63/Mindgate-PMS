@@ -755,7 +755,7 @@ test('the competency form asks the right person the right competencies', async (
   await ctx.close();
 });
 
-test('Delivery Head is its own tab, and no longer sits under Manager', async (t) => {
+test('HOD is its own tab, and no longer sits under Manager', async (t) => {
   if (needStack(t)) return;
   // Asked for on 24 Sep: "There should be separate HOD tab next to 3
   // roles of employee, manager and HR and remove the same from manager
@@ -763,13 +763,13 @@ test('Delivery Head is its own tab, and no longer sits under Manager', async (t)
   const { ctx, page, errors } = await open('hod@shot.in', '/home');
   const tabs = (await page.locator('header >> button').allInnerTexts())
     .map((s) => s.split('\n')[0].trim()).filter(Boolean);
-  assert.ok(tabs.some((x) => /Delivery Head/.test(x)), `tabs were: ${tabs.join(' | ')}`);
+  assert.ok(tabs.some((x) => /HOD/.test(x)), `tabs were: ${tabs.join(' | ')}`);
 
   const mgr = await groupItems(page, 'Manager');
-  assert.ok(!mgr.includes('Delivery Head Review'),
+  assert.ok(!mgr.includes('HOD Review'),
     `it must be gone from Manager — got ${mgr.join(', ')}`);
-  const dh = await groupItems(page, 'Delivery Head');
-  assert.ok(dh.includes('Delivery Head Review'), `Delivery Head tab was: ${dh.join(', ')}`);
+  const dh = await groupItems(page, 'HOD');
+  assert.ok(dh.includes('HOD Review'), `HOD tab was: ${dh.join(', ')}`);
   assert.deepEqual(errors, []);
   await ctx.close();
 
@@ -777,7 +777,7 @@ test('Delivery Head is its own tab, and no longer sits under Manager', async (t)
   // whose every item is filtered out is dropped entirely.
   const e = await open('emp@shot.in', '/home');
   const eTabs = (await e.page.locator('header >> button').allInnerTexts()).join(' ');
-  assert.ok(!/Delivery Head/.test(eTabs), 'an employee has no Delivery Head tab');
+  assert.ok(!/HOD/.test(eTabs), 'an employee has no HOD tab');
   await e.ctx.close();
 });
 

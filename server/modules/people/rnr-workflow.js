@@ -1,14 +1,14 @@
 // The RnR approval workflow. Pure: no database, no express.
 //
-// Manager → Delivery Head → HRBP → Final HR, with Reject and Send Back
+// Manager → HOD → HRBP → Final HR, with Reject and Send Back
 // available at every stage. Kept as a table rather than as branches in a
 // handler, because the thing most likely to change about this is the
-// number of stages — a client with no Delivery Head, or one with a second
+// number of stages — a client with no HOD, or one with a second
 // HR step, should be a row here and not a rewrite.
 
 const STAGES = [
   { status: 'draft', label: 'Draft', actor: 'manager' },
-  { status: 'pending_delivery_head', label: 'Pending Delivery Head', actor: 'delivery_head' },
+  { status: 'pending_delivery_head', label: 'Pending HOD', actor: 'delivery_head' },
   { status: 'pending_hrbp', label: 'Pending HRBP', actor: 'hrbp' },
   { status: 'pending_hr', label: 'Pending Final HR', actor: 'hr' },
   { status: 'final_approved', label: 'Final Approved', actor: null },
@@ -78,7 +78,7 @@ function progress(status) {
 }
 
 const LABELS = {
-  draft: 'Draft', pending_delivery_head: 'Pending Delivery Head', pending_hrbp: 'Pending HRBP',
+  draft: 'Draft', pending_delivery_head: 'Pending HOD', pending_hrbp: 'Pending HRBP',
   pending_hr: 'Pending Final HR', final_approved: 'Final Approved', rejected: 'Rejected',
   sent_back: 'Sent Back', awarded: 'Awarded',
 };

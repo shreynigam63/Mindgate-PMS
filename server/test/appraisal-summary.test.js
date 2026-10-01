@@ -107,7 +107,7 @@ test('the pre-read is NOT the employee’s to pull about themselves', { skip }, 
   const token = await login('as-emp@x.com');
   const r = await api('/agentic/appraisal-summary', token, { method: 'POST', body: JSON.stringify({ stage: 'pre_publish' }) });
   assert.equal(r.status, 403);
-  assert.match(r.body.error, /manager, Delivery Head or HR/);
+  assert.match(r.body.error, /manager, HOD or HR/);
 });
 
 test('an unrelated employee gets neither stage', { skip }, async () => {

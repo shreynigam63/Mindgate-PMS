@@ -87,7 +87,7 @@ test('advancing to kra_open notifies every active employee, not managers/HOD onl
   }
 });
 
-test('advancing to manager_eval only notifies managers, not individual contributors or Delivery Heads', { skip }, async () => {
+test('advancing to manager_eval only notifies managers, not individual contributors or HODs', { skip }, async () => {
   const { token } = await login('pcn-admin@x.com');
   for (const to of ['mid_year_review', 'self_appraisal', 'manager_eval']) {
     await api(`/pms/cycles/${cycleId}/phase`, token, { method: 'POST', body: JSON.stringify({ to }) });
@@ -99,15 +99,15 @@ test('advancing to manager_eval only notifies managers, not individual contribut
   assert.ok(!empNotes.some((n) => n.title === 'Team Evaluation is now open'), 'individual contributor not notified about manager-only phase');
 });
 
-test('advancing to hod_eval notifies only Delivery Heads (via department_heads), not everyone', { skip }, async () => {
+test('advancing to hod_eval notifies only HODs (via department_heads), not everyone', { skip }, async () => {
   const { token } = await login('pcn-admin@x.com');
   await api(`/pms/cycles/${cycleId}/phase`, token, { method: 'POST', body: JSON.stringify({ to: 'hod_eval' }) });
 
   const hodNotes = await notificationsFor(hodId);
-  assert.ok(hodNotes.some((n) => n.title === 'Delivery Head Review is now open'));
+  assert.ok(hodNotes.some((n) => n.title === 'HOD Review is now open'));
 
   const empNotes = await notificationsFor(empId);
-  assert.ok(!empNotes.some((n) => n.title === 'Delivery Head Review is now open'), 'non-Delivery-Head not notified');
+  assert.ok(!empNotes.some((n) => n.title === 'HOD Review is now open'), 'non-HOD not notified');
 });
 
 test('rolling back closes the phase being left, with a "no longer open" body, not a stale open-direction message', { skip }, async () => {
@@ -122,11 +122,11 @@ test('rolling back closes the phase being left, with a "no longer open" body, no
   // rather than on the behaviour it was written to check.
   const rolled = await api(`/pms/cycles/${cycleId}/phase`, token, { method: 'POST', body: JSON.stringify({ rollback: true, to: 'manager_eval' }) });
   assert.equal(rolled.status, 200, JSON.stringify(rolled.body));
-  // Rolling back FROM hod_eval closes hod_eval's own audience (Delivery Heads).
+  // Rolling back FROM hod_eval closes hod_eval's own audience (HODs).
   const after = await notificationsFor(hodId);
   assert.equal(after.length, beforeCount + 1);
   const closed = after[after.length - 1];
-  assert.equal(closed.title, 'Delivery Head Review has closed');
+  assert.equal(closed.title, 'HOD Review has closed');
   assert.equal(closed.body, 'This is no longer open.', 'not a stale "is now open" message from the open-direction text');
 });
 

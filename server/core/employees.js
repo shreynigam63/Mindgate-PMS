@@ -357,7 +357,7 @@ function validateEmployeeRows(rows) {
   }
 
   // HOD -> department heads. The column names the person who heads the
-  // employee's department, which is exactly what fills the Delivery Head
+  // employee's department, which is exactly what fills the HOD
   // Review queue — a step HR would otherwise set up by hand, per
   // department, after every import.
   const headVotes = new Map(); // department -> Map(normalised name -> {name, count})
@@ -374,7 +374,7 @@ function validateEmployeeRows(rows) {
   // own data "Development" is 226 people naming 23 different HODs, because
   // their Department is a coarse grouping and the HOD column records each
   // person's actual head within it. Taking the modal name would have put
-  // 226 people into one person's Delivery Head Review queue and called it
+  // 226 people into one person's HOD Review queue and called it
   // configuration.
   //
   // So a head is set automatically only where every employee in the
@@ -682,7 +682,7 @@ async function loadEmployees(tenantId, rows, opts = {}) {
     }
 
     // Department heads, from the file's HOD column. This is what fills the
-    // Delivery Head Review queue, and setting it by hand after every import
+    // HOD Review queue, and setting it by hand after every import
     // is a step HR should not have to remember.
     const headGrants = [];
     const headsSet = [];
@@ -817,7 +817,7 @@ const TEMPLATE_COLUMNS = [
   ['Employee Code',     'MGS1001',                  'Required if anyone has no email — the placeholder address is built from it. Must be unique.'],
   ['Full Name',         'Jane Sample',              'Required. Also how the Reporting Manager and HOD columns are matched, so spell it the same way in all three.'],
   ['Office Email',      'jane.sample@example.com',  'The sign-in address; must be unique. Leave blank only if you have no address — that person gets a placeholder and cannot sign in.'],
-  ['Department',        'Engineering',              'Groups the employee for reports and for the Delivery Head review queue.'],
+  ['Department',        'Engineering',              'Groups the employee for reports and for the HOD review queue.'],
   ['Designation',       'Senior Software Engineer', 'Decides which KRA library shelf this employee is offered. Spell it as it appears in the KRA library.'],
   ['Reporting Manager', 'Priya Menon',              'The manager\u2019s FULL NAME as written in this same file. Leave blank for the top of the organisation.'],
   ['HOD',               'Rajesh Kulkarni',          'Head of this employee\u2019s department, by full name. Where every row in a department agrees, the department head is set automatically.'],
@@ -1673,11 +1673,11 @@ router.put('/:employeeId/role', async (req, res) => {
 });
 
 // Found live: assigning someone the "hod" role (above) grants the
-// PERMISSION to open Delivery Head Review, but /hod/queue scopes what
+// PERMISSION to open HOD Review, but /hod/queue scopes what
 // they actually SEE by core.department_heads (which department they
 // head) — a completely separate table that nothing in this app ever
 // wrote to. Setting someone's role to "hod" alone left their queue
-// permanently empty ("Nothing awaiting Delivery Head review"), with no
+// permanently empty ("Nothing awaiting HOD review"), with no
 // way for HR to fix it — this is that missing piece.
 // The list is the UNION of two things, and the distinction is shown rather
 // than smoothed over:
@@ -1797,7 +1797,7 @@ router.delete('/departments/:department', async (req, res) => {
       [req.user.tenant_id, name]);
     // The head mapping goes with it. Leaving it behind would resurrect the
     // department on the next read of core.department_heads and hand a
-    // Delivery Head a queue for something that no longer exists.
+    // HOD a queue for something that no longer exists.
     const headGone = await db.query(
       `DELETE FROM core.department_heads WHERE tenant_id=$1 AND lower(btrim(department))=lower($2)`,
       [req.user.tenant_id, name]);

@@ -7,7 +7,7 @@
 // both of which HR hit:
 //
 //   - A new department could not be set up in advance. You could not name a
-//     Delivery Head for "Cloud Ops" until somebody was already filed under
+//     HOD for "Cloud Ops" until somebody was already filed under
 //     it, and the page said so out loud: "No departments found — add
 //     employees with a department set first."
 //   - A department could never be removed. A typo in one HRMS import
@@ -37,7 +37,7 @@ module.exports.up = async (db) => {
 
   // Case-insensitive uniqueness. "Finance" and "finance" are one department
   // to every human who reads the page, and two rows here would show up as
-  // two lines each offering its own Delivery Head.
+  // two lines each offering its own HOD.
   await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_departments_ci
                     ON core.departments (tenant_id, lower(btrim(name)))`);
 

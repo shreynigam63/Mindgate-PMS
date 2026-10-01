@@ -68,13 +68,13 @@ test('THE HRBP TAB SITS BETWEEN DELIVERY HEAD AND HR, and carries HR’s own tab
   const { ctx, page, errors } = await open('hod@shot.in', '/home');
   const names = (await page.$$eval('button', (bs) => bs.map((b) => b.textContent.trim())))
     .map((x) => x.replace(/[0-9+]+$/, '').trim());
-  const iH = names.findIndex((x) => x === 'Delivery Head');
+  const iH = names.findIndex((x) => x === 'HOD');
   const iB = names.findIndex((x) => x === 'HRBP');
   const iR = names.findIndex((x) => x === 'HR');
   assert.ok(iB > -1, `no HRBP tab — tabs were ${names.filter(Boolean).slice(0, 10).join(', ')}`);
-  assert.ok(iH > -1 && iH < iB, `HRBP must sit after Delivery Head: ${iH}, ${iB}`);
+  assert.ok(iH > -1 && iH < iB, `HRBP must sit after HOD: ${iH}, ${iB}`);
   // WRITTEN TWICE. This first asserted the HR tab was absent entirely.
-  // It is not, and should not be: hod@shot.in is a genuine Delivery Head,
+  // It is not, and should not be: hod@shot.in is a genuine HOD,
   // and /admin/nine-box is gated on pms_hod on purpose, so one HR entry
   // legitimately remains. What actually matters is that the HRBP tab
   // carries HR's OWN tabs rather than a hand-picked subset.

@@ -457,7 +457,7 @@ router.post('/connect-insights', async (req, res) => {
       tenantId: T(req), kind: 'connect_insights', ref: { employee_id },
       requestedBy: req.user.email, input, maxTokens: 700,
       system: `You read a manager's own logged 1-on-1 notes about ONE employee across recent
-Quarterly Connects (discussion narrative, plus any logged achievements/blockers/feedback) and
+Connects (discussion narrative, plus any logged achievements/blockers/feedback) and
 produce a read on their overall progress and performance this cycle, not just a list of topics.
 
 You ALWAYS produce a headline, a status, at least one theme, and at least one follow-up —
@@ -1441,7 +1441,7 @@ router.post('/appraisal-summary', async (req, res) => {
     const isAdmin = await hasPermission(req.user, 'pms_admin');
     if (stage === 'pre_publish') {
       if (!isMgr && !isAdmin && !(await hasPermission(req.user, 'pms_hod'))) {
-        return res.status(403).json({ error: 'The pre-read is for the manager, Delivery Head or HR' });
+        return res.status(403).json({ error: 'The pre-read is for the manager, HOD or HR' });
       }
     } else if (!isSelf && !isMgr && !isAdmin) {
       return res.status(403).json({ error: 'Not your appraisal' });

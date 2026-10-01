@@ -180,7 +180,7 @@ export default function RnrNominatePage() {
           ))}
           <p className="text-[11px] text-navy-400 flex items-start gap-1">
             <Info size={11} className="mt-0.5 shrink-0" />
-            It goes to the Delivery Head, then the HRBP, then HR. Each of them decides on the
+            It goes to the HOD, then the HRBP, then HR. Each of them decides on the
             justification, so it is worth writing.
           </p>
           {err && <p className="text-xs text-rose-600">{err}</p>}

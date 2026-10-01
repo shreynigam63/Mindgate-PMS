@@ -112,7 +112,7 @@ const RATING_PAGES = [
   ['/pms/my/midyear-review', 'emp', 'Mid-Year Review — the derived overall'],
   ['/pms/team/kra-sheets', 'mgr', 'Team KRA Sheets — mid-year beside each KRA'],
   ['/pms/approvals', 'mgr', 'Approvals — mid-year beside each KRA'],
-  ['/pms/hod/queue', 'mgr', 'Delivery Head Review — the manager and DH overalls'],
+  ['/pms/hod/queue', 'mgr', 'HOD Review — the manager and DH overalls'],
 ];
 
 test('every rating-showing endpoint hands over the cycle rating scale', { skip }, async () => {

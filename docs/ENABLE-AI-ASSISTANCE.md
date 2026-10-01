@@ -195,7 +195,7 @@ buttons on these screens, and nowhere else:
 | Self-Appraisal | Employee | Review assist on the self-appraisal; meeting summary |
 | My Rating | Employee | Appraisal summary and the recommendations the employee can keep |
 | Team Evaluation | Manager | Drafts the manager's appraisal text; pre-publish appraisal summary |
-| Quarterly Connects | Manager | Themes across connects, auto-tagging, meeting summary |
+| Connects | Manager | Themes across connects, auto-tagging, meeting summary |
 | Cycles | HR / admin | Cycle health — where the cycle is stuck and who to chase |
 | Calibration | HR / admin | Calibration brief for the panel |
 | Closure Letters | HR / admin | Drafts the letter body |

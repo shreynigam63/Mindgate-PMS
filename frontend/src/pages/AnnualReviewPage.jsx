@@ -27,12 +27,12 @@ export default function AnnualReviewPage() {
       <p className="text-xs text-navy-400">Consolidates your KRA outcomes, target achievement progress, and Aspiring Career status for the year — brings together what's already recorded elsewhere into one view.</p>
       {/* Said once, at the top, rather than only beside each blank. The
           reason matters: the manager's number is not final until the
-          Delivery Head review and calibration have been through it, and
+          HOD review and calibration have been through it, and
           seeing a draft you later "lose" is worse than waiting. */}
       {data.manager_ratings_withheld && (
         <p className="text-xs bg-navy-50 text-navy-600 rounded-lg p-2">
           <b>Your manager's ratings are not shown yet.</b> They are still going through the
-          Delivery Head review and calibration, where they can change. Everything appears here,
+          HOD review and calibration, where they can change. Everything appears here,
           and on <b>My Rating</b>, once HR publishes the cycle.
         </p>
       )}

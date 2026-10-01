@@ -982,7 +982,7 @@ function EmployeePanel({ employee, onDone }) {
         </div>
         {role === 'hod' && (
           <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5 max-w-md">
-            The "hod" role only grants access to the Delivery Head Review screen — it does not by itself say WHICH department they review.
+            The "hod" role only grants access to the HOD Review screen — it does not by itself say WHICH department they review.
             Assign them as a department's head in the "Department Heads" panel above the employee list, or their queue will show nothing.
           </p>
         )}

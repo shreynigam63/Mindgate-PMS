@@ -35,13 +35,13 @@ export default function HodQueuePage() {
   const queueShown = (data.queue || []).filter(row => matches(q, row.name, row.department, row.manager_name));
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <PageHead title="Delivery Head Review" hue="navy">
+      <PageHead title="HOD Review" hue="navy">
         <span className={`chip ${phaseColor(data.cycle.phase)}`}>{data.cycle.name} · {phaseLabel(data.cycle.phase)}</span>
         {data.departments?.length > 0 && <span className="text-xs text-navy-400">departments: {data.departments.join(', ')}</span>}
       </PageHead>
       <SearchBox value={q} onChange={setQ} placeholder="Search the queue by name, department or manager…"
         shown={queueShown.length} total={(data.queue || []).length} />
-      {!data.queue.length && <div className="card p-8 text-center text-sm text-navy-400">Nothing awaiting Delivery Head review — manager evaluations feed this queue as they are submitted.</div>}
+      {!data.queue.length && <div className="card p-8 text-center text-sm text-navy-400">Nothing awaiting HOD review — manager evaluations feed this queue as they are submitted.</div>}
       {queueShown.map(q => (
         <div key={q.employee_id} className="card overflow-hidden">
           <button className="w-full flex items-center gap-2 px-4 py-3 text-left" onClick={() => setOpenId(v => v === q.employee_id ? null : q.employee_id)}>
@@ -59,7 +59,7 @@ export default function HodQueuePage() {
 
 // Requested: this view should show ratings given by BOTH the employee
 // (self) and the manager against EACH KRA, not just the two flat overall
-// numbers — so the Delivery Head can see exactly what's behind the
+// numbers — so the HOD can see exactly what's behind the
 // manager's rating before finalising their own.
 function HodRow({ q, editable, reload, scale }) {
   const [detail, setDetail] = useState(null);
@@ -112,7 +112,7 @@ function HodRow({ q, editable, reload, scale }) {
           <p className="text-xs text-navy-500">Manager's overall: <b>{overallLabel(q.manager_rating, scale)}</b></p>
         </div>
         <div className="flex items-center gap-2">
-          <label className="lbl mb-0">Delivery Head rating</label>
+          <label className="lbl mb-0">HOD rating</label>
           {q.hod_status === 'submitted' ? (
             <span className="font-mono text-sm">{overallLabel(q.hod_rating, scale)}</span>
           ) : (

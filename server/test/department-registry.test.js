@@ -113,7 +113,7 @@ test('HR ADDS A DEPARTMENT BEFORE ANYBODY IS IN IT', { skip }, async () => {
   assert.equal(d.removable, true);
 });
 
-test('an empty department can be given a Delivery Head — the reason to add it early', { skip }, async () => {
+test('an empty department can be given a HOD — the reason to add it early', { skip }, async () => {
   const r = await req('PUT', '/employees/department-heads/Cloud%20Ops', hrTok, { employee_id: headId });
   assert.equal(r.status, 200);
   const d = await find('Cloud Ops');
@@ -159,7 +159,7 @@ test('removing an empty department clears its head and changes no employee', { s
 
   const r = await req('DELETE', '/employees/departments/Cloud%20Ops', hrTok);
   assert.equal(r.status, 200);
-  assert.equal(r.body.head_cleared, true, 'the Delivery Head mapping goes with it');
+  assert.equal(r.body.head_cleared, true, 'the HOD mapping goes with it');
 
   assert.equal(await find('Cloud Ops'), undefined, 'gone from the page');
   const head = (await db.query(

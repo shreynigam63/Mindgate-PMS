@@ -9,7 +9,7 @@ import SearchBox, { matches } from '../SearchBox';
 // and a budget.
 //
 // EVERYTHING HERE IS SALARY, behind pms_compensation — which managers and
-// Delivery Heads do not have. The page shows a plain 403 explanation
+// HODs do not have. The page shows a plain 403 explanation
 // rather than an empty screen if someone reaches it without the grant.
 //
 // Nothing on this page changes anybody's pay. Scenarios are models; the

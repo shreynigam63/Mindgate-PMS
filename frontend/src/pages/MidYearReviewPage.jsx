@@ -498,7 +498,7 @@ function MyMidYearCard() {
           client's direction: the mid-year conversation is a real scheduled
           discussion between the two of them, and it should be arranged from
           the screen they are already on rather than by leaving for
-          Quarterly Connects.
+          Connects.
           The three screens are not duplicates — each meeting carries its
           own `context` (connect | midyear | annual), so a mid-year
           discussion is stored and listed as a mid-year one and does not
@@ -545,7 +545,7 @@ function MyMidYearCard() {
           under self mid-year."
           THE RECORD IS NOT DELETED: manager_rating and manager_narrative
           are still written, still returned by GET /pms/my/midyear-review,
-          and still visible to the manager, the Delivery Head and HR. The
+          and still visible to the manager, the HOD and HR. The
           employee no longer sees them HERE. The status line at the top of
           this card still says whether the manager has signed, so an
           employee can still tell their half is done. */}

@@ -11,7 +11,7 @@ import { Award, TrendingUp } from 'lucide-react';
 // gateway, which is why nothing here filters by person.
 
 const STEPS = ['draft', 'pending_delivery_head', 'pending_hrbp', 'pending_hr', 'final_approved', 'awarded'];
-const LABEL = { draft: 'Draft', pending_delivery_head: 'Delivery Head', pending_hrbp: 'HRBP',
+const LABEL = { draft: 'Draft', pending_delivery_head: 'HOD', pending_hrbp: 'HRBP',
   pending_hr: 'Final HR', final_approved: 'Approved', awarded: 'Awarded',
   rejected: 'Rejected', sent_back: 'Sent back' };
 

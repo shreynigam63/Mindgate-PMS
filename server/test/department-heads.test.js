@@ -1,6 +1,6 @@
 // node --test — Department Heads assignment (core.department_heads).
 // Reported live: setting an employee's role to "hod" grants access to
-// the Delivery Head Review screen, but their queue stayed permanently
+// the HOD Review screen, but their queue stayed permanently
 // empty — GET /hod/queue scopes visibility by core.department_heads,
 // a completely separate table nothing in this app had a way to write
 // to. This covers the new admin endpoints that fix that, and proves

@@ -10,7 +10,7 @@
 // Zoho becomes the source of employee data.
 //
 // PERMISSIONS reuse the roles that already exist rather than inventing a
-// parallel set: a manager nominates (pms_team_eval), the Delivery Head
+// parallel set: a manager nominates (pms_team_eval), the HOD
 // approves (pms_hod), the HR Business Partner approves (pms_hrbp), HR
 // finalises (pms_admin). An HRBP's view is narrowed to their remit by the
 // HRBP gateway, which runs on this router already.
@@ -418,7 +418,7 @@ router.post('/rnr/nominations', async (req, res) => {
 
     if (award.needs_justification && !String(b.justification || '').trim()) {
       return res.status(422).json({ error: 'A nomination needs a written justification. '
-        + 'It is what the Delivery Head, the HRBP and HR each decide on.' });
+        + 'It is what the HOD, the HRBP and HR each decide on.' });
     }
 
     let snapshot = null;
@@ -548,7 +548,7 @@ router.post('/rnr/nominations/:id/decide', async (req, res) => {
     if (!t.ok) return res.status(422).json({ error: t.error });
 
     // THE QUOTA IS CHECKED AT THE LAST GATE, not earlier: a nomination
-    // that fails at the Delivery Head never consumes a slot, so holding
+    // that fails at the HOD never consumes a slot, so holding
     // one for it would shrink the cycle for everybody else.
     let overrideRow = null;
     if (b.action === 'approve' && t.next === 'final_approved') {
@@ -603,14 +603,14 @@ async function notifyStage(tenantId, n, award, status, reason) {
   const name = award ? award.name : 'an RnR award';
   if (status === 'pending_delivery_head') {
     await tell(n.nominated_by, 'Your RnR nomination has been submitted',
-      `${name} — it is now with the Delivery Head.`, '/rnr/my-nominations');
+      `${name} — it is now with the HOD.`, '/rnr/my-nominations');
     const heads = (await db.query(
       `SELECT e.id FROM core.employees e JOIN core.user_roles ur
          ON ur.tenant_id=e.tenant_id AND lower(ur.email)=lower(e.email)
         WHERE e.tenant_id=$1 AND e.status='active' AND ur.role='hod'`, [tenantId])).rows;
     for (const h of heads) {
       await tell(h.id, 'An RnR nomination is waiting on you',
-        `${name} — pending Delivery Head approval.`, '/rnr/approvals');
+        `${name} — pending HOD approval.`, '/rnr/approvals');
     }
   }
   if (status === 'rejected' || status === 'sent_back') {

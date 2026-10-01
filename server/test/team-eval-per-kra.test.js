@@ -1,7 +1,7 @@
 // node --test — Manager evaluation per-KRA rating (BR-5.4), mirroring
 // Self-Appraisal's per-KRA feature: a rating + comment against each KRA,
 // with overall_rating auto-computed as the weighted average — plus the
-// Delivery Head Review detail endpoint showing both sides per KRA.
+// HOD Review detail endpoint showing both sides per KRA.
 // Real Postgres, real HTTP surface, skips cleanly without DATABASE_URL.
 const { test, after, before } = require('node:test');
 const assert = require('node:assert');
@@ -97,7 +97,7 @@ test('manager rating per KRA auto-computes overall_rating as the weighted averag
   assert.equal(Number(put.body.overall_rating), 4.1);
 });
 
-test('the Delivery Head detail endpoint shows both the employee self-rating and the manager rating+comment, per KRA', { skip }, async () => {
+test('the HOD detail endpoint shows both the employee self-rating and the manager rating+comment, per KRA', { skip }, async () => {
   // Uses an admin login (bypasses the department-head scoping check
   // entirely in this endpoint) for a reliable permission path, rather
   // than standing up full department_heads wiring just for this test —

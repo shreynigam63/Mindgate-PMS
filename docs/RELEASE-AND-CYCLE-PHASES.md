@@ -71,7 +71,7 @@ Covered in Part 2.
 
 ```
 Draft → KRA Setting → Growth Planning → Mid-Year Review → Self-Appraisal
-      → Manager Evaluation → Delivery Head Review → Calibration
+      → Manager Evaluation → HOD Review → Calibration
       → Publish → Closed
 ```
 
@@ -83,7 +83,7 @@ an **all-tenant** action — whenever one person needed to finish late.
 
 ```
 Draft → KRA Setting and Growth Planning → Mid-Year Review → Self-Appraisal
-      → Manager Evaluation → Delivery Head Review → Calibration
+      → Manager Evaluation → HOD Review → Calibration
       → Publish → Closed
 ```
 

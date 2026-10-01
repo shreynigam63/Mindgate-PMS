@@ -5,7 +5,7 @@
 // from a recording, that the person cannot see. Almost everything worth
 // testing is therefore about restraint rather than output:
 //
-//   - the employee, their manager and a Delivery Head are all refused
+//   - the employee, their manager and a HOD are all refused
 //   - it does not run without the employee's recorded consent
 //   - it mints no rating, and stripRatingSuggestions is not what saves us
 //   - a parameter the conversation missed comes back as not_discussed
@@ -143,7 +143,7 @@ test('their MANAGER cannot either — that is the point of the feature', { skip 
   assert.equal((await api(`/agentic/parameter-analysis?employee_id=${empId}`, token)).status, 403);
 });
 
-test('a Delivery Head cannot either — pms_hod is not pms_admin', { skip }, async () => {
+test('a HOD cannot either — pms_hod is not pms_admin', { skip }, async () => {
   const token = await login('pa-hod@x.com');
   assert.equal((await RUN(token)).status, 403);
 });

@@ -1,7 +1,7 @@
 // The RnR screens, registered so the menu and the direct-URL guard agree.
 //
 // Each lands in the tab of the role that owns that step: the manager
-// nominates from Manager, the Delivery Head approves from their own tab,
+// nominates from Manager, the HOD approves from their own tab,
 // the HRBP from theirs, HR administers from HR. One row drives both the
 // menu entry and who may open the URL.
 const PAGES = [

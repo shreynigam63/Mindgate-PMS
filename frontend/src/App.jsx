@@ -66,7 +66,7 @@ const NAV = [
     { to: '/home', label: 'Home', icon: Home },
     { to: '/my/kras', label: 'My KRAs', icon: Target },
     { to: '/my/growth', label: 'My Growth', icon: TrendingUp },
-    // Asked for on 22 Sep: Quarterly Connects sits between My Growth and
+    // Asked for on 22 Sep: Connects sits between My Growth and
     // Mid-Year Review. It belongs here rather than under Team because the
     // page is TWO-SIDED — GET /pms/connects returns rows where the caller
     // is the employee OR the manager — and because it follows the year as
@@ -75,7 +75,7 @@ const NAV = [
     //
     // The ROUTE stays /team/connects. It is in bookmarks and in links
     // inside notifications already sent; only the menu position moves.
-    { to: '/team/connects', label: 'Quarterly Connects', icon: MessageCircle },
+    { to: '/team/connects', label: 'Connects', icon: MessageCircle },
     { to: '/my/midyear', label: 'Mid-Year Review', icon: Clock },
     // RENAMED on request, as a pair. What was 'Self-Appraisal' is now
     // 'Annual Review', and what was 'Annual Review' is now 'Final Rating'
@@ -162,12 +162,12 @@ const NAV = [
   //
   // The tab disappears for anyone without pms_hod, because a group
   // whose every item is filtered out is dropped (see TopNav).
-  { group: 'Delivery Head', hue: 'leaf', icon: Landmark, items: [
-    { to: '/hod', label: 'Delivery Head Review', icon: Landmark },
+  { group: 'HOD', hue: 'leaf', icon: Landmark, items: [
+    { to: '/hod', label: 'HOD Review', icon: Landmark },
     { to: '/rnr/approvals/delivery-head', label: 'RnR Approvals', icon: Award },
   ]},
   // HRBP — HR for a slice of the company rather than all of it. Between
-  // Delivery Head and HR because that is the order of widening scope:
+  // HOD and HR because that is the order of widening scope:
   // your reports, your department, your locations, everybody.
   //
   // The same operational pages HR has, minus three that cannot be scoped

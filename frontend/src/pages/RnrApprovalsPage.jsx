@@ -17,10 +17,10 @@ import { CheckCircle2, XCircle, CornerUpLeft, AlertTriangle, Clock } from 'lucid
 // without anybody noticing.
 
 const QUEUES = {
-  '/rnr/approvals/delivery-head': { status: 'pending_delivery_head', title: 'Delivery Head approvals',
+  '/rnr/approvals/delivery-head': { status: 'pending_delivery_head', title: 'HOD approvals',
     sub: 'Nominations your managers have raised, waiting on you.' },
   '/hrbp/rnr-approvals': { status: 'pending_hrbp', title: 'HRBP approvals',
-    sub: 'Nominations the Delivery Head has approved. Yours to check against policy.' },
+    sub: 'Nominations the HOD has approved. Yours to check against policy.' },
   '/rnr/approvals/hr': { status: 'pending_hr', title: 'Final HR approval',
     sub: 'The last gate. This is where the award quota is applied.' },
 };
