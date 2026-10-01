@@ -43,6 +43,15 @@ export default function MyTimesheetPage() {
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
 
+  // WHOSE ROWS DID THAT UPLOAD ACTUALLY LOAD. An admin may upload anyone's
+  // export — the row-level scope rule is bypassed for pms_admin — and the
+  // rows then belong to the person named in the file, not to the uploader.
+  // This page reads only the signed-in user's own logs, so it would sit
+  // there saying "Nothing uploaded yet" directly underneath "73 loaded",
+  // which reads as a failure and is how this was reported as a bug.
+  const landedOnOthers = (up && up.committed ? (up.employees || []) : [])
+    .filter((e) => !(report && report.employee && e.id === report.employee.id));
+
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="Timesheet" hue="navy"
@@ -85,6 +94,18 @@ export default function MyTimesheetPage() {
             {up.meta && (up.meta.project_name || up.meta.team_name) && (
               <p className="text-navy-400">{[up.meta.team_name, up.meta.project_name, up.meta.exported_on].filter(Boolean).join(' · ')}</p>
             )}
+            {!!landedOnOthers.length && (
+              <div className="rounded border border-lagoon-100 bg-lagoon-50/60 p-2">
+                <p className="text-navy-700"><Info size={11} className="inline mr-1" />
+                  Those {up.loadable} row{up.loadable === 1 ? '' : 's'} belong to{' '}
+                  <b>{landedOnOthers.map((e) => e.name).join(', ')}</b>, not to you.
+                  This page shows your own logs only, so it stays empty.
+                </p>
+                <p className="text-navy-500 mt-0.5">
+                  Open their record under <b>HR → Timesheet</b>, or <b>Manager → Timesheet</b> if they report to you.
+                </p>
+              </div>
+            )}
             {!!up.skipped_total && (
               <div>
                 <p className="text-navy-600"><Info size={11} className="inline mr-1" />
@@ -113,7 +134,13 @@ export default function MyTimesheetPage() {
       {!report ? <p className="text-sm text-navy-400">Loading…</p>
         : report.total && report.total.no_data ? (
           <div className="card p-8 text-center text-sm text-navy-400">
-            Nothing uploaded yet. Your report appears here as soon as you upload an export.
+            {landedOnOthers.length ? (
+              <>
+                You have no logs of your own. The file you just uploaded belongs to{' '}
+                <b className="text-navy-700">{landedOnOthers.map((e) => e.name).join(', ')}</b> —
+                open their record under <b className="text-navy-700">HR → Timesheet</b> to read it.
+              </>
+            ) : 'Nothing uploaded yet. Your report appears here as soon as you upload an export.'}
           </div>
         ) : (
           <>
