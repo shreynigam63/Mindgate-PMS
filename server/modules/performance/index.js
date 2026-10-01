@@ -5541,10 +5541,16 @@ router.post('/connects', async (req, res) => {
           notes || null, achievements || null, blockers || null, feedback || null,
           Array.isArray(kra_ids) ? kra_ids : null, !!meeting_based, req.user.id])).rows[0];
       connectId = cn.id;
-      for (const item of items) {
+      // The index IS the order. created_at cannot carry it: every item
+      // here is inserted in one transaction and now() is the
+      // transaction's clock, so they would all share a timestamp and the
+      // list would reshuffle the first time somebody ticked one.
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
         await client.query(
-          `INSERT INTO pms.connect_action_items (tenant_id, connect_id, description, due_date) VALUES ($1,$2,$3,$4)`,
-          [T(req), connectId, String(item.description).trim(), item.due_date || null]);
+          `INSERT INTO pms.connect_action_items (tenant_id, connect_id, description, due_date, sort_order)
+             VALUES ($1,$2,$3,$4,$5)`,
+          [T(req), connectId, String(item.description).trim(), item.due_date || null, i + 1]);
       }
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
@@ -5560,7 +5566,7 @@ router.get('/connects', async (req, res) => {
     const mine = req.query.employee_id;
     const r = await db.query(
       `SELECT cn.*, e.name AS employee_name, m.name AS manager_name,
-              COALESCE((SELECT json_agg(json_build_object('id', ai.id, 'description', ai.description, 'due_date', ai.due_date, 'done', ai.done) ORDER BY ai.created_at)
+              COALESCE((SELECT json_agg(json_build_object('id', ai.id, 'description', ai.description, 'due_date', ai.due_date, 'done', ai.done) ORDER BY ai.sort_order, ai.created_at, ai.id)
                         FROM pms.connect_action_items ai WHERE ai.connect_id=cn.id), '[]') AS action_items,
               COALESCE((SELECT json_agg(json_build_object('id', k.id, 'title', k.title))
                         FROM pms.kras k WHERE k.id = ANY(cn.kra_ids)), '[]') AS linked_kras

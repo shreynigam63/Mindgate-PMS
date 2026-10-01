@@ -512,7 +512,7 @@ router.get('/templates', async (req, res) => {
     const rows = (await db.query(
       `SELECT id, key, category, title, description, trigger_type, trigger_day, trigger_window_days,
               anonymity_default, audience_rule, audience_kind, questions, blocked_reason, sort_order,
-              jsonb_array_length(questions) AS question_count
+              import_only, jsonb_array_length(questions) AS question_count
          FROM engagement.survey_templates
         WHERE tenant_id=$1 AND active ORDER BY sort_order, title`, [T(req)])).rows;
     // How many times each has been used, so HR can see which of these
@@ -559,11 +559,11 @@ router.post('/templates/:key/use', async (req, res) => {
     const s = (await db.query(
       `INSERT INTO engagement.surveys (tenant_id, title, survey_type, description, target_audience,
          audience_rule, audience_kind, trigger_type, trigger_day, trigger_window_days,
-         anonymity_default, allow_attribution_optin, template_key, created_by)
-       VALUES ($1,$2,'pulse',$3,'rule',$4,$5,$6,$7,$8,$9,$9,$10,$11) RETURNING *`,
+         anonymity_default, allow_attribution_optin, template_key, created_by, import_only)
+       VALUES ($1,$2,'pulse',$3,'rule',$4,$5,$6,$7,$8,$9,$9,$10,$11,$12) RETURNING *`,
       [T(req), b.title || tpl.title, tpl.description || null, JSON.stringify(rule), kind,
        merged.trigger_type, merged.trigger_type === 'tenure' ? merged.trigger_day : null,
-       merged.trigger_window_days, anon, tpl.key, req.user.email])).rows[0];
+       merged.trigger_window_days, anon, tpl.key, req.user.email, tpl.import_only === true])).rows[0];
 
     const qs = Array.isArray(tpl.questions) ? tpl.questions : [];
     // A question may ask for its options to come from the TENANT rather
@@ -841,6 +841,23 @@ router.post('/surveys/:id/open', async (req, res) => {
     if (!qn) return res.status(422).json({ error: 'Add at least one question before opening' });
 
     await db.query(`UPDATE engagement.surveys SET status='open', opens_at=COALESCE(opens_at, now()) WHERE id=$1`, [s.id]);
+
+    // NOBODY IS INVITED TO A SURVEY NOBODY TAKES.
+    //
+    // This is here because the opposite happened: opening the external
+    // review survey invited all 1,427 employees, because Open has always
+    // meant "work out the audience and invite it" and the template's
+    // description saying nobody answers it is not something code reads.
+    // The survey still opens — that is what makes its results readable —
+    // it simply has no audience, and says so instead of reporting a
+    // number that would be wrong.
+    if (s.import_only) {
+      audit(req, 'SURVEY_OPENED', { survey: s.id, title: s.title, import_only: true, invited: 0 });
+      logger.info('import-only survey opened', { survey: s.id });
+      return res.json({ ok: true, invited: 0, audience_size: 0, import_only: true,
+        audience: 'nobody — this survey is filled by importing reviews, not by answering it',
+        note: 'Opened. Nobody has been invited: use Import to load the reviews.' });
+    }
     const r = await inviteAudience(T(req), { ...s, status: 'open' });
     await db.query(`UPDATE engagement.surveys SET last_swept_at=now(), swept_count=swept_count+1 WHERE id=$1`, [s.id]);
     audit(req, 'SURVEY_OPENED', { survey: s.id, title: s.title, trigger: s.trigger_type,
@@ -1114,10 +1131,11 @@ const normHeader = (h) => String(h == null ? '' : h).trim().toLowerCase().replac
 async function importableSurvey(tenantId, id) {
   const s = (await db.query(`SELECT * FROM engagement.surveys WHERE id=$1 AND tenant_id=$2`, [id, tenantId])).rows[0];
   if (!s) return { error: 'survey not found', status: 404 };
-  // Only a survey built from the external template. Importing rows into a
-  // survey real people are taking would put fabricated answers beside
-  // theirs, and nothing afterwards could tell the two apart.
-  if (s.template_key !== 'external_review') {
+  // Only an import-only survey. Importing rows into one real people are
+  // taking would put fabricated answers beside theirs, and nothing
+  // afterwards could tell the two apart. Keyed off the flag rather than
+  // the template's name so a client's own import-only template works too.
+  if (!s.import_only) {
     return { status: 422,
       error: 'Reviews can only be imported into an "External reviews" survey. '
            + 'Create one from the library first — importing into a survey people are '

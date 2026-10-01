@@ -112,6 +112,10 @@ const EXTERNAL_REVIEW = {
   // Anonymous, because the source is. Nobody is invited and nobody takes
   // it: the rows arrive by import.
   anonymity_default: true,
+  // Enforced, not just described. Opening this used to invite the whole
+  // company, because Open means "work out the audience and invite it" and
+  // a description saying nobody answers it is not something code reads.
+  import_only: true,
   questions: [
     c('Which site is this review from?', EXTERNAL_SOURCES, 'external'),
     s('Overall rating the reviewer gave', 'external'),

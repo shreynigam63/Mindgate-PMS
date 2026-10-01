@@ -154,6 +154,45 @@ test('an empty file is refused rather than reported as a successful import of no
   assert.match(r.body.error, /no rows/);
 });
 
+test('OPENING AN IMPORT-ONLY SURVEY INVITES NOBODY', async () => {
+  // WHY THIS TEST EXISTS. Opening this survey on the client's instance
+  // invited all 1,427 employees, because Open has always meant "work out
+  // the audience and invite it" and the template's own description
+  // saying nobody answers it is not something code reads. The
+  // invitations and the notifications they produced had to be deleted by
+  // hand. A description is not a control; this is.
+  for (let i = 1; i <= 3; i++) {
+    await db.query(
+      `INSERT INTO core.employees (tenant_id,name,email,status) VALUES ($1,$2,$3,'active')`,
+      [tenantId, `Body ${i}`, `xr-body${i}@x.com`]);
+  }
+  const r = await (await fetch(`${base}/api/v1/engagement/surveys/${reviewSurveyId}/open`, {
+    method: 'POST', headers: { Authorization: `Bearer ${hrTok}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })).json();
+  assert.equal(r.invited, 0, 'it invited somebody to a survey nobody can answer');
+  assert.equal(r.import_only, true);
+  assert.match(r.note, /Nobody has been invited/);
+  const n = (await db.query(
+    `SELECT count(*)::int n FROM engagement.invitations WHERE survey_id=$1`, [reviewSurveyId])).rows[0].n;
+  assert.equal(n, 0, 'invitation rows were written anyway');
+  // It IS open — that is what makes the results readable.
+  const st = (await db.query(`SELECT status FROM engagement.surveys WHERE id=$1`, [reviewSurveyId])).rows[0].status;
+  assert.equal(st, 'open');
+});
+
+test('and an ordinary survey still invites its audience', async () => {
+  // The guard has to be about THIS survey, not about opening in general.
+  await db.query(
+    `INSERT INTO engagement.questions (tenant_id,survey_id,qtype,prompt,sort_order)
+     VALUES ($1,$2,'scale','Are you happy here?',10)`, [tenantId, normalSurveyId]);
+  const r = await (await fetch(`${base}/api/v1/engagement/surveys/${normalSurveyId}/open`, {
+    method: 'POST', headers: { Authorization: `Bearer ${hrTok}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })).json();
+  assert.ok(r.invited > 0, `an ordinary survey invited nobody: ${JSON.stringify(r)}`);
+});
+
 test('a file of nothing but bad rows writes nothing at all', async () => {
   const before = (await db.query(`SELECT count(*)::int n FROM engagement.responses WHERE survey_id=$1`, [reviewSurveyId])).rows[0].n;
   const r = await post(`/surveys/${reviewSurveyId}/import`, `${HEAD}\nMySpace,2026-01-01,4,Yes,Current employee,a,b,c`);

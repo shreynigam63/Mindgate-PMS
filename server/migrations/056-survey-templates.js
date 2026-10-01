@@ -38,6 +38,23 @@ async function seedTemplates(db, tenantId) {
        t.audience_kind || null]);
     if (r.rows.length) inserted++;
   }
+  // import_only is set SEPARATELY, and only once the column exists.
+  //
+  // This migration is older than that column — 075 adds it — and the
+  // migration runner replays the whole sequence from 001 on a fresh
+  // database. Naming the column in the INSERT above made 056 fail on
+  // every fresh install, which the replay tests caught: a migration may
+  // only reference what the migrations before it have created.
+  const hasColumn = (await db.query(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_schema='engagement' AND table_name='survey_templates' AND column_name='import_only'`)).rows.length;
+  if (hasColumn) {
+    for (const t of TEMPLATES.filter((x) => x.import_only === true)) {
+      await db.query(
+        `UPDATE engagement.survey_templates SET import_only=true WHERE tenant_id=$1 AND key=$2`,
+        [tenantId, t.key]);
+    }
+  }
   return inserted;
 }
 
