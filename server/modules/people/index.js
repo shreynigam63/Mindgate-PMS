@@ -1133,6 +1133,12 @@ async function careerPathFor(tenantId, employeeId) {
 // writer that serves the download can be driven offline against a
 // customer's employee master — otherwise the file we hand over and the
 // file the button produces are two pieces of code that can drift.
-module.exports = { router, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor,
+// The HRBP remit is a PEOPLE concept — it is resolved from the employee
+// master — but the pages it scopes are performance ones. Exported here so
+// the performance module reaches it through this module's public
+// interface rather than requiring its internals, which is the rule.
+const hrbpScope = require('./hrbp-scope');
+
+module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor,
                    transitionsWorkbook, suggestedTransitionRows,
                    TRANSITION_HEADERS, TRANSITION_BANNER, SUGGESTED_BANNER };

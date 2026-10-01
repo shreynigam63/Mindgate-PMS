@@ -3221,6 +3221,10 @@ router.use('/competencies', require('./competencies').router);
 // a person, read next to their KRAs — and a new mount would mean a new
 // permission surface for no gain.
 router.use('/timesheet', require('./timesheet').router);
+// The HRBP tab. Its own file because it is a scoping layer over screens
+// that already exist, and mixing that into this one would hide which
+// routes are org-wide and which are not.
+router.use('/hrbp', require('./hrbp').router);
 
 // ---------------- All Approvals (HR / super admin) --------------------------
 // Everything the cycle is waiting on, in one queue. See approvals.js for

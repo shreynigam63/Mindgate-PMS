@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound, MapPin } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -25,6 +25,8 @@ import CompetencyDashboardPage from './pages/CompetencyDashboardPage';
 import MyTimesheetPage from './pages/MyTimesheetPage';
 import TeamTimesheetPage from './pages/TeamTimesheetPage';
 import HrTimesheetPage from './pages/HrTimesheetPage';
+import HrbpPage from './pages/HrbpPage';
+import HrbpAdminPage from './pages/HrbpAdminPage';
 import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamOverviewPage from './pages/TeamOverviewPage';
 import PIPPage from './pages/PIPPage';
@@ -159,11 +161,28 @@ const NAV = [
   { group: 'Delivery Head', hue: 'leaf', icon: Landmark, items: [
     { to: '/hod', label: 'Delivery Head Review', icon: Landmark },
   ]},
+  // HRBP — HR for a slice of the company rather than all of it. Between
+  // Delivery Head and HR because that is the order of widening scope:
+  // your reports, your department, your locations, everybody.
+  //
+  // The same operational pages HR has, minus three that cannot be scoped
+  // and should not be held: Increment Simulation (salary), Settings
+  // (tenant-wide) and the KRA Library (publishes shelves org-wide).
+  { group: 'HRBP', hue: 'amber', icon: MapPin, items: [
+    { to: '/hrbp/employees', label: 'My People', icon: Users },
+    { to: '/hrbp/approvals', label: 'Approvals', icon: CheckCircle2 },
+    { to: '/hrbp/kra-overview', label: 'KRA Overview', icon: ClipboardList },
+    { to: '/hrbp/timesheet', label: 'Timesheet', icon: CalendarClock },
+    { to: '/hrbp/completion-report', label: 'PMS Completion', icon: FileText },
+    { to: '/hrbp/competency-dashboard', label: 'Competency', icon: Gauge },
+    { to: '/hrbp/nine-box', label: '9-Box Grid', icon: Grid3x3 },
+  ]},
   { group: 'HR', hue: 'violet', icon: ShieldCheck, items: [
     { to: '/admin/approvals', label: 'All Approvals', icon: CheckCircle2 },
     { to: '/admin/cycles', label: 'Cycles', icon: BarChart3 },
     { to: '/admin/directory', label: 'Employees', icon: Upload },
     { to: '/admin/department-heads', label: 'Department Heads', icon: UserCog },
+    { to: '/admin/hrbp', label: 'HR Business Partners', icon: MapPin },
     { to: '/admin/career-transitions', label: 'Career Pathing Matrix', icon: GitBranch },
     { to: '/admin/kra-overview', label: 'KRA Overview', icon: ClipboardList },
     // Next to KRA Overview because the two are easily confused and the
@@ -351,6 +370,14 @@ function Main({ user }) {
               <Route path="/my/timesheet" element={<MyTimesheetPage />} />
               <Route path="/team/timesheet" element={<TeamTimesheetPage />} />
               <Route path="/admin/timesheet" element={<HrTimesheetPage />} />
+              <Route path="/admin/hrbp" element={<HrbpAdminPage />} />
+              {/* One component for all seven: they differ only in which
+                  endpoint they read, and seven near-identical files would
+                  drift the way the Timesheet tabs once did. */}
+              {['employees', 'approvals', 'kra-overview', 'timesheet',
+                'completion-report', 'competency-dashboard', 'nine-box'].map((p) => (
+                <Route key={p} path={`/hrbp/${p}`} element={<HrbpPage />} />
+              ))}
               <Route path="/team/dashboard" element={<TeamDashboardPage />} />
               <Route path="/team/overview" element={<TeamOverviewPage />} />
               <Route path="/team/kra-sheets" element={<TeamKraSheetsPage />} />

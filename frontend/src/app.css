@@ -112,6 +112,7 @@ body {
 .roletab-on-lagoon { background: linear-gradient(135deg, #0d7183, #17a2b8); border-color: #0d7183; }
 .roletab-on-violet { background: linear-gradient(135deg, #5b2a86, #7c4dbe); border-color: #5b2a86; }
 .roletab-on-leaf   { background: linear-gradient(135deg, #2c7a30, #43a047); border-color: #2c7a30; }
+.roletab-on-amber  { background: linear-gradient(135deg, #a1620a, #d98a1a); border-color: #a1620a; }
 /* A CLOSED tab keeps its colour, tinted. Closed is not disabled.
    Shades limited to the ones this palette actually defines — navy, lagoon
    and leaf have no 200, and Tailwind silently emits nothing for a colour
@@ -120,16 +121,19 @@ body {
 .roletab-off-lagoon { @apply bg-lagoon-50 text-lagoon-700 border-lagoon-100; }
 .roletab-off-violet { @apply bg-violet-50 text-violet-700 border-violet-100; }
 .roletab-off-leaf   { @apply bg-leaf-50 text-leaf-600 border-leaf-100; }
+.roletab-off-amber  { @apply bg-amber-50 text-amber-700 border-amber-100; }
 .roletab-off-navy:hover   { @apply bg-navy-100; }
 .roletab-off-lagoon:hover { @apply bg-lagoon-100; }
 .roletab-off-violet:hover { @apply bg-violet-100; }
 .roletab-off-leaf:hover   { @apply bg-leaf-100; }
+.roletab-off-amber:hover  { @apply bg-amber-100; }
 .navcount { @apply text-[9.5px] font-bold rounded-full px-1.5 py-0.5; letter-spacing: 0; }
 .navcount-on { background: rgba(255, 255, 255, 0.26); @apply text-white; }
 .navcount-navy   { @apply bg-navy-100 text-navy-700; }
 .navcount-lagoon { @apply bg-lagoon-100 text-lagoon-700; }
 .navcount-violet { @apply bg-violet-100 text-violet-700; }
 .navcount-leaf   { @apply bg-leaf-100 text-leaf-600; }
+.navcount-amber  { @apply bg-amber-100 text-amber-700; }
 /* The sub-nav WRAPS. HR Admin's fifteen pages need 2286px at 1440px wide,
    and a sideways-scrolling row hid eight of them with no cue they were
    there — measured, not guessed. Wrapping costs one extra row, for HR
@@ -143,6 +147,7 @@ body {
 .subnav-on-lagoon { @apply text-lagoon-700 border-lagoon-500; }
 .subnav-on-violet { @apply text-violet-700 border-violet-600; }
 .subnav-on-leaf { @apply text-leaf-600 border-leaf-500; }
+.subnav-on-amber { @apply text-amber-700 border-amber-500; }
 /* The icon square is tinted by the group, so the row has structure at a
    glance without every item shouting. */
 .navico { @apply w-6 h-6 rounded-lg flex items-center justify-center shrink-0; }
@@ -150,6 +155,7 @@ body {
 .navico-lagoon { @apply bg-lagoon-50 text-lagoon-700; }
 .navico-violet { @apply bg-violet-50 text-violet-700; }
 .navico-leaf { @apply bg-leaf-50 text-leaf-600; }
+.navico-amber { @apply bg-amber-50 text-amber-700; }
 
 /* ---- Dashboard: stat strip and desk tiles --------------------------------
    Built to a reference the client sent (their Humanware HRMS dashboard): a
