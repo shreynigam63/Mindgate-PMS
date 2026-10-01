@@ -62,7 +62,10 @@ test('Employees offers an Add form whose fields keep focus while you type', asyn
   const { ctx, page, errors } = await open('/admin/directory');
   await page.getByRole('button', { name: /Add employee/ }).first().click();
   await page.waitForTimeout(400);
-  const box = page.locator('label:has-text("Full name") input');
+  // Anchored, not :has-text — that is a case-insensitive SUBSTRING match
+  // over the whole label including its hint, so once the HOD field's hint
+  // read "by full name" it matched two labels and the count went to 2.
+  const box = page.locator('label').filter({ hasText: /^Full name \*/ }).locator('input');
   assert.equal(await box.count(), 1, 'the add form is open');
   await box.click();
   await page.keyboard.type('Priya Deshpande', { delay: 30 });

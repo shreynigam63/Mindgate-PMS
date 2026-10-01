@@ -103,6 +103,34 @@ test('1 + 3 — Engagement admin sits under HR, team growth under Manager', asyn
 
 test('3 — My Growth no longer carries the team list', async (t) => {
   if (needStack(t)) return;
+  // WRITTEN TWICE. The search-box assertion below used to rely on a
+  // reportee's plan already sitting in `submitted` — which is true on a
+  // fresh database and false the moment "All Approvals … can return it"
+  // further down this same file has run once. The suite poisoned itself:
+  // green on the first run, red on every one after. It sets its own
+  // precondition now.
+  const tk = async (email) => (await (await fetch(`${API}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: PASS }),
+  })).json()).token;
+  const auth = { Authorization: `Bearer ${await tk('emp@shot.in')}`, 'Content-Type': 'application/json' };
+  // The demo goals predate the target-date rule, and submit refuses
+  // without one — correctly. Save them with a date first, through the
+  // same endpoint the employee uses.
+  const plan = await (await fetch(`${API}/api/v1/pms/my/development-plan`, { headers: auth })).json();
+  if (plan.plan && plan.plan.status !== 'submitted') {
+    const save = await fetch(`${API}/api/v1/pms/my/development-plan/goals`, {
+      method: 'PUT', headers: auth,
+      body: JSON.stringify({ goals: (plan.goals || []).map((g) => ({
+        ...g, target_date: g.target_date || '2027-03-31' })) }),
+    });
+    assert.ok(save.ok, `the goals have to save — ${await save.text()}`);
+    const sub = await fetch(`${API}/api/v1/pms/my/development-plan/submit`, {
+      method: 'POST', headers: auth,
+    });
+    assert.ok(sub.ok, `a reportee's plan has to be submitted — ${await sub.text()}`);
+  }
+
   const { ctx, page, errors } = await open('mgr@shot.in', '/my/growth');
   const body = await page.locator('body').innerText();
   assert.ok(!/Team Target Achievements/i.test(body),
