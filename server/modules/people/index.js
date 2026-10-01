@@ -894,11 +894,28 @@ async function careerPathDiagnostics(tenantId, employeeId) {
   };
 }
 
+// Two horizons, not one. Asked for: Aspiring Career "structured into
+// distinct Short-Term and Long-Term view tabs". `?horizon=` picks which
+// one is being read or written; leaving it off means short-term, which is
+// what every reader written before this meant.
+const HORIZONS = ['short_term', 'long_term'];
+const horizonOf = (v) => (HORIZONS.includes(String(v || '')) ? String(v) : 'short_term');
+
 router.get('/career/my-path', async (req, res) => {
   try {
-    const p = (await db.query(
-      `SELECT id, target_role, target_timeline, plan, years_experience, skills_interests, updated_at
-         FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [T(req), req.user.id])).rows[0];
+    const horizon = horizonOf(req.query.horizon);
+    const rows = (await db.query(
+      // BOTH horizons, deliberately — this is the one reader that is
+      // about the split. A blanket pass qualifying every pre-split reader
+      // to short_term caught this query too and pinned the tab strip to
+      // one answer; the test is what noticed.
+      `SELECT id, horizon, target_role, target_timeline, plan, years_experience, skills_interests, updated_at
+         FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [T(req), req.user.id])).rows;
+    const p = rows.find((r) => r.horizon === horizon) || null;
+    // Both are returned alongside, so the tab strip can say which horizon
+    // already has an answer without a second round trip — the difference
+    // between a tab that looks empty and one that IS empty.
+    const filled = rows.filter((r) => r.target_role).map((r) => r.horizon);
     // The employee's CURRENT role, straight off the master. Asked for on
     // 23 Sep: the form asked where you want to go without ever saying
     // where you are, so "is this a step up?" was unanswerable on screen.
@@ -916,7 +933,7 @@ router.get('/career/my-path', async (req, res) => {
     // transition exists but was excluded on level.
     const diagnostics = eligibleTargetRoles.length ? null : await careerPathDiagnostics(T(req), req.user.id);
     const gw = await growthWindowFor(T(req), req.user.id);
-    res.json({ path: p || null, milestones, progress_pct: careerProgress(milestones),
+    res.json({ path: p || null, horizon, horizons_filled: filled, milestones, progress_pct: careerProgress(milestones),
       current: { designation: me.designation || null, department: me.department || null,
                  role_band: me.role_band || null, date_of_joining: me.date_of_joining || null },
       eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
@@ -931,6 +948,7 @@ router.put('/career/my-path', async (req, res) => {
     const gw = await growthWindowFor(T(req), req.user.id);
     if (!gw.window.ok) return res.status(409).json({ error: careerShutMessage(gw.phase, gw.window) });
     const { target_role, target_timeline, plan, years_experience, skills_interests } = req.body || {};
+    const horizon = horizonOf(req.body && req.body.horizon);
     if (!target_role || !String(target_role).trim()) return res.status(400).json({ error: 'target_role required' });
     // Blank is a real answer — "I have not said yet" — and must not
     // become 0.0 years, which would read as a fact nobody stated.
@@ -948,15 +966,15 @@ router.put('/career/my-path', async (req, res) => {
     }
     await db.query(
       `INSERT INTO people.career_paths
-         (tenant_id, employee_id, target_role, target_timeline, plan, years_experience, skills_interests)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (tenant_id, employee_id) DO UPDATE SET
+         (tenant_id, employee_id, horizon, target_role, target_timeline, plan, years_experience, skills_interests)
+       VALUES ($1,$2,$8,$3,$4,$5,$6,$7)
+       ON CONFLICT (tenant_id, employee_id, horizon) DO UPDATE SET
          target_role=EXCLUDED.target_role, target_timeline=EXCLUDED.target_timeline,
          plan=EXCLUDED.plan, years_experience=EXCLUDED.years_experience,
          skills_interests=EXCLUDED.skills_interests, updated_at=now()`,
       [T(req), req.user.id, target_role.trim(), (target_timeline || '').trim() || null, plan || null,
-       years, (skills_interests || '').trim() || null]);
-    res.json({ ok: true });
+       years, (skills_interests || '').trim() || null, horizon]);
+    res.json({ ok: true, horizon });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -975,7 +993,7 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 async function myCareerPathId(tenantId, employeeId) {
   const r = await db.query(
-    `SELECT id FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]);
+    `SELECT id FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, employeeId]);
   return r.rows[0] ? r.rows[0].id : null;
 }
 
@@ -1093,7 +1111,7 @@ router.get('/career/team', async (req, res) => {
               -- rather than 0%.
               ROUND(AVG(m.progress_pct))::int                         AS progress_pct
          FROM core.employees e
-         LEFT JOIN people.career_paths cp ON cp.tenant_id=e.tenant_id AND cp.employee_id=e.id
+         LEFT JOIN people.career_paths cp ON cp.tenant_id=e.tenant_id AND cp.employee_id=e.id AND cp.horizon='short_term'
          LEFT JOIN people.career_milestones m ON m.career_path_id=cp.id
         WHERE e.tenant_id=$1 AND e.manager_id=$2 AND e.status='active'
         GROUP BY e.id, e.name, cp.target_role, cp.target_timeline, cp.plan, cp.updated_at

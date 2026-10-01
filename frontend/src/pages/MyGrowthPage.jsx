@@ -52,7 +52,10 @@ function DevelopmentPlanCard() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const load = () => api('/pms/my/development-plan').then(setData).catch(e => setErr(e.message));
-  useEffect(() => { load(); }, []);
+  // Reloaded per horizon: the two tabs hold different answers and
+  // different milestones, so switching has to refetch rather than
+  // re-render the one already in hand.
+  useEffect(() => { setSaved(false); setErr(null); load(horizon); }, [horizon]);
 
   if (err) return <div className="card p-4"><p className="text-sm text-rose-600">{err}</p></div>;
   if (!data) return <div className="card p-4"><p className="text-sm text-navy-400">Loading…</p></div>;
@@ -705,14 +708,27 @@ function CareerPathGap({ d }) {
   </div>;
 }
 
+// SHORT-TERM AND LONG-TERM, as two tabs over one form.
+//
+// Asked for: 'Structure the "Aspiring Career" section into distinct
+// Short-Term and Long-Term view tabs.' They are two separate aspirations,
+// stored separately (migration 070) and with their own milestones, not
+// two labels over one answer — "where next" and "where eventually" are
+// different questions and an employee should be able to answer both.
+const HORIZONS = [
+  ['short_term', 'Short-Term', 'The next move — roughly one to two years.'],
+  ['long_term', 'Long-Term', 'Where you want to end up — three years and beyond.'],
+];
+
 function CareerPathCard() {
+  const [horizon, setHorizon] = useState('short_term');
   const [data, setData] = useState(null);
   const [form, setForm] = useState({ target_role: '', target_timeline: '', plan: '',
     years_experience: '', skills_interests: '' });
   const [milestones, setMilestones] = useState([]);
   const [err, setErr] = useState(null);
   const [saved, setSaved] = useState(false);
-  const load = () => api('/people/career/my-path').then(r => {
+  const load = (h = horizon) => api(`/people/career/my-path?horizon=${h}`).then(r => {
     setData(r);
     setForm({ target_role: r.path?.target_role || '', target_timeline: r.path?.target_timeline || '',
       plan: r.path?.plan || '',
@@ -720,7 +736,10 @@ function CareerPathCard() {
       skills_interests: r.path?.skills_interests || '' });
     setMilestones((r.milestones || []).map(m => ({ ...m, target_date: m.target_date ? String(m.target_date).slice(0, 10) : '' })));
   }).catch(e => setErr(e.message));
-  useEffect(() => { load(); }, []);
+  // Reloaded per horizon: the two tabs hold different answers and
+  // different milestones, so switching has to refetch rather than
+  // re-render the one already in hand.
+  useEffect(() => { setSaved(false); setErr(null); load(horizon); }, [horizon]);
 
   // The path is saved FIRST: milestones hang off it, so on the very first
   // save there is no row for them to attach to until this lands.
@@ -730,7 +749,7 @@ function CareerPathCard() {
     const missingDate = milestones.findIndex(m => m.title.trim() && !m.target_date);
     if (missingDate >= 0) { setErr(`Milestone ${missingDate + 1} needs a target date.`); return; }
     try {
-      await api('/people/career/my-path', { method: 'PUT', body: JSON.stringify(form) });
+      await api('/people/career/my-path', { method: 'PUT', body: JSON.stringify({ ...form, horizon }) });
       await api('/people/career/my-milestones', {
         method: 'PUT',
         body: JSON.stringify({ milestones: milestones.filter(m => m.title.trim()) }),
@@ -762,6 +781,20 @@ function CareerPathCard() {
       <div className="flex items-center gap-2">
         <p className="font-bold text-sm flex-1">Aspiring Career</p>
         {data.cycle_phase && <span className={`chip ${phaseColor(data.cycle_phase)}`}>{phaseLabel(data.cycle_phase)}</span>}
+      </div>
+      {/* A tab that already has an answer says so, so an empty tab reads
+          as "not filled in yet" rather than as a page that failed to load. */}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-navy-100 pb-2">
+        {HORIZONS.map(([key, label, hint]) => (
+          <button key={key} onClick={() => setHorizon(key)} title={hint}
+            className={`chip ${horizon === key ? 'bg-indigo-100 text-indigo-800 font-semibold' : 'bg-navy-50 text-navy-500'}`}>
+            {label}
+            {(data.horizons_filled || []).includes(key) && <span className="ml-1 opacity-60">·&nbsp;set</span>}
+          </button>
+        ))}
+        <span className="text-[11px] text-navy-400 ml-1">
+          {(HORIZONS.find(([k]) => k === horizon) || [])[2]}
+        </span>
       </div>
       {/* WHERE YOU ARE, before where you want to go. Read from the
           employee master, never typed — a designation somebody types is

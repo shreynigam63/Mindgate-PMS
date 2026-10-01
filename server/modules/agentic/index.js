@@ -876,7 +876,7 @@ router.post('/career-suggest', async (req, res) => {
     const diagnostics = transitions.length ? null : await careerPathDiagnostics(T(req), req.user.id);
     const current = (await db.query(
       `SELECT target_role, target_timeline, plan, years_experience, skills_interests
-         FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`,
+         FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`,
       [T(req), req.user.id])).rows[0];
 
     const input = {

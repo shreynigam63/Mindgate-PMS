@@ -5368,7 +5368,7 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId,
   const devGoals = devPlan ? (await db.query(`SELECT title, description, target_date, progress_pct FROM pms.development_goals WHERE plan_id=$1 ORDER BY sort_order`, [devPlan.id])).rows : [];
   const devAvgProgress = devGoals.length ? Math.round(devGoals.reduce((s, g) => s + g.progress_pct, 0) / devGoals.length) : null;
 
-  const careerPath = (await db.query(`SELECT target_role, plan, updated_at FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId])).rows[0];
+  const careerPath = (await db.query(`SELECT target_role, plan, updated_at FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, employeeId])).rows[0];
 
   const params = (await db.query(`SELECT id, name, weight_pct FROM pms.review_parameters WHERE tenant_id=$1 AND active=true ORDER BY sort_order`, [tenantId])).rows;
   // scored_by_role='manager' — this section is explicitly the manager's
@@ -6412,7 +6412,7 @@ router.get('/team/overview', async (req, res) => {
          FROM core.employees e
          LEFT JOIN pms.kra_sheets ks ON ks.cycle_id=$3 AND ks.employee_id=e.id
          LEFT JOIN pms.development_plans dp ON dp.cycle_id=$3 AND dp.employee_id=e.id
-         LEFT JOIN people.career_paths cp ON cp.tenant_id=e.tenant_id AND cp.employee_id=e.id
+         LEFT JOIN people.career_paths cp ON cp.tenant_id=e.tenant_id AND cp.employee_id=e.id AND cp.horizon='short_term'
          LEFT JOIN pms.self_appraisals sa ON sa.cycle_id=$3 AND sa.employee_id=e.id
          LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$3 AND me.employee_id=e.id
         WHERE e.tenant_id=$2 AND e.status='active'
