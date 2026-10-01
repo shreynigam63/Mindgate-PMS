@@ -9,6 +9,7 @@
 // shouldAttribute() is pure and tested.
 
 const express = require('express');
+const ExcelJS = require('exceljs');
 const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
@@ -1087,6 +1088,184 @@ router.get('/my/submissions', async (req, res) => {
       })),
     });
   } catch (e) { logger.error('my submissions', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// ---- Survey results, as a file ---------------------------------------------
+//
+// Asked for: "we should have export option for results of all surveys
+// completed by employees for HR and HRBP role."
+//
+// ANONYMITY IS THE WHOLE DESIGN HERE, and a spreadsheet is where it is
+// most easily lost. Three rules, all enforced below rather than left to
+// whoever opens the file:
+//
+//   1. A per-person sheet exists ONLY for responses that carry an
+//      employee_id — which, by the take-flow at the top of this file,
+//      means the respondent explicitly asked to be attributed. An
+//      unattributed response never appears beside a name, in any sheet.
+//
+//   2. An aggregate over too few people is not anonymous. Four responses
+//      from a six-person team identify everybody in it by elimination, so
+//      a cohort below the floor is reported as withheld, with the reason
+//      printed in the file rather than silently showing a number.
+//
+//   3. An HRBP gets THEIR REMIT, and the file says so on the front sheet —
+//      so a figure that differs from HR's reads as a different population
+//      rather than as a disagreement.
+const ANON_FLOOR = 5;
+
+/**
+ * The employee ids an HRBP may see, or null for HR (meaning everybody).
+ *
+ * WRITTEN TWICE. The first version asked whether engagement_admin had
+ * been LENT for this request, which was true only while an HRBP reached
+ * this page through the gateway alone. Granting the role that permission
+ * in its own right — the same change that was meant to stop the feature
+ * depending on the lending — made the test read false and handed every
+ * partner the whole company. The test now asks the question that actually
+ * decides it, and the same one the gateway asks: is this an HR Business
+ * Partner rather than HR?
+ */
+async function exportScope(req) {
+  const [isPartner, isAdmin] = await Promise.all([
+    hasPermission(req.user, 'pms_hrbp'),
+    hasPermission(req.user, 'pms_admin'),
+  ]);
+  if (!isPartner || isAdmin) return null;
+  const people = require('../people');
+  const ids = await people.hrbpScope.employeeIdsFor(req.user.tenant_id, req.user.email, { includeInactive: true });
+  const remit = await people.hrbpScope.remitFor(req.user.tenant_id, req.user.email);
+  return { ids: new Set(ids), remit };
+}
+
+router.get('/surveys/:id/results.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) {
+      return res.status(403).json({ error: "Requires 'engagement_admin'", needs: 'engagement_admin' });
+    }
+    const t = T(req);
+    const s = (await db.query(`SELECT * FROM engagement.surveys WHERE id=$1 AND tenant_id=$2`, [req.params.id, t])).rows[0];
+    if (!s) return res.status(404).json({ error: 'survey not found' });
+    const scope = await exportScope(req);
+
+    const qs = (await db.query(
+      `SELECT id, qtype, prompt, options, sort_order FROM engagement.questions
+        WHERE survey_id=$1 ORDER BY sort_order`, [s.id])).rows;
+    // Every answer, with the respondent where there is one. The join to
+    // responses is the only place identity can enter, and r.employee_id
+    // is NULL for anybody who did not opt in.
+    const rows = (await db.query(
+      `SELECT a.question_id, a.value_num, a.value_text, a.value_list,
+              r.id AS response_id, r.employee_id, r.submitted_at,
+              e.name AS employee_name, e.email AS employee_email, e.department, e.location
+         FROM engagement.responses r
+         JOIN engagement.answers a ON a.response_id = r.id
+         LEFT JOIN core.employees e ON e.id = r.employee_id
+        WHERE r.survey_id=$1`, [s.id])).rows;
+
+    // An HRBP's file covers their own people. An UNATTRIBUTED response
+    // cannot be placed in anybody's remit, so it is counted for HR and
+    // left out of an HRBP's aggregate rather than guessed at.
+    const inScope = (r) => !scope || (r.employee_id && scope.ids.has(r.employee_id));
+    const mine = scope ? rows.filter(inScope) : rows;
+    const responders = new Set(mine.map((r) => r.response_id));
+
+    const wb = new ExcelJS.Workbook();
+    const head = (ws, cells, widths) => {
+      const h = ws.addRow(cells); h.font = { bold: true };
+      ws.columns.forEach((c, i) => { c.width = widths[i] || 18; });
+    };
+
+    // ---- front sheet: what this file is, and what it is not
+    const info = wb.addWorksheet('About');
+    info.addRow(['Survey', s.title]);
+    info.addRow(['Status', s.status]);
+    info.addRow(['Exported', new Date().toISOString().slice(0, 16).replace('T', ' ')]);
+    info.addRow(['Responses in this file', responders.size]);
+    info.addRow(['Scope', scope
+      ? `Your remit only — ${(scope.remit.locations || []).join(', ') || 'no locations'}`
+        + `${(scope.remit.hods || []).length ? ` · HOD: ${scope.remit.hods.join(', ')}` : ''}`
+      : 'The whole company']);
+    info.addRow(['Anonymity', s.anonymity_default
+      ? 'Anonymous. Only responses where the person asked to be named appear beside a name.'
+      : 'Named survey.']);
+    info.addRow(['Small cohorts', `An aggregate of fewer than ${ANON_FLOOR} responses is withheld — `
+      + 'with that few, an average identifies the people who gave it.']);
+    info.columns.forEach((c, i) => { c.width = i ? 90 : 26; });
+    info.getColumn(1).font = { bold: true };
+
+    // ---- per question
+    const ws = wb.addWorksheet('Questions');
+    head(ws, ['#', 'Question', 'Type', 'Responses', 'Average', 'Breakdown'], [6, 60, 12, 12, 12, 70]);
+    for (const q of qs) {
+      const a = mine.filter((r) => r.question_id === q.id);
+      const n = a.filter((r) => r.value_num != null || r.value_text != null || (r.value_list || []).length).length;
+      if (n && n < ANON_FLOOR) {
+        ws.addRow([q.sort_order, q.prompt, q.qtype, n, '—',
+          `withheld — fewer than ${ANON_FLOOR} responses in this scope`]);
+        continue;
+      }
+      if (q.qtype === 'choice' || q.qtype === 'multi') {
+        const tally = new Map((Array.isArray(q.options) ? q.options : []).map((o) => [String(o), 0]));
+        for (const r of a) {
+          const picked = q.qtype === 'multi' ? (r.value_list || []) : (r.value_text != null ? [r.value_text] : []);
+          for (const v of picked) tally.set(String(v), (tally.get(String(v)) || 0) + 1);
+        }
+        ws.addRow([q.sort_order, q.prompt, q.qtype, n, '—',
+          [...tally.entries()].sort((x, y) => y[1] - x[1]).map(([o, c]) => `${o}: ${c}`).join(' · ')]);
+      } else if (q.qtype === 'text') {
+        ws.addRow([q.sort_order, q.prompt, q.qtype, n, '—', 'see the Verbatims sheet']);
+      } else {
+        const nums = a.map((r) => r.value_num).filter((x) => x != null).map(Number);
+        ws.addRow([q.sort_order, q.prompt, q.qtype, nums.length,
+          nums.length ? +(nums.reduce((x, y) => x + y, 0) / nums.length).toFixed(2) : '—', '']);
+      }
+    }
+
+    // ---- free text, never beside a name
+    const vs = wb.addWorksheet('Verbatims');
+    head(vs, ['Question', 'Answer'], [50, 110]);
+    const verbN = mine.filter((r) => r.value_text != null
+      && (qs.find((q) => q.id === r.question_id) || {}).qtype === 'text').length;
+    if (verbN && verbN < ANON_FLOOR) {
+      vs.addRow([`withheld — fewer than ${ANON_FLOOR} written answers in this scope`, '']);
+    } else {
+      for (const q of qs.filter((x) => x.qtype === 'text')) {
+        for (const r of mine.filter((x) => x.question_id === q.id && x.value_text != null)) {
+          vs.addRow([q.prompt, r.value_text]);
+        }
+      }
+    }
+
+    // ---- per person, ONLY where the person asked to be named
+    const named = mine.filter((r) => r.employee_id);
+    const ps = wb.addWorksheet('Named responses');
+    head(ps, ['Employee', 'Email', 'Department', 'Location', 'Submitted', 'Question', 'Answer'],
+      [26, 30, 22, 16, 18, 50, 60]);
+    if (!named.length) {
+      // WHY it is empty, not just that it is. Scoped and anonymous are
+      // different answers and lead to different next steps — one means
+      // "ask a wider remit", the other means "there is nothing to ask for".
+      const anyNamedAtAll = rows.some((r) => r.employee_id);
+      ps.addRow([scope && anyNamedAtAll
+        ? 'Nobody in your remit has a named response on this survey.'
+        : 'Nobody asked to be named on this survey, so there is no per-person sheet.',
+        '', '', '', '', '', '']);
+    } else {
+      for (const r of named.sort((a, b) => String(a.employee_name).localeCompare(String(b.employee_name)))) {
+        const q = qs.find((x) => x.id === r.question_id) || {};
+        ps.addRow([r.employee_name, r.employee_email, r.department || '', r.location || '',
+          r.submitted_at ? new Date(r.submitted_at).toISOString().slice(0, 16).replace('T', ' ') : '',
+          q.prompt || '', r.value_num != null ? r.value_num : (r.value_text || (r.value_list || []).join(', '))]);
+      }
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    const safe = String(s.title).replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 50) || 'survey';
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${safe}-results.xlsx"`);
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('survey results export', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
 router.get('/surveys/:id/results', async (req, res) => {

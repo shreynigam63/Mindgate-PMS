@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Plus, Sparkles, Play, Square, Trash2, Eye, Pencil } from 'lucide-react';
-import { api } from '../utils/api';
+import { Download, Eye, Pencil, Play, Plus, Sparkles, Square, Trash2 } from 'lucide-react';
+import { api, API_BASE } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
 
@@ -254,6 +254,15 @@ export function EngagementAdminPage() {
             {data.admin && s.status === 'draft' && <button className="btn-sec" onClick={() => openSurvey(s)}><Play size={12} className="inline mr-1" />Open</button>}
             {data.admin && s.status === 'open' && <button className="btn-sec" onClick={async () => { await api(`/engagement/surveys/${s.id}/close`, { method: 'POST' }); load(); }}><Square size={12} className="inline mr-1" />Close</button>}
             {data.admin && <button className="btn-sec" onClick={() => viewResults(s)}>Results</button>}
+            {/* The same results as a file. An HRBP gets their own remit and
+                the front sheet of the workbook says so, rather than leaving
+                a number that differs from HR's looking like a disagreement. */}
+            {data.admin && (
+              <a className="btn-sec" title="Download the results as a spreadsheet"
+                href={`${API_BASE}/engagement/surveys/${s.id}/results.xlsx?token=${localStorage.getItem('apms_token')}`}>
+                <Download size={12} className="inline mr-1" />Export
+              </a>
+            )}
           </div>
         ))}
         {!data.surveys.length && <p className="p-6 text-center text-sm text-navy-400">No surveys yet.</p>}
