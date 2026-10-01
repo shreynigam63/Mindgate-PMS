@@ -37,7 +37,7 @@ body {
    the app already uses for its super-admin and AI surfaces — nothing here
    needs a colour the product could not already produce. */
 .hero {
-  @apply w-full rounded-2xl px-5 py-4 flex items-center justify-between gap-4 text-white;
+  @apply w-full rounded-2xl px-4 py-3 flex items-center justify-between gap-4 text-white;
   position: relative;
   overflow: hidden;
   box-shadow: 0 8px 22px -12px rgba(16, 31, 61, 0.55);
@@ -55,7 +55,7 @@ body {
 }
 .hero > * { position: relative; z-index: 1; }
 .hero h2, .hero h1 { @apply text-white; }
-.hero-sub { @apply text-xs mt-1; color: rgba(255, 255, 255, 0.82); }
+.hero-sub { @apply text-[11.5px] mt-0.5; color: rgba(255, 255, 255, 0.82); }
 .hero-navy { background: linear-gradient(115deg, #12294f, #1b3b6f 42%, #2f6fae 78%, #17a2b8); }
 .hero-teal { background: linear-gradient(115deg, #0d6070, #17a2b8 55%, #43a047); }
 /* .hero-lagoon was MISSING while nine components already asked for it,
@@ -163,8 +163,8 @@ body {
    grid of SOLID colour blocks carrying one number each. The colour is the
    index — you find "the orange one" before you have read a single word —
    so each metric keeps its hue everywhere it appears on this page. */
-.stat { @apply bg-white/90 border border-navy-100/70 rounded-2xl shadow-card
-  p-3.5 flex items-center gap-3; }
+.stat { @apply bg-white/90 border border-navy-100/70 rounded-xl shadow-card
+  p-2.5 flex items-center gap-2.5; }
 /* Label above, number below, both right-aligned against the icon — the
    reference's arrangement, and it reads as one column of figures across
    the strip instead of six ragged left edges. */
@@ -172,11 +172,14 @@ body {
 /* No truncate: six cards across 1440px left "Growth goals" reading
    "Growth go…". A label that clips is a label that lies. It wraps, and
    the grid stretches every card to match. */
-.stat-l { @apply block text-[11px] font-semibold text-navy-400 leading-tight; }
-.stat-n { @apply block text-[26px] font-extrabold leading-none text-navy-900 tabular-nums mt-1; }
-/* 52px, not the nav's 24px: at a glance from across a desk this row is the
-   thing people navigate by. */
-.stat-i { @apply w-[52px] h-[52px] rounded-2xl flex items-center justify-center
+.stat-l { @apply block text-[10.5px] font-semibold text-navy-400 leading-tight; }
+.stat-n { @apply block text-[20px] font-extrabold leading-none text-navy-900 tabular-nums mt-1; }
+/* 38px, not the nav's 24px: at a glance from across a desk this row is the
+   thing people navigate by. It WAS 52px — the client asked on 1 Oct for the
+   dashboard to be crisper, and six 52px squares were the single biggest
+   claim on the fold. Still the largest icon on the page, which is what the
+   row needs to stay the thing people navigate by. */
+.stat-i { @apply w-[38px] h-[38px] rounded-xl flex items-center justify-center
   shrink-0 text-white; }
 .si-lagoon { background: linear-gradient(135deg, #17a2b8, #0d7183); }
 .si-amber  { background: linear-gradient(135deg, #f5821f, #d2630a); }
@@ -196,11 +199,11 @@ body {
    right, and a short rule under the number — straight from the reference. */
 .deskt { @apply rounded-xl overflow-hidden flex text-white text-left transition-transform; }
 .deskt:hover { transform: translateY(-2px); }
-.deskt-i { @apply w-[62px] shrink-0 flex items-center justify-center; background: rgba(0,0,0,0.16); }
-.deskt-b { @apply flex-1 px-4 py-3.5 min-w-0; }
+.deskt-i { @apply w-[46px] shrink-0 flex items-center justify-center; background: rgba(0,0,0,0.16); }
+.deskt-b { @apply flex-1 px-3 py-2.5 min-w-0; }
 .deskt-l { @apply block text-[11px] font-bold uppercase tracking-wide truncate; color: rgba(255,255,255,0.92); }
-.deskt-n { @apply block text-[30px] font-extrabold leading-none mt-1 tabular-nums; }
-.deskt-r { @apply block h-[3px] w-14 mt-2 rounded-full; background: rgba(255,255,255,0.55); }
+.deskt-n { @apply block text-[22px] font-extrabold leading-none mt-1 tabular-nums; }
+.deskt-r { @apply block h-[3px] w-10 mt-1.5 rounded-full; background: rgba(255,255,255,0.55); }
 .dk-navy   { background: #2f6fae; }
 .dk-amber  { background: #e5900f; }
 .dk-red    { background: #c62828; }
@@ -213,10 +216,10 @@ body {
    large colour-filled icon badge ("Spot Light", "Employee's Desk") rather
    than a small grey caption, and it is what gives the page its rhythm at a
    glance. Same idea here, in the group's own hue. */
-.sechead { @apply flex items-center gap-2.5 mb-2.5; }
-.sechead-i { @apply w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-white; }
-.sechead-t { @apply text-[15px] font-extrabold text-navy-900 leading-none; }
-.sechead-s { @apply block text-[11px] font-medium text-navy-400 mt-1; }
+.sechead { @apply flex items-center gap-2 mb-2; }
+.sechead-i { @apply w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-white; }
+.sechead-t { @apply text-[13.5px] font-extrabold text-navy-900 leading-none; }
+.sechead-s { @apply block text-[10.5px] font-medium text-navy-400 mt-0.5; }
 
 /* ---- The one KRA table: Parameters · KRAs · KPIs · Weightage -------------
    Asked for on 23 Sep against the client's own sheet. The parameter is a

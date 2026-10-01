@@ -44,7 +44,7 @@ const TONE = {
 const PHASE_LABEL = {
   draft: 'Draft', kra_open: 'KRA Setting', mid_year_review: 'Mid-Year Review',
   self_appraisal: 'Self-Appraisal', manager_eval: 'Manager Evaluation',
-  hod_eval: 'Delivery Head Review', calibration: 'Calibration',
+  hod_eval: 'HOD Review', calibration: 'Calibration',
   publish: 'Publishing', closed: 'Closed',
 };
 
@@ -59,7 +59,7 @@ const waited = (iso) => {
 function Stat({ icon: Icon, hue, n, label, to }) {
   const body = (
     <>
-      <span className={`stat-i si-${hue}`}><Icon size={22} /></span>
+      <span className={`stat-i si-${hue}`}><Icon size={17} /></span>
       <span className="stat-t">
         <span className="stat-l">{label}</span>
         <span className="stat-n">{n}</span>
@@ -73,7 +73,7 @@ function Stat({ icon: Icon, hue, n, label, to }) {
 function Desk({ icon: Icon, hue, n, label, to }) {
   return (
     <NavLink to={to} className={`deskt dk-${hue}`}>
-      <span className="deskt-i"><Icon size={24} /></span>
+      <span className="deskt-i"><Icon size={19} /></span>
       <span className="deskt-b">
         <span className="deskt-l">{label}</span>
         <span className="deskt-n">{String(n).padStart(2, '0')}</span>
@@ -85,8 +85,8 @@ function Desk({ icon: Icon, hue, n, label, to }) {
 
 function Tile({ to, icon: Icon, title, sub, hue = 'lagoon' }) {
   return (
-    <NavLink to={to} className="card p-3.5 flex items-center gap-3 transition-shadow hover:shadow-glass">
-      <span className={`navico navico-${hue} w-9 h-9 shrink-0`}><Icon size={16} /></span>
+    <NavLink to={to} className="card p-2.5 flex items-center gap-2.5 transition-shadow hover:shadow-glass">
+      <span className={`navico navico-${hue} w-8 h-8 shrink-0`}><Icon size={14} /></span>
       <span className="min-w-0">
         <span className="block text-sm font-bold text-navy-900">{title}</span>
         <span className="block text-[11.5px] text-navy-400 leading-snug">{sub}</span>
@@ -98,7 +98,7 @@ function Tile({ to, icon: Icon, title, sub, hue = 'lagoon' }) {
 function SecHead({ icon: Icon, hue, title, sub }) {
   return (
     <div className="sechead">
-      <span className={`sechead-i si-${hue}`}><Icon size={18} /></span>
+      <span className={`sechead-i si-${hue}`}><Icon size={15} /></span>
       <span className="min-w-0">
         <span className="sechead-t">{title}</span>
         <span className="sechead-s">{sub}</span>
@@ -176,15 +176,15 @@ export default function TeamDashboardPage() {
   const shown = roster.filter(r => matches(q, r.name, r.department, r.designation));
 
   return (
-    <div className="space-y-5 max-w-5xl mx-auto">
+    <div className="space-y-3 max-w-5xl mx-auto">
       {/* No cycle chip in the band: the cycle card directly below already
           names it, and the two side by side read as two cycles. */}
       <PageHead title="Manager Dashboard" hue="lagoon"
         sub="Everything your reports owe, and everything they are waiting on you for." />
 
       {cycle && (
-        <div className="card p-4 flex flex-wrap items-center gap-3">
-          <span className="navico navico-lagoon w-9 h-9"><BarChart3 size={16} /></span>
+        <div className="card p-3 flex flex-wrap items-center gap-2.5">
+          <span className="navico navico-lagoon w-8 h-8"><BarChart3 size={14} /></span>
           <div className="min-w-0">
             <p className="text-sm font-bold">{cycle.name}</p>
             <p className="text-[11.5px] text-navy-400">
@@ -198,7 +198,7 @@ export default function TeamDashboardPage() {
       {/* Progress through the cycle, left to right, exactly the order a
           report moves through it. Each is "how many of my people are
           past this point", so the row reads as one sentence. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <Stat icon={Users} hue="navy" to="/team/overview" n={stats.reports} label="My reports" />
         <Stat icon={Target} hue="lagoon" to="/team/kra-sheets"
           n={`${stats.kra_approved}/${stats.reports}`} label="KRAs approved" />
@@ -232,7 +232,7 @@ export default function TeamDashboardPage() {
         <div>
           <SecHead icon={Inbox} hue="red" title="My desk"
             sub={`${desk.length} ${desk.length === 1 ? 'thing is' : 'things are'} outstanding across your team`} />
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {/* key pulled OUT of the spread: React warns when a "key"
                 rides in with the rest of the props, and the warning is
                 only visible in the console. */}
@@ -320,7 +320,7 @@ export default function TeamDashboardPage() {
       <div>
         <SecHead icon={LayoutDashboard} hue="lagoon" title="Manager pages"
           sub="Everything on this tab, with where your team stands on each" />
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
           <Tile to="/team/overview" icon={LayoutDashboard} title="Team Overview"
             sub={`${stats.reports} ${stats.reports === 1 ? 'person' : 'people'} · every phase at a glance`} />
           <Tile to="/team/kra-sheets" icon={Target} title="Team KRA Sheets"
@@ -332,7 +332,7 @@ export default function TeamDashboardPage() {
             sub={`${stats.midyear_signed} of ${stats.reports} signed off`} />
           <Tile to="/team/eval" icon={ClipboardList} title="Team Evaluation"
             sub={`${stats.evals_done} of ${stats.reports} submitted`} />
-          <Tile to="/team/connects" icon={MessageCircle} title="Quarterly Connects"
+          <Tile to="/team/connects" icon={MessageCircle} title="Connects"
             sub={`${stats.connects} logged · ${stats.open_actions} actions open`} />
         </div>
       </div>

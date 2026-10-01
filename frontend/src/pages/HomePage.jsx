@@ -27,6 +27,19 @@ import {
 // they open. A tile that vanishes makes people ask whether they have lost
 // access; a tile that says "opens at manager evaluation" answers the
 // question they were about to send an email about.
+//
+// TIGHTENED ON 1 OCT. The client sent the whole page scrolled out and
+// said it reads as gaps: "details are too large, can we make it more
+// crisp and compact". Nothing was REMOVED to achieve that — every count,
+// reason and link on the page is still here, which matters because the
+// no-filler rule above cuts both ways: if a number was worth showing
+// yesterday, hiding it today to win vertical space is the same dishonesty
+// in the other direction. What shrank is the chrome: icon badges, type
+// scale, padding and the space between blocks, which is where the page
+// was actually spending its height. Sizes live in app.css (.stat, .deskt,
+// .sechead) because this page and the manager dashboard share them, and
+// two dashboards drifting apart is how the product starts looking like
+// two products.
 
 const TONE = {
   urgent: 'from-brand-600 to-brand-500',
@@ -40,7 +53,7 @@ const TONE = {
 function Stat({ icon: Icon, hue, n, label, to, hint }) {
   const body = (
     <>
-      <span className={`stat-i si-${hue}`}><Icon size={22} /></span>
+      <span className={`stat-i si-${hue}`}><Icon size={17} /></span>
       <span className="stat-t">
         <span className="stat-l">{label}</span>
         <span className="stat-n">{n}</span>
@@ -57,7 +70,7 @@ function Stat({ icon: Icon, hue, n, label, to, hint }) {
 function Desk({ icon: Icon, hue, n, label, to }) {
   return (
     <NavLink to={to} className={`deskt dk-${hue}`}>
-      <span className="deskt-i"><Icon size={24} /></span>
+      <span className="deskt-i"><Icon size={19} /></span>
       <span className="deskt-b">
         <span className="deskt-l">{label}</span>
         <span className="deskt-n">{String(n).padStart(2, '0')}</span>
@@ -70,15 +83,15 @@ function Desk({ icon: Icon, hue, n, label, to }) {
 function Tile({ to, icon: Icon, title, sub, hue = 'navy', locked }) {
   const body = (
     <>
-      <span className={`navico navico-${hue} w-9 h-9 shrink-0`}><Icon size={16} /></span>
+      <span className={`navico navico-${hue} w-8 h-8 shrink-0`}><Icon size={14} /></span>
       <span className="min-w-0">
-        <span className="block text-sm font-bold text-navy-900">{title}</span>
-        <span className="block text-[11.5px] text-navy-400 leading-snug">{sub}</span>
+        <span className="block text-[12.5px] font-bold text-navy-900 leading-tight">{title}</span>
+        <span className="block text-[10.5px] text-navy-400 leading-snug mt-0.5">{sub}</span>
       </span>
       {locked && <Lock size={12} className="ml-auto shrink-0 text-navy-300" />}
     </>
   );
-  const cls = 'card p-3.5 flex items-center gap-3 transition-shadow';
+  const cls = 'card p-2.5 flex items-center gap-2.5 transition-shadow';
   return locked
     ? <div className={`${cls} opacity-60`} title={sub}>{body}</div>
     : <NavLink to={to} className={`${cls} hover:shadow-glass`}>{body}</NavLink>;
@@ -90,7 +103,7 @@ function Tile({ to, icon: Icon, title, sub, hue = 'navy', locked }) {
 function SecHead({ icon: Icon, hue, title, sub }) {
   return (
     <div className="sechead">
-      <span className={`sechead-i si-${hue}`}><Icon size={18} /></span>
+      <span className={`sechead-i si-${hue}`}><Icon size={15} /></span>
       <span className="min-w-0">
         <span className="sechead-t">{title}</span>
         <span className="sechead-s">{sub}</span>
@@ -103,7 +116,7 @@ function Section({ icon, hue, title, sub, children }) {
   return (
     <div>
       <SecHead icon={icon} hue={hue} title={title} sub={sub} />
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{children}</div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">{children}</div>
     </div>
   );
 }
@@ -116,10 +129,25 @@ const waited = (iso) => {
   return d <= 0 ? 'today' : d === 1 ? 'waiting 1 day' : `waiting ${d} days`;
 };
 
+// HOW MANY SURVEY ROWS THE HOME PAGE WILL CARRY.
+//
+// This list was unbounded. One open survey per row is right for the two
+// or three a person normally owes; an employee invited to twelve — a
+// manager assessment per report, say, plus the lifecycle forms — got a
+// wall of identical rows that pushed My desk, their KRAs and every other
+// section below the fold. The page then answers "what now?" with a
+// scrollbar.
+//
+// Capped rather than counted: "12 surveys" is a number nobody acts on,
+// whereas four named forms plus "8 more waiting on you" keeps the thing
+// somebody will click AND states what is not shown. Nothing is hidden —
+// the remainder is a link to the page that lists all of them.
+const SURVEYS_SHOWN = 4;
+
 const PHASE_LABEL = {
   draft: 'Draft', kra_open: 'KRA Setting', mid_year_review: 'Mid-Year Review',
   self_appraisal: 'Self-Appraisal', manager_eval: 'Manager Evaluation',
-  hod_eval: 'Delivery Head Review', calibration: 'Calibration',
+  hod_eval: 'HOD Review', calibration: 'Calibration',
   publish: 'Publishing', closed: 'Closed',
 };
 
@@ -198,11 +226,11 @@ export default function HomePage() {
     desk.push({ key: 'nm', icon: UserX, hue: 'red', n: admin.no_manager, label: 'Employees with no manager', to: '/admin/directory' });
 
   return (
-    <div className="space-y-5 max-w-5xl mx-auto">
+    <div className="space-y-3 max-w-5xl mx-auto">
       {cycle && (
-        <div className="card p-4 space-y-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="navico navico-navy w-9 h-9"><BarChart3 size={16} /></span>
+        <div className="card p-3 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="navico navico-navy w-8 h-8"><BarChart3 size={14} /></span>
             <div className="min-w-0">
               <p className="text-sm font-bold">{cycle.name}</p>
               <p className="text-[11.5px] text-navy-400">
@@ -218,7 +246,7 @@ export default function HomePage() {
               the other end, so a person who is NOT in this cycle is
               told when theirs is instead of being left to work it out. */}
           {el && (
-            <div className="border-t border-navy-50 pt-2 space-y-1">
+            <div className="border-t border-navy-50 pt-1.5 space-y-0.5">
               <p className="text-[11.5px] text-navy-500">{el.line_in}</p>
               <p className="text-[11.5px] text-navy-500">{el.line_out}</p>
               {el.mine && el.mine.label && (
@@ -243,7 +271,7 @@ export default function HomePage() {
       {/* The stat strip. Your own numbers first, then your team's, then the
           company's — the same order of widening scope the rest of the page
           uses, so the row does not change meaning halfway across. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <Stat icon={Target} hue="lagoon" to="/my/kras"
           n={me.kra ? me.kra.kra_count : 0} label="My KRAs" />
         <Stat icon={Percent} hue="amber" to="/my/kras"
@@ -274,11 +302,11 @@ export default function HomePage() {
           <p className="text-[10.5px] font-bold uppercase tracking-widest opacity-80">
             {action.tone === 'clear' ? 'You are up to date' : 'Action needed'}
           </p>
-          <p className="text-lg font-bold mt-0.5">{action.title}</p>
+          <p className="text-[15px] font-bold mt-0.5 leading-snug">{action.title}</p>
           <p className="hero-sub">{action.detail}</p>
           {action.cta && (
             <NavLink to={action.to}
-              className="inline-flex items-center gap-1.5 mt-3 bg-white text-navy-900 font-bold text-xs px-4 py-2 rounded-xl">
+              className="inline-flex items-center gap-1.5 mt-2 bg-white text-navy-900 font-bold text-[11.5px] px-3 py-1.5 rounded-lg">
               {action.cta} <ArrowRight size={13} />
             </NavLink>
           )}
@@ -296,9 +324,9 @@ export default function HomePage() {
           <SecHead icon={HeartHandshake} hue="leaf" title="Surveys waiting on you"
             sub={`${surveys.length} open ${surveys.length === 1 ? 'form has' : 'forms have'} not been answered yet`} />
           <div className="card divide-y divide-navy-100">
-            {surveys.map((s) => (
+            {surveys.slice(0, SURVEYS_SHOWN).map((s) => (
               <NavLink key={`${s.id}-${s.subject_employee_id || 'self'}`} to="/engagement"
-                className="p-3 flex flex-wrap items-center gap-2 hover:bg-navy-50/60">
+                className="p-2.5 flex flex-wrap items-center gap-2 hover:bg-navy-50/60">
                 <span className="text-sm font-semibold flex-1 min-w-0">
                   {s.title}
                   {/* A manager assessment names its subject, or a
@@ -314,6 +342,13 @@ export default function HomePage() {
                 </span>
               </NavLink>
             ))}
+            {surveys.length > SURVEYS_SHOWN && (
+              <NavLink to="/engagement"
+                className="p-2.5 flex items-center gap-1.5 text-[11.5px] font-semibold text-navy-600 hover:bg-navy-50/60">
+                {surveys.length - SURVEYS_SHOWN} more waiting on you — open My Surveys
+                <ArrowRight size={12} />
+              </NavLink>
+            )}
           </div>
         </div>
       )}
@@ -328,7 +363,7 @@ export default function HomePage() {
             sub={`${requested.length} ${requested.length === 1 ? 'submission is' : 'submissions are'} waiting on someone else`} />
           <div className="card divide-y divide-navy-50">
             {requested.map((r, i) => (
-              <div key={i} className="p-3 flex flex-wrap items-center gap-2 text-sm">
+              <div key={i} className="p-2.5 flex flex-wrap items-center gap-2 text-[12.5px]">
                 <span className="chip bg-lagoon-50 text-lagoon-700">{r.label}</span>
                 <span className="text-navy-500">
                   with <b className="text-navy-900">{r.waiting_on || 'no manager set'}</b>
@@ -344,7 +379,7 @@ export default function HomePage() {
         <div>
           <SecHead icon={Inbox} hue="red" title="My desk"
             sub={`${desk.length} ${desk.length === 1 ? 'thing is' : 'things are'} outstanding`} />
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {/* key pulled OUT of the spread: React warns when a "key"
                 rides in with the rest of the props, and the warning is
                 only ever visible in the console. */}
@@ -359,7 +394,7 @@ export default function HomePage() {
             sub={team.scope === 'all_employees'
               ? 'Submitted across the company and not yet decided'
               : 'Submitted by your reports and not yet decided'} />
-          <div className="grid sm:grid-cols-3 gap-3">
+          <div className="grid sm:grid-cols-3 gap-2">
             <Tile to={queueLink} icon={Target} title="KRA sheets" hue="lagoon"
               sub={`${pending.kra} awaiting an approve or a return`} />
             <Tile to={queueLink} icon={TrendingUp} title="Growth plans" hue="leaf"
@@ -376,7 +411,7 @@ export default function HomePage() {
           sub={me.kra ? `${me.kra.kra_count} KRAs · ${me.kra.total_weight}% · ${kraStatus}` : 'Not started'} />
         <Tile to="/my/growth" icon={TrendingUp} title="My Growth" hue="leaf"
           sub={goals.total ? `${goals.done} of ${goals.total} goals complete · ${goals.status}` : 'Target achievements and aspiring career'} />
-        <Tile to="/team/connects" icon={MessageCircle} title="Quarterly Connects" hue="navy"
+        <Tile to="/team/connects" icon={MessageCircle} title="Connects" hue="navy"
           sub={connects.logged ? `${connects.logged} logged · ${connects.open_actions || 0} actions open` : 'Your 1-on-1 log with your manager'} />
         <Tile to="/my/midyear" icon={Clock} title="Mid-Year Review" hue="navy"
           sub={me.midyear ? `Self: ${me.midyear.self_status.replace('_', ' ')} · manager: ${me.midyear.manager_status.replace('_', ' ')}` : 'Not started'} />
@@ -395,7 +430,7 @@ export default function HomePage() {
           title={team.scope === 'all_employees' ? 'My team · every employee' : 'My team'}
           sub={`${team.reports} ${team.reports === 1 ? 'person' : 'people'} · ${team.kra_approved} KRA sheets approved`}>
           <Tile to="/team/dashboard" icon={Gauge} title="Manager Dashboard" hue="lagoon"
-            sub="This page, one scope out — everything your reports owe" />
+            sub="One scope out — what your reports owe" />
           <Tile to="/team/overview" icon={LayoutDashboard} title="Team Overview" hue="lagoon"
             sub={`${team.reports} ${team.reports === 1 ? 'person' : 'people'} · all phases at a glance`} />
           <Tile to="/team/kra-sheets" icon={Users} title="Team KRA approvals" hue="lagoon"
