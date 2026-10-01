@@ -25,7 +25,6 @@ import CompetencyDashboardPage from './pages/CompetencyDashboardPage';
 import MyTimesheetPage from './pages/MyTimesheetPage';
 import TeamTimesheetPage from './pages/TeamTimesheetPage';
 import HrTimesheetPage from './pages/HrTimesheetPage';
-import HrbpPage from './pages/HrbpPage';
 import HrbpAdminPage from './pages/HrbpAdminPage';
 import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamOverviewPage from './pages/TeamOverviewPage';
@@ -168,14 +167,34 @@ const NAV = [
   // The same operational pages HR has, minus three that cannot be scoped
   // and should not be held: Increment Simulation (salary), Settings
   // (tenant-wide) and the KRA Library (publishes shelves org-wide).
+  // EVERY HR TAB, on parallel routes. Asked for after the first cut
+  // shipped: "HRBP should have all tabs available in HR but with
+  // conditions we have mentioned". The pages are HR's own components —
+  // the rows they show are narrowed to the partner's remit by
+  // hrbp-gateway.js on the server, so there is one page to maintain
+  // rather than two that drift. The six marked read-only below apply to
+  // the whole company and cannot be scoped, so an HRBP reads them and
+  // the server refuses the write.
   { group: 'HRBP', hue: 'amber', icon: MapPin, items: [
-    { to: '/hrbp/employees', label: 'My People', icon: Users },
-    { to: '/hrbp/approvals', label: 'Approvals', icon: CheckCircle2 },
+    { to: '/hrbp/approvals', label: 'All Approvals', icon: CheckCircle2 },
+    { to: '/hrbp/cycles', label: 'Cycles', icon: BarChart3 },
+    { to: '/hrbp/directory', label: 'Employees', icon: Upload },
+    { to: '/hrbp/department-heads', label: 'Department Heads', icon: UserCog },
+    { to: '/hrbp/career-transitions', label: 'Career Pathing Matrix', icon: GitBranch },
     { to: '/hrbp/kra-overview', label: 'KRA Overview', icon: ClipboardList },
+    { to: '/hrbp/kra-library', label: 'KRA Library', icon: Library },
+    { to: '/hrbp/competencies', label: 'Competency Framework', icon: Layers },
+    { to: '/hrbp/competency-dashboard', label: 'Competency Dashboard', icon: Gauge },
     { to: '/hrbp/timesheet', label: 'Timesheet', icon: CalendarClock },
-    { to: '/hrbp/completion-report', label: 'PMS Completion', icon: FileText },
-    { to: '/hrbp/competency-dashboard', label: 'Competency', icon: Gauge },
+    { to: '/hrbp/completion-report', label: 'PMS Completion Report', icon: FileText },
+    { to: '/hrbp/calibration', label: 'Calibration', icon: Sparkles },
     { to: '/hrbp/nine-box', label: '9-Box Grid', icon: Grid3x3 },
+    { to: '/hrbp/closure-letters', label: 'Closure Letters', icon: FileText },
+    { to: '/hrbp/increments', label: 'Increment Simulation', icon: Calculator },
+    { to: '/hrbp/watchlist', label: 'Super 50', icon: Award },
+    { to: '/hrbp/engagement', label: 'Engagement Surveys', icon: HeartHandshake },
+    { to: '/hrbp/engagement-insights', label: 'New Hire Insights', icon: HeartHandshake },
+    { to: '/hrbp/settings', label: 'Settings', icon: SlidersHorizontal },
   ]},
   { group: 'HR', hue: 'violet', icon: ShieldCheck, items: [
     { to: '/admin/approvals', label: 'All Approvals', icon: CheckCircle2 },
@@ -374,10 +393,27 @@ function Main({ user }) {
               {/* One component for all seven: they differ only in which
                   endpoint they read, and seven near-identical files would
                   drift the way the Timesheet tabs once did. */}
-              {['employees', 'approvals', 'kra-overview', 'timesheet',
-                'completion-report', 'competency-dashboard', 'nine-box'].map((p) => (
-                <Route key={p} path={`/hrbp/${p}`} element={<HrbpPage />} />
-              ))}
+              {/* HR's own pages, opened by an HRBP. The server narrows
+                  what comes back; these routes only decide what opens. */}
+              <Route path="/hrbp/approvals" element={<ApprovalsPage />} />
+              <Route path="/hrbp/cycles" element={<CycleAdminPage />} />
+              <Route path="/hrbp/directory" element={<DirectoryPage />} />
+              <Route path="/hrbp/department-heads" element={<DepartmentHeadsPage />} />
+              <Route path="/hrbp/career-transitions" element={<CareerTransitionsPage />} />
+              <Route path="/hrbp/kra-overview" element={<KraOrgOverviewPage />} />
+              <Route path="/hrbp/kra-library" element={<KraLibraryPage />} />
+              <Route path="/hrbp/competencies" element={<CompetencyFrameworkPage />} />
+              <Route path="/hrbp/competency-dashboard" element={<CompetencyDashboardPage />} />
+              <Route path="/hrbp/timesheet" element={<HrTimesheetPage />} />
+              <Route path="/hrbp/completion-report" element={<CompletionReportPage />} />
+              <Route path="/hrbp/calibration" element={<CalibrationPage />} />
+              <Route path="/hrbp/nine-box" element={<NineBoxPage />} />
+              <Route path="/hrbp/closure-letters" element={<ClosureLettersPage />} />
+              <Route path="/hrbp/increments" element={<IncrementSimulationPage />} />
+              <Route path="/hrbp/watchlist" element={<WatchlistPage />} />
+              <Route path="/hrbp/engagement" element={<EngagementAdminPage />} />
+              <Route path="/hrbp/engagement-insights" element={<EngagementInsightsPage />} />
+              <Route path="/hrbp/settings" element={<SettingsPage />} />
               <Route path="/team/dashboard" element={<TeamDashboardPage />} />
               <Route path="/team/overview" element={<TeamOverviewPage />} />
               <Route path="/team/kra-sheets" element={<TeamKraSheetsPage />} />

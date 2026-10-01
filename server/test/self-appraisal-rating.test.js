@@ -11,7 +11,7 @@ const assert = require('node:assert');
 const HAS_DB = !!process.env.DATABASE_URL;
 const skip = !HAS_DB && 'DATABASE_URL not set — see file header';
 
-let db, server, base, cycleId;
+let db, server, base, cycleId, tenantId;
 
 before(async () => {
   if (!HAS_DB) return;
@@ -57,6 +57,7 @@ before(async () => {
   const app = express();
   app.use(cors());
   app.use(express.json());
+  tenantId = t.id;
   app.use((req, _res, next) => { req.tenantId = t.id; next(); });
   app.post('/api/v1/auth/dev-login', devLogin);
   app.use('/api/v1/pms', require('../modules/performance').router);
@@ -115,7 +116,7 @@ test('omitting overall_self_rating on an unrelated PUT leaves the existing ratin
 test('overall_self_rating is auto-computed as the weighted average of per-KRA ratings, not manually set', { skip }, async () => {
   const { token } = await login('sar-emp2@x.com');
   await api('/pms/my/self-appraisal', token); // auto-creates the appraisal row, same as the page does on load
-  const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE email='sar-emp2@x.com')`, [cycleId])).rows[0];
+  const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE tenant_id=$2 AND email='sar-emp2@x.com')`, [cycleId, tenantId])).rows[0];
   const kras = (await db.query(`SELECT id, weight FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [sheet.id])).rows;
   assert.equal(kras.length, 2);
 
@@ -167,12 +168,12 @@ test('on an annual cycle a directly-sent overall_self_rating is stored, same as 
 
 test('on an annual cycle the per-KRA average drives overall_self_rating, overwriting whatever was there', { skip }, async () => {
   const { token } = await login('sar-emp2@x.com');
-  const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE email='sar-emp2@x.com')`, [cycleId])).rows[0];
+  const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE tenant_id=$2 AND email='sar-emp2@x.com')`, [cycleId, tenantId])).rows[0];
   const kras = (await db.query(`SELECT id FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [sheet.id])).rows;
 
   // A stale value on the row, as the old 7-parameter path would have left
   // it. The per-KRA average owns the column now, so it must win.
-  await db.query(`UPDATE pms.self_appraisals SET overall_self_rating=4.6 WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE email='sar-emp2@x.com')`, [cycleId]);
+  await db.query(`UPDATE pms.self_appraisals SET overall_self_rating=4.6 WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE tenant_id=$2 AND email='sar-emp2@x.com')`, [cycleId, tenantId]);
 
   const put = await api('/pms/my/self-appraisal', token, {
     method: 'PUT',
@@ -203,9 +204,9 @@ test('a PUT that touches only prose reports the rating actually stored, not null
 // narrative before grading anything is the ordinary way to hit it.
 test('entries with no grades yet do not store an overall self-rating of 0', { skip }, async () => {
   const { token } = await login('sar-emp2@x.com');
-  const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE email='sar-emp2@x.com')`, [cycleId])).rows[0];
+  const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE tenant_id=$2 AND email='sar-emp2@x.com')`, [cycleId, tenantId])).rows[0];
   const kras = (await db.query(`SELECT id FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [sheet.id])).rows;
-  await db.query(`UPDATE pms.self_appraisals SET overall_self_rating=NULL WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE email='sar-emp2@x.com')`, [cycleId]);
+  await db.query(`UPDATE pms.self_appraisals SET overall_self_rating=NULL WHERE cycle_id=$1 AND employee_id=(SELECT id FROM core.employees WHERE tenant_id=$2 AND email='sar-emp2@x.com')`, [cycleId, tenantId]);
 
   // Narratives only — no self_rating on either KRA.
   const put = await api('/pms/my/self-appraisal', token, {

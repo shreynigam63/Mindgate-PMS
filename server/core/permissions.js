@@ -32,6 +32,13 @@ async function effectivePermissions(user) {
     db.query(`SELECT permission FROM core.user_permissions WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [user.tenant_id, user.email]),
   ]);
   const set = new Set([...roleP.rows, ...userP.rows].map(r => r.permission));
+  // Lent for the life of ONE request, by the HRBP gateway, so an HR
+  // Business Partner can use HR's own pages. It is a grant, never a
+  // wildcard: the gateway adds exactly the permissions it names, and the
+  // rows those pages return are narrowed to the partner's remit on the
+  // way out. Nothing writes this to the database and it does not survive
+  // the request.
+  if (user.grantedForRequest) for (const p of user.grantedForRequest) set.add(p);
   return { permissions: set, wildcard: set.has('*') };
 }
 

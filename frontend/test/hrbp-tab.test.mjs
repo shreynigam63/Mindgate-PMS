@@ -1,16 +1,13 @@
 // node --test — the HRBP tab, in a real browser.
 //
-// The server tests prove the remit resolves and fails closed. What only a
-// browser shows is whether the tab appears for the right people and
-// whether its empty states tell the truth — and there are THREE different
-// emptinesses here, each needing a different action:
+// The HRBP tab opens HR'S OWN PAGES, nineteen of them, narrowed per
+// request by hrbp-gateway.js. hrbp-gateway.test.js proves no row outside
+// the remit comes back; what only a browser shows is that each of those
+// nineteen routes actually RENDERS for an HRBP — a page that 403s, throws,
+// or sits on "Loading…" is a dead tab however well the API scopes.
 //
-//   nothing assigned          -> HR assigns a remit
-//   assigned but matches none -> the master has no location/HOD yet
-//   matches people, no rows   -> genuinely nothing to do
-//
-// Rendering a blank table for all three is how somebody concludes the
-// product is broken. That is most of what is pinned below.
+// So the sweep below walks all nineteen. It is the test that catches the
+// twentieth page somebody adds to the HR group and forgets to mirror.
 //
 // Skips cleanly when the dev stack is not up.
 import { test, before, after } from 'node:test';
@@ -61,17 +58,36 @@ async function open(email, route) {
 // container — every assertion here reads textContent.
 const text = (page) => page.evaluate(() => document.body.textContent);
 
-test('THE HRBP TAB SITS BETWEEN DELIVERY HEAD AND HR', async (t) => {
+const VIEWS = ['approvals', 'cycles', 'directory', 'department-heads', 'career-transitions',
+  'kra-overview', 'kra-library', 'competencies', 'competency-dashboard', 'timesheet',
+  'completion-report', 'calibration', 'nine-box', 'closure-letters', 'increments',
+  'watchlist', 'engagement', 'engagement-insights', 'settings'];
+
+test('THE HRBP TAB SITS BETWEEN DELIVERY HEAD AND HR, and carries HR’s own tabs', async (t) => {
   if (needStack(t)) return;
-  const { ctx, page, errors } = await open('admin@shot.in', '/home');
-  const tabs = await page.$$eval('button', (bs) => bs.map((b) => b.textContent.trim()));
-  const names = tabs.map((x) => x.replace(/[0-9+]+$/, '').trim());
+  const { ctx, page, errors } = await open('hod@shot.in', '/home');
+  const names = (await page.$$eval('button', (bs) => bs.map((b) => b.textContent.trim())))
+    .map((x) => x.replace(/[0-9+]+$/, '').trim());
   const iH = names.findIndex((x) => x === 'Delivery Head');
   const iB = names.findIndex((x) => x === 'HRBP');
   const iR = names.findIndex((x) => x === 'HR');
   assert.ok(iB > -1, `no HRBP tab — tabs were ${names.filter(Boolean).slice(0, 10).join(', ')}`);
-  assert.ok(iH > -1 && iR > -1 && iH < iB && iB < iR,
-    `order was wrong: Delivery Head ${iH}, HRBP ${iB}, HR ${iR}`);
+  assert.ok(iH > -1 && iH < iB, `HRBP must sit after Delivery Head: ${iH}, ${iB}`);
+  // WRITTEN TWICE. This first asserted the HR tab was absent entirely.
+  // It is not, and should not be: hod@shot.in is a genuine Delivery Head,
+  // and /admin/nine-box is gated on pms_hod on purpose, so one HR entry
+  // legitimately remains. What actually matters is that the HRBP tab
+  // carries HR's OWN tabs rather than a hand-picked subset.
+  // The sub-nav only renders for the ACTIVE tab, so read it from a page
+  // inside the group rather than from Home.
+  await page.goto(APP + '/hrbp/approvals', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  const hrbpLabels = await page.$$eval('a', (as) => as.map((a) => a.getAttribute('href') || ''));
+  for (const want of ['/hrbp/calibration', '/hrbp/settings', '/hrbp/closure-letters',
+    '/hrbp/increments', '/hrbp/watchlist']) {
+    assert.ok(hrbpLabels.includes(want), `${want} is missing from the HRBP tab`);
+  }
+  void iR;
   assert.deepEqual(errors, []);
   await ctx.close();
 });
@@ -87,60 +103,48 @@ test('AN EMPLOYEE WITHOUT THE PERMISSION DOES NOT SEE THE TAB AT ALL', async (t)
   await ctx.close();
 });
 
-test('an HRBP sees their remit named, and only their own people', async (t) => {
+test('EVERY ONE OF THE NINETEEN VIEWS RENDERS FOR AN HRBP, with no page error', async (t) => {
   if (needStack(t)) return;
-  // hr@shot.in holds pms_hrbp and is assigned location Pune.
-  const { ctx, page, errors } = await open('hr@shot.in', '/hrbp/employees');
-  const body = (await text(page)).replace(/\s+/g, ' ');
-  assert.match(body, /Your remit:/, 'the remit has to be on screen — otherwise "why can I not see X" has no answer');
-  assert.match(body, /Pune/);
-  assert.match(body, /read-only/i, 'and it has to say it decides nothing');
-  // Somebody outside the remit must not be listed.
-  assert.ok(!/Abhedya/.test(body), 'a Mumbai employee appeared in a Pune remit');
-  assert.deepEqual(errors, []);
-  await ctx.close();
-});
-
-test('THE APPROVALS VIEW SAYS IT IS A SUBSET, not a different number', async (t) => {
-  if (needStack(t)) return;
-  // The commonest support question about a scoped screen is "HR says 6
-  // and I see 3". Saying so on the page is cheaper than answering it.
-  const { ctx, page } = await open('hr@shot.in', '/hrbp/approvals');
-  const body = (await text(page)).replace(/\s+/g, ' ');
-  assert.match(body, /of \d+ across the company/,
-    'the view must name the org-wide total beside its own');
-  await ctx.close();
-});
-
-test('EVERY ONE OF THE SEVEN VIEWS RENDERS, with no page error', async (t) => {
-  if (needStack(t)) return;
-  // WRITTEN TWICE. The first version opened only /hrbp/employees, which
-  // would have passed with 9-box broken — that endpoint returns `cells`
-  // and the shared table reads `people`, so it rendered an empty table
-  // while holding data. Found by walking all seven.
-  for (const p of ['employees', 'approvals', 'kra-overview', 'timesheet',
-    'completion-report', 'competency-dashboard', 'nine-box']) {
-    const { ctx, page, errors } = await open('hr@shot.in', `/hrbp/${p}`);
+  const broken = [];
+  for (const p of VIEWS) {
+    const { ctx, page, errors } = await open('hod@shot.in', `/hrbp/${p}`);
     const body = (await text(page)).replace(/\s+/g, ' ');
-    assert.deepEqual(errors, [], `${p} threw: ${errors[0]}`);
-    assert.match(body, /Your remit:/, `${p} did not render the remit header`);
-    assert.ok(!/Loading…/.test(body.slice(-40)), `${p} was still loading`);
+    if (errors.length) broken.push(`${p}: threw ${errors[0]}`);
+    if (/not part of your access/i.test(body)) broken.push(`${p}: the URL guard refused it`);
+    if (/Loading…\s*$/.test(body)) broken.push(`${p}: still loading`);
+    if (/Access denied|Requires '/.test(body)) broken.push(`${p}: the API refused it`);
     await ctx.close();
   }
+  assert.deepEqual(broken, [], `dead tabs:\n${broken.join('\n')}`);
+});
+
+test('AN HRBP SEES ONLY THEIR OWN PEOPLE on a page that lists everybody for HR', async (t) => {
+  if (needStack(t)) return;
+  // hod@shot.in is assigned Pune. Abhedya and Rekha are Mumbai.
+  const { ctx, page } = await open('hod@shot.in', '/hrbp/directory');
+  const body = (await text(page)).replace(/\s+/g, ' ');
+  assert.ok(/Arun Employee|Priya Nair|Suraj Khairnar/.test(body), 'their own people are missing');
+  assert.ok(!/Abhedya/.test(body), 'a Mumbai employee appeared in a Pune remit');
+  assert.ok(!/Rekha/.test(body), 'a Mumbai employee appeared in a Pune remit');
+  await ctx.close();
+});
+
+test('HR still sees everybody — the gateway must not touch an admin', async (t) => {
+  if (needStack(t)) return;
+  const { ctx, page } = await open('admin@shot.in', '/admin/directory');
+  const body = (await text(page)).replace(/\s+/g, ' ');
+  assert.ok(/Abhedya/.test(body), 'HR lost sight of a Mumbai employee');
+  await ctx.close();
 });
 
 test('HR can open the assignment screen and sees the locations from the master', async (t) => {
   if (needStack(t)) return;
-  // WRITTEN TWICE. The first version asserted the union-rule sentence on the
-  // landing view, where it does not exist — it lives in the edit panel, which
-  // only opens on "Edit remit". That assertion was testing my memory of the
-  // page, not the page; it failed while the screen was entirely correct.
+  // WRITTEN TWICE. The first version asserted the union-rule sentence on
+  // the landing view, where it does not exist — it lives in the edit panel,
+  // which only opens on "Edit remit".
   const { ctx, page, errors } = await open('admin@shot.in', '/admin/hrbp');
   const landing = (await text(page)).replace(/\s+/g, ' ');
   assert.match(landing, /HR Business Partners/);
-  assert.match(landing, /Partner/, 'the partner list is the point of the landing view');
-
-  // Open the panel where the remit is actually chosen.
   await page.getByRole('button', { name: 'Edit remit' }).first().click();
   await page.waitForTimeout(400);
   const body = (await text(page)).replace(/\s+/g, ' ');
@@ -151,35 +155,17 @@ test('HR can open the assignment screen and sees the locations from the master',
   await ctx.close();
 });
 
-test('an HRBP cannot open HR’s assignment screen', async (t) => {
+test('an HRBP cannot open HR’s assignment screen, or set their own remit', async (t) => {
   if (needStack(t)) return;
   // Setting your own remit is the obvious abuse of this feature.
   const r = await fetch(`${API}/api/v1/pms/hrbp/admin/partners`, {
-    headers: { authorization: `Bearer ${await token('hr@shot.in')}` },
+    headers: { authorization: `Bearer ${await token('hod@shot.in')}` },
   });
-  // hr@shot.in holds pms_admin too, so the meaningful check is the
-  // employee: no pms_admin, no partners list.
-  const r2 = await fetch(`${API}/api/v1/pms/hrbp/admin/partners`, {
-    headers: { authorization: `Bearer ${await token('emp@shot.in')}` },
+  assert.equal(r.status, 403, 'an HRBP read the partner list');
+  const w = await fetch(`${API}/api/v1/pms/hrbp/admin/partners/hod%40shot.in`, {
+    method: 'PUT',
+    headers: { authorization: `Bearer ${await token('hod@shot.in')}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ locations: ['Mumbai'], hods: [] }),
   });
-  assert.equal(r2.status, 403, 'an employee read the partner list');
-  const j = await r2.json();
-  assert.equal(j.needs, 'pms_admin', 'and the refusal names what was missing');
-});
-
-test('NOTHING ASSIGNED SAYS SO, and says who fixes it', async (t) => {
-  if (needStack(t)) return;
-  // The whole point of the three empty states. admin@shot.in holds the
-  // permission (wildcard) but has no remit row, which is exactly the state
-  // every partner is in on the day the feature ships. A blank table here
-  // reads as "the product is broken"; the sentence has to name both what is
-  // missing and who sets it.
-  const { ctx, page, errors } = await open('admin@shot.in', '/hrbp/employees');
-  const body = (await text(page)).replace(/\s+/g, ' ');
-  assert.match(body, /nothing assigned/i, 'the remit header must admit it is empty');
-  assert.match(body, /No locations or HODs are assigned to you yet/,
-    'and the body must say so rather than drawing an empty table');
-  assert.match(body, /HR sets this/, 'naming who fixes it is the difference from a dead end');
-  assert.deepEqual(errors, []);
-  await ctx.close();
+  assert.equal(w.status, 403, 'an HRBP widened their own remit');
 });

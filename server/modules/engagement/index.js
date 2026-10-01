@@ -118,7 +118,9 @@ function enps(scores) {
 }
 
 const router = express.Router();
-router.use(authenticate, apiPermissionParity);
+router.use(authenticate, require('../../core/scope-hooks').run(), apiPermissionParity);
+// `.run()` is the extension point a module uses to narrow what this
+// router returns — today, the HRBP gateway. See core/scope-hooks.js.
 // Malformed uuid path params are rejected with 400 here, before any
 // handler can pass one into a query (see core/http.js).
 guardUuidParams(router);

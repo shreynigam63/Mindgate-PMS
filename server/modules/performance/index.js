@@ -34,7 +34,11 @@ const { derivePlacement, PERFORMANCE_BANDS, POTENTIAL_BANDS } = require('./nine-
 const { grade } = require('./grade');
 
 const router = express.Router();
-router.use(authenticate, apiPermissionParity);
+// The HRBP gateway runs BEFORE the route table, not after: an HR Business
+// Partner is lent pms_admin for the request, and the table would have
+// refused them on the way in. Found by the browser sweep, on the one HR
+// page whose route rule names pms_admin explicitly.
+router.use(authenticate, require('./hrbp-gateway').gateway(), apiPermissionParity);
 // Malformed uuid path params are rejected with 400 here, before any
 // handler can pass one into a query (see core/http.js).
 guardUuidParams(router);

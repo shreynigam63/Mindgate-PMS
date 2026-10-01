@@ -20,7 +20,9 @@ const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor } = require
 const { buildAnnualReviewSummary, kraSuggestionCandidates } = require('../performance');
 
 const router = express.Router();
-router.use(authenticate, apiPermissionParity);
+router.use(authenticate, require('../../core/scope-hooks').run(), apiPermissionParity);
+// `.run()` is the extension point a module uses to narrow what this
+// router returns — today, the HRBP gateway. See core/scope-hooks.js.
 const T = (req) => req.user.tenant_id;
 // The message is already the user-safe one (core/ai.js decides that,
 // and logs the real cause). `reason` rides along so a screen can tell
