@@ -77,6 +77,70 @@ const TEAMS = ['Development Team', 'QA Team', 'Support Team',
 const APPRECIATION = ['Technical expertise', 'Quality of work', 'Quick response',
   'Problem solving', 'Collaboration', 'Going above & beyond'];
 
+
+// ---- External reviews ------------------------------------------------
+//
+// Asked for on 1 Oct: "please confirm how can we directly submit the
+// feedback of surveys completed on ambition box, glassdoor and other
+// such websites."
+//
+// There is no feed to connect. Glassdoor retired its public review API in
+// 2021, AmbitionBox has never published one, and both sites' terms
+// prohibit scraping — so an automatic sync is not a thing anybody can
+// build honestly. What CAN be done is to put the reviews somewhere they
+// sit beside the internal answers, trend over time, and come out in the
+// same export: HR pastes them in.
+//
+// EVERY ROW IS UNATTRIBUTED, and that is not a limitation to work around.
+// Reviews on those sites are anonymous by design; a row claiming to know
+// who wrote one would be a guess dressed as a fact, and the guess would
+// be about somebody who chose anonymity deliberately. The importer
+// therefore has no employee column at all, and the responses it writes
+// carry no employee_id — they count towards averages and verbatims, and
+// never towards anybody's record.
+const EXTERNAL_SOURCES = ['AmbitionBox', 'Glassdoor', 'Indeed', 'Google Reviews',
+  'LinkedIn', 'Naukri', 'Other'];
+
+const EXTERNAL_REVIEW = {
+  key: 'external_review',
+  category: 'External',
+  title: 'External reviews (AmbitionBox / Glassdoor)',
+  description: 'Reviews copied from public sites, imported as a spreadsheet so they trend '
+    + 'beside your own survey answers. Nobody takes this one: open it, then use Import. '
+    + 'Nothing is fetched automatically — those sites have no feed to connect to.',
+  trigger_type: 'manual',
+  // Anonymous, because the source is. Nobody is invited and nobody takes
+  // it: the rows arrive by import.
+  anonymity_default: true,
+  questions: [
+    c('Which site is this review from?', EXTERNAL_SOURCES, 'external'),
+    s('Overall rating the reviewer gave', 'external'),
+    c('Would they recommend working here?', ['Yes', 'No', 'Not stated'], 'external'),
+    c('Were they still employed when they wrote it?', ['Current employee', 'Former employee', 'Not stated'], 'external'),
+    t('What they said was good'),
+    t('What they said needs improvement'),
+    t('Their stated role or department, as written on the review'),
+  ],
+};
+
+// The import sheet's columns, tied to the questions above BY PROMPT so
+// the two cannot drift: changing a question without changing this map
+// leaves a column that writes nowhere, which looks exactly like a working
+// import. The header names are what a person would type, not the prompts.
+const EXTERNAL_IMPORT_COLUMNS = [
+  { header: 'Site', prompt: 'Which site is this review from?', required: true,
+    hint: EXTERNAL_SOURCES.join(' / ') },
+  { header: 'Review date', date: true, required: false, hint: 'YYYY-MM-DD. Blank means today.' },
+  { header: 'Rating', prompt: 'Overall rating the reviewer gave', required: false, hint: '1 to 5' },
+  { header: 'Recommends', prompt: 'Would they recommend working here?', required: false, hint: 'Yes / No / Not stated' },
+  { header: 'Employment', prompt: 'Were they still employed when they wrote it?', required: false,
+    hint: 'Current employee / Former employee / Not stated' },
+  { header: 'Pros', prompt: 'What they said was good', required: false, hint: 'The reviewer\'s own words' },
+  { header: 'Cons', prompt: 'What they said needs improvement', required: false, hint: 'The reviewer\'s own words' },
+  { header: 'Role or department', prompt: 'Their stated role or department, as written on the review',
+    required: false, hint: 'As written on the review — never looked up against the master' },
+];
+
 const TEMPLATES = [
   // ---- Onboarding ----------------------------------------------------
   {
@@ -551,4 +615,7 @@ function validateTemplates(list = TEMPLATES) {
   return errors;
 }
 
-module.exports = { TEMPLATES, validateTemplates, BLOCKERS, CAPABILITIES, BANDS };
+TEMPLATES.push(EXTERNAL_REVIEW);
+
+module.exports = { TEMPLATES, validateTemplates, BLOCKERS, CAPABILITIES, BANDS,
+  EXTERNAL_REVIEW, EXTERNAL_IMPORT_COLUMNS, EXTERNAL_SOURCES };

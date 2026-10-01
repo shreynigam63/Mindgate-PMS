@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, Eye, Pencil, Play, Plus, Sparkles, Square, Trash2 } from 'lucide-react';
+import { Download, Eye, Pencil, Play, Plus, Sparkles, Square, Trash2, Upload } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
@@ -17,6 +17,70 @@ import PageHead from '../PageHead';
 //
 // Same endpoints, same anonymity guarantees; only the route each half
 // lives at changed.
+
+// Pasting in reviews from AmbitionBox, Glassdoor and the rest.
+//
+// Nothing is fetched: Glassdoor retired its public review API in 2021,
+// AmbitionBox has never published one, and both prohibit scraping. So the
+// honest version is an upload, and this panel says so rather than leaving
+// somebody waiting for a sync that is never coming.
+function ImportReviews({ survey, onClose, onDone }) {
+  const [file, setFile] = useState(null);
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const send = async () => {
+    setBusy(true); setErr(null); setRes(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`${API_BASE}/engagement/surveys/${survey.id}/import`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('apms_token')}` },
+        body: fd,
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Import failed');
+      setRes(j); onDone();
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="card p-4 space-y-3 border-l-4 border-indigo-500">
+      <div className="flex items-center justify-between">
+        <p className="lbl mb-0">Import reviews into “{survey.title}”</p>
+        <button className="btn-sec !py-1" onClick={onClose}>Close</button>
+      </div>
+      <p className="text-[11.5px] text-navy-500">
+        Download the blank sheet, paste the reviews into it, and upload it here. There is no
+        employee column and there will not be one — reviews on these sites are anonymous, and
+        naming somebody would be a guess stored as a fact. The rows count towards the averages
+        and the written answers, and towards nobody’s record.
+      </p>
+      <input type="file" accept=".csv,.xlsx" className="text-xs"
+        onChange={(e) => { setFile(e.target.files[0]); setRes(null); setErr(null); }} />
+      <button className="btn-pri" disabled={!file || busy} onClick={send}>
+        {busy ? 'Loading…' : 'Upload'}
+      </button>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      {res && (
+        <div className="text-xs space-y-1">
+          <p className="text-leaf-600">{res.note}</p>
+          {/* Every rejected row with its own reason, printed rather than
+              summarised — the house rule for every importer here. */}
+          {(res.rejected || []).length > 0 && (
+            <ul className="list-disc pl-5 text-amber2-700">
+              {res.rejected.map((x, i) => <li key={i}>Row {x.row}: {x.reason}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MySurveysPage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -145,6 +209,7 @@ export function EngagementAdminPage() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [results, setResults] = useState(null);
+  const [importing, setImporting] = useState(null);
   const [themes, setThemes] = useState(null);
   const [themesOpen, setThemesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -263,10 +328,30 @@ export function EngagementAdminPage() {
                 <Download size={12} className="inline mr-1" />Export
               </a>
             )}
+            {/* AmbitionBox / Glassdoor reviews, pasted in. Only on a survey
+                built from the external template — importing rows into a
+                survey real people are answering would mix fabricated
+                answers with theirs and nothing afterwards could separate
+                them, which is why the server refuses it too. */}
+            {data.admin && s.template_key === 'external_review' && (
+              <>
+                <a className="btn-sec" title="The sheet to paste the reviews into"
+                  href={`${API_BASE}/engagement/surveys/${s.id}/import-template.xlsx?token=${localStorage.getItem('apms_token')}`}>
+                  Blank sheet
+                </a>
+                <button className="btn-pri" onClick={() => setImporting(s)}>
+                  <Upload size={12} className="inline mr-1" />Import reviews
+                </button>
+              </>
+            )}
           </div>
         ))}
         {!data.surveys.length && <p className="p-6 text-center text-sm text-navy-400">No surveys yet.</p>}
       </div>
+
+      {importing && (
+        <ImportReviews survey={importing} onClose={() => setImporting(null)} onDone={load} />
+      )}
 
       {/* Lifecycle surveys are swept nightly. This runs the same sweep
           on demand, which is the only way to see a standing survey do

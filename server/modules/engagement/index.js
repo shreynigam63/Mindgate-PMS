@@ -10,6 +10,7 @@
 
 const express = require('express');
 const ExcelJS = require('exceljs');
+const multer = require('multer');
 const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
@@ -19,7 +20,7 @@ const { notify } = require('../../core/notifications');
 const { normaliseRule, audienceSql, describeRule, needsJoiningDate,
         triggerRule, validateRule, MILESTONES } = require('./audience');
 const { seedTemplates } = require('../../migrations/056-survey-templates');
-const { TEMPLATES: SHIPPED_TEMPLATES } = require('./templates');
+const { TEMPLATES: SHIPPED_TEMPLATES, EXTERNAL_IMPORT_COLUMNS, EXTERNAL_SOURCES } = require('./templates');
 const { seedFlagRules } = require('../../migrations/058-engagement-insights');
 const { flagsFor, groupFlags, worst, scoreByDimension, overallScore, trend,
         newHireIndex, outcomeByBand } = require('./insights');
@@ -1088,6 +1089,209 @@ router.get('/my/submissions', async (req, res) => {
       })),
     });
   } catch (e) { logger.error('my submissions', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// ---- Importing reviews from outside ----------------------------------------
+//
+// Asked for: a way to get AmbitionBox / Glassdoor feedback into the
+// product. There is no feed — see the note on EXTERNAL_REVIEW in
+// templates.js — so this is the honest version: HR pastes the reviews
+// into a sheet and uploads it.
+//
+// NO EMPLOYEE COLUMN, ANYWHERE. Reviews on those sites are anonymous by
+// design, and a column inviting somebody to guess who wrote one would
+// turn a guess into a stored fact about a person who chose anonymity.
+// The responses written here carry no employee_id, so they count towards
+// averages and verbatims and never towards anybody's record.
+const reviewUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+const normHeader = (h) => String(h == null ? '' : h).trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** Is this a survey the importer is willing to write into? */
+async function importableSurvey(tenantId, id) {
+  const s = (await db.query(`SELECT * FROM engagement.surveys WHERE id=$1 AND tenant_id=$2`, [id, tenantId])).rows[0];
+  if (!s) return { error: 'survey not found', status: 404 };
+  // Only a survey built from the external template. Importing rows into a
+  // survey real people are taking would put fabricated answers beside
+  // theirs, and nothing afterwards could tell the two apart.
+  if (s.template_key !== 'external_review') {
+    return { status: 422,
+      error: 'Reviews can only be imported into an "External reviews" survey. '
+           + 'Create one from the library first — importing into a survey people are '
+           + 'answering themselves would mix the two with no way to tell them apart.' };
+  }
+  return { survey: s };
+}
+
+router.get('/surveys/:id/import-template.xlsx', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) {
+      return res.status(403).json({ error: "Requires 'engagement_admin'", needs: 'engagement_admin' });
+    }
+    const g = await importableSurvey(T(req), req.params.id);
+    if (g.error) return res.status(g.status).json({ error: g.error });
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Reviews');
+    const header = ws.addRow(EXTERNAL_IMPORT_COLUMNS.map((c) => c.header));
+    header.font = { bold: true };
+    header.alignment = { wrapText: true, vertical: 'middle' };
+    // One sample row, so the expected shape of each cell is visible
+    // rather than described. The banner on the help sheet says to delete
+    // it — the lesson from the KRA template, where it was not said and
+    // the sample got imported as a person.
+    ws.addRow(['Glassdoor', '2026-09-14', 4, 'Yes', 'Current employee',
+      'Good people, real ownership early on.', 'Appraisal cycle could be clearer.',
+      'Software Engineer, Development']);
+    ws.columns.forEach((c, i) => { c.width = [16, 14, 10, 14, 20, 46, 46, 28][i] || 18; });
+
+    const help = wb.addWorksheet('How to fill this in');
+    help.addRow(['DELETE THE SAMPLE ROW on the Reviews sheet before uploading.']).font = { bold: true };
+    help.addRow([]);
+    help.addRow(['Column', 'Required', 'What goes in it']).font = { bold: true };
+    for (const c of EXTERNAL_IMPORT_COLUMNS) help.addRow([c.header, c.required ? 'yes' : 'no', c.hint]);
+    help.addRow([]);
+    help.addRow(['There is deliberately no employee column. Reviews on these sites are anonymous, '
+      + 'and naming somebody would be a guess stored as a fact.']);
+    help.addRow(['Nothing is fetched automatically: Glassdoor retired its public review API in 2021, '
+      + 'AmbitionBox has never published one, and both prohibit scraping.']);
+    help.columns.forEach((c, i) => { c.width = [22, 10, 100][i] || 20; });
+
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="external-reviews-template.xlsx"');
+    res.send(Buffer.from(buf));
+  } catch (e) { logger.error('review import template', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+router.post('/surveys/:id/import', reviewUpload.single('file'), async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) {
+      return res.status(403).json({ error: "Requires 'engagement_admin'", needs: 'engagement_admin' });
+    }
+    const t = T(req);
+    const g = await importableSurvey(t, req.params.id);
+    if (g.error) return res.status(g.status).json({ error: g.error });
+    if (!req.file) return res.status(400).json({ error: 'file required (multipart field "file")' });
+
+    const { parseCsv, parseExcelSheets, detectFormat } = require('../../core/employees');
+    const fmt = detectFormat(req.file.originalname, req.file.buffer);
+    let rows;
+    if (fmt === 'csv') rows = parseCsv(req.file.buffer.toString('utf8'));
+    else rows = (parseExcelSheets(req.file.buffer)[0] || {}).rows || [];
+    if (!rows.length) return res.status(422).json({ error: 'That file has no rows in it.' });
+
+    const qs = (await db.query(
+      `SELECT id, prompt, qtype FROM engagement.questions WHERE survey_id=$1`, [g.survey.id])).rows;
+    const qByPrompt = new Map(qs.map((q) => [q.prompt, q]));
+    const missing = EXTERNAL_IMPORT_COLUMNS.filter((c) => c.prompt && !qByPrompt.has(c.prompt));
+    if (missing.length) {
+      // The questions were edited and the map no longer reaches them. Said
+      // out loud rather than importing the columns that still match, which
+      // would be a partial import nothing on screen could explain.
+      return res.status(422).json({
+        error: 'This survey\'s questions have been edited, so the import sheet no longer matches them: '
+             + missing.map((m) => `"${m.header}"`).join(', ') + ' has nowhere to go. '
+             + 'Create a fresh External reviews survey from the library.',
+      });
+    }
+
+    // Header row: the sheet's own, matched case- and space-insensitively.
+    const head = (rows[0] || []).map(normHeader);
+    const colIndex = new Map();
+    for (const c of EXTERNAL_IMPORT_COLUMNS) {
+      const i = head.indexOf(normHeader(c.header));
+      if (i >= 0) colIndex.set(c.header, i);
+    }
+    const required = EXTERNAL_IMPORT_COLUMNS.filter((c) => c.required && !colIndex.has(c.header));
+    if (required.length) {
+      return res.status(422).json({
+        error: `The file is missing ${required.map((c) => `"${c.header}"`).join(', ')}. `
+             + 'Download the template and use its header row.',
+        headers_found: rows[0] || [],
+      });
+    }
+
+    // VALIDATE EVERY ROW BEFORE WRITING ANY — the importer's rule here and
+    // everywhere else. A half-loaded file is worse than a refusal because
+    // nothing afterwards says which half landed.
+    const cell = (r, header) => {
+      const i = colIndex.get(header);
+      return i == null ? null : (r[i] == null ? null : String(r[i]).trim());
+    };
+    const clean = [];
+    const rejected = [];
+    for (let n = 1; n < rows.length; n++) {
+      const r = rows[n];
+      if (!r || !r.some((x) => String(x == null ? '' : x).trim())) continue;   // blank line
+      const site = cell(r, 'Site');
+      if (!site) { rejected.push({ row: n + 1, reason: 'no site named' }); continue; }
+      if (!EXTERNAL_SOURCES.map((x) => x.toLowerCase()).includes(site.toLowerCase())) {
+        rejected.push({ row: n + 1, reason: `"${site}" is not one of ${EXTERNAL_SOURCES.join(', ')}` });
+        continue;
+      }
+      const ratingRaw = cell(r, 'Rating');
+      let rating = null;
+      if (ratingRaw) {
+        rating = Number(ratingRaw);
+        if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+          rejected.push({ row: n + 1, reason: `rating "${ratingRaw}" is not a number from 1 to 5` });
+          continue;
+        }
+      }
+      const dateRaw = cell(r, 'Review date');
+      let when = null;
+      if (dateRaw) {
+        when = new Date(dateRaw);
+        if (Number.isNaN(when.getTime())) {
+          rejected.push({ row: n + 1, reason: `date "${dateRaw}" is not a date — use YYYY-MM-DD` });
+          continue;
+        }
+      }
+      clean.push({ site: EXTERNAL_SOURCES.find((x) => x.toLowerCase() === site.toLowerCase()), rating, when, r });
+    }
+    if (!clean.length) {
+      return res.status(422).json({ error: 'Nothing in that file could be loaded.', rejected });
+    }
+
+    const client = await db.getClient();
+    let loaded = 0;
+    try {
+      await client.query('BEGIN');
+      for (const row of clean) {
+        // employee_id stays NULL. See the note at the top of this block.
+        const resp = (await client.query(
+          `INSERT INTO engagement.responses (tenant_id, survey_id, employee_id, submitted_at)
+           VALUES ($1,$2,NULL,COALESCE($3, now())) RETURNING id`,
+          [t, g.survey.id, row.when])).rows[0].id;
+        for (const c of EXTERNAL_IMPORT_COLUMNS) {
+          if (!c.prompt) continue;
+          const q = qByPrompt.get(c.prompt);
+          const v = c.header === 'Site' ? row.site : cell(row.r, c.header);
+          if (v == null || v === '') continue;
+          if (q.qtype === 'scale' || q.qtype === 'enps') {
+            await client.query(`INSERT INTO engagement.answers (response_id,question_id,value_num) VALUES ($1,$2,$3)`,
+              [resp, q.id, Number(v)]);
+          } else {
+            await client.query(`INSERT INTO engagement.answers (response_id,question_id,value_text) VALUES ($1,$2,$3)`,
+              [resp, q.id, v]);
+          }
+        }
+        loaded++;
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+
+    logger.info('external reviews imported', { survey: g.survey.id, loaded, rejected: rejected.length });
+    res.json({ ok: true, loaded, rejected,
+      note: rejected.length
+        ? `${loaded} loaded, ${rejected.length} left out — each one is listed with its reason.`
+        : `${loaded} review${loaded === 1 ? '' : 's'} loaded. They are unattributed, so they count `
+          + 'towards the averages and the written answers and towards nobody\'s record.' });
+  } catch (e) { logger.error('review import', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
 // ---- Survey results, as a file ---------------------------------------------
