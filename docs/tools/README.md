@@ -13,6 +13,7 @@ Two documents are published this way:
 | `docs/MANUAL-EMPLOYEE.md` | `docs/Agentic-PMS-Employee-Manual.pdf` |
 | `docs/MANUAL-HR.md` | `docs/Agentic-PMS-HR-Manual.pdf` |
 | `docs/MANUAL-MANAGER.md` | `docs/Agentic-PMS-Manager-Manual.pdf` |
+| `docs/ONEPAGER-TIMESHEET-KRA-LOGIC.md` | `docs/Agentic-PMS-Timesheet-KRA-Logic.pdf` |
 
 ## Rendering
 
@@ -83,6 +84,20 @@ OUT=$PWD/docs/Agentic-PMS-Manager-Manual.pdf \
 FOOTER="Agentic PMS — Manager Manual · 30 September 2026" \
   node docs/tools/topdf.js
 ```
+
+**The one-pager is built differently.** `md2html.py` always inserts a
+Contents block before the body and gives it `break-after:page`, and every
+`##` starts a new page — both right for a manual, fatal for a single sheet.
+So `docs/ONEPAGER-TIMESHEET-KRA-LOGIC.md` uses **`###` headings only**, the
+empty `<div class="toc">` is stripped from the HTML, and a small `<style>`
+block scales the type to 0.86 to hold one A4 page. Measure before shipping:
+render at the A4 content box (184mm x 269mm) and compare `scrollHeight`
+against 1017px.
+
+**A table cell cannot contain a pipe, escaped or not.** `md2html.py` splits
+rows on every `|`, so `\|x\|` for an absolute value silently breaks the row
+into extra columns. Spell it `abs(x)` instead — this bit the alignment
+formula on the first render.
 
 **Keep every list item on ONE line.** `md2html.py` reads the markdown line by
 line, so a bullet wrapped across two lines loses its continuation: the second
