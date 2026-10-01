@@ -1159,6 +1159,12 @@ async function careerPathFor(tenantId, employeeId) {
 // interface rather than requiring its internals, which is the rule.
 const hrbpScope = require('./hrbp-scope');
 
+// Rewards & Recognition. Its own file, and its decisions in three pure
+// modules beside it — the eligibility engine, the quota engine and the
+// approval workflow — so each can be tested without a database and
+// replaced when Zoho becomes the source of employee data.
+router.use('/', require('./rnr').router);
+
 module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor,
                    transitionsWorkbook, suggestedTransitionRows,
                    TRANSITION_HEADERS, TRANSITION_BANNER, SUGGESTED_BANNER };

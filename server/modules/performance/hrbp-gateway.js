@@ -213,6 +213,12 @@ async function targetEmployeeIds(req) {
     'SELECT employee_id FROM pms.midyear_checkins WHERE tenant_id=$1 AND id=$2',
     'SELECT employee_id FROM pms.manager_evaluations WHERE tenant_id=$1 AND id=$2',
     'SELECT employee_id FROM pms.connects WHERE tenant_id=$1 AND id=$2',
+    // An RnR nomination names the person it is about. Without this the
+    // gateway could not resolve a nomination id to anybody and refused
+    // every HRBP approval — failing closed, which is the right direction,
+    // but it meant an HRBP could not take their own step in the RnR
+    // workflow. Found by walking a nomination through all four stages.
+    'SELECT employee_id FROM rnr.nominations WHERE tenant_id=$1 AND id=$2',
   ];
   for (const id of candidates) {
     for (const sql of OWNED) {

@@ -26,6 +26,10 @@ import MyTimesheetPage from './pages/MyTimesheetPage';
 import TeamTimesheetPage from './pages/TeamTimesheetPage';
 import HrTimesheetPage from './pages/HrTimesheetPage';
 import HrbpAdminPage from './pages/HrbpAdminPage';
+import RnrNominatePage from './pages/RnrNominatePage';
+import RnrApprovalsPage from './pages/RnrApprovalsPage';
+import RnrAdminPage from './pages/RnrAdminPage';
+import RnrDashboardPage from './pages/RnrDashboardPage';
 import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamOverviewPage from './pages/TeamOverviewPage';
 import PIPPage from './pages/PIPPage';
@@ -124,6 +128,7 @@ const NAV = [
     { to: '/people', label: 'People Hub', icon: User },
   ]},
   { group: 'Manager', hue: 'lagoon', icon: Users, items: [
+    { to: '/rnr/nominate', label: 'Nominate for RnR', icon: Award },
     // Added 24 Sep on request: the Manager tab's own landing page, the
     // same thing /home is for a person's own work. First in the group
     // because it is where a manager now starts, and because it links on
@@ -159,6 +164,7 @@ const NAV = [
   // whose every item is filtered out is dropped (see TopNav).
   { group: 'Delivery Head', hue: 'leaf', icon: Landmark, items: [
     { to: '/hod', label: 'Delivery Head Review', icon: Landmark },
+    { to: '/rnr/approvals/delivery-head', label: 'RnR Approvals', icon: Award },
   ]},
   // HRBP — HR for a slice of the company rather than all of it. Between
   // Delivery Head and HR because that is the order of widening scope:
@@ -177,6 +183,7 @@ const NAV = [
   // the server refuses the write.
   { group: 'HRBP', hue: 'amber', icon: MapPin, items: [
     { to: '/hrbp/approvals', label: 'All Approvals', icon: CheckCircle2 },
+    { to: '/hrbp/rnr-approvals', label: 'RnR Approvals', icon: Award },
     { to: '/hrbp/cycles', label: 'Cycles', icon: BarChart3 },
     { to: '/hrbp/directory', label: 'Employees', icon: Upload },
     { to: '/hrbp/department-heads', label: 'Department Heads', icon: UserCog },
@@ -202,6 +209,8 @@ const NAV = [
     { to: '/admin/directory', label: 'Employees', icon: Upload },
     { to: '/admin/department-heads', label: 'Department Heads', icon: UserCog },
     { to: '/admin/hrbp', label: 'HR Business Partners', icon: MapPin },
+    { to: '/rnr/approvals/hr', label: 'RnR Final Approval', icon: Award },
+    { to: '/admin/rnr', label: 'RnR Administration', icon: Award },
     { to: '/admin/career-transitions', label: 'Career Pathing Matrix', icon: GitBranch },
     { to: '/admin/kra-overview', label: 'KRA Overview', icon: ClipboardList },
     // Next to KRA Overview because the two are easily confused and the
@@ -390,6 +399,16 @@ function Main({ user }) {
               <Route path="/team/timesheet" element={<TeamTimesheetPage />} />
               <Route path="/admin/timesheet" element={<HrTimesheetPage />} />
               <Route path="/admin/hrbp" element={<HrbpAdminPage />} />
+              {/* Rewards & Recognition. The approval queue is one component
+                  for all three stages — they differ only in which status
+                  they read, and three copies is three places a rule moves. */}
+              <Route path="/rnr/dashboard" element={<RnrDashboardPage />} />
+              <Route path="/rnr/nominate" element={<RnrNominatePage />} />
+              <Route path="/rnr/my-nominations" element={<RnrDashboardPage />} />
+              <Route path="/rnr/approvals/delivery-head" element={<RnrApprovalsPage />} />
+              <Route path="/hrbp/rnr-approvals" element={<RnrApprovalsPage />} />
+              <Route path="/rnr/approvals/hr" element={<RnrApprovalsPage />} />
+              <Route path="/admin/rnr" element={<RnrAdminPage />} />
               {/* One component for all seven: they differ only in which
                   endpoint they read, and seven near-identical files would
                   drift the way the Timesheet tabs once did. */}
