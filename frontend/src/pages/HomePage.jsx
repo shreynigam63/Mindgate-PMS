@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { api } from '../utils/api';
 import { grade } from '../grade';
 import {
-  Target, TrendingUp, MessageCircle, Clock, ClipboardList, Award, Star, History,
+  Target, TrendingUp, MessageCircle, Clock, ClipboardList, Star,
   LayoutDashboard, Users, CheckCircle2, Library, BarChart3, ArrowRight, Lock,
   Percent, ListChecks, UserX, FileWarning, Inbox, ShieldCheck, Send, Hourglass, Gauge, CalendarClock,
   HeartHandshake, ChevronDown,
@@ -194,7 +194,6 @@ export default function HomePage() {
   const { cycle, me = {}, team, admin, action } = d;
   const el = d.eligibility;
   const phase = cycle ? cycle.phase : null;
-  const kraStatus = me.kra ? me.kra.status : 'not started';
   const evalOpen = phase === 'manager_eval' || phase === 'hod_eval';
   const goals = me.goals || {};
   const connects = me.connects || {};
@@ -433,25 +432,20 @@ export default function HomePage() {
         </div>
       )}
 
-      <Section icon={Target} hue="lagoon" title="My performance"
-        sub="Your KRAs, growth, reviews and rating">
-        <Tile to="/my/kras" icon={Target} title="My KRAs" hue="navy"
-          sub={me.kra ? `${me.kra.kra_count} KRAs · ${me.kra.total_weight}% · ${kraStatus}` : 'Not started'} />
-        <Tile to="/my/growth" icon={TrendingUp} title="My Growth" hue="leaf"
-          sub={goals.total ? `${goals.done} of ${goals.total} goals complete · ${goals.status}` : 'Target achievements and aspiring career'} />
-        <Tile to="/team/connects" icon={MessageCircle} title="Connects" hue="navy"
-          sub={connects.logged ? `${connects.logged} logged · ${connects.open_actions || 0} actions open` : 'Your 1-on-1 log with your manager'} />
-        <Tile to="/my/midyear" icon={Clock} title="Mid-Year Review" hue="navy"
-          sub={me.midyear ? `Self: ${me.midyear.self_status.replace('_', ' ')} · manager: ${me.midyear.manager_status.replace('_', ' ')}` : 'Not started'} />
-        <Tile to="/my/self-appraisal" icon={ClipboardList} title="Annual Review" hue="navy"
-          sub={me.appraisal ? `Self-appraisal · ${me.appraisal.status.replace('_', ' ')}` : 'Not started'} />
-        <Tile to="/my/rating" icon={Star} title="My Rating" hue="violet" locked={!hasRating}
-          sub={me.published ? `${grade(me.published.final_rating)} · ${me.published.rating_label || 'published'}`
-             : hasRating ? 'Your ratings from earlier cycles'
-             : 'Opens once HR publishes your appraisal'} />
-        <Tile to="/my/annual-review" icon={Award} title="Final Rating" hue="navy" sub="Consolidated view" />
-        <Tile to="/my/history" icon={History} title="Past Cycles" hue="navy" sub="Previous ratings and trail" />
-      </Section>
+      {/* "My performance" USED TO SIT HERE — eight tiles linking to My
+          KRAs, My Growth, Connects, Mid-Year, Annual Review, My Rating,
+          Final Rating and Past Cycles.
+          Removed on 5 Oct: "please remove tabs which are already
+          available on headlines. no need on homepage again." Every one of
+          those eight is in the header nav of the tab this page is on, so
+          the block was a second copy of a menu the reader is already
+          looking at.
+          The STATUS those tiles carried is not lost — it moved up, not
+          away. The stat strip counts the KRAs, the weight, the goals, the
+          connects and the rating; the action band names the one thing
+          waiting; the desk tiles name everything outstanding, a returned
+          KRA included. What went is the navigation, which the header
+          already does better. */}
 
       {team && (
         <Section icon={Users} hue="navy"

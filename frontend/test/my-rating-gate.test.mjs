@@ -86,7 +86,7 @@ test('with nothing published the menu entry is there, greyed, and leads nowhere'
   await ctx.close();
 });
 
-test('the two Home tiles are shut in the same way, and say the same thing', async (t) => {
+test('the Home surfaces are shut in the same way, and say the same thing', async (t) => {
   if (needStack(t)) return;
   const { ctx, page, errors } = await open(SHUT);
 
@@ -97,11 +97,14 @@ test('the two Home tiles are shut in the same way, and say the same thing', asyn
     'the stat card leads nowhere while there is nothing behind it');
   assert.match(await stat.getAttribute('title') || '', /Opens once HR publishes/i);
 
-  // And the tile in "My performance".
-  const tile = page.locator('main .card').filter({ hasText: /^My Rating/ }).first();
-  assert.equal(await tile.count(), 1);
-  assert.equal(await tile.evaluate((el) => el.tagName), 'DIV', 'locked tiles are not links');
-  assert.match(await tile.innerText(), /Opens once HR publishes your appraisal/i);
+  // The "My performance" tile that used to be asserted here went with the
+  // block on 5 Oct — it duplicated the header nav. The gate still has two
+  // surfaces and both are still pinned: the nav entry (the test above)
+  // and this stat card. What matters is that no surface offers a door
+  // that opens onto nothing, so the removed one is asserted ABSENT rather
+  // than left unmentioned.
+  assert.equal(await page.locator('main .card').filter({ hasText: /^My Rating/ }).count(), 0,
+    'the duplicated My Rating tile should be gone from Home');
 
   assert.deepEqual(errors, []);
   await ctx.close();
@@ -120,8 +123,8 @@ test('with a rating published everything opens, and the page actually loads', as
   const stat = page.locator('main .stat').filter({ hasText: 'My rating' });
   assert.equal(await stat.evaluate((el) => el.tagName), 'A');
 
-  const tile = page.locator('main .card').filter({ hasText: /^My Rating/ }).first();
-  assert.equal(await tile.evaluate((el) => el.tagName), 'A');
+  assert.equal(await page.locator('main .card').filter({ hasText: /^My Rating/ }).count(), 0,
+    'and it is gone in the published case too — the block went, not the lock');
 
   await holder.click();
   await page.waitForTimeout(1500);
