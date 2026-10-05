@@ -49,6 +49,19 @@ async function main() {
   await require('./migrations/068-hrbp-scope').ensureHrbpScopePages(db, TENANT_ID);
   await require('./migrations/069-hrbp-all-hr-pages').ensureHrbpPages(db, TENANT_ID);
   await require('./migrations/078-rnr-pages').ensureRnrPages(db, TENANT_ID);
+  // The RnR master itself — awards, band→level mapping, employment
+  // statuses, settings. 077 has said in its own docstring since the day it
+  // was written that this is "seeded at request time as well as here",
+  // and it never was: the call was simply missing. A fresh install came up
+  // with an RnR module containing zero awards, so every nomination screen
+  // offered nothing and the eligibility engine had no rules to apply.
+  await require('./migrations/077-rnr').seedFor(db, TENANT_ID);
+  // The grade ladder, its role families, and the designation→grade and
+  // department→family mappings. Same omission as the two above, found by
+  // the same guard: 060 exports seed() and nothing called it, so a fresh
+  // install had an empty Career Pathing Matrix and no grade for any
+  // designation to resolve against.
+  await require('./migrations/060-grade-ladder').seed(db, TENANT_ID);
 
   const app = express();
   app.use(cors());

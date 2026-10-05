@@ -208,12 +208,31 @@ test('A LOYALTY MILESTONE DOES NOT CONSUME AN AWARD SLOT', async () => {
   // reach ten years in a cycle of forty-two would otherwise be refused
   // recognition for having worked here, with "quota exhausted" as the
   // only explanation.
-  const rows = (await db.query(
-    `SELECT key, counts_towards_quota FROM rnr.awards WHERE key LIKE 'loyalty%' OR key='rising_star'`)).rows;
-  assert.ok(rows.length, 'the award master has to be seeded for this to mean anything');
-  for (const r of rows) {
-    assert.equal(r.counts_towards_quota, !r.key.startsWith('loyalty'),
-      `${r.key}: loyalty sits outside the cap, everything else inside it`);
+  //
+  // IT SEEDS ITS OWN TENANT. This read used to have no tenant filter at
+  // all, so it asserted against whichever tenant happened to be in the
+  // database — and passed only because some earlier run had left one
+  // seeded. On a virgin database it found zero rows and fell straight
+  // onto its own guard below, which is how the CI gate caught it on its
+  // first clean run. A test that needs seeded data has to seed it.
+  const t = (await db.query(
+    `INSERT INTO core.tenants (name, slug) VALUES ($1,$1) RETURNING id`,
+    [`rnr-awards-${Date.now()}`])).rows[0].id;
+  try {
+    await require('../migrations/077-rnr').seedFor(db, t);
+    const rows = (await db.query(
+      `SELECT key, counts_towards_quota FROM rnr.awards
+        WHERE tenant_id=$1 AND (key LIKE 'loyalty%' OR key='rising_star')`, [t])).rows;
+    assert.ok(rows.length, 'the award master has to be seeded for this to mean anything');
+    for (const r of rows) {
+      assert.equal(r.counts_towards_quota, !r.key.startsWith('loyalty'),
+        `${r.key}: loyalty sits outside the cap, everything else inside it`);
+    }
+  } finally {
+    for (const tbl of ['rnr.awards', 'rnr.band_levels', 'rnr.employment_statuses', 'rnr.settings']) {
+      await db.query(`DELETE FROM ${tbl} WHERE tenant_id=$1`, [t]);
+    }
+    await db.query(`DELETE FROM core.tenants WHERE id=$1`, [t]);
   }
 });
 

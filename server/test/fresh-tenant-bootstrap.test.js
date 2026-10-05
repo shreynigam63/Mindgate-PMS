@@ -44,6 +44,8 @@ const BOOT_SEEDS = [
   ['068-hrbp-scope', 'ensureHrbpScopePages'],
   ['069-hrbp-all-hr-pages', 'ensureHrbpPages'],
   ['078-rnr-pages', 'ensureRnrPages'],
+  ['077-rnr', 'seedFor'],
+  ['060-grade-ladder', 'seed'],
 ];
 
 test('a tenant created after the migrations gets the HRBP and RnR pages', { skip }, async () => {
@@ -93,6 +95,35 @@ test('a tenant created after the migrations gets the HRBP and RnR pages', { skip
       assert.ok(grants.includes(perm), `hrbp role is missing ${perm}`);
     }
 
+    // THE RnR MASTER. Found by running this suite against a virgin
+    // database on 5 Oct: rnr.awards was empty, so the nomination screen
+    // offered nothing and the eligibility engine had no rules to apply.
+    // 077 has carried a docstring since it was written saying it is
+    // "seeded at request time as well as here" — index.js just never
+    // made the call. The comment was true about the intent and false
+    // about the code.
+    const master = await db.query(
+      `SELECT (SELECT count(*) FROM rnr.awards WHERE tenant_id=$1) AS awards,
+              (SELECT count(*) FROM rnr.band_levels WHERE tenant_id=$1) AS bands,
+              (SELECT count(*) FROM rnr.employment_statuses WHERE tenant_id=$1) AS statuses,
+              (SELECT count(*) FROM rnr.settings WHERE tenant_id=$1) AS settings`, [t]);
+    const m = master.rows[0];
+    assert.equal(Number(m.awards), require('../migrations/077-rnr').AWARDS.length,
+      'every award in the master must exist, or RnR has nothing to nominate for');
+    assert.equal(Number(m.bands), require('../migrations/077-rnr').BANDS.length,
+      'without the band mapping no employee resolves to a junior/mid/senior level');
+    assert.ok(Number(m.statuses) > 0, 'no employment statuses means nobody counts as active');
+    assert.equal(Number(m.settings), 1, 'the 3% quota and tenure rules come from this row');
+
+    // THE GRADE LADDER, the third one the guard turned up. Without it the
+    // Career Pathing Matrix is empty and no designation resolves to a
+    // grade, so the increment and 9-box screens have nothing to work from.
+    const ladder = (await db.query(
+      `SELECT (SELECT count(*) FROM pms.grade_ladder WHERE tenant_id=$1) AS grades,
+              (SELECT count(*) FROM pms.grade_roles WHERE tenant_id=$1) AS roles`, [t])).rows[0];
+    assert.ok(Number(ladder.grades) > 0, 'a fresh tenant has no grade ladder');
+    assert.ok(Number(ladder.roles) > 0, 'a fresh tenant has no role families');
+
     // Running the boot sequence twice must change nothing — it runs on
     // every boot, not only the first.
     const n1 = (await db.query(
@@ -102,12 +133,58 @@ test('a tenant created after the migrations gets the HRBP and RnR pages', { skip
       `SELECT count(*)::int c FROM core.page_permission WHERE tenant_id=$1`, [t])).rows[0].c;
     assert.equal(n2, n1, 'the boot seeds are not idempotent');
   } finally {
+    for (const tbl of ['rnr.awards', 'rnr.band_levels', 'rnr.employment_statuses', 'rnr.settings',
+      'pms.grade_roles', 'pms.grade_ladder', 'pms.designation_grade', 'pms.department_family']) {
+      await db.query(`DELETE FROM ${tbl} WHERE tenant_id=$1`, [t]);
+    }
     await db.query(`DELETE FROM core.page_permission WHERE tenant_id=$1`, [t]);
     await db.query(`DELETE FROM core.role_permissions WHERE tenant_id=$1`, [t]);
     await db.query(`DELETE FROM core.user_permissions WHERE tenant_id=$1`, [t]);
     await db.query(`DELETE FROM pms.review_parameters WHERE tenant_id=$1`, [t]);
     await db.query(`DELETE FROM core.tenants WHERE id=$1`, [t]);
   }
+});
+
+// THE SECOND GUARD, added after the first one proved too narrow. It only
+// looked at migrations declaring PAGES, so it said nothing about 077,
+// which declares AWARDS and exports seedFor() — a per-tenant seeder that
+// existed, was documented as being called at boot, and was called by
+// nobody. A seeder nothing calls is dead code that reads as a feature.
+//
+// Not "index.js must call it": some seeders are legitimately called from a
+// module at request time (056's seedTemplates is). The rule is weaker and
+// still catches this — somebody outside migrations/ and test/ has to call
+// it at all.
+test('every per-tenant seeder a migration exports is actually called somewhere', () => {
+  const root = path.join(__dirname, '..');
+  const dir = path.join(root, 'migrations');
+  const sources = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) {
+        if (['node_modules', 'migrations', 'test', '.git'].includes(e.name)) continue;
+        walk(full);
+      } else if (e.name.endsWith('.js')) sources.push(fs.readFileSync(full, 'utf8'));
+    }
+  };
+  walk(root);
+  const callers = sources.join('\n');
+
+  const orphans = [];
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.js')).sort()) {
+    const m = require(path.join(dir, file));
+    for (const name of Object.keys(m)) {
+      if (typeof m[name] !== 'function') continue;
+      if (!/^(ensure|seed)/.test(name)) continue;
+      if (!new RegExp(`\\b${name}\\s*\\(`).test(callers)) {
+        orphans.push(`${file} exports ${name}() and nothing outside migrations/ calls it`);
+      }
+    }
+  }
+  assert.deepEqual(orphans, [],
+    'a per-tenant seeder that nobody calls leaves a fresh install missing that data:\n'
+    + orphans.join('\n'));
 });
 
 // THE GUARD. The test above only knows about the three migrations that
