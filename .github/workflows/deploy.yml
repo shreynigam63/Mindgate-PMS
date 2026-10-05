@@ -1,0 +1,219 @@
+# Deploy to the PoC instance, without a credential in anybody's chat window.
+#
+# WHY THIS EXISTS. Deploying used to mean: a person with AWS keys runs
+# `update.sh` over SSM from whatever machine they happen to be on. That
+# blocked twice in one week when the session holding those keys was
+# recycled, and it meant long-lived access keys travelling through chat to
+# get the job done. This workflow authenticates with OIDC instead — GitHub
+# hands AWS a short-lived token minted for this repository, AWS hands back
+# credentials that expire in minutes, and nothing durable is stored
+# anywhere. There is no access key to leak, rotate, or lose with a
+# container.
+#
+# WHAT IT ACTUALLY DOES. Nothing is copied to the box. `update.sh` already
+# pulls from this repository itself, so a deploy is one SSM command that
+# tells the instance to fetch, rebuild and restart.
+#
+# SETUP IS NOT OPTIONAL AND IS NOT DONE HERE: see
+# docs/DEPLOY-GITHUB-ACTIONS.md for the IAM role, its trust policy and the
+# three repository settings. Until those exist the deploy job SKIPS with a
+# message rather than failing red, so merging this does not start breaking
+# the default branch.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy (blank = whatever branch the box is on)'
+        required: false
+        default: 'main'
+
+# One deploy at a time. Two overlapping runs of update.sh would fight over
+# the same checkout and the same systemd unit. Queued, not cancelled: a
+# half-finished deploy is worse than a slightly stale one.
+concurrency:
+  group: deploy-poc
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write          # required to mint the OIDC token
+
+jobs:
+  # ---------------------------------------------------------------- tests
+  # The gate. An automatic deploy with no gate is worse than a manual one,
+  # because the human who used to run the suite by hand is now out of the
+  # loop. The server suite needs a real Postgres; it creates its own schema.
+  #
+  # The browser suite is NOT here: it needs the API, Vite and Chromium all
+  # running together, which is a different and much slower job. That is a
+  # real gap — it is the suite that catches layout and nav regressions —
+  # and it stays a pre-merge step run locally until somebody builds it.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pw
+          POSTGRES_DB: apms_ci
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports: ['5432:5432']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci --no-audit --no-fund
+      - name: Run the server suite
+        working-directory: server
+        env:
+          DATABASE_URL: postgres://postgres:pw@127.0.0.1:5432/apms_ci
+        run: npm test
+
+  # ------------------------------------------------------------ preflight
+  # `secrets` is not available in a job-level `if`, so the check happens in
+  # a step and is published as an output. This is what lets the deploy skip
+  # cleanly on a repository that has not been wired to AWS yet.
+  preflight:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        # Read through env, never interpolated into the script body. A
+        # `${{ secrets.X }}` written inline becomes part of the shell text
+        # before bash sees it, so a value containing shell metacharacters
+        # would execute. Nothing here is attacker-controlled today; the
+        # habit is what matters, because the next person copies this block.
+        env:
+          ROLE: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          INSTANCE: ${{ secrets.EC2_INSTANCE_ID }}
+        run: |
+          if [ -n "$ROLE" ] && [ -n "$INSTANCE" ]; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Deploy skipped — AWS_DEPLOY_ROLE_ARN and/or EC2_INSTANCE_ID are not set. See docs/DEPLOY-GITHUB-ACTIONS.md.'
+          fi
+
+  # --------------------------------------------------------------- deploy
+  deploy:
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Add required reviewers to this environment in repository settings to
+    # make production deploys need a human approval.
+    environment: production
+    steps:
+      - name: Assume the deploy role (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-deploy-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-south-1' }}
+
+      - name: Run update.sh on the instance
+        id: ssm
+        env:
+          INSTANCE: ${{ secrets.EC2_INSTANCE_ID }}
+          REF: ${{ github.event.inputs.ref || 'main' }}
+        run: |
+          set -euo pipefail
+          # REF reaches a root shell on the instance. It comes from a
+          # workflow_dispatch input, so it is typed by a person — one who
+          # can already deploy, but "they could do it anyway" is not a
+          # reason to pass unvalidated text into a remote command line.
+          # A git ref cannot contain anything outside this set.
+          case "$REF" in
+            ''|*[!A-Za-z0-9._/-]*)
+              echo "::error::Refusing ref '${REF}' — expected only [A-Za-z0-9._/-]"; exit 1 ;;
+          esac
+          echo "Deploying ref '${REF}'"
+          CMD=$(aws ssm send-command \
+            --instance-ids "$INSTANCE" \
+            --document-name AWS-RunShellScript \
+            --comment "GH Actions deploy ${GITHUB_SHA:0:7}" \
+            --timeout-seconds 600 \
+            --parameters "commands=[\"sudo /opt/agentic-pms/deploy/service/update.sh ${REF}\"]" \
+            --query 'Command.CommandId' --output text)
+          echo "command id: $CMD"
+
+          # aws ssm wait command-executed returns non-zero on a failed
+          # command, which would hide the output we actually need to read.
+          # Poll instead, then decide on the real status.
+          for i in $(seq 1 90); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE" \
+              --query 'Status' --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut) break ;;
+            esac
+            sleep 10
+          done
+
+          OUT=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE" \
+            --query 'StandardOutputContent' --output text || true)
+          ERR=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE" \
+            --query 'StandardErrorContent' --output text || true)
+          echo "----- stdout -----"; echo "$OUT"
+          # Plain `if` rather than `[ -n "$ERR" ] && { ...; }`. Both are
+          # safe under `set -e` — a failing test that is not the last
+          # command of an && list is exempt — but the one-liner reads like
+          # it might not be, and this runs on the path that deploys.
+          if [ -n "$ERR" ]; then echo "----- stderr -----"; echo "$ERR"; fi
+          {
+            echo '### Deploy output'
+            echo '```'; echo "$OUT"; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          [ "$STATUS" = Success ] || { echo "::error::SSM command finished as ${STATUS}"; exit 1; }
+
+          # A DEPLOY THAT MOVED NOTHING IS A FAILED DEPLOY, not a quiet
+          # success. update.sh says so in as many words precisely because a
+          # no-op once read as a real deploy and was believed for days —
+          # that is what git-report.sh was added for. Catch it here too, or
+          # the automation reintroduces the bug the script was written to
+          # prevent.
+          case "$OUT" in
+            *"NOTHING NEW was deployed"*)
+              echo "::error::update.sh reported no change — the box did not move to this commit."
+              exit 1 ;;
+            *"Healthy."*) echo "Deploy moved the checkout and the API came back healthy." ;;
+            *) echo "::error::update.sh did not report a healthy finish."; exit 1 ;;
+          esac
+
+      - name: Verify the API answers
+        env:
+          INSTANCE: ${{ secrets.EC2_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+          CMD=$(aws ssm send-command --instance-ids "$INSTANCE" \
+            --document-name AWS-RunShellScript \
+            --parameters 'commands=["curl -fsS -o /dev/null -w %{http_code} http://127.0.0.1/api/v1/health","git -C /opt/agentic-pms rev-parse --short HEAD"]' \
+            --query 'Command.CommandId' --output text)
+          for i in $(seq 1 30); do
+            S=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE" \
+              --query 'Status' --output text 2>/dev/null || echo Pending)
+            case "$S" in Success|Failed|Cancelled|TimedOut) break ;; esac
+            sleep 5
+          done
+          OUT=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE" \
+            --query 'StandardOutputContent' --output text)
+          echo "$OUT"
+          echo "### Post-deploy check" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"; echo "$OUT" >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          case "$OUT" in 200*) ;; *) echo "::error::health check did not return 200"; exit 1 ;; esac
