@@ -96,4 +96,27 @@ module.exports.up = async (db) => {
   }
 };
 
+// WHAT SURVIVES INTO THE CURRENT PAGE SET. 069 replaced the bespoke HRBP
+// views with HR's own pages on parallel /hrbp/* routes and retired
+// /hrbp/employees outright, so of this migration's rows only the HR screen
+// that ASSIGNS a remit is still a page. It matters on a fresh deploy: with
+// no /admin/hrbp row, nobody can give an HRBP any locations or HODs to
+// look after, so every HRBP sees an empty product and the tab looks
+// broken rather than unconfigured.
+//
+// Called at boot by index.js for the same reason as 042's: a migration
+// cannot seed a tenant row that does not exist yet.
+const SURVIVING = PAGES.filter(([page]) => page === 'hrbp_admin');
+
+async function ensureHrbpScopePages(db, tenantId) {
+  for (const [page, route, perm] of SURVIVING) {
+    await db.query(
+      `INSERT INTO core.page_permission (tenant_id, page, route, required_permission)
+       VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_id, page) DO NOTHING`,
+      [tenantId, page, route, perm]);
+  }
+}
+
 module.exports.PAGES = PAGES;
+module.exports.SURVIVING = SURVIVING;
+module.exports.ensureHrbpScopePages = ensureHrbpScopePages;

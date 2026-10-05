@@ -40,6 +40,15 @@ async function main() {
   // 042 ran would have no page rows, and the sidebar would fall back to
   // showing every page to everyone.
   await require('./migrations/042-seed-page-permissions').ensurePageSeeds(db, TENANT_ID);
+  // The page rows added after 042. Each is here for the same reason 042 is
+  // — a migration's loop over core.tenants finds nothing on a fresh deploy,
+  // because the tenant above is created after runMigrations(). Without
+  // these, a new install silently has no HRBP tab, no RnR screens, and no
+  // way for HR to assign an HRBP their people. Every one is idempotent and
+  // leaves an existing row alone, so a client's own edits survive a boot.
+  await require('./migrations/068-hrbp-scope').ensureHrbpScopePages(db, TENANT_ID);
+  await require('./migrations/069-hrbp-all-hr-pages').ensureHrbpPages(db, TENANT_ID);
+  await require('./migrations/078-rnr-pages').ensureRnrPages(db, TENANT_ID);
 
   const app = express();
   app.use(cors());

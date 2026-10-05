@@ -14,6 +14,19 @@ const PAGES = [
   ['rnr_admin', '/admin/rnr', 'pms_admin'],
 ];
 
+// Also called at boot — see the note in 069. A migration cannot seed a
+// tenant that is created after it runs, so without this a fresh deploy
+// gets no RnR menu entries at all and every /rnr/* URL is refused by the
+// page guard, which reads the same rows.
+async function ensureRnrPages(db, tenantId) {
+  for (const [page, route, perm] of PAGES) {
+    await db.query(
+      `INSERT INTO core.page_permission (tenant_id, page, route, required_permission)
+       VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_id, page) DO NOTHING`,
+      [tenantId, page, route, perm]);
+  }
+}
+
 async function up(db) {
   for (const { id } of (await db.query(`SELECT id FROM core.tenants`)).rows) {
     for (const [page, route, perm] of PAGES) {
@@ -25,4 +38,4 @@ async function up(db) {
     }
   }
 }
-module.exports = { up, PAGES };
+module.exports = { up, ensureRnrPages, PAGES };

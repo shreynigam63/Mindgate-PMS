@@ -53,14 +53,38 @@ const RETIRED = ['/hrbp/employees'];
 // exactly those two tabs.
 const ROLE_GRANTS = ['pms_compensation'];
 
+// CALLED AT BOOT TOO, not only from up(). No migration can seed a tenant
+// that does not exist yet: index.js creates the tenant row AFTER
+// runMigrations(), so on a fresh deploy this migration's loop over
+// core.tenants finds nothing and the HRBP tab simply never appears — the
+// menu and the URL guard both read page_permission, so the whole tab is
+// silently absent rather than broken in a way anyone would notice. 042
+// already carries this shape for exactly the same reason; these rows were
+// added later and did not.
+//
+// DO NOTHING on conflict, not DO UPDATE: this runs on every boot, and the
+// table is data a client is meant to edit. up() keeps the UPDATE, because
+// there it is a one-time correction for tenants that still carry the 068
+// route set.
+async function ensureHrbpPages(db, tenantId) {
+  for (const perm of ROLE_GRANTS) {
+    await db.query(
+      `INSERT INTO core.role_permissions (tenant_id, role, permission) VALUES ($1,'hrbp',$2)
+       ON CONFLICT DO NOTHING`, [tenantId, perm]);
+  }
+  for (const [page, route] of PAGES) {
+    await db.query(
+      `INSERT INTO core.page_permission (tenant_id, page, route, required_permission)
+       VALUES ($1,$2,$3,'pms_hrbp') ON CONFLICT (tenant_id, page) DO NOTHING`,
+      [tenantId, page, route]);
+  }
+}
+
 async function up(db) {
   const tenants = (await db.query(`SELECT id FROM core.tenants`)).rows;
   for (const t of tenants) {
-    for (const perm of ROLE_GRANTS) {
-      await db.query(
-        `INSERT INTO core.role_permissions (tenant_id, role, permission) VALUES ($1,'hrbp',$2)
-         ON CONFLICT DO NOTHING`, [t.id, perm]);
-    }
+    await ensureHrbpPages(db, t.id);
+    // The corrective pass, for a tenant that already holds the 068 rows.
     for (const [page, route] of PAGES) {
       await db.query(
         `INSERT INTO core.page_permission (tenant_id, page, route, required_permission)
@@ -75,4 +99,4 @@ async function up(db) {
   }
 }
 
-module.exports = { up, PAGES, RETIRED, ROLE_GRANTS };
+module.exports = { up, ensureHrbpPages, PAGES, RETIRED, ROLE_GRANTS };
