@@ -77,11 +77,38 @@ jobs:
       - name: Install server dependencies
         working-directory: server
         run: npm ci --no-audit --no-fund
+      # The failing test names go into the job summary AND into
+      # annotations. Raw logs are served from a blob host that some API
+      # clients will not follow, so "the gate went red" was readable and
+      # "which test" was not — on the very first run of this workflow.
+      # Annotations come back from the check-runs API, so the answer is
+      # reachable by whoever (or whatever) is looking.
       - name: Run the server suite
         working-directory: server
         env:
           DATABASE_URL: postgres://postgres:pw@127.0.0.1:5432/apms_ci
-        run: npm test
+        run: |
+          set -o pipefail
+          FAILED=
+          npm test 2>&1 | tee /tmp/suite.log || FAILED=1
+          {
+            echo '### Server suite'
+            echo '```'
+            grep -E '^# (tests|pass|fail|skipped)' /tmp/suite.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$FAILED" ]; then
+            {
+              echo '#### Failures'
+              echo '```'
+              grep -E '^not ok ' /tmp/suite.log | head -50 || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            grep -E '^not ok ' /tmp/suite.log | head -20 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            exit 1
+          fi
 
   # ------------------------------------------------------------ preflight
   # `secrets` is not available in a job-level `if`, so the check happens in
