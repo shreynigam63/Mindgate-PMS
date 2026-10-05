@@ -11,6 +11,7 @@
 // Configuration per instance: ANTHROPIC_API_KEY (absent = agentic features
 // return 503 with a clear message, everything else works), AI_MODEL.
 
+const crypto = require('crypto');
 const db = require('./db');
 const logger = require('./logger');
 
@@ -18,6 +19,81 @@ const MODEL = process.env.AI_MODEL || 'claude-sonnet-4-5';
 const API = 'https://api.anthropic.com/v1/messages';
 
 function aiEnabled() { return !!process.env.ANTHROPIC_API_KEY; }
+
+// ---- what the boot log says about the key ------------------------------
+//
+// A key that is absent, truncated, or still wrapped in the quotes somebody
+// typed into the env file does not announce itself. The app starts
+// perfectly, every screen works, and the first person to find out is
+// whoever clicks an AI button — which, the way this product gets used, is
+// somebody in a demo. Config this quiet should say what it is at boot.
+//
+// WHAT THIS MAY PRINT: whether a key is set, how long it is, what looks
+// wrong with it, and a FINGERPRINT. Never the key, never a prefix or
+// suffix of it. The fingerprint is sha256 truncated to 8 hex characters —
+// enough to answer "did the rotation actually land" and "are these two
+// boxes on the same key" by comparing two log lines, and useless to
+// anybody who reads it.
+//
+// It fingerprints the value EXACTLY as the app will send it, not a
+// cleaned-up copy. That is deliberate: a trailing newline left by an
+// editor produces a different fingerprint from the key you believe you
+// pasted, which is precisely the mistake worth catching.
+const KEY_PREFIX = 'sk-ant-';
+const MIN_KEY_LENGTH = 40;   // every real key is far longer; this only catches a truncated paste
+
+/** Inspect a key without revealing it. Pure: no env, no logger, no I/O. */
+function apiKeyStatus(raw, model) {
+  if (raw == null || String(raw) === '') return { configured: false, model, problems: [] };
+  const value = String(raw);
+  const problems = [];
+
+  let candidate = value;
+  if (candidate !== candidate.trim()) {
+    problems.push('has whitespace around it — usually a newline the editor left behind');
+    candidate = candidate.trim();
+  }
+  if (/^(["']).*\1$/.test(candidate)) {
+    problems.push('is wrapped in quotes — an env file takes the value bare');
+    candidate = candidate.slice(1, -1);
+  }
+  if (/\s/.test(candidate)) problems.push('contains a space or newline inside it — probably pasted across two lines');
+  if (!candidate.startsWith(KEY_PREFIX)) problems.push(`does not start with "${KEY_PREFIX}"`);
+  if (candidate.length < MIN_KEY_LENGTH) problems.push(`is ${candidate.length} characters, shorter than any real key — truncated paste`);
+
+  return {
+    configured: true,
+    model,
+    length: value.length,
+    fingerprint: crypto.createHash('sha256').update(value).digest('hex').slice(0, 8),
+    problems,
+  };
+}
+
+/**
+ * One line at boot. Takes its logger and env so the test can watch what it
+ * emits rather than trust it.
+ *
+ * A bad key WARNS, it does not stop the boot. AI is optional here by
+ * design — absent key means agentic endpoints answer 503 and nothing else
+ * changes — so refusing to start would take an entire working PMS down
+ * over a feature nobody may be using that day. That is the opposite trade
+ * from a failed migration, which does stop the boot, because a schema the
+ * code expects and does not have is broken rather than merely reduced.
+ */
+function logApiKeyStatus(log = logger, env = process.env) {
+  const status = apiKeyStatus(env.ANTHROPIC_API_KEY, env.AI_MODEL || MODEL);
+  if (!status.configured) {
+    log.info('ai disabled — ANTHROPIC_API_KEY is not set, agentic endpoints will answer 503',
+      { model: status.model });
+  } else if (status.problems.length) {
+    log.warn('ai key is set but looks wrong — agentic endpoints will fail at the Anthropic API',
+      { fingerprint: status.fingerprint, length: status.length, model: status.model, problems: status.problems });
+  } else {
+    log.info('ai enabled', { fingerprint: status.fingerprint, length: status.length, model: status.model });
+  }
+  return status;
+}
 
 // Tolerant JSON extraction from a model reply (pure, tested).
 // Index of the brace that closes the object opened at `start`, ignoring
@@ -279,4 +355,5 @@ async function narrate({ tenantId, kind, ref, system, input, requestedBy, maxTok
   return { id: saved.rows[0].id, created_at: saved.rows[0].created_at, draft };
 }
 
-module.exports = { narrate, parseAiJson, stripRatingSuggestions, aiEnabled, ensureTable, upstreamFailure };
+module.exports = { narrate, parseAiJson, stripRatingSuggestions, aiEnabled, ensureTable, upstreamFailure,
+  apiKeyStatus, logApiKeyStatus };

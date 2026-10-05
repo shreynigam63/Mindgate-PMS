@@ -18,6 +18,14 @@ async function main() {
   const missing = REQUIRED_ENV.filter(k => !process.env[k]);
   if (missing.length) { logger.error('Missing required env', { missing }); process.exit(1); }
 
+  // Says at boot whether the Anthropic key is set and whether it looks
+  // usable — a fingerprint, never the key. Before this, a key that was
+  // absent, truncated, or still carrying the quotes from an env-file edit
+  // first showed up as a 503 under somebody's finger in a demo. Here
+  // because it is config reporting: early, before the slow work, so it is
+  // the top of the log rather than buried under migrations.
+  require('./core/ai').logApiKeyStatus();
+
   await db.waitForDatabase(); // tolerates the DB still provisioning on a fresh Blueprint sync — see core/db.js
   await runMigrations(); // throws → process exits nonzero → deploy fails loudly
 
