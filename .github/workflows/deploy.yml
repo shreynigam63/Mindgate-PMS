@@ -104,7 +104,20 @@ jobs:
               grep -E '^not ok ' /tmp/suite.log | head -50 || true
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            grep -E '^not ok ' /tmp/suite.log | head -20 | while IFS= read -r line; do
+            # The DISTINCT error messages, not only the test names. A
+            # suite that fails wholesale usually fails for one reason, and
+            # the reason is in the `error:` lines — naming twenty tests
+            # says how bad it is, not what happened.
+            {
+              echo '#### Distinct errors'
+              echo '```'
+              grep -hoE "error: .*" /tmp/suite.log | sort | uniq -c | sort -rn | head -15 || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            grep -hoE "error: .*" /tmp/suite.log | sort -u | head -8 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            grep -E '^not ok ' /tmp/suite.log | head -12 | while IFS= read -r line; do
               echo "::error::${line}"
             done
             exit 1
