@@ -87,6 +87,15 @@ jobs:
         working-directory: server
         env:
           DATABASE_URL: postgres://postgres:pw@127.0.0.1:5432/apms_ci
+          # core/db.js defaults SSL ON and only turns it off for this exact
+          # value. That default is right — the managed Postgres this ships
+          # against requires TLS, and defaulting to plaintext is the kind
+          # of default nobody notices. It cost a red run here because the
+          # postgres:16 image serves plaintext while the Ubuntu package a
+          # developer has locally enables SSL with a snakeoil cert, so the
+          # suite passed on a laptop and failed on the runner with "The
+          # server does not support SSL connections".
+          DATABASE_SSL: 'false'
         run: |
           set -o pipefail
           FAILED=
