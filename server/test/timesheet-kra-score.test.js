@@ -180,54 +180,67 @@ test('a ladder with no floor is refused', () => {
   assert.match(s.validateScoring({ ...CFG, min_mapped_pct: 120 }), /between 0 and 100/);
 });
 
-// ---- kraRatings: one rating per KRA (6 Oct) -------------------------------
+// ---- kraRatings: hours against required hours, per KRA (6 Oct) ------------
 
-const KR = (byKra, mapped = 100) => s.kraRatings({ by_kra: byKra, totals: { mapped_pct: mapped } },
-  { bands: BANDS, min_mapped_pct: 80 });
+const KR = (byKra, days, extra = {}, mapped = 100) => s.kraRatings({ by_kra: byKra, totals: { mapped_pct: mapped } },
+  { min_mapped_pct: 80, hours_per_day: 8, ...extra }, { working_days: days });
 const K = (id, weight, hours, scorable = true) => ({ kra_id: id, title: id, weight, hours, scorable });
 
-test('a KRA that got exactly its weight\'s share of the effort rates at the top', () => {
-  const r = KR([K('a', 30, 30), K('b', 70, 70)]);
-  for (const x of r.ratings) { assert.equal(x.effort_pct, 100); assert.equal(x.rating, 'A+'); }
-});
-
-test('half the expected share is 50%, and more than the share is capped at 100', () => {
-  const r = KR([K('a', 40, 20), K('b', 60, 80)]);
+test('THE CLIENT\'S EXAMPLE: 140 required hours, a 25% KRA expects 35 h', () => {
+  // 17.5 working days x 8 h = 140 h. Four KRAs at 25% each.
+  const r = KR([K('a', 25, 35), K('b', 25, 17.5), K('c', 25, 10), K('d', 25, 0)], 17.5);
+  assert.equal(r.required_hours, 140);
   const by = Object.fromEntries(r.ratings.map((x) => [x.kra_id, x]));
-  assert.equal(by.a.effort_pct, 50);
-  assert.equal(by.b.effort_pct, 100, 'over-investing is not rewarded above full marks');
+  assert.equal(by.a.expected_hours, 35);
+  assert.equal(by.a.effort_pct, 100); assert.equal(by.a.rating, 'A+');
+  assert.equal(by.b.effort_pct, 50, '70 of 140 is 50% — the same rule on one KRA');
+  assert.equal(by.b.rating, 'A', '40% up to 80% is A');
+  assert.equal(by.c.effort_pct, 28.6); assert.equal(by.c.rating, 'B', 'below 40% is B');
+  assert.equal(by.d.rating, 'B');
 });
 
-test('part-timers and partial months: only the proportions matter, not the total hours', () => {
-  const full = KR([K('a', 50, 80), K('b', 50, 80)]);
-  const part = KR([K('a', 50, 8), K('b', 50, 8)]);
-  assert.deepEqual(full.ratings.map((x) => x.rating), part.ratings.map((x) => x.rating));
+test('the client\'s ladder: B below 40, A from 40, A+ from 80, capped at 100', () => {
+  const at = (h) => KR([K('a', 100, h)], 10).ratings[0];   // 80 h required
+  assert.equal(at(31.9).rating, 'B');
+  assert.equal(at(32).rating, 'A', 'exactly 40% is A');
+  assert.equal(at(63.9).rating, 'A');
+  assert.equal(at(64).rating, 'A+', 'exactly 80% is A+');
+  assert.equal(at(200).effort_pct, 100, 'overtime does not score above 100');
 });
 
-test('a KRA not measured from timesheets is not rated, and is not in anyone\'s denominator', () => {
-  const r = KR([K('a', 40, 10), K('b', 40, 10), K('csat', 20, 0, false)]);
+test('a KRA not measured from timesheets expects no hours, and its weight is shared out', () => {
+  // 20 days x 8 = 160 h; CSAT 20% unmeasured, so the 40% KRAs expect 80 h each.
+  const r = KR([K('a', 40, 80), K('b', 40, 40), K('csat', 20, 0, false)], 20);
   const by = Object.fromEntries(r.ratings.map((x) => [x.kra_id, x]));
-  assert.equal(by.csat.rating, null);
-  assert.equal(by.csat.measured, false);
-  assert.equal(by.a.expected_pct, 50, 'expected share is over the measured KRAs only');
-  assert.equal(by.a.rating, 'A+');
+  assert.equal(by.csat.rating, null); assert.equal(by.csat.measured, false);
+  assert.equal(by.a.expected_hours, 80); assert.equal(by.a.rating, 'A+');
+  assert.equal(by.b.effort_pct, 50);
+});
+
+test('hours per day is the tenant\'s', () => {
+  assert.equal(KR([K('a', 100, 10)], 10, { hours_per_day: 9 }).required_hours, 90);
 });
 
 test('no mapped hours: no ratings invented, and a sentence saying why', () => {
-  const r = KR([K('a', 50, 0), K('b', 50, 0)], 0);
+  const r = KR([K('a', 50, 0), K('b', 50, 0)], 20, {}, 0);
   assert.ok(r.ratings.every((x) => x.rating === null));
   assert.match(r.note, /None of the logged hours are placed/);
 });
 
-test('a thin mapping still rates, but says it is thin', () => {
-  const r = KR([K('a', 50, 5), K('b', 50, 5)], 13);
+test('a thin mapping still rates, and says unmapped hours count for no KRA', () => {
+  const r = KR([K('a', 50, 40), K('b', 50, 40)], 20, {}, 13);
   assert.equal(r.thin, true);
   assert.match(r.note, /13% of the hours logged/);
-  assert.equal(r.ratings[0].rating, 'A+');
 });
 
-test('kra_bands, when HR sets them, are used instead of the monthly ladder', () => {
-  const r = s.kraRatings({ by_kra: [K('a', 50, 10), K('b', 50, 0)], totals: { mapped_pct: 100 } },
-    { bands: BANDS, kra_bands: [{ label: 'Met', min: 80 }, { label: 'Not met', min: 0 }] });
+test('HR\'s own KRA bands replace the default ladder', () => {
+  const r = KR([K('a', 50, 80), K('b', 50, 0)], 20, { kra_bands: [{ label: 'Met', min: 90 }, { label: 'Not met', min: 0 }] });
   assert.deepEqual(r.ratings.map((x) => x.rating), ['Met', 'Not met']);
+});
+
+test('KRA bands and hours per day are validated like the rest of scoring', () => {
+  const base = { weight_coverage: 50, weight_compliance: 30, weight_value_add: 20, min_mapped_pct: 80 };
+  assert.match(s.validateScoring({ ...base, hours_per_day: 0 }), /Hours per day/);
+  assert.match(s.validateScoring({ ...base, kra_bands: [{ label: 'A', min: 40 }] }), /must start at 0/);
+  assert.equal(s.validateScoring({ ...base, hours_per_day: 8, kra_bands: s.DEFAULT_KRA_BANDS }), null);
 });

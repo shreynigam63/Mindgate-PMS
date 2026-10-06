@@ -31,11 +31,13 @@ export function TimesheetRatingNote({ data }) {
   if (!data.has_entries) {
     return <p className="text-[11px] text-navy-400"><Clock3 size={11} className="inline mr-1 -mt-px" />No timesheet uploaded for this cycle yet, so there is no timesheet rating.</p>;
   }
+  const ladder = (k.bands || []).slice().sort((x, y) => y.min - x.min).map((b) => `${b.label} ≥ ${b.min}%`).join(', ');
   return (
     <p className={`text-[11px] ${k.thin ? 'text-amber-700' : 'text-navy-500'}`}>
       <Info size={11} className="inline mr-1 -mt-px" />
-      Timesheet rating: each KRA's share of the hours placed against KRAs, compared with its weight,
-      over {data.window.from} – {data.window.to}. Shown as evidence — your rating is the one that counts.
+      Timesheet rating, {data.window.from} – {data.window.to}: {k.working_days} working days × {k.hours_per_day} h
+      = <b>{k.required_hours} h required</b>, shared across the KRAs by weight. Each KRA's hours ÷ its expected hours
+      gives its % ({ladder}). Shown as evidence — your rating is the one that counts.
       {k.note ? ` ${k.note}` : ''}
     </p>
   );
@@ -52,11 +54,10 @@ export function TimesheetRatingChip({ data, kraId }) {
     return <span className="text-[11px] text-navy-400">Timesheet: {row.reason ? row.reason.toLowerCase() : '—'}</span>;
   }
   return (
-    <span className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-navy-500"
-      title={`${row.hours} h on this KRA — ${row.share_pct}% of placed hours against an expected ${row.expected_pct}%`}>
+    <span className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-navy-500">
       Timesheet:
       <span className={`chip ${TONE[row.rating] || 'bg-navy-50 text-navy-700'}`}>{row.rating}</span>
-      <span>effort {row.effort_pct}% · {row.share_pct}% of hours vs {row.expected_pct}% expected</span>
+      <span>{row.hours} h worked of {row.expected_hours} h expected · {row.effort_pct}%</span>
     </span>
   );
 }

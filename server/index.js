@@ -84,6 +84,8 @@ async function main() {
   // statements and holidays — called here for the same reason as the two
   // above, from the day it was written.
   await require('./migrations/081-onboarding').seedFor(db, TENANT_ID);
+  // Who each onboarding task's email goes to — after 081, which creates the rows.
+  await require('./migrations/082-onboarding-spocs').ensureSpocRoles(db, TENANT_ID);
 
   const app = express();
   app.use(cors());

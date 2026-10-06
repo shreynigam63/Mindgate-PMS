@@ -390,29 +390,31 @@ breadth over value: on the real client month, every hour in one KRA scored
 
 The monthly rollup feeds Calibration as a **suggestion only**.
 
-### Timesheet rating per KRA (added 6 Oct)
+### Timesheet rating per KRA (6 Oct)
 
-Asked for directly: *"there should be rating against KRA as per timesheet
-filled"*. For every KRA measured from timesheets:
+Specified by the client: *"if 1 KRA weighs 25%, it will be based on ratings
+like A+, A, B+, B as per no of hours worked … I have to work 140 hours and
+I have worked 70 hours … <40% will have B rating, <80% will be A and <100%
+will be A+."*
 
 | Step | Formula |
 |---|---|
-| effort share | hours on the KRA ÷ hours on all measured KRAs |
-| expected share | the KRA's weight ÷ weight of all measured KRAs |
-| effort % | effort share ÷ expected share × 100, capped at 100 |
-| rating | effort % on the tenant's bands (A+ ≥ 90, A ≥ 75, B+ ≥ 60, B ≥ 45, C) |
+| required hours | working days in the period × hours per day (8 by default; weekends and the timesheet holiday list skipped) |
+| KRA expected hours | required hours × the KRA's weight ÷ weight of the KRAs measured from timesheets |
+| KRA effort % | hours placed against the KRA ÷ its expected hours, capped at 100 |
+| rating | **A+** from 80%, **A** from 40%, **B** below 40% (editable as `kra_bands`) |
 
-A 30% KRA that received 30% of the placed hours rates A+; half of that is
-50%; none is C. Only proportions count, so part-timers and partial months
-are rated fairly. KRAs marked *not measured from timesheets* are not rated
-and are left out of everyone's expected share. No mapped hours → no rating,
-with a sentence saying why; a thin mapping (below the tenant's minimum
-mapped %) still rates but is flagged on screen.
+Example: 140 h required, a 25% KRA expects 35 h; 17.5 h on it is 50% → A.
+A KRA *not measured from timesheets* expects no hours and its weight is
+shared across the others. Hours not yet mapped to a KRA count for none, so
+ratings rise as items are mapped.
 
-Where it shows: the **Timesheet** page (per month), and beside each KRA on
-**Team Evaluation** and **HOD Review** (over the cycle so far). It is
-**evidence, never the rating of record** — the client's choice, "shown
-beside, manager decides". Nothing writes it into an evaluation.
+Periods: the **Timesheet** page rates one month (to today at most). Team
+Evaluation and HOD Review rate the **days the uploads cover** within the
+cycle, so a month nobody uploaded is not counted as hours not worked.
+
+It is **evidence, never the rating of record** — "shown beside, manager
+decides". Nothing writes it into an evaluation.
 
 ## 3.8 Competencies
 
@@ -505,6 +507,13 @@ Insights (opens first; *Survey Insights* is the other tab).
   owner group named), by day.
 - **HRBP** sees and edits only joiners in their remit — the counts too.
   Holidays are company-wide, so only HR changes them.
+- **Email SPOC** on every task (and on its owner chip) drafts an email to
+  whoever does that task: Manager and Buddy from the joiner's record; HR
+  from the joiner's HR POC, else the HR desk; Recruiter, HR Ops, HRBP, IT,
+  Admin, SME and L&D from the **SPOCs** list HR keeps on this page. The
+  text is editable; every send is kept on the task. While the instance's
+  mail is in *simulated* mode the email is recorded, not delivered — the
+  screen says so and offers *Open in my mail app*.
 
 Verified against all 288 real rows of the workbook: planned date, status
 and days overdue match on every one. Three workbook faults were corrected

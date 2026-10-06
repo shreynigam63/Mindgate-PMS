@@ -88,7 +88,7 @@ before(async () => {
 after(async () => {
   if (!HAS_DB) return;
   if (server) await new Promise((r) => server.close(r));
-  for (const t of ['people.onboarding_feedback', 'people.onboarding_tasks', 'people.onboarding_joiners',
+  for (const t of ['people.onboarding_task_emails', 'people.onboarding_spocs', 'core.notif_log', 'people.onboarding_feedback', 'people.onboarding_tasks', 'people.onboarding_joiners',
     'people.onboarding_activities', 'people.onboarding_days', 'people.onboarding_feedback_questions',
     'people.onboarding_holidays', 'core.audit_log', 'core.hrbp_scope', 'core.local_credentials', 'core.user_roles',
     'core.role_permissions', 'core.employees']) {
@@ -219,4 +219,46 @@ test('taking a joiner off removes their tasks and feedback, and is audited', { s
   assert.equal(left, 0);
   const a = (await db.query(`SELECT count(*)::int n FROM core.audit_log WHERE tenant_id=$1 AND entity='onboarding' AND action='onboarding_remove'`, [tenantId])).rows[0].n;
   assert.equal(a, 1);
+});
+
+test('A TASK EMAILS ITS SPOC: the joiner\'s own people from their record, desks from the SPOC list', { skip }, async () => {
+  // Asked for on 6 Oct: "clicking on each option should initiate email to
+  // particular spoc working for that task."
+  await require('../migrations/082-onboarding-spocs').ensureSpocRoles(db, tenantId);
+  const w = (await req('GET', `/joiners/${ids.puneJoiner}?asOf=2026-10-06`, hrTok)).body.joiner;
+  const byCode = (c) => w.tasks.find((t) => t.code === c);
+
+  // Manager Connect (13) goes to the joiner's manager, from the master.
+  const mgr = await req('GET', `/tasks/${byCode(13).id}/email`, hrTok);
+  assert.equal(mgr.status, 200, JSON.stringify(mgr.body));
+  assert.deepEqual(mgr.body.to.map((x) => x.email), ['mgr@onb.x']);
+  assert.match(mgr.body.subject, /Manager Connect for Riya Sharma/);
+  assert.match(mgr.body.body, /What to do: Explain role, immediate priorities and expectations/);
+
+  // IT Readiness (4) needs the IT desk, which nobody has set: it says so.
+  const it = await req('GET', `/tasks/${byCode(4).id}/email`, hrTok);
+  assert.deepEqual(it.body.to, []);
+  assert.match(it.body.missing[0].why, /No IT SPOC email is set/);
+  const refused = await req('POST', `/tasks/${byCode(4).id}/email`, hrTok, { subject: 's', body: 'b' });
+  assert.equal(refused.status, 400, 'nothing is sent to nobody');
+
+  // HR sets the desk; an HRBP may not — it is company-wide.
+  assert.equal((await req('PUT', '/spocs/IT', hrbpTok, { email: 'it@onb.x' })).status, 403);
+  assert.equal((await req('PUT', '/spocs/IT', hrTok, { email: 'not-an-address' })).status, 400);
+  assert.equal((await req('PUT', '/spocs/IT', hrTok, { name: 'IT Desk', email: 'it@onb.x' })).status, 200);
+  assert.equal((await req('PUT', '/spocs/Manager', hrTok, { email: 'x@onb.x' })).status, 400, 'Manager comes from the master');
+
+  const ok = await req('POST', `/tasks/${byCode(4).id}/email`, hrTok, { subject: 'Laptop for Riya', body: 'Please <b>issue</b> it.' });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.deepEqual(ok.body.to, ['it@onb.x']);
+  assert.equal(ok.body.mode, 'simulated', 'the product default until HR turns live mail on — and the screen says so');
+  const log = (await db.query(`SELECT to_email, subject FROM core.notif_log WHERE tenant_id=$1 AND kind='onboarding_task'`, [tenantId])).rows;
+  assert.deepEqual(log.map((x) => x.to_email), ['it@onb.x']);
+
+  const again = (await req('GET', `/joiners/${ids.puneJoiner}?asOf=2026-10-06`, hrTok)).body.joiner;
+  assert.ok(again.tasks.find((t) => t.code === 4).last_emailed_at, 'the row shows it was emailed');
+
+  // An HRBP can email for a joiner in their remit.
+  const p = await req('POST', `/tasks/${byCode(13).id}/email`, hrbpTok, { subject: 'x', body: 'y' });
+  assert.equal(p.status, 200, JSON.stringify(p.body));
 });

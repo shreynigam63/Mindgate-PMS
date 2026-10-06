@@ -186,101 +186,110 @@ function validateScoring(s) {
   // Not normalised silently: three weights that total 90 mean somebody
   // mistyped one, and a score scaled up from them would look correct.
   if (Math.round(total) !== 100) return `The three weights must add up to 100 — they add up to ${round1(total)}.`;
-  if (s.bands !== undefined) {
-    if (!Array.isArray(s.bands) || !s.bands.length) return 'Give at least one band.';
+  if (s.hours_per_day !== undefined) {
+    const h = Number(s.hours_per_day);
+    if (!Number.isFinite(h) || h <= 0 || h > 24) return `Hours per day must be between 0 and 24 — got "${s.hours_per_day}".`;
+  }
+  for (const [key, label] of [['bands', 'band'], ['kra_bands', 'KRA band']]) {
+    const list = s[key];
+    if (list === undefined) continue;
+    if (!Array.isArray(list) || !list.length) return `Give at least one ${label}.`;
     const seen = new Set();
-    for (const b of s.bands) {
-      const label = String((b && b.label) || '').trim();
-      if (!label) return 'Every band needs a label.';
-      if (seen.has(label.toLowerCase())) return `Two bands are both called "${label}".`;
-      seen.add(label.toLowerCase());
+    for (const b of list) {
+      const l = String((b && b.label) || '').trim();
+      if (!l) return `Every ${label} needs a label.`;
+      if (seen.has(l.toLowerCase())) return `Two ${label}s are both called "${l}".`;
+      seen.add(l.toLowerCase());
       const min = Number(b && b.min);
-      if (!Number.isFinite(min) || min < 0 || min > 100) return `Band "${label}" needs a minimum between 0 and 100.`;
+      if (!Number.isFinite(min) || min < 0 || min > 100) return `${label[0].toUpperCase()}${label.slice(1)} "${l}" needs a minimum between 0 and 100.`;
     }
-    // A ladder with no floor silently returns no grade for a low score,
-    // which reads on screen as the engine failing.
-    if (!s.bands.some((b) => Number(b.min) === 0)) return 'One band must start at 0, or a low score gets no grade at all.';
+    if (!list.some((b) => Number(b.min) === 0)) return `One ${label} must start at 0, or a low score gets no grade at all.`;
   }
   return null;
 }
 
 // ---------------------------------------------------------------------------
-// A RATING FOR EACH KRA, from the timesheet. Added 6 Oct.
+// A RATING FOR EACH KRA, from the hours worked against it.
 //
-// Asked for directly: "there should be rating against KRA as per
-// timesheet filled". The coverage numbers above describe the sheet as a
-// whole; nothing turned one KRA's logged effort into a rating for that
-// KRA, which is what was wanted. The client chose the basis:
+// Asked for on 6 Oct ("there should be rating against KRA as per
+// timesheet filled") and then specified the same day:
 //
-//   "Hours on the KRA as a share of all mapped hours, compared with the
-//    KRA's weight … rates as per efforts of employee working for
-//    particular KRA. Works for part-timers and partial months."
+//   "in 6 KRAs, if 1 KRA … weighs 25%, it will be based on ratings like
+//    A+, A, B+, B as per no of hours worked by the employee for that
+//    month … e.g. I have to work 140 hours and I have worked 70 hours …
+//    <40% will have B rating, <80% will be A and <100% will be A+."
 //
-// So, per timesheet-measured KRA:
+// So, for one person and one window (a month, or the cycle so far):
 //
-//   effort share   = hours on this KRA / hours on all measured KRAs
-//   expected share = this KRA's weight / weight of all measured KRAs
-//   effort %       = effort share / expected share, capped at 100
+//   required hours  = working days in the window × hours per day
+//                     (weekends and the timesheet holiday list skipped)
+//   KRA expected h  = required hours × the KRA's weight ÷ weight of the
+//                     KRAs measured from timesheets
+//   KRA effort %    = hours placed against the KRA ÷ KRA expected h,
+//                     capped at 100
+//   rating          = effort % on the tenant's KRA bands — by default
+//                     A+ from 80, A from 40, B below 40
 //
-// A 30% KRA that got 30% of the effort scores 100% and the top band; one
-// that got 15% scores 50%; one that got none scores 0. Capped because
-// more than its share on one KRA is less than theirs on another, and
-// that shortfall is rated where it happened. Expected share is over the
-// MEASURED KRAs only, for the same reason weighted coverage is: a KRA
-// marked "not measured from timesheets" would otherwise sit in every
-// denominator as a permanent zero.
+// e.g. 140 required hours, a 25% KRA → 35 h expected; 17.5 h on it is
+// 50% → A. The weight is shared only over MEASURED KRAs: a KRA marked
+// "not measured from timesheets" expects no hours, so its weight is not
+// left as hours nobody can ever log.
 //
-// THIS IS EVIDENCE, NOT THE RATING OF RECORD — also the client's choice
-// ("shown beside, manager decides"). It is never written into a manager
-// or HOD evaluation. The bands are the tenant's (kra_bands if HR set
-// them, else the same ladder as the monthly indicator) and no rating is
-// invented when there is nothing to rate: no mapped hours means no
-// rating and a sentence saying why. A thin mapping is flagged on every
-// row rather than hidden, because a rating on 13% of the hours is still
-// worth showing a manager, as long as it says it is on 13%.
+// THE FIRST VERSION (same day) compared each KRA's share of the hours
+// with its weight. The client replaced that with this: hours against
+// required hours, which also counts how much was worked, not only how
+// it was split.
+//
+// EVIDENCE, NOT THE RATING OF RECORD — the client's choice, "shown
+// beside, manager decides". Nothing here writes into an evaluation.
+
+const DEFAULT_KRA_BANDS = [{ label: 'A+', min: 80 }, { label: 'A', min: 40 }, { label: 'B', min: 0 }];
 
 /**
- * @param {object} att  the return of timesheet-kra-match.attribute()
- * @param {object} cfg  the `scoring` blob
- * @returns {{ratings:object[], basis_hours:number, mapped_pct:number, thin:boolean, note:string|null}}
+ * @param {object} att   the return of timesheet-kra-match.attribute()
+ * @param {object} cfg   the `scoring` blob (kra_bands, hours_per_day, min_mapped_pct)
+ * @param {{working_days:number}} win  working days in the window
  */
-function kraRatings(att, cfg = {}) {
-  const bands = Array.isArray(cfg.kra_bands) && cfg.kra_bands.length ? cfg.kra_bands : cfg.bands;
+function kraRatings(att, cfg = {}, win = {}) {
+  const bands = Array.isArray(cfg.kra_bands) && cfg.kra_bands.length ? cfg.kra_bands : DEFAULT_KRA_BANDS;
+  const perDay = Number(cfg.hours_per_day) > 0 ? Number(cfg.hours_per_day) : 8;
+  const days = Math.max(0, Number(win.working_days) || 0);
+  const required = round1(days * perDay);
   const minMapped = Number(cfg.min_mapped_pct);
   const all = att.by_kra || [];
   const measured = all.filter((k) => k.scorable);
-  const basis = measured.reduce((t, k) => t + (Number(k.hours) || 0), 0);
   const weightAll = measured.reduce((t, k) => t + (Number(k.weight) || 0), 0);
+  const placed = measured.reduce((t, k) => t + (Number(k.hours) || 0), 0);
   const mappedPct = Number(att.totals && att.totals.mapped_pct) || 0;
-  const thin = Number.isFinite(minMapped) && mappedPct < minMapped;
+  const thin = Number.isFinite(minMapped) && placed > 0 && mappedPct < minMapped;
 
   let note = null;
   if (!all.length) note = 'No KRA sheet for this cycle, so there is nothing to rate the hours against.';
   else if (!measured.length) note = 'Every KRA is marked as not measured from timesheets.';
-  else if (!(basis > 0)) note = 'None of the logged hours are placed against a KRA yet. Map the work items to rate each KRA.';
+  else if (!(required > 0)) note = 'No working days in this period, so no hours were required.';
+  else if (!(placed > 0)) note = 'None of the logged hours are placed against a KRA yet. Map the work items to rate each KRA.';
   else if (thin) {
-    note = `Based on ${round1(basis)} h placed against KRAs — ${mappedPct}% of the hours logged, `
-      + `below the ${minMapped}% this tenant expects. Treat these as indicative until more items are mapped.`;
+    note = `Only ${mappedPct}% of the hours logged are placed against a KRA (this tenant expects ${minMapped}%). `
+      + 'Hours not yet mapped count for no KRA, so these ratings will rise as more items are mapped.';
   }
 
   const ratings = all.map((k) => {
     const row = { kra_id: k.kra_id, title: k.title, weight: Number(k.weight) || 0, hours: Number(k.hours) || 0 };
     if (!k.scorable) {
-      return { ...row, measured: false, effort_pct: null, rating: null,
+      return { ...row, measured: false, expected_hours: null, effort_pct: null, rating: null,
         reason: k.untracked_reason || 'Not measured from timesheets' };
     }
-    if (!(basis > 0) || !(weightAll > 0) || !(row.weight > 0)) {
-      return { ...row, measured: true, effort_pct: null, rating: null, share_pct: null,
-        expected_pct: weightAll > 0 ? round1((row.weight / weightAll) * 100) : null,
-        reason: !(row.weight > 0) ? 'This KRA carries no weight' : 'No mapped hours yet' };
+    const expected = weightAll > 0 ? round1((required * row.weight) / weightAll) : 0;
+    if (!(expected > 0) || !(placed > 0)) {
+      return { ...row, measured: true, expected_hours: expected || null, effort_pct: null, rating: null,
+        reason: !(row.weight > 0) ? 'This KRA carries no weight' : !(required > 0) ? 'No working days' : 'No mapped hours yet' };
     }
-    const share = row.hours / basis;
-    const expected = row.weight / weightAll;
-    const effort = round1(clamp((share / expected) * 100, 0, 100));
-    return { ...row, measured: true, share_pct: round1(share * 100), expected_pct: round1(expected * 100),
-      effort_pct: effort, rating: gradeFor(effort, bands), reason: null };
+    const effort = round1(clamp((row.hours / expected) * 100, 0, 100));
+    return { ...row, measured: true, expected_hours: expected, effort_pct: effort,
+      rating: gradeFor(effort, bands), reason: null };
   });
-  return { ratings, basis_hours: round1(basis), mapped_pct: mappedPct, thin, note };
+  return { ratings, required_hours: required, working_days: days, hours_per_day: perDay,
+    placed_hours: round1(placed), mapped_pct: mappedPct, thin, note, bands };
 }
 
-module.exports = { summarise, gradeFor, validateScoring, kraRatings };
+module.exports = { summarise, gradeFor, validateScoring, kraRatings, DEFAULT_KRA_BANDS };

@@ -195,6 +195,19 @@ async function inheritFromShelf(tenantId, target, kras) {
   }
 }
 
+// Working days from `from` to `to` inclusive: weekdays not on the
+// timesheet holiday list — the same days compliance counts as owed.
+function workingDays(from, to, holidays = []) {
+  if (!from || !to || to < from) return 0;
+  const hol = new Set(holidays || []);
+  let n = 0;
+  for (let t = Date.parse(`${from}T00:00:00Z`), end = Date.parse(`${to}T00:00:00Z`); t <= end; t += 86400000) {
+    const d = new Date(t); const w = d.getUTCDay();
+    if (w !== 0 && w !== 6 && !hol.has(d.toISOString().slice(0, 10))) n += 1;
+  }
+  return n;
+}
+
 // ---------------------------------------------------------------------------
 // The monthly read: one person, one window.
 
@@ -251,7 +264,12 @@ async function reportFor(req, target, q) {
 
   const sum = score.summarise(att, va, compliancePct, cfg.scoring);
   // One rating per KRA from the same attribution — see kraRatings.
-  const kraRating = score.kraRatings(att, cfg.scoring);
+  // Required hours run to today at the latest: the unfinished part of a
+  // month in progress cannot have been worked yet.
+  const today = new Date().toISOString().slice(0, 10);
+  const kraRating = score.kraRatings(att, cfg.scoring, {
+    working_days: workingDays(win.from, win.to < today ? win.to : today, settings.holidays),
+  });
 
   return {
     employee: target,
@@ -313,16 +331,19 @@ router.get('/ratings/:id', async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     // to_char, not a Date: a date column read as a JS Date sits at local
     // midnight, and toISOString on a box east of UTC moves it a day back.
-    let from = cycle ? ((await db.query(
+    // THE PERIOD THE UPLOADS COVER, inside the cycle: from the first day
+    // logged to the last. Required hours are counted over this span, so
+    // a month nobody has uploaded yet is not counted as hours not worked.
+    const opens = cycle ? ((await db.query(
       `SELECT to_char(opens_at,'YYYY-MM-DD') d FROM pms.cycles WHERE tenant_id=$1 AND id=$2`,
       [T(req), cycle.id])).rows[0] || {}).d || null : null;
-    if (!from) {
-      const first = (await db.query(
-        `SELECT to_char(min(log_date),'YYYY-MM-DD') d FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2`,
-        [T(req), target.id])).rows[0];
-      from = (first && first.d) || today;
-    }
-    const r = await reportFor(req, target, { from, to: today < from ? from : today });
+    const span = (await db.query(
+      `SELECT to_char(min(log_date),'YYYY-MM-DD') lo, to_char(max(log_date),'YYYY-MM-DD') hi
+         FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2 AND ($3::date IS NULL OR log_date >= $3::date)`,
+      [T(req), target.id, opens])).rows[0] || {};
+    const from = span.lo || opens || today;
+    const to = span.hi || today;
+    const r = await reportFor(req, target, { from, to: to < from ? from : to });
     res.json({ employee_id: target.id, cycle: r.cycle, window: r.window, has_entries: r.has_entries,
       totals: r.totals, kra_ratings: r.kra_ratings });
   } catch (e) {

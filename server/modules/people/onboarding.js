@@ -22,6 +22,9 @@ const logger = require('../../core/logger');
 const { hasPermission } = require('../../core/permissions');
 const hrbpScope = require('./hrbp-scope');
 const cal = require('./onboarding-calendar');
+const spoc = require('./onboarding-spoc');
+const { sendMail, sendMode } = require('../../core/mail');
+const { ROLES, PER_JOINER } = require('../../migrations/082-onboarding-spocs');
 
 const { guardUuidParams } = require('../../core/http');
 
@@ -70,8 +73,8 @@ async function load(tenantId, asOf, ids, joinerId = null) {
   const js = (await db.query(
     `SELECT j.id, j.employee_id, to_char(j.doj,'YYYY-MM-DD') doj,
             e.name, e.email, e.emp_code, e.designation, e.department, e.location, e.status AS employee_status,
-            m.name AS manager_name, b.id AS buddy_id, b.name AS buddy_name,
-            h.id AS hr_poc_id, h.name AS hr_poc_name, j.started_by, j.started_at
+            m.name AS manager_name, m.email AS manager_email, b.id AS buddy_id, b.name AS buddy_name, b.email AS buddy_email,
+            h.id AS hr_poc_id, h.name AS hr_poc_name, h.email AS hr_poc_email, j.started_by, j.started_at
        FROM people.onboarding_joiners j
        JOIN core.employees e ON e.id = j.employee_id
        LEFT JOIN core.employees m ON m.id = e.manager_id
@@ -86,8 +89,12 @@ async function load(tenantId, asOf, ids, joinerId = null) {
     `SELECT t.id, t.joiner_id, a.id AS activity_id, a.code, a.theme, a.activity, a.owner, a.owner_groups,
             a.process, a.outcome, a.day_offset, a.mandatory, a.ack_required,
             to_char(t.completed_on,'YYYY-MM-DD') completed_on, t.ack_received, t.remarks, t.issue,
-            t.action_owner, to_char(t.closure_date,'YYYY-MM-DD') closure_date, t.updated_by, t.updated_at
+            t.action_owner, to_char(t.closure_date,'YYYY-MM-DD') closure_date, t.updated_by, t.updated_at,
+            COALESCE(a.spoc_roles, '{}') AS spoc_roles,
+            le.sent_at AS last_emailed_at, le.to_emails AS last_emailed_to, le.outcome AS last_email_outcome
        FROM people.onboarding_tasks t
+       LEFT JOIN LATERAL (SELECT sent_at, to_emails, outcome FROM people.onboarding_task_emails x
+                           WHERE x.task_id = t.id ORDER BY sent_at DESC LIMIT 1) le ON true
        JOIN people.onboarding_activities a ON a.id = t.activity_id
       WHERE t.tenant_id=$1 AND t.joiner_id = ANY($2::uuid[])
       ORDER BY a.day_offset, a.sort`, [tenantId, js.map((j) => j.id)])).rows;
@@ -423,6 +430,120 @@ router.put('/joiners/:id/feedback', async (req, res) => {
 
 // Holidays apply to everybody's plan, so they are HR's alone — the
 // gateway refuses an HRBP write here (TENANT_WIDE).
+// ---- emailing the SPOC of a task --------------------------------------------
+
+async function directoryFor(tenantId) {
+  const r = await db.query(`SELECT role, name, email FROM people.onboarding_spocs WHERE tenant_id=$1`, [tenantId]);
+  return Object.fromEntries(r.rows.map((x) => [x.role, { name: x.name, email: x.email }]));
+}
+
+// One task, with its joiner, for the email routes — through load(), so
+// the remit, the planned date and the status are exactly the screen's.
+async function taskWithJoiner(req, taskId) {
+  const t = (await db.query(`SELECT joiner_id FROM people.onboarding_tasks WHERE tenant_id=$1 AND id=$2`, [T(req), taskId])).rows[0];
+  if (!t) return null;
+  const { joiners } = await load(T(req), today(), await remitIds(req), t.joiner_id);
+  if (!joiners.length) return null;
+  const task = joiners[0].tasks.find((x) => x.id === taskId);
+  return task ? { task, joiner: joiners[0] } : null;
+}
+
+// The SPOC directory: every role, with the address HR set for it. The
+// joiner-specific roles are listed so the screen can say where they come
+// from, and are not editable here.
+router.get('/spocs', async (req, res) => {
+  if (!(await guard(req, res))) return;
+  try {
+    const dir = await directoryFor(T(req));
+    res.json({ spocs: ROLES.map((role) => ({
+      role, per_joiner: PER_JOINER.includes(role),
+      name: dir[role] ? dir[role].name : null, email: dir[role] ? dir[role].email : null,
+      note: role === 'Manager' ? "The joiner's reporting manager, from the employee master"
+        : role === 'Buddy' ? 'The buddy chosen for each joiner'
+          : role === 'HR' ? "The joiner's HR POC when one is chosen; this address otherwise" : null,
+    })) });
+  } catch (e) { logger.error('onboarding spocs', { error: e.message }); res.status(500).json({ error: 'Could not load the SPOCs.' }); }
+});
+
+router.put('/spocs/:role', async (req, res) => {
+  if (!(await guard(req, res))) return;
+  const role = String(req.params.role);
+  if (!ROLES.includes(role) || PER_JOINER.includes(role)) return res.status(400).json({ error: `${role} is not a SPOC role set here.` });
+  const email = String((req.body || {}).email || '').trim();
+  const name = String((req.body || {}).name || '').trim() || null;
+  try {
+    if (!email) {
+      await db.query(`DELETE FROM people.onboarding_spocs WHERE tenant_id=$1 AND role=$2`, [T(req), role]);
+    } else {
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: `"${email}" is not an email address.` });
+      await db.query(
+        `INSERT INTO people.onboarding_spocs (tenant_id, role, name, email, updated_by) VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (tenant_id, role) DO UPDATE SET name=EXCLUDED.name, email=EXCLUDED.email,
+           updated_by=EXCLUDED.updated_by, updated_at=now()`, [T(req), role, name, email, req.user.email]);
+    }
+    audit(req, 'onboarding_spoc', { role, email: email || null, name });
+    res.json({ ok: true });
+  } catch (e) { logger.error('onboarding spoc save', { error: e.message }); res.status(500).json({ error: 'Could not save.' }); }
+});
+
+// The draft: who it goes to, who is missing and why, and the text.
+router.get('/tasks/:id/email', async (req, res) => {
+  if (!(await guard(req, res))) return;
+  try {
+    const tj = await taskWithJoiner(req, req.params.id);
+    if (!tj) return res.status(404).json({ error: 'No such task on your tracker.' });
+    const r = spoc.recipients(tj.task.spoc_roles, tj.joiner, await directoryFor(T(req)));
+    const sender = (await db.query(`SELECT name, email FROM core.employees WHERE tenant_id=$1 AND id=$2`, [T(req), req.user.id])).rows[0]
+      || { email: req.user.email };
+    const history = (await db.query(
+      `SELECT to_emails, subject, mode, outcome, sent_by, sent_at FROM people.onboarding_task_emails
+        WHERE tenant_id=$1 AND task_id=$2 ORDER BY sent_at DESC LIMIT 10`, [T(req), req.params.id])).rows;
+    // 'simulated' is the product's safe default until HR turns live mail
+    // on, and the screen must say so: an email that was only logged must
+    // not look sent.
+    res.json({ ...r, ...spoc.draft(tj.task, tj.joiner, sender), roles: tj.task.spoc_roles, history,
+      mail_mode: await sendMode(T(req)) });
+  } catch (e) { logger.error('onboarding email draft', { error: e.message }); res.status(500).json({ error: 'Could not prepare the email.' }); }
+});
+
+// Send it. The recipients are re-resolved here, never taken from the
+// body: an address typed into a request is not an address this task's
+// SPOC list produced. Extra people can be copied, but only colleagues in
+// the employee master.
+router.post('/tasks/:id/email', async (req, res) => {
+  if (!(await guard(req, res))) return;
+  const b = req.body || {};
+  const subject = String(b.subject || '').trim().slice(0, 300);
+  const body = String(b.body || '').trim().slice(0, 8000);
+  if (!subject || !body) return res.status(400).json({ error: 'The email needs a subject and a message.' });
+  try {
+    const tj = await taskWithJoiner(req, req.params.id);
+    if (!tj) return res.status(404).json({ error: 'No such task on your tracker.' });
+    const r = spoc.recipients(tj.task.spoc_roles, tj.joiner, await directoryFor(T(req)));
+    let to = r.to.map((x) => x.email);
+    if (Array.isArray(b.only) && b.only.length) to = to.filter((e) => b.only.map((x) => String(x).toLowerCase()).includes(e.toLowerCase()));
+    if (Array.isArray(b.cc) && b.cc.length) {
+      const ok = (await db.query(`SELECT email FROM core.employees WHERE tenant_id=$1 AND lower(email) = ANY($2::text[])`,
+        [T(req), b.cc.map((x) => String(x).toLowerCase())])).rows.map((x) => x.email);
+      for (const e of ok) if (!to.some((t) => t.toLowerCase() === e.toLowerCase())) to.push(e);
+    }
+    if (!to.length) {
+      return res.status(400).json({ error: r.missing.length ? r.missing.map((m) => m.why).join(' ') : 'Nobody to send this to.' });
+    }
+    const results = [];
+    for (const addr of to) {
+      results.push({ to: addr, ...(await sendMail(T(req), { to: addr, subject, html: spoc.toHtml(body), kind: 'onboarding_task' })) });
+    }
+    const mode = results[0].mode;
+    const outcome = results.every((x) => x.outcome === results[0].outcome) ? results[0].outcome : 'mixed';
+    await db.query(
+      `INSERT INTO people.onboarding_task_emails (tenant_id, task_id, to_emails, subject, mode, outcome, sent_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`, [T(req), req.params.id, to, subject, mode, outcome, req.user.email]);
+    audit(req, 'onboarding_task_email', { task_id: req.params.id, to, outcome });
+    res.json({ to, mode, outcome, results });
+  } catch (e) { logger.error('onboarding email send', { error: e.message }); res.status(500).json({ error: 'Could not send the email.' }); }
+});
+
 router.post('/holidays', async (req, res) => {
   if (!(await guard(req, res))) return;
   const { date, name } = req.body || {};

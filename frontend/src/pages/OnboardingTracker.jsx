@@ -18,7 +18,7 @@
 import { useEffect, useState } from 'react';
 import {
   Users, CalendarCheck, AlertTriangle, Star, Gauge, Plus, CalendarX, ListTree, X, Check, ChevronRight,
-  ChevronDown, Trash2, Search, MessageSquareWarning, ArrowLeft,
+  ChevronDown, Trash2, Search, MessageSquareWarning, ArrowLeft, Mail, Send, Contact,
 } from 'lucide-react';
 import { api } from '../utils/api';
 
@@ -187,6 +187,55 @@ function Holidays({ onClose, onChanged }) {
   );
 }
 
+// The company-wide SPOC desks a task email can go to. Manager and Buddy
+// come from each joiner's record, so they are listed but not set here.
+function Spocs({ onClose }) {
+  const [list, setList] = useState(null);
+  const [edit, setEdit] = useState({});
+  const [err, setErr] = useState(null);
+  const [saved, setSaved] = useState(null);
+  const load = () => api('/people/onboarding/spocs').then((r) => {
+    setList(r.spocs);
+    setEdit(Object.fromEntries(r.spocs.map((x) => [x.role, { name: x.name || '', email: x.email || '' }])));
+  }).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const save = async (role) => {
+    setErr(null); setSaved(null);
+    try { await api(`/people/onboarding/spocs/${encodeURIComponent(role)}`, { method: 'PUT', body: JSON.stringify(edit[role]) }); setSaved(role); load(); }
+    catch (e) { setErr(e.message); }
+  };
+  return (
+    <div className="panel">
+      <div className="panel-h">
+        <Contact size={18} className="text-brand-600" />
+        <span className="panel-t">SPOCs</span>
+        <span className="text-[12px] text-navy-400">Who each task's “Email SPOC” goes to</span>
+        <button type="button" className="ml-auto topicon !w-8 !h-8" onClick={onClose} aria-label="Close"><X size={16} /></button>
+      </div>
+      {err && <p className="text-[12.5px] text-rose-600 mb-2">{err}</p>}
+      <div className="divide-y divide-[#eef1f6]">
+        {(list || []).map((x) => (
+          <div key={x.role} className="py-2 flex flex-wrap items-center gap-2">
+            <span className="w-28 font-semibold text-[13px] text-navy-900">{x.role}</span>
+            {x.per_joiner ? <span className="text-[12.5px] text-navy-500">{x.note}</span> : (
+              <>
+                <input className="inp !w-48 !py-1.5" placeholder="Name (optional)" value={(edit[x.role] || {}).name || ''}
+                  onChange={(e) => setEdit({ ...edit, [x.role]: { ...edit[x.role], name: e.target.value } })} />
+                <input className="inp !w-64 !py-1.5" placeholder="email@company.com" value={(edit[x.role] || {}).email || ''}
+                  onChange={(e) => setEdit({ ...edit, [x.role]: { ...edit[x.role], email: e.target.value } })} />
+                <button type="button" className="btn-sec" onClick={() => save(x.role)}>Save</button>
+                {saved === x.role && <span className="text-[12px] text-leaf-600">Saved</span>}
+                {x.note && <span className="basis-full text-[11.5px] text-navy-400 pl-[7.5rem]">{x.note}</span>}
+                {!x.email && <span className="text-[11.5px] text-amber-700">not set — tasks for {x.role} cannot be emailed</span>}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Matrix({ days, onClose }) {
   const [acts, setActs] = useState(null);
   useEffect(() => { api('/people/onboarding/activities').then((r) => setActs(r.activities)).catch(() => setActs([])); }, []);
@@ -222,9 +271,86 @@ function Matrix({ days, onClose }) {
   );
 }
 
+// EMAIL THE SPOC. Asked for on 6 Oct: "clicking on each option should
+// initiate email to particular spoc working for that task". The server
+// decides who it goes to (the joiner's manager or buddy from their
+// record; the IT, Admin, Recruiter… desks from the SPOC list) and drafts
+// the text; it is editable here before it goes. When this instance's mail
+// is still in simulated mode the email is logged, not delivered, and the
+// screen says so — with a button to send it from your own mail app.
+function EmailSpoc({ taskId, onSent, onClose }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);
+  useEffect(() => {
+    api(`/people/onboarding/tasks/${taskId}/email`)
+      .then((r) => { setD(r); setSubject(r.subject); setBody(r.body); })
+      .catch((e) => setErr(e.message));
+  }, [taskId]);
+  if (err && !d) return <p className="text-[12px] text-rose-600 px-3 pb-3">{err}</p>;
+  if (!d) return <p className="text-[12px] text-navy-400 px-3 pb-3">Preparing the email…</p>;
+  const send = async () => {
+    setErr(null); setBusy(true);
+    try { const r = await api(`/people/onboarding/tasks/${taskId}/email`, { method: 'POST', body: JSON.stringify({ subject, body }) }); setDone(r); onSent(); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const mailto = `mailto:${d.to.map((x) => x.email).join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return (
+    <div className="px-3 pb-3 pt-3 border-t border-[#eef1f6] space-y-2.5 bg-[#f8faff]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="lbl !mb-0">To</span>
+        {d.to.map((x) => (
+          <span key={x.email} className="pill pill-blue" title={x.email}>{x.role}: {x.name || x.email} &lt;{x.email}&gt;</span>
+        ))}
+        {!d.to.length && <span className="text-[12px] text-navy-500">Nobody yet —</span>}
+        <button type="button" className="ml-auto topicon !w-7 !h-7" onClick={onClose} aria-label="Close"><X size={14} /></button>
+      </div>
+      {d.missing.map((m) => (
+        <p key={m.role} className="text-[12px] text-amber-700">{m.role}: {m.why}</p>
+      ))}
+      {d.mail_mode !== 'live' && (
+        <p className="text-[12px] text-amber-700">
+          Email on this instance is in <b>simulated</b> mode — sending records it on the tracker but does not deliver it.
+          Use <b>Open in my mail app</b> to send it yourself, or ask the admin to switch mail to live in Settings.
+        </p>
+      )}
+      <input className="inp" value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Subject" />
+      <textarea className="inp" rows={9} value={body} onChange={(e) => setBody(e.target.value)} aria-label="Message" />
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className="btn-pri" disabled={busy || !d.to.length} onClick={send}>
+          <Send size={12} className="inline mr-1" />{busy ? 'Sending…' : `Send to ${d.to.length || 'nobody'}`}
+        </button>
+        {!!d.to.length && <a className="btn-sec" href={mailto}><Mail size={12} className="inline mr-1" />Open in my mail app</a>}
+        {done && (
+          <span className={`text-[12px] ${done.outcome === 'sent' ? 'text-leaf-600' : 'text-amber-700'}`}>
+            {done.outcome === 'sent' ? `Sent to ${done.to.join(', ')}.`
+              : done.outcome === 'simulated' ? `Recorded for ${done.to.join(', ')} — not delivered (simulated mail).`
+                : `Not delivered: ${done.outcome}. Try "Open in my mail app".`}
+          </span>
+        )}
+        {err && <span className="text-[12px] text-rose-600">{err}</span>}
+      </div>
+      {!!(d.history || []).length && (
+        <div className="text-[11.5px] text-navy-500 space-y-0.5">
+          <p className="lbl !mb-0">Emailed before</p>
+          {d.history.map((h, i) => (
+            <p key={i}>{new Date(h.sent_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              {' '}by {h.sent_by} to {h.to_emails.join(', ')} · {h.outcome}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // One task row, with its follow-up fields folded underneath.
 function TaskRow({ t, onSaved, asOf }) {
   const [open, setOpen] = useState(false);
+  const [mail, setMail] = useState(false);
   const [f, setF] = useState({
     completed_on: t.completed_on || '', ack_received: t.ack_received, remarks: t.remarks || '',
     issue: t.issue || '', action_owner: t.action_owner || '', closure_date: t.closure_date || '',
@@ -250,7 +376,10 @@ function TaskRow({ t, onSaved, asOf }) {
           </span>
           <span className="block text-[11.5px] text-navy-400">{t.process}</span>
         </span>
-        <span className="pill pill-blue">{t.owner}</span>
+        <button type="button" className="pill pill-blue hover:bg-brand-100" onClick={() => setMail((v) => !v)}
+          title={`Email ${(t.spoc_roles || []).join(', ') || 'the SPOC'} about this task`}>
+          <Mail size={11} className="mr-1" />{t.owner}
+        </button>
         <span className="text-[12px] text-navy-500 w-24">{fmtDay(t.planned_date)}</span>
         <span className={`pill ${STATUS_PILL[t.status]}`}>
           {t.status}{t.status === 'Overdue' && t.days_overdue ? ` · ${t.days_overdue}d` : ''}{done && t.completed_on ? ` · ${fmtDate(t.completed_on)}` : ''}
@@ -262,6 +391,14 @@ function TaskRow({ t, onSaved, asOf }) {
           </button>
         )}
         {t.issue && !t.closure_date && <MessageSquareWarning size={16} className="text-rose-500" title={t.issue} />}
+        {t.last_emailed_at && (
+          <span className="text-[11px] text-navy-400" title={(t.last_emailed_to || []).join(', ')}>
+            emailed {new Date(t.last_emailed_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+          </span>
+        )}
+        <button type="button" className="btn-sec !px-2.5 !py-1.5" onClick={() => setMail((v) => !v)} aria-expanded={mail}>
+          <Mail size={12} className="inline mr-1" />Email SPOC
+        </button>
         <button type="button" className="topicon !w-8 !h-8" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Details">
           <ChevronDown size={16} className={`transition-transform ${open ? '' : '-rotate-90'}`} />
         </button>
@@ -286,6 +423,7 @@ function TaskRow({ t, onSaved, asOf }) {
           <p className="sm:col-span-2 lg:col-span-3 text-[11.5px] text-navy-400">Expected outcome: {t.outcome}</p>
         </div>
       )}
+      {mail && <EmailSpoc taskId={t.id} onSent={onSaved} onClose={() => setMail(false)} />}
       {err && !open && <p className="px-3 pb-2 text-[12px] text-rose-600">{err}</p>}
     </div>
   );
@@ -470,12 +608,14 @@ export default function OnboardingTracker() {
         <label className="flex items-center gap-2 text-[12.5px] text-navy-600">Report date
           <input type="date" className="inp !w-40 !py-1.5" value={asOf} onChange={(e) => e.target.value && setAsOf(e.target.value)} /></label>
         <button type="button" className="btn-sec" onClick={() => setPanel(panel === 'matrix' ? null : 'matrix')}><ListTree size={13} className="inline mr-1" />Activity matrix</button>
+        <button type="button" className="btn-sec" onClick={() => setPanel(panel === 'spocs' ? null : 'spocs')}><Contact size={13} className="inline mr-1" />SPOCs</button>
         <button type="button" className="btn-sec" onClick={() => setPanel(panel === 'holidays' ? null : 'holidays')}><CalendarX size={13} className="inline mr-1" />Holidays</button>
         <button type="button" className="btn-pri" onClick={() => setPanel(panel === 'add' ? null : 'add')}><Plus size={13} className="inline mr-1" />Add joiner</button>
       </div>
 
       {panel === 'add' && <AddJoiner onDone={load} onClose={() => setPanel(null)} />}
       {panel === 'holidays' && <Holidays onClose={() => setPanel(null)} onChanged={load} />}
+      {panel === 'spocs' && <Spocs onClose={() => setPanel(null)} />}
       {panel === 'matrix' && <Matrix days={d.days} onClose={() => setPanel(null)} />}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">

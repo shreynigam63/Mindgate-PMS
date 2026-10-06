@@ -393,9 +393,13 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
 
       {/* The KRAs. */}
       <div className="card p-4">
-        {d.kra_ratings && d.kra_ratings.note && (
+        {d.kra_ratings && (
           <p className={`text-[11px] mb-2 ${d.kra_ratings.thin ? 'text-amber-700' : 'text-navy-500'}`}>
-            <Info size={11} className="inline mr-1 -mt-px" />{d.kra_ratings.note}
+            <Info size={11} className="inline mr-1 -mt-px" />
+            Timesheet rating: {d.kra_ratings.working_days} working days × {d.kra_ratings.hours_per_day} h
+            = {d.kra_ratings.required_hours} h required, shared across the KRAs by weight; each KRA's hours ÷ its expected hours
+            ({(d.kra_ratings.bands || []).slice().sort((x, y) => y.min - x.min).map((b) => `${b.label} ≥ ${b.min}%`).join(', ')}).
+            {d.kra_ratings.note ? ` ${d.kra_ratings.note}` : ''}
           </p>
         )}
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
@@ -450,9 +454,9 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                     if (!r || !r.measured) return <span className="text-navy-300">—</span>;
                     if (!r.rating) return <span className="text-[10.5px] text-navy-400">{r.reason}</span>;
                     return (
-                      <span title={`${r.share_pct}% of placed hours against an expected ${r.expected_pct}%`}>
+                      <span>
                         <span className="chip bg-navy-700 text-white">{r.rating}</span>
-                        <span className="text-[10.5px] text-navy-500 ml-1.5">effort {r.effort_pct}%</span>
+                        <span className="text-[10.5px] text-navy-500 ml-1.5">{r.hours} of {r.expected_hours} h · {r.effort_pct}%</span>
                       </span>
                     );
                   })()}</td>

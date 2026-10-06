@@ -62,6 +62,7 @@ const TENANT_WIDE = [
   // The onboarding calendar and activity matrix plan every joiner's week.
   '/onboarding/holidays',
   '/onboarding/activities',
+  '/onboarding/spocs',
 ];
 
 // The keys a payload uses to name whose record a row is. Checked in this

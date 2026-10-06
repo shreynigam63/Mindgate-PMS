@@ -246,26 +246,30 @@ test('the manager maps the month and every number moves', { skip }, async () => 
   assert.deepEqual(v.uncovered.map((u) => u.title), ['CSAT Score']);
 });
 
-test('EACH KRA GETS A TIMESHEET RATING — its share of the effort against its weight', { skip }, async () => {
-  // Asked for on 6 Oct: "there should be rating against KRA as per
-  // timesheet filled". After the mapping above: 40 h on Ticket Resolution
-  // (60%), 8 h on Client Reporting (20%), none on CSAT Score (20%).
+test('EACH KRA GETS A TIMESHEET RATING — hours worked against hours required', { skip }, async () => {
+  // Asked for on 6 Oct. After the mapping above: 40 h on Ticket
+  // Resolution (60%), 8 h on Client Reporting (20%), none on CSAT (20%).
+  //
+  // The month 21 Aug – 20 Sep has 21 working days = 168 required hours.
   const v = (await api(`/pms/timesheet/kra/employee/${ids.emp}?${WIN}`)).body;
+  assert.equal(v.kra_ratings.required_hours, 168);
   const by = Object.fromEntries(v.kra_ratings.ratings.map((r) => [r.title, r]));
-  assert.equal(by['Ticket Resolution'].rating, 'A+', 'more than its share is full marks, never above');
-  assert.equal(by['Ticket Resolution'].effort_pct, 100);
-  assert.equal(by['Client Reporting'].effort_pct, 83.3, '16.7% of the hours against an expected 20%');
-  assert.equal(by['Client Reporting'].rating, 'A');
-  assert.equal(by['CSAT Score'].effort_pct, 0);
-  assert.equal(by['CSAT Score'].rating, 'C', 'a weighted KRA with no logged work rates at the bottom');
-  assert.equal(v.kra_ratings.thin, false, 'every considered hour is mapped');
+  assert.equal(by['Ticket Resolution'].expected_hours, 100.8);
+  assert.equal(by['Ticket Resolution'].effort_pct, 39.7, '40 of 100.8 hours');
+  assert.equal(by['Ticket Resolution'].rating, 'B', 'below 40% is B');
+  assert.equal(by['CSAT Score'].rating, 'B');
 
-  // The cycle view the manager and HOD rate from: the whole cycle so
-  // far, and the same answer for the same hours.
+  // The cycle view the manager and HOD rate from covers the days the
+  // uploads cover — 1 to 9 Sep, 7 working days, 56 h — so a month nobody
+  // has uploaded is not counted as hours not worked.
   const c = await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'mgr');
   assert.equal(c.status, 200, JSON.stringify(c.body));
-  assert.equal(c.body.window.from, '2026-04-01', 'from the cycle\'s opening date');
-  assert.equal(c.body.kra_ratings.ratings.find((r) => r.title === 'Client Reporting').rating, 'A');
+  assert.deepEqual([c.body.window.from, c.body.window.to], ['2026-09-01', '2026-09-09']);
+  assert.equal(c.body.kra_ratings.required_hours, 56);
+  const cy = Object.fromEntries(c.body.kra_ratings.ratings.map((r) => [r.title, r]));
+  assert.equal(cy['Ticket Resolution'].rating, 'A+', '40 h against 33.6 expected');
+  assert.equal(cy['Client Reporting'].effort_pct, 71.4, '8 h against 11.2 expected');
+  assert.equal(cy['Client Reporting'].rating, 'A');
   assert.equal((await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'emp')).status, 200, 'the employee sees their own');
   assert.equal((await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'other')).status, 403, 'a stranger does not');
 
