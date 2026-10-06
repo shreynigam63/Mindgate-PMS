@@ -218,7 +218,7 @@ sits in the queue of somebody who no longer manages them.
 
 The `hod` role grants access to the *screen*; `core.department_heads` decides
 **which department's** evaluations appear. A person with the role and no
-mapping has a permanently empty queue — which is why the Department Heads
+mapping has a permanently empty queue — which is why the HOD
 screen exists and why a department can be given a head before anyone is in
 it.
 
@@ -226,13 +226,13 @@ it.
 
 Every HR screen, on `/hrbp/*` routes, narrowed to the partner's own people
 by the gateway in §1.3. All Approvals, RnR Approvals, Cycles, Employees,
-Department Heads, Career Pathing Matrix, KRA Overview, KRA Library,
+HOD, Career Pathing Matrix, KRA Overview, KRA Library,
 Competency Framework, Competency Dashboard, Timesheet, PMS Completion
 Report, Calibration, 9-Box Grid, Closure Letters, Increment Simulation,
 Super 50, Engagement Surveys, New Hire Insights, Settings.
 
 Read-only for the HRBP where the thing is the tenant's rather than a
-person's: Cycles, Department Heads, KRA Library, Competency Framework,
+person's: Cycles, HOD, KRA Library, Competency Framework,
 Settings.
 
 Increment Simulation is reachable because salary sits behind its own
@@ -243,7 +243,7 @@ from `core.role_permissions`.
 
 ## 2.5 HR — 22 pages
 
-All Approvals, Cycles, Employees, Department Heads, **HR Business
+All Approvals, Cycles, Employees, HOD, **HR Business
 Partners**, **RnR Final Approval**, **RnR Administration**, Career Pathing
 Matrix, KRA Overview, KRA Library, Competency Framework, Competency
 Dashboard, Timesheet, PMS Completion Report, Calibration, 9-Box Grid,

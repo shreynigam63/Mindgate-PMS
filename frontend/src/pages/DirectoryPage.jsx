@@ -603,7 +603,7 @@ export default function DirectoryPage() {
             {!!(report.department_heads_need_a_choice || []).length && (
               <details className="text-[11px]">
                 <summary className="cursor-pointer text-amber-700 font-semibold">
-                  Departments whose rows name more than one HOD — pick the head on Department Heads
+                  Departments whose rows name more than one HOD — pick the head on the HOD page
                 </summary>
                 <div className="pt-1 space-y-0.5">
                   {report.department_heads_need_a_choice.map((d) => (
@@ -983,7 +983,7 @@ function EmployeePanel({ employee, onDone }) {
         {role === 'hod' && (
           <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5 max-w-md">
             The "hod" role only grants access to the HOD Review screen — it does not by itself say WHICH department they review.
-            Assign them as a department's head in the "Department Heads" panel above the employee list, or their queue will show nothing.
+            Assign them as a department's head on the HOD page, or their queue will show nothing.
           </p>
         )}
         {accessErr && <p className="text-rose-600">{accessErr}</p>}

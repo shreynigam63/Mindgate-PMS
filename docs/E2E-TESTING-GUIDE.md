@@ -84,7 +84,7 @@ expectation is wrong** — it was changed on request. See `KRA-07`.
 | `SMK-01` | any | Open https://pms.agentichumans.in | Login page renders |
 | `SMK-02` | any | Sign in | Lands on My KRAs; your name and role show bottom-left |
 | `SMK-03` | any | Open every nav item visible to you | No blank screens, no error banners |
-| `SMK-04` | employee | Sign in as a plain employee | **HR Admin** items (Employees, KRA Library, Settings, Increment Simulation, Review Analysis, Department Heads, Career Pathing Matrix, Completion Report) are **not visible** |
+| `SMK-04` | employee | Sign in as a plain employee | **HR Admin** items (Employees, KRA Library, Settings, Increment Simulation, Review Analysis, HOD, Career Pathing Matrix, Completion Report) are **not visible** |
 | `SMK-05` | employee | Type `/admin/directory` directly in the URL bar | Blocked — not rendered. Hiding a link is not access control; this checks the guard |
 | `SMK-06` | any | Read the **My Performance** group top to bottom | Order is **My KRAs · My Growth · Connects · Mid-Year Review · Annual Review · Final Rating · My Rating · Past Cycles**. Connects is **no longer** under Team |
 | `SMK-07` | any | Open an old bookmark or notification link to `/team/connects` | Still opens Connects. Only the menu position moved, not the URL |
@@ -106,7 +106,7 @@ expectation is wrong** — it was changed on request. See `KRA-07`.
 | `SET-03` | hr | Read the dry-run report | Shows rows, errors, warnings, reporting lines matched, and **how many new hires would get KRAs** |
 | `SET-04` | hr | Upload a file with a bad row (missing email) | That row is reported by line number; the rest still validate |
 | `SET-05` | hr | **Commit load** | Employees created/updated; report says what changed |
-| `SET-06` | hr | Department Heads → add a department, assign a head | Department appears; the head gains `hod` |
+| `SET-06` | hr | HOD → add a department, assign a head | Department appears; the head gains `hod` |
 | `SET-07` | hr | KRA Library → upload the library workbook (with **Department**) → Validate → Commit | Shelves published per designation |
 | `SET-08` | hr | KRA Library → edit one KRA's title and weight inline | Saves. **Employees who already picked that KRA are unaffected** (see `LIB-03`) |
 | `SET-09` | hr | Settings → confirm KRA library scope | `department+designation` is already set on this instance |

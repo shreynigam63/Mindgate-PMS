@@ -45,7 +45,7 @@ not bundled with general HR administration. A manager must never see it.
 | **All Approvals** | Every pending decision across the company, in one place. |
 | **Cycles** | Create and run appraisal cycles. |
 | **Employees** | The employee master — imported, not edited here. |
-| **Department Heads** | Who heads which department. |
+| **HOD** | Which department each HOD heads. |
 | **Career Pathing Matrix** | Which roles lead to which. |
 | **KRA Overview** | Org-wide view of who has KRAs and who does not. |
 | **KRA Library** | Publish a shelf of suggested KRAs per job title. |

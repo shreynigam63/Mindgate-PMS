@@ -69,9 +69,9 @@ export default function DepartmentHeadsPage() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
-      <PageHead title="Department Heads" hue="navy"
+      <PageHead title="HOD" hue="navy"
         sub={<>
-        Who each department's HOD Review queue belongs to. Giving someone the "hod" role only grants access to the screen; this is what actually scopes which department's evaluations they see.
+        Which department each HOD heads, and so whose HOD Review queue is whose. Giving someone the "hod" role only grants access to the screen; this is what actually scopes which department's evaluations they see.
         </>} />
       <div className="card p-3">
         <p className="lbl mb-1">Add a department</p>
