@@ -6,6 +6,7 @@ import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import StatusTabs, { statusTabs } from '../StatusTabs';
 import KraTable from '../KraTable';
+import { useKraTimesheet, KraTimesheetBar, KraTimesheetLine } from '../TimesheetRating';
 
 // Fix guide item #5 (BR-1.3): confirmed root cause was that no frontend
 // page anywhere called the existing, working GET /team/kra-sheets and
@@ -136,6 +137,8 @@ function SheetEditor({ sheet, reload, isMine, scale }) {
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState([]);
   const [saved, setSaved] = useState(null);
+  // The report's timesheet against each KRA, on the sheet being reviewed.
+  const ts = useKraTimesheet(sheet.employee_id);
 
   useEffect(() => {
     api(`/pms/team/kra-sheets/${sheet.id}/kras`).then(setDetail).catch(e => setErr(e.message));
@@ -248,6 +251,7 @@ function SheetEditor({ sheet, reload, isMine, scale }) {
               </div>
             </div>
           )}
+          {detail.kras.length > 0 && !editing && <KraTimesheetBar ts={ts} mapLink="/team/timesheet" />}
           {detail.kras.length > 0 && !editing && (
             <KraTable
               groups={groupByCategory(detail.kras)}
@@ -263,6 +267,7 @@ function SheetEditor({ sheet, reload, isMine, scale }) {
                   <span className="whitespace-pre-line">{k.measures || <i className="text-navy-300">no KPI recorded</i>}</span>
                   {k.description && <div className="text-navy-400">{k.description}</div>}
                   <MidYearOnKra midyear={k.midyear} scale={scale} />
+                  <KraTimesheetLine ts={ts} kraId={k.id} />
                 </div>
               )}
               renderWeight={({ k }) => <span>{k.weight == null ? '—' : `${Number(k.weight)}%`}</span>}

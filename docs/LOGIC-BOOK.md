@@ -425,6 +425,8 @@ A KRA *not measured from timesheets* expects no hours and its weight is
 shared across the others. Hours not yet mapped to a KRA count for none, so
 ratings rise as items are mapped.
 
+Where it shows: on **My KRAs** and **Team KRA Sheets**, under each KRA (hours worked, hours expected, %, rating, with a month picker and the formula above the table); on the **Timesheet** page; and beside each KRA on **Team Evaluation** and **HOD Review**.
+
 Periods: the **Timesheet** page rates one month (to today at most). Team
 Evaluation and HOD Review rate the **days the uploads cover** within the
 cycle, so a month nobody uploaded is not counted as hours not worked.

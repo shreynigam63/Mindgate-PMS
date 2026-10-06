@@ -6,6 +6,7 @@ import KraSuggestPanel from './KraSuggestPanel';
 import PageHead from '../PageHead';
 import KraTable from '../KraTable';
 import Grade from '../grade';
+import { useKraTimesheet, KraTimesheetBar, KraTimesheetLine } from '../TimesheetRating';
 
 // Whitespace counts as empty. An imported cell can carry a stray space or
 // newline, and treating that as content would put the box back on exactly
@@ -49,6 +50,8 @@ export default function MyKRASheetPage() {
   const [kras, setKras] = useState([]);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Each KRA's timesheet hours and rating, shown on its row (6 Oct).
+  const ts = useKraTimesheet(null);
 
   // numeric(5,2) comes back as the string "10.00". Left as-is it fills the
   // weight box with false precision on a field people type "10" into, and
@@ -209,6 +212,7 @@ export default function MyKRASheetPage() {
           merged across its KRAs. Asked for on 23 Sep against the client's
           own sheet, and the same component the KRA Library uses — the
           two pages showing one thing two ways was the complaint. */}
+      <KraTimesheetBar ts={ts} mapLink="/my/timesheet" />
       <KraTable
         groups={groups}
         kpiHeaderNote="(measuring metrics & data source)"
@@ -238,6 +242,7 @@ export default function MyKRASheetPage() {
                 onClick={() => openDesc(i)}>+ Add description</button>
             )}
             <MidYearOnKra midyear={k.midyear} withheld={data.manager_ratings_withheld} scale={data.cycle.rating_scale} />
+            <KraTimesheetLine ts={ts} kraId={k.id} />
           </div>
         )}
         renderWeight={({ k, i }) => (
