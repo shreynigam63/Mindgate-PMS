@@ -268,7 +268,7 @@ const gateClosed = (item, gates) => !!item.gate && gates[item.gate] === false;
 
 // THE SHELL, rebuilt on 6 Oct to the reference the client sent ("current
 // UI seems bit dull for working, please build exact UI as shown"): a
-// white top bar carrying the Mindgate mark, a search box, the bell, help
+// white top bar carrying the product's name, a search box, the bell, help
 // and the person; a dark navy sidebar down the left; the page on a light
 // canvas to the right.
 //
@@ -293,12 +293,19 @@ const visibleGroups = (user) => NAV
 const groupOf = (groups, pathname) =>
   groups.find(g => g.items.some(it => it.to !== '/home' && (pathname === it.to || pathname.startsWith(it.to + '/'))));
 
-// The mark from the reference: the word, with the coloured dots over it.
+// THE PRODUCT'S NAME, not the client's. The reference drew a Mindgate
+// logo here with "People Management System" beside it; on 6 Oct the
+// client asked for it to read "Performance Management System and not
+// Mindgate". One name, so the separate subtitle went with the logo.
+// The four coloured dots of the reference stay as a small mark — they
+// were the drawing's, not a trademark — and a phone shows "PMS", because
+// the full name and the bell, help and account icons do not fit 390px.
 function Wordmark() {
   return (
-    <span className="wordmark" aria-label="Mindgate">
-      <span className="wordmark-dots" aria-hidden="true"><i /><i /><i /><i /></span>
-      Mindgate
+    <span className="wordmark" aria-label="Performance Management System">
+      <span className="wordmark-mark" aria-hidden="true"><i /><i /><i /><i /></span>
+      <span className="hidden sm:inline">Performance Management System</span>
+      <span className="sm:hidden">PMS</span>
     </span>
   );
 }
@@ -367,7 +374,6 @@ function Topbar({ user, groups, onChangePassword, onMenu }) {
           <Menu size={20} />
         </button>
         <NavLink to="/home" className="flex items-center"><Wordmark /></NavLink>
-        <span className="topbar-sub">People Management System</span>
       </div>
       <div className="flex-1 min-w-0 hidden md:flex justify-center px-4"><NavSearch groups={groups} /></div>
       <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-auto">

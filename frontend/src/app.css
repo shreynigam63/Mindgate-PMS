@@ -314,15 +314,15 @@ body { background: #f3f6fc; }
 .topbar { @apply sticky top-0 z-40 bg-white flex items-center gap-3 px-3 lg:px-5 h-[68px];
   border-bottom: 1px solid #e7ecf5; }
 .topbar-brand { @apply flex items-center gap-3 lg:w-[400px] shrink-0 min-w-0; }
-.topbar-sub { @apply hidden xl:block text-[13px] text-navy-500 pl-3 border-l border-navy-100 whitespace-nowrap; }
-.wordmark { @apply relative text-[26px] font-extrabold tracking-tight leading-none;
-  color: #1d3b8f; letter-spacing: -0.02em; padding-top: 6px; }
-.wordmark-dots { @apply absolute flex gap-[3px]; top: -2px; left: 47px; }
-.wordmark-dots i { @apply block w-[6px] h-[6px] rounded-full; }
-.wordmark-dots i:nth-child(1) { background: #e53935; }
-.wordmark-dots i:nth-child(2) { background: #fb8c00; }
-.wordmark-dots i:nth-child(3) { background: #1e88e5; }
-.wordmark-dots i:nth-child(4) { background: #3949ab; }
+.wordmark { @apply flex items-center gap-2.5 text-[19px] font-extrabold leading-none whitespace-nowrap;
+  color: #1d3b8f; letter-spacing: -0.01em; }
+/* The reference's four dots, as a 2x2 mark beside the name. */
+.wordmark-mark { @apply grid grid-cols-2 gap-[3px] shrink-0; }
+.wordmark-mark i { @apply block w-[7px] h-[7px] rounded-full; }
+.wordmark-mark i:nth-child(1) { background: #e53935; }
+.wordmark-mark i:nth-child(2) { background: #fb8c00; }
+.wordmark-mark i:nth-child(3) { background: #1e88e5; }
+.wordmark-mark i:nth-child(4) { background: #3949ab; }
 .topsearch { @apply relative w-full max-w-[600px] flex items-center gap-2.5 px-4 h-11 rounded-xl bg-white;
   border: 1px solid #dfe5f0; }
 .topsearch:focus-within { border-color: #2f7fe8; box-shadow: 0 0 0 3px #cfe1fc; }
