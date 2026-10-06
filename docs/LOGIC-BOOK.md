@@ -456,6 +456,38 @@ There is no feed: Glassdoor retired its public review API in 2021,
 AmbitionBox never had one, and both prohibit scraping. Such surveys are
 `import_only` — they take responses but never invite anybody.
 
+### First-Week Journey (onboarding tracker) — New Hire Insights, HR and HRBP
+
+The client's *7 Days Onboarding Tracker* workbook, as a tab on New Hire
+Insights (opens first; *Survey Insights* is the other tab).
+
+- **A joiner is an employee** picked from the master (recent and upcoming
+  joiners are offered; anyone else by search). Manager, department and
+  designation come from the master. Buddy and HR POC are chosen.
+- **Starting a joiner creates one task per active activity** — 48 from
+  the client's Activity Matrix.
+- **Planned date** = `WORKDAY(DOJ, offset, holidays)`: weekends and the
+  Holidays list are skipped; offset −2 is Pre-Day 1, 0 is Day 1, 6 is
+  Day 7. Never stored — a holiday added later moves every plan.
+- **Status** on the Report Date: *Completed* (has a completion date),
+  *Overdue* (planned date passed), *Due Today*, *Upcoming*. Days overdue =
+  `NETWORKDAYS(planned, report date) − 1`.
+- **Joiner status**: *Completed* when every task is; else *N overdue*;
+  else *On track*. *Where*: Not joined / Pre-Day 1 / Day n / After Day 7.
+- **Day-7 feedback**: 1–5 on seven statements; average shown per joiner
+  and across joiners.
+- **Dashboard**: joiners in onboarding, due today, overdue, average
+  feedback, completion %, by owner (a shared activity counts for every
+  owner group named), by day.
+- **HRBP** sees and edits only joiners in their remit — the counts too.
+  Holidays are company-wide, so only HR changes them.
+
+Verified against all 288 real rows of the workbook: planned date, status
+and days overdue match on every one. Three workbook faults were corrected
+rather than copied: the Day column (Readiness rows said Day 1 but were
+planned before joining), 55 tracker rows per joiner for 48 activities,
+and the Ownership sheet counting "Recruiter" as IT.
+
 ## 3.12 Reminders
 
 `reminder-schedule.js` is the pure calendar; `reminders.js` answers who it

@@ -73,10 +73,14 @@ async function open(email, path) {
 }
 
 // The item strip for one role tab, by its label.
+// Since 6 Oct the role groups are sidebar sections rather than header
+// tabs. A section that is already open is left alone — clicking it would
+// fold it shut.
 const groupItems = async (page, group) => {
-  await page.locator(`header >> text="${group}"`).first().click();
+  const btn = page.locator('aside button[aria-expanded]').filter({ hasText: new RegExp(`^${group}\\d*$`) }).first();
+  if ((await btn.getAttribute('aria-expanded')) !== 'true') await btn.click();
   await page.waitForTimeout(350);
-  return (await page.locator('header nav').innerText())
+  return (await page.locator(`aside nav[aria-label="${group}"]`).innerText())
     .split('\n').map((s) => s.trim()).filter(Boolean);
 };
 
@@ -140,7 +144,7 @@ test('3 — My Growth no longer carries the team list', async (t) => {
   await page.waitForTimeout(900);
   const team = await page.locator('body').innerText();
   assert.ok(!/not part of your access/i.test(team), '/team/growth opens for a manager');
-  assert.equal(await page.locator('input[placeholder*="Search"]').count(), 1,
+  assert.equal(await page.locator('main input[placeholder*="Search"]').count(), 1,
     'and it has the search box every team list now has');
   assert.deepEqual(errors, []);
   await ctx.close();
@@ -561,7 +565,7 @@ test('the two HR reports can be exported, and the counts on KRA Overview filter'
 test('Team Overview can be searched', async (t) => {
   if (needStack(t)) return;
   const { ctx, page, errors } = await open('mgr@shot.in', '/team/overview');
-  const box = page.locator('input[placeholder*="Search"]');
+  const box = page.locator('main input[placeholder*="Search"]');
   assert.equal(await box.count(), 1);
   const before = await page.locator('tbody tr').count();
   assert.ok(before > 1, 'the demo manager has a team to search');
@@ -761,7 +765,7 @@ test('HOD is its own tab, and no longer sits under Manager', async (t) => {
   // roles of employee, manager and HR and remove the same from manager
   // tab."
   const { ctx, page, errors } = await open('hod@shot.in', '/home');
-  const tabs = (await page.locator('header >> button').allInnerTexts())
+  const tabs = (await page.locator('aside button').allInnerTexts())
     .map((s) => s.split('\n')[0].trim()).filter(Boolean);
   assert.ok(tabs.some((x) => /HOD/.test(x)), `tabs were: ${tabs.join(' | ')}`);
 
@@ -776,7 +780,7 @@ test('HOD is its own tab, and no longer sits under Manager', async (t) => {
   // And it is NOT offered to somebody without the permission — a group
   // whose every item is filtered out is dropped entirely.
   const e = await open('emp@shot.in', '/home');
-  const eTabs = (await e.page.locator('header >> button').allInnerTexts()).join(' ');
+  const eTabs = (await e.page.locator('aside button').allInnerTexts()).join(' ');
   assert.ok(!/HOD/.test(eTabs), 'an employee has no HOD tab');
   await e.ctx.close();
 });

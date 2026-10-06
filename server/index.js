@@ -12,6 +12,16 @@ const { authenticate, devLogin, changePassword } = require('./core/auth');
 const employees = require('./core/employees');
 const { effectivePermissions } = require('./core/permissions');
 
+// The commit this checkout is on, read once at boot. null when the code
+// did not come from a git checkout (a copied tree, a container image) —
+// the health check then simply carries no build, and nothing compares it.
+const BUILD = (() => {
+  try {
+    return require('child_process').execFileSync('git', ['-C', __dirname, 'rev-parse', '--short=7', 'HEAD'],
+      { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).toString().trim() || null;
+  } catch { return null; }
+})();
+
 const REQUIRED_ENV = ['DATABASE_URL', 'JWT_SECRET', 'TENANT_SLUG'];
 
 async function main() {
@@ -70,13 +80,22 @@ async function main() {
   // install had an empty Career Pathing Matrix and no grade for any
   // designation to resolve against.
   await require('./migrations/060-grade-ladder').seed(db, TENANT_ID);
+  // The First-Week Journey's activity matrix, day themes, feedback
+  // statements and holidays — called here for the same reason as the two
+  // above, from the day it was written.
+  await require('./migrations/081-onboarding').seedFor(db, TENANT_ID);
 
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: '2mb' }));
   app.use((req, _res, next) => { req.tenantId = TENANT_ID; next(); });
 
-  app.get('/api/v1/health', (_req, res) => res.json({ ok: true, service: 'agentic-pms' }));
+  // `build` is the commit this process was started from. The bundle is
+  // stamped with the commit it was built from (frontend/vite.config.js),
+  // so an open tab can tell it is running yesterday's screens and say so —
+  // a single-page app never reloads itself, which is how "I deployed and
+  // nothing changed" happens with a perfectly good deploy.
+  app.get('/api/v1/health', (_req, res) => res.json({ ok: true, service: 'agentic-pms', build: BUILD }));
   app.post('/api/v1/auth/dev-login', devLogin);
   // Setting your own password. Authenticated, and reachable even while
   // the account is locked to this one action — see OPEN_WHILE_LOCKED in

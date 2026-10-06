@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import OnboardingTracker from './OnboardingTracker';
 
 const DIM_LABEL = {
   onboarding: 'Onboarding', role_clarity: 'Role clarity', manager_support: 'Manager support',
@@ -50,7 +51,7 @@ const Arrow = ({ dir }) => (dir === 'up' ? <TrendingUp size={13} className="text
   : dir === 'down' ? <TrendingDown size={13} className="text-rose-600" />
   : dir === 'flat' ? <Minus size={13} className="text-navy-300" /> : null);
 
-export default function EngagementInsightsPage() {
+function SurveyInsights() {
   const [index, setIndex] = useState(null);
   const [flags, setFlags] = useState(null);
   const [outcomes, setOutcomes] = useState(null);
@@ -78,8 +79,6 @@ export default function EngagementInsightsPage() {
   const nobody = index.people === 0;
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      <PageHead title="New Hire Insights" hue="leaf"
-        sub="What the lifecycle surveys are saying: who needs attention, which part of onboarding is weakest, and what happened next." />
 
       {/* Nothing to read is said once, plainly, rather than as a page
           of zeroes that looks like a catastrophe. */}
@@ -316,6 +315,41 @@ export default function EngagementInsightsPage() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// TWO VIEWS OF A NEW HIRE, one page. Added 6 Oct with the onboarding
+// tracker, which was asked for "under hiring insights tab available in
+// HRBP and HR tab": the First-Week Journey is what HR DOES in a joiner's
+// first seven days, the survey insights are what the joiners SAY about
+// it afterwards. The tracker opens first because it is the one with work
+// due today. The choice rides in the URL so a link can open either.
+const VIEWS = [
+  ['journey', 'First-Week Journey', 'Every activity of a joiner’s first seven working days — owner, due date, done or overdue, and Day-7 feedback.'],
+  ['surveys', 'Survey Insights', 'What the lifecycle surveys are saying: who needs attention, which part of onboarding is weakest, and what happened next.'],
+];
+
+export default function EngagementInsightsPage() {
+  const [view, setView] = useState(() => {
+    const v = new URLSearchParams(window.location.search).get('view');
+    return VIEWS.some(([k]) => k === v) ? v : 'journey';
+  });
+  const pick = (k) => {
+    setView(k);
+    const u = new URL(window.location.href); u.searchParams.set('view', k);
+    window.history.replaceState(null, '', u);
+  };
+  const sub = VIEWS.find(([k]) => k === view)[2];
+  return (
+    <div className="space-y-4">
+      <PageHead title="New Hire Insights" hue="leaf" sub={sub} />
+      <div className="tabbar">
+        {VIEWS.map(([k, label]) => (
+          <button key={k} type="button" className={view === k ? 'on' : ''} onClick={() => pick(k)}>{label}</button>
+        ))}
+      </div>
+      {view === 'journey' ? <OnboardingTracker /> : <SurveyInsights />}
     </div>
   );
 }

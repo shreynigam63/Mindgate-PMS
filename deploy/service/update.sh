@@ -66,6 +66,20 @@ echo "==> Restarting"
 systemctl restart agentic-pms-api
 for i in $(seq 1 45); do
   if curl -fsS http://127.0.0.1/api/v1/health >/dev/null 2>&1; then
+    # What nginx is actually SERVING, against what was just built. Asked
+    # after "I ran it, deployment is not reflected": a healthy API proves
+    # nothing about the screens. If these differ the web root or the
+    # nginx site is not the one this script writes to, and saying so here
+    # beats a browser hard-refresh that cannot fix it.
+    BUILT=$(grep -o 'assets/index-[A-Za-z0-9_-]*\.js' "${APP_DIR}/frontend/dist/index.html" | head -1 || true)
+    SERVED=$(curl -fsS http://127.0.0.1/ 2>/dev/null | grep -o 'assets/index-[A-Za-z0-9_-]*\.js' | head -1 || true)
+    if [ -n "$BUILT" ] && [ "$BUILT" != "$SERVED" ]; then
+      echo "!! nginx is serving ${SERVED:-nothing recognisable} but this build is ${BUILT}." >&2
+      echo "!! The site root is not ${WEB_ROOT}, or nginx is serving another site. Check: nginx -T | grep -n root" >&2
+      exit 1
+    fi
+    echo "==> Serving ${SERVED} (API build $(curl -fsS http://127.0.0.1/api/v1/health | grep -o '"build":"[^"]*"' || echo 'unknown'))."
+    echo "==> Open tabs pick this up on their own; a tab older than this deploy shows a 'Reload' bar."
     # The summary rides on the SAME line as the success, because
     # "==> Healthy." on its own is exactly what made a no-op deploy look
     # like a real one.

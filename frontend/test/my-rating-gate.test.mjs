@@ -59,6 +59,15 @@ async function open(email, path = '/home') {
   await page.evaluate((x) => localStorage.setItem('apms_token', x), t);
   await page.goto(APP + path, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1400);
+  // The Self section of the sidebar starts folded on Home (6 Oct); the
+  // entry is only drawn once it is open.
+  const self = page.locator('aside button[aria-expanded]').filter({ hasText: /^Self\d*$/ }).first();
+  if (await self.count() && (await self.getAttribute('aria-expanded')) !== 'true') {
+    await self.click();
+    await page.goto(APP + path, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(900);
+    if ((await self.getAttribute('aria-expanded')) !== 'true') await self.click();
+  }
   return { ctx, page, errors };
 }
 
@@ -91,11 +100,17 @@ test('the Home surfaces are shut in the same way, and say the same thing', async
   const { ctx, page, errors } = await open(SHUT);
 
   // The stat card the client circled. It must not be a link.
-  const stat = page.locator('main .stat').filter({ hasText: 'My rating' });
-  assert.equal(await stat.count(), 1);
-  assert.equal(await stat.evaluate((el) => el.tagName), 'DIV',
-    'the stat card leads nowhere while there is nothing behind it');
-  assert.match(await stat.getAttribute('title') || '', /Opens once HR publishes/i);
+  // Since 6 Oct the card row leads with what is OUTSTANDING and fills
+  // with personal counts only when fewer than four things are, so the
+  // rating card may not be drawn at all. When it is, it must not be a
+  // door; and nothing else on Home may link to the empty page either.
+  const stat = page.locator('main .kpi').filter({ hasText: 'My rating' });
+  if (await stat.count()) {
+    assert.equal(await stat.evaluate((el) => el.tagName), 'DIV',
+      'the stat card leads nowhere while there is nothing behind it');
+    assert.match(await stat.getAttribute('title') || '', /Opens once HR publishes/i);
+  }
+  assert.equal(await page.locator('main a[href="/my/rating"]').count(), 0, 'no link on Home opens onto nothing');
 
   // The "My performance" tile that used to be asserted here went with the
   // block on 5 Oct — it duplicated the header nav. The gate still has two
@@ -120,8 +135,8 @@ test('with a rating published everything opens, and the page actually loads', as
   assert.equal(await holder.evaluate((el) => el.tagName), 'A', 'the menu entry is a link again');
   assert.equal(await holder.getAttribute('aria-disabled'), null);
 
-  const stat = page.locator('main .stat').filter({ hasText: 'My rating' });
-  assert.equal(await stat.evaluate((el) => el.tagName), 'A');
+  const stat = page.locator('main .kpi').filter({ hasText: 'My rating' });
+  if (await stat.count()) assert.equal(await stat.evaluate((el) => el.tagName), 'A');
 
   assert.equal(await page.locator('main .card').filter({ hasText: /^My Rating/ }).count(), 0,
     'and it is gone in the published case too — the block went, not the lock');

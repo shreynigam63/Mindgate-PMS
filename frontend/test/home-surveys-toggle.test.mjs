@@ -54,7 +54,9 @@ async function openHome(email) {
   return { ctx, page, errors };
 }
 
-const toggle = (page) => page.locator('button[aria-expanded]').first();
+// Scoped to main: since 6 Oct the sidebar's role groups are
+// aria-expanded buttons too.
+const toggle = (page) => page.locator('main button[aria-expanded]').first();
 // SCOPED TO THE CARD, AND :visible. Two ways this locator was wrong
 // before it was right, both found by running it:
 //   - a bare locator counts DOM nodes, and the collapse sets `hidden`
@@ -66,7 +68,7 @@ const toggle = (page) => page.locator('button[aria-expanded]').first();
 //     still counted one.
 // The card is the toggle's next sibling, which is the only thing the
 // collapse actually governs.
-const rows = (page) => page.locator('button[aria-expanded] + div a:visible');
+const rows = (page) => page.locator('main button[aria-expanded] + div a:visible');
 
 test('the survey list hides and opens in one click, and says so', async (t) => {
   if (needStack(t)) return;

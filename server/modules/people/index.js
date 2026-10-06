@@ -1163,6 +1163,8 @@ const hrbpScope = require('./hrbp-scope');
 // modules beside it — the eligibility engine, the quota engine and the
 // approval workflow — so each can be tested without a database and
 // replaced when Zoho becomes the source of employee data.
+// The First-Week Journey (onboarding tracker) — see onboarding.js.
+router.use('/onboarding', require('./onboarding').router);
 router.use('/', require('./rnr').router);
 
 module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor,

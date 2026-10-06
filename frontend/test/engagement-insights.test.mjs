@@ -37,7 +37,9 @@ const needStack = (t) => {
   return false;
 };
 
-async function open(email = 'admin@shot.in', path = '/admin/engagement-insights') {
+async function open(email = 'admin@shot.in', path = '/admin/engagement-insights?view=surveys') {
+  // ?view=surveys: since 6 Oct the page opens on the First-Week Journey
+  // tab, and these tests are about the survey half.
   const t = (await (await fetch(`${API}/api/v1/auth/dev-login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password: PASS }),

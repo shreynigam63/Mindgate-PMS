@@ -59,6 +59,9 @@ const TENANT_WIDE = [
   '/hrbp/admin',
   '/calibration/bands',
   '/increment-matrix',
+  // The onboarding calendar and activity matrix plan every joiner's week.
+  '/onboarding/holidays',
+  '/onboarding/activities',
 ];
 
 // The keys a payload uses to name whose record a row is. Checked in this
@@ -219,6 +222,10 @@ async function targetEmployeeIds(req) {
     // but it meant an HRBP could not take their own step in the RnR
     // workflow. Found by walking a nomination through all four stages.
     'SELECT employee_id FROM rnr.nominations WHERE tenant_id=$1 AND id=$2',
+    // The First-Week Journey: a joiner, and one of their tasks.
+    'SELECT employee_id FROM people.onboarding_joiners WHERE tenant_id=$1 AND id=$2',
+    `SELECT j.employee_id FROM people.onboarding_tasks t JOIN people.onboarding_joiners j ON j.id = t.joiner_id
+      WHERE t.tenant_id=$1 AND t.id=$2`,
   ];
   for (const id of candidates) {
     for (const sql of OWNED) {

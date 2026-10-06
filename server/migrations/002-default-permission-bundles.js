@@ -11,7 +11,14 @@ const BUNDLES = {
   // manager can already see their reports' ratings; they must never see
   // their pay. Kept as its own grant rather than folded into pms_admin so
   // that revoking compensation access is one row (see migration 030).
-  hr:       ['pms_self', 'pms_admin', 'pms_team_eval', 'pms_hod', 'engagement_admin', 'engagement_take', 'people_admin', 'people_view', 'letters_admin', 'pms_compensation'],
+  hr:       ['pms_self', 'pms_admin', 'pms_team_eval', 'pms_hod', 'engagement_admin', 'engagement_take', 'people_admin', 'people_view', 'letters_admin', 'pms_compensation', 'pms_hrbp'],
+  // HRBP, and HR's pms_hrbp above, WERE granted only by migration 068 —
+  // to the tenants that existed when it ran. index.js creates the tenant
+  // AFTER migrations on a fresh install, so a new deployment's HRBPs
+  // held nothing but what someone added by hand: no HRBP group, every
+  // /hrbp/* page refused. Found on 6 Oct opening New Hire Insights as an
+  // HRBP. Listed here, the boot-time seed carries them to every tenant.
+  hrbp:     ['pms_self', 'pms_hrbp', 'people_view', 'engagement_take'],
   admin:    ['*'],
 };
 

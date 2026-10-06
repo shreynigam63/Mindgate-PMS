@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound, MapPin } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound, MapPin, Search, HelpCircle, ChevronDown, Menu, RefreshCw } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -47,6 +47,7 @@ import IncrementSimulationPage from './pages/IncrementSimulationPage';
 import SettingsPage from './pages/SettingsPage';
 import ApprovalsPage from './pages/ApprovalsPage';
 import HomePage from './pages/HomePage';
+import Summit from './Summit';
 
 // THE THREE ROLE TABS, named on 23 Sep to match the reference: SELF for
 // everyone, + MANAGER for people with reports, + HR for HR and super
@@ -63,7 +64,7 @@ import HomePage from './pages/HomePage';
 // here only describe the grouping.
 const NAV = [
   { group: 'Self', hue: 'navy', icon: User, items: [
-    { to: '/home', label: 'Home', icon: Home },
+    { to: '/home', label: 'Dashboard', icon: Home },
     { to: '/my/kras', label: 'My KRAs', icon: Target },
     { to: '/my/growth', label: 'My Growth', icon: TrendingUp },
     // Asked for on 22 Sep: Connects sits between My Growth and
@@ -161,7 +162,7 @@ const NAV = [
   // else's.
   //
   // The tab disappears for anyone without pms_hod, because a group
-  // whose every item is filtered out is dropped (see TopNav).
+  // whose every item is filtered out is dropped (see visibleGroups).
   { group: 'HOD', hue: 'leaf', icon: Landmark, items: [
     { to: '/hod', label: 'HOD Review', icon: Landmark },
     { to: '/rnr/approvals/delivery-head', label: 'RnR Approvals', icon: Award },
@@ -265,84 +266,244 @@ const mayOpen = (user, route) => !user.pages || user.pages.includes(route);
 // guards itself.
 const gateClosed = (item, gates) => !!item.gate && gates[item.gate] === false;
 
-function TopNav({ user, gates, onChangePassword }) {
-  const { pathname } = useLocation();
-  const nav = useNavigate();
-  // If a whole group ends up empty after filtering, drop the tab too: an
-  // empty "HR Admin" tab with nothing behind it is just confusing.
-  const groups = NAV
-    .map(g => ({ ...g, items: g.items.filter(it => mayOpen(user, it.to)) }))
-    .filter(g => g.items.length > 0);
+// THE SHELL, rebuilt on 6 Oct to the reference the client sent ("current
+// UI seems bit dull for working, please build exact UI as shown"): a
+// white top bar carrying the Mindgate mark, a search box, the bell, help
+// and the person; a dark navy sidebar down the left; the page on a light
+// canvas to the right.
+//
+// ONE DELIBERATE DIFFERENCE FROM THE PICTURE. The reference lists
+// features down the sidebar (My Team, Evaluations, Connects, KRA, …).
+// This product's menu is grouped by ROLE — Self, Manager, HOD, HRBP, HR —
+// which the client asked for on 23 and 24 Sep, and which is what decides
+// whose data a page shows. Flattening it into features would put "my
+// KRAs" and "the whole company's KRAs" next to each other under one
+// word. So the sidebar keeps the role groups as its sections, styled
+// the way the reference styles its items, and opens the group you are
+// in. Everything else on the reference is built as drawn.
+//
+// WHICH GROUPS YOU SEE is still decided by core.page_permission (mayOpen),
+// exactly as the tabs were — a group whose pages you may not open is
+// not drawn.
 
-  // Which tab is open follows the page you are on, not a click you made —
-  // a link from a notification has to land on the right tab too.
-  const here = groups.find(g => g.items.some(it => pathname === it.to || pathname.startsWith(it.to + '/')))
-    || groups[0];
+const visibleGroups = (user) => NAV
+  .map(g => ({ ...g, items: g.items.filter(it => mayOpen(user, it.to)) }))
+  .filter(g => g.items.length > 0);
 
+const groupOf = (groups, pathname) =>
+  groups.find(g => g.items.some(it => it.to !== '/home' && (pathname === it.to || pathname.startsWith(it.to + '/'))));
+
+// The mark from the reference: the word, with the coloured dots over it.
+function Wordmark() {
   return (
-    <header className="glass rounded-none">
-      <div className="px-4 lg:px-6 py-3 flex items-center justify-between gap-3">
-        <h1 className="text-sm lg:text-base font-bold flex items-center gap-2 text-navy-900">
-          <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-navy-700 to-brand-500 flex items-center justify-center shadow-card shrink-0">
-            <Sparkles size={13} className="text-white" />
-          </span>
-          Performance Management System
-        </h1>
-        <div className="flex items-center gap-2 shrink-0">
-          <NotificationBell />
-          <span className="hidden sm:inline text-xs text-navy-500">{user.name} · {user.role}</span>
-          {/* Icon only on a phone. With the word beside it this row grew
-              past 390px and pushed the whole page sideways — caught by
-              the KRA table's phone test, which measures document scroll
-              width rather than looking at this header at all. */}
-          <button className="btn-sec !px-2 sm:!px-3" onClick={onChangePassword}
-            title="Change your password" aria-label="Change your password">
-            <KeyRound size={12} className="inline sm:mr-1" />
-            <span className="hidden sm:inline">Password</span>
+    <span className="wordmark" aria-label="Mindgate">
+      <span className="wordmark-dots" aria-hidden="true"><i /><i /><i /><i /></span>
+      Mindgate
+    </span>
+  );
+}
+
+// Search the pages this person can open. A page search rather than an
+// employee search on purpose: it works for every role, it cannot show
+// anybody a name they may not see, and "where is Calibration?" is the
+// question the old 22-item HR row was worst at answering.
+function NavSearch({ groups }) {
+  const nav = useNavigate();
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const hits = q.trim().length < 2 ? [] : groups.flatMap(g => g.items.map(it => ({ ...it, group: g.group })))
+    .filter(it => `${it.label} ${it.group}`.toLowerCase().includes(q.trim().toLowerCase()))
+    .slice(0, 8);
+  const go = (to) => { setQ(''); setOpen(false); nav(to); };
+  return (
+    <div className="topsearch" onBlur={() => setTimeout(() => setOpen(false), 150)}>
+      <Search size={16} className="text-navy-400 shrink-0" />
+      <input value={q} placeholder="Search for a page — KRA, evaluation, connects…"
+        aria-label="Search pages"
+        onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && hits[0]) go(hits[0].to); if (e.key === 'Escape') setOpen(false); }} />
+      {open && hits.length > 0 && (
+        <div className="topsearch-pop">
+          {hits.map(h => (
+            <button key={h.to} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => go(h.to)}>
+              <h.icon size={14} className="text-brand-600 shrink-0" />
+              <span className="flex-1 text-left">{h.label}</span>
+              <span className="text-[11px] text-navy-400">{h.group}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && q.trim().length >= 2 && hits.length === 0 && (
+        <div className="topsearch-pop"><p className="px-3 py-2 text-xs text-navy-400">No page you can open matches “{q}”.</p></div>
+      )}
+    </div>
+  );
+}
+
+// Click-away popover, for the help and person menus.
+function usePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const off = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', off);
+    return () => document.removeEventListener('mousedown', off);
+  }, [open]);
+  return { open, setOpen, ref };
+}
+
+const ROLE_LABEL = { admin: 'Super Admin', hr: 'HR', hod: 'HOD', manager: 'Manager', employee: 'Employee', hrbp: 'HRBP' };
+
+function Topbar({ user, groups, onChangePassword, onMenu }) {
+  const help = usePopover();
+  const me = usePopover();
+  const initial = (user.name || user.email || '?').trim().charAt(0).toUpperCase();
+  return (
+    <header className="topbar">
+      <div className="topbar-brand">
+        <button type="button" className="lg:hidden p-1.5 -ml-1 rounded-lg hover:bg-navy-50" onClick={onMenu} aria-label="Open menu">
+          <Menu size={20} />
+        </button>
+        <NavLink to="/home" className="flex items-center"><Wordmark /></NavLink>
+        <span className="topbar-sub">People Management System</span>
+      </div>
+      <div className="flex-1 min-w-0 hidden md:flex justify-center px-4"><NavSearch groups={groups} /></div>
+      <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-auto">
+        <span className="topicon"><NotificationBell /></span>
+        <div className="relative" ref={help.ref}>
+          <button type="button" className="topicon" onClick={() => help.setOpen(v => !v)} aria-label="Help">
+            <HelpCircle size={20} />
           </button>
-          <button className="btn-sec" onClick={signOut}><LogOut size={12} className="inline mr-1" />Sign out</button>
+          {help.open && (
+            <div className="menu-pop w-72 p-3 text-[12.5px] text-navy-600 space-y-2">
+              <p className="font-bold text-navy-900">Finding your way</p>
+              <p>The menu on the left is grouped by role — <b>Self</b> is your own work, <b>Manager</b> your reports, then <b>HOD</b>, <b>HRBP</b> and <b>HR</b> as the scope widens. You only see the groups you hold.</p>
+              <p>Search at the top finds any page you can open. Stuck on access? HR can grant a page per role without a release.</p>
+              <p className="text-[11px] text-navy-400">Build {typeof __APP_BUILD__ !== 'undefined' && __APP_BUILD__ ? __APP_BUILD__ : 'local'}</p>
+            </div>
+          )}
+        </div>
+        <div className="relative" ref={me.ref}>
+          <button type="button" className="flex items-center gap-2.5 pl-1 pr-1.5 py-1 rounded-xl hover:bg-navy-50"
+            onClick={() => me.setOpen(v => !v)} aria-label="Your account">
+            <span className="avatar">{initial}</span>
+            <span className="hidden sm:block text-left leading-tight">
+              <span className="block text-[13px] font-bold text-navy-900">{user.name}</span>
+              <span className="block text-[11.5px] text-navy-400">{ROLE_LABEL[user.role] || user.role}</span>
+            </span>
+            <ChevronDown size={16} className="text-navy-500 hidden sm:block" />
+          </button>
+          {me.open && (
+            <div className="menu-pop w-56 py-1.5">
+              <p className="px-3 py-1.5 text-[11.5px] text-navy-400 truncate">{user.email}</p>
+              <button type="button" className="menu-item" onClick={() => { me.setOpen(false); onChangePassword(); }}>
+                <KeyRound size={14} /> Change password
+              </button>
+              <button type="button" className="menu-item" onClick={signOut}><LogOut size={14} /> Sign out</button>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Role tabs. Clicking one opens its first page: a tab is a place to
-          go, not just a filter, and landing on nothing would be a dead end.
-          EVERY tab carries its group's colour, not only the open one: the
-          first cut left the three closed tabs plain white, so the row read
-          as one coloured tab and three disabled ones. Closed tabs are
-          tinted and open tabs are fully saturated, which says "here" and
-          "there" without saying "off". */}
-      <div className="px-4 lg:px-6 flex gap-1.5 overflow-x-auto">
-        {groups.map(g => (
-          <button key={g.group} type="button" onClick={() => nav(g.items[0].to)}
-            className={`roletab roletab-${g === here ? 'on' : 'off'}-${g.hue} ${g === here ? 'roletab-on' : ''}`}>
-            <g.icon size={14} />
-            {g.group}
-            <span className={`navcount ${g === here ? 'navcount-on' : `navcount-${g.hue}`}`}>{g.items.length}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* The open tab's pages. HR Admin has fifteen — 2286px of them at
-          1440px wide — so this WRAPS rather than scrolling sideways. A
-          scrolling row silently hid eight of HR's pages off the right edge
-          with no cue they existed, which would have been worse than the
-          sidebar this replaced, on exactly the axis the sidebar was good
-          at. Wrapping costs one extra row, and only for HR. */}
-      <nav className="subnav px-4 lg:px-6 flex flex-wrap gap-x-1">
-        {here && here.items.map(it => (gateClosed(it, gates) ? (
-          <span key={it.to} className="subnav-item opacity-40 cursor-not-allowed select-none"
-            title={it.gateHint} aria-disabled="true">
-            <span className={`navico navico-${here.hue}`}><it.icon size={13} /></span>{it.label}
-            <Lock size={11} className="ml-1 shrink-0" />
-          </span>
-        ) : (
-          <NavLink key={it.to} to={it.to}
-            className={({ isActive }) => `subnav-item ${isActive ? `subnav-on subnav-on-${here.hue}` : ''}`}>
-            <span className={`navico navico-${here.hue}`}><it.icon size={13} /></span>{it.label}
-          </NavLink>
-        )))}
-      </nav>
     </header>
+  );
+}
+
+function Sidebar({ user, groups, gates, mobileOpen, onClose }) {
+  const { pathname } = useLocation();
+  const nav = useNavigate();
+  const here = groupOf(groups, pathname);
+  // Which groups are expanded. The one you are in always is — a link from
+  // a notification has to land with its group open — and others open on
+  // a click. Expanding a group also opens its first page, as the tabs
+  // did: a group is a place to go, not just a heading.
+  const [openGroups, setOpenGroups] = useState(() => new Set(here ? [here.group] : []));
+  useEffect(() => { if (here) setOpenGroups(s => (s.has(here.group) ? s : new Set([...s, here.group]))); }, [here && here.group]);
+  useEffect(() => { onClose(); }, [pathname]);
+  const dash = mayOpen(user, '/home');
+  const toggle = (g) => {
+    const isOpen = openGroups.has(g.group);
+    setOpenGroups(s => { const n = new Set(s); if (isOpen) n.delete(g.group); else n.add(g.group); return n; });
+    if (!isOpen && here !== g) nav(g.items.filter(it => it.to !== '/home')[0].to);
+  };
+  return (
+    <>
+      {mobileOpen && <div className="fixed inset-0 bg-navy-900/40 z-30 lg:hidden" onClick={onClose} />}
+      <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
+        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1 sidebar-scroll">
+          {dash && (
+            <NavLink to="/home" className={({ isActive }) => `side-item side-top ${isActive ? 'side-on' : ''}`}>
+              <Home size={18} /> Dashboard
+            </NavLink>
+          )}
+          {groups.map(g => {
+            const items = g.items.filter(it => it.to !== '/home');
+            if (!items.length) return null;
+            const isOpen = openGroups.has(g.group);
+            return (
+              <div key={g.group}>
+                <button type="button" onClick={() => toggle(g)} aria-expanded={isOpen}
+                  className={`side-item side-top side-group ${here === g ? 'side-group-here' : ''}`}>
+                  <g.icon size={18} />
+                  <span className="flex-1 text-left">{g.group}</span>
+                  <span className="side-count">{items.length}</span>
+                  <ChevronDown size={15} className={`transition-transform ${isOpen ? '' : '-rotate-90'} opacity-70`} />
+                </button>
+                {isOpen && (
+                  <nav className={`subnav side-sub ${here === g ? '' : 'side-sub-peek'}`} aria-label={g.group}>
+                    {items.map(it => (gateClosed(it, gates) ? (
+                      <span key={it.to} className="subnav-item side-item side-leaf opacity-40 cursor-not-allowed select-none"
+                        title={it.gateHint} aria-disabled="true">
+                        <it.icon size={15} />{it.label}<Lock size={11} className="ml-auto shrink-0" />
+                      </span>
+                    ) : (
+                      <NavLink key={it.to} to={it.to}
+                        className={({ isActive }) => `subnav-item side-item side-leaf ${isActive ? 'side-on subnav-on' : ''}`}>
+                        <it.icon size={15} /><span className="truncate">{it.label}</span>
+                      </NavLink>
+                    )))}
+                  </nav>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="side-card">
+          <p>“People<br />Processes<br />Progress<br />Together”</p>
+          <Summit className="side-card-art" />
+        </div>
+      </aside>
+    </>
+  );
+}
+
+// "I DEPLOYED AND NOTHING CHANGED." A single-page app never reloads
+// itself: a tab opened before a deploy keeps running the old screens for
+// as long as it stays open, however healthy the deploy was. This asks the
+// API which commit it is running and, if the bundle in this tab was built
+// from a different one, says so with a one-click reload. Silent when
+// either side does not know its build (a local dev server, a copied
+// tree) — a banner that guesses would cry wolf.
+function BuildWatch() {
+  const mine = typeof __APP_BUILD__ !== 'undefined' ? __APP_BUILD__ : null;
+  const [live, setLive] = useState(null);
+  useEffect(() => {
+    if (!mine) return undefined;
+    const check = () => fetch('/api/v1/health').then(r => r.json()).then(r => setLive(r.build || null)).catch(() => {});
+    check();
+    const t = setInterval(check, 5 * 60 * 1000);
+    const onFocus = () => document.visibilityState === 'visible' && check();
+    document.addEventListener('visibilitychange', onFocus);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onFocus); };
+  }, [mine]);
+  if (!mine || !live || live === mine) return null;
+  return (
+    <div className="buildbar" role="status">
+      <RefreshCw size={14} />
+      A newer version of PMS has been deployed ({live}). This tab is still on {mine}.
+      <button type="button" onClick={() => location.reload()}>Reload now</button>
+    </div>
   );
 }
 
@@ -374,11 +535,12 @@ function Main({ user }) {
     .sort((a, b) => b.length - a.length)[0];
   const blocked = known && !mayOpen(user, known);
   return (
-    <main className="flex-1 min-w-0 p-4 lg:p-6 max-w-[1500px] w-full mx-auto">
+    <main className="flex-1 min-w-0 p-4 lg:p-6 w-full">
+      <div className="max-w-[1500px] mx-auto">
       {blocked ? <NoAccess /> : (
             <Routes>
               <Route path="/" element={<Navigate to="/home" replace />} />
-              <Route path="/home" element={<HomePage />} />
+              <Route path="/home" element={<HomePage user={user} />} />
               <Route path="/my/kras" element={<MyKRASheetPage />} />
               <Route path="/admin/increments" element={<IncrementSimulationPage />} />
               <Route path="/admin/settings" element={<SettingsPage />} />
@@ -458,6 +620,7 @@ function Main({ user }) {
               <Route path="*" element={<Navigate to="/home" replace />} />
             </Routes>
       )}
+      </div>
     </main>
   );
 }
@@ -536,6 +699,21 @@ function ChangePassword({ forced, email, onDone, onCancel }) {
   );
 }
 
+function Shell({ user, gates, onChangePassword }) {
+  const groups = visibleGroups(user);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  return (
+    <div className="min-h-screen flex flex-col">
+      <Topbar user={user} groups={groups} onChangePassword={onChangePassword} onMenu={() => setMobileOpen(true)} />
+      <BuildWatch />
+      <div className="flex flex-1 min-h-0">
+        <Sidebar user={user} groups={groups} gates={gates} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+        <Main user={user} />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [checked, setChecked] = useState(false);
@@ -595,10 +773,7 @@ export default function App() {
   }
   return (
     <BrowserRouter>
-      <div className="min-h-screen flex flex-col">
-        <TopNav user={user} gates={gates} onChangePassword={() => setChanging(true)} />
-        <Main user={user} />
-      </div>
+      <Shell user={user} gates={gates} onChangePassword={() => setChanging(true)} />
     </BrowserRouter>
   );
 }
