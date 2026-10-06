@@ -11,6 +11,10 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
+**Current to build `b2d3a2b`**, deployed on 6 October 2026 at
+pms.agentichumans.in. The build a screen is running is shown in its **?**
+menu, and `/api/v1/health` reports the same commit.
+
 ---
 
 # Part 1 — The engine
@@ -90,10 +94,15 @@ with `*` as wildcard. Default bundles (`migrations/002`):
 | `employee` | `pms_self`, `engagement_take`, `people_view` |
 | `manager` | + `pms_team_eval` |
 | `hod` | + `pms_hod` |
-| `hr` | `pms_admin`, `pms_team_eval`, `pms_hod`, `engagement_admin`, `people_admin`, `letters_admin`, `pms_compensation`, … |
+| `hrbp` | `pms_self`, `pms_hrbp`, `people_view`, `engagement_take` |
+| `hr` | `pms_admin`, `pms_team_eval`, `pms_hod`, `pms_hrbp`, `engagement_admin`, `people_admin`, `letters_admin`, `pms_compensation`, … |
 | `admin` | `*` |
 
-Bundles are **data, not code**. A client edits them; they never fork.
+Bundles are **data, not code**. A client edits them; they never fork. They
+are re-seeded at every boot with `ON CONFLICT DO NOTHING`, so a missing
+grant is restored and an added one is kept. (Until 6 Oct the `hrbp` bundle
+was granted only to tenants that existed when migration 068 ran, so a fresh
+install's HRBPs held no HRBP access; it is now in the boot seed.)
 
 Three layers, in order (`core/auth.js`, `core/permissions.js`):
 
@@ -132,8 +141,13 @@ whole module rather than edits in 104 handlers:
   the life of one request. Named, not a wildcard, so adding one is a
   decision somebody had to write down.
 - **`TENANT_WIDE`** — settings, cycles, the KRA library, competency
-  framework and similar. Configuration is the tenant's, not a person's, so
-  these are not narrowed.
+  framework, the onboarding holidays, activity matrix and SPOC list, and
+  similar. Configuration is the tenant's, not a person's: an HRBP may read
+  it and may not change it.
+- **Writes must name a person in the remit.** The gateway resolves every id
+  in the request — an employee, a KRA sheet, a connect, an RnR nomination,
+  an onboarding joiner or task — to the person it belongs to, and refuses
+  the write if that person is outside the remit or cannot be resolved.
 - **`HR_ONLY`** — `/hrbp/admin`. Reading is not automatically safe: lending
   `pms_admin` would otherwise open the screen that *sets* remits, letting
   an HRBP widen their own.
@@ -141,7 +155,7 @@ whole module rather than edits in 104 handlers:
 The remit itself lives in `core.hrbp_scope` (`kind` = location or HOD,
 `value`). Routes are separate from `/admin/*` on purpose: one page row
 drives both menu and guard, so giving an HRBP the `/admin/*` rows would put
-the **HR tab itself** in their menu.
+the **HR section itself** in their menu.
 
 ## 1.4 Four house rules visible on every screen
 
@@ -178,7 +192,7 @@ deploy shows a *Reload now* bar (`BuildWatch`).
 | Page | Route | What governs it |
 |---|---|---|
 | Dashboard | `/home` | Top of the sidebar, §2.6 |
-| My KRAs | `/my/kras` | Sheet status machine, §3.1. Weights must total exactly 100 to submit |
+| My KRAs | `/my/kras` | Sheet status machine, §3.1. Weights must total exactly 100 to submit. Each KRA shows its timesheet hours and rating, §3.7 |
 | My Growth | `/my/growth` | Opens on **your** KRA submission, §3.2. Short-term and long-term aspiration are separate records |
 | Connects | `/team/connects` | 1-on-1 log. Action items carry `sort_order` — `created_at` ties inside one transaction |
 | Mid-Year Review | `/my/midyear` | Opens at `mid_year_review`, stays open to end of Annual Review. Per-KRA ratings with a computed overall |
@@ -204,7 +218,7 @@ says "No published ratings yet" and what will change that.
 | Nominate for RnR | `/rnr/nominate` | §3.10 |
 | Manager Dashboard | `/team/dashboard` | The Dashboard one scope out |
 | Team Overview | `/team/overview` | Every report, all phases at a glance |
-| Team KRA Sheets | `/team/kra-sheets` | Approve or return. A return **must** carry a comment — refused 422, *"the employee must know why"* (`approvals.js`) |
+| Team KRA Sheets | `/team/kra-sheets` | Each KRA shows the report's timesheet hours and rating, §3.7. Approve or return. A return **must** carry a comment — refused 422, *"the employee must know why"* (`approvals.js`) |
 | Team Target Achievements | `/team/growth` | Growth-plan decisions |
 | Team Mid-Year | `/team/midyear` | Manager half of the checkpoint |
 | Team Evaluation | `/team/eval` | Opens at `manager_eval`. Each KRA shows its timesheet rating beside the manager's buttons, §3.7 |
@@ -437,6 +451,19 @@ cycle, so a month nobody uploaded is not counted as hours not worked.
 It is **evidence, never the rating of record** — "shown beside, manager
 decides". Nothing writes it into an evaluation.
 
+Who sees it: the employee (their own), their manager, the HOD of their
+department, and HR (`GET /api/v1/pms/timesheet/kra/ratings/:employeeId`).
+
+**Configuring it.** The bands (`kra_bands`) and hours per day
+(`hours_per_day`, default 8) sit in the timesheet scoring settings
+(`core.admin_settings`, key `timesheet`, `scoring`), with the overall
+score's switches (`auto_score`, `min_mapped_pct`, the 50/30/20 weights).
+**There is no screen for these yet**: HR changes them through
+`PUT /api/v1/pms/timesheet/kra/scoring`, which validates them (every band
+needs a label, one band must start at 0, hours per day 0–24) and audits the
+change. The working-day calendar — cycle start day and holidays — is on
+**HR → Timesheet → Settings**.
+
 ## 3.8 Competencies
 
 A framework of competencies with levels per role, an employee
@@ -503,13 +530,22 @@ There is no feed: Glassdoor retired its public review API in 2021,
 AmbitionBox never had one, and both prohibit scraping. Such surveys are
 `import_only` — they take responses but never invite anybody.
 
-### First-Week Journey (onboarding tracker) — New Hire Insights, HR and HRBP
+## 3.12 First-Week Journey — onboarding tracker (New Hire Insights, HR and HRBP)
 
 The client's *7 Days Onboarding Tracker* workbook, as a tab on New Hire
 Insights (opens first; *Survey Insights* is the other tab).
 
-- **A joiner is an employee** picked from the master (recent and upcoming
-  joiners are offered; anyone else by search). Manager, department and
+Tables: `people.onboarding_activities` (the 48-row matrix, with who each
+task's email goes to), `_days`, `_holidays`, `_joiners`, `_tasks`,
+`_feedback`, `_feedback_questions`, `_spocs`, `_task_emails`
+(migrations 081 and 082). The screen: a **Report date**, buttons for
+**Activity matrix**, **SPOCs**, **Holidays** and **Add joiner**, five
+cards, *By owner*, *By day of the journey*, and the joiner list; a joiner
+opens to their week, day by day, then Day-7 feedback.
+
+- **A joiner is an employee** picked from the master (anyone active who
+  joined in the last three weeks or joins in the next six is offered;
+  anyone else by search). Manager, department and
   designation come from the master. Buddy and HR POC are chosen.
 - **Starting a joiner creates one task per active activity** — 48 from
   the client's Activity Matrix.
@@ -534,7 +570,17 @@ Insights (opens first; *Survey Insights* is the other tab).
   Admin, SME and L&D from the **SPOCs** list HR keeps on this page. The
   text is editable; every send is kept on the task. While the instance's
   mail is in *simulated* mode the email is recorded, not delivered — the
-  screen says so and offers *Open in my mail app*.
+  screen says so and offers *Open in my mail app*. Recipients are worked
+  out on the server, never taken from the request; colleagues from the
+  employee master can be copied in. Where the owner is "A to B" (e.g.
+  *HR Ops → IT*) the email goes to B, the one doing the work. A desk with
+  no address set is named on screen and nothing is sent.
+- **Email mode.** `core.admin_settings` key `mail_send_mode`:
+  `simulated` (the product default — logged in `core.notif_log`, not
+  delivered) or `live`. Live needs SMTP: `SMTP_HOST`, `SMTP_PORT`,
+  `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` in `/etc/agentic-pms/api.env`, or
+  the `smtp` setting. **There is no screen for either yet**; the
+  administrator sets them.
 
 Verified against all 288 real rows of the workbook: planned date, status
 and days overdue match on every one. Three workbook faults were corrected
@@ -542,7 +588,7 @@ rather than copied: the Day column (Readiness rows said Day 1 but were
 planned before joining), 55 tracker rows per joiner for 48 activities,
 and the Ownership sheet counting "Recruiter" as IT.
 
-## 3.12 Reminders
+## 3.13 Reminders
 
 `reminder-schedule.js` is the pure calendar; `reminders.js` answers who it
 is about and whether they already got it.
@@ -571,7 +617,14 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 | RnR awards, bands, quota | `rnr.awards`, `rnr.band_levels`, `rnr.settings` |
 | Connect questions | `pms.connect_questions` |
 | HRBP remits | `core.hrbp_scope` |
-| Department heads | `core.department_heads` |
+| Department heads | `core.department_heads` (HR → HOD) |
+| Super 50 rule, KRA Library scope | HR → Settings |
+| Timesheet calendar (cycle start day, holidays, compliance thresholds) | HR → Timesheet → Settings |
+| Timesheet KRA rating bands, hours per day; overall score switches | `core.admin_settings` `timesheet.scoring`, via `PUT /pms/timesheet/kra/scoring` — no screen yet |
+| Which KRA a work item serves; KRAs not measured from timesheets | Manager → Timesheet (mapping), HR mapping backlog |
+| Onboarding activity matrix, day themes, Day-7 statements | `people.onboarding_activities`, `_days`, `_feedback_questions` (seeded from the client's workbook) |
+| Onboarding holidays, SPOC email addresses | New Hire Insights → First-Week Journey → Holidays / SPOCs |
+| Email live or simulated; SMTP | `core.admin_settings` `mail_send_mode`; `SMTP_*` in `api.env` — no screen yet |
 | AI on/off | `ANTHROPIC_API_KEY` in `/etc/agentic-pms/api.env` — instance-owned, never written by a deploy |
 | AI model | `deploy/service/managed-settings.env`, pushed into `api.env` by every deploy (`UNMANAGED=AI_MODEL` pins a box) |
 
@@ -587,8 +640,13 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 - **No dummy data.** Empty states are honest.
 - **A missing key is not a broken product.** With no `ANTHROPIC_API_KEY`,
   agentic endpoints answer a clean 503 and everything else works.
+- **The timesheet does not set a rating.** Its per-KRA rating is shown
+  beside the manager's and HOD's own; the people rate.
+- **It does not pretend to send email.** In simulated mode an email is
+  recorded and the screen says it was not delivered.
 
 ---
 
-*Derived from the code at the commit this file was added. Where this book
-and the code disagree, the code is right and this book is a bug.*
+*Checked against the code at `b2d3a2b`, the build deployed on 6 October
+2026. Where this book and the code disagree, the code is right and this
+book is a bug.*

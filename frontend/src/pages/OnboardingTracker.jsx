@@ -315,7 +315,7 @@ function EmailSpoc({ taskId, onSent, onClose }) {
       {d.mail_mode !== 'live' && (
         <p className="text-[12px] text-amber-700">
           Email on this instance is in <b>simulated</b> mode — sending records it on the tracker but does not deliver it.
-          Use <b>Open in my mail app</b> to send it yourself, or ask the admin to switch mail to live in Settings.
+          Use <b>Open in my mail app</b> to send it yourself, or ask the administrator to turn live email on for this instance.
         </p>
       )}
       <input className="inp" value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Subject" />
