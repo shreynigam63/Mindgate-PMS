@@ -225,13 +225,14 @@ function validateScoring(s) {
 //                     (weekends and the timesheet holiday list skipped)
 //   KRA expected h  = required hours × the KRA's weight ÷ weight of the
 //                     KRAs measured from timesheets
-//   KRA effort %    = hours placed against the KRA ÷ KRA expected h,
-//                     capped at 100
+//   KRA effort %    = hours placed against the KRA ÷ KRA expected h
+//                     (not capped: A+ is "more than 100%", so overtime
+//                     shows as what it is, e.g. 125%)
 //   rating          = effort % on the tenant's KRA bands — by default
-//                     A+ from 80, A from 70, B+ from 40, B below 40
+//                     A+ from 100, A from 80, B+ from 70, B below 70
 //
 // e.g. 140 required hours, a 25% KRA → 35 h expected; 17.5 h on it is
-// 50% → B+. The weight is shared only over MEASURED KRAs: a KRA marked
+// 50% → B. The weight is shared only over MEASURED KRAs: a KRA marked
 // "not measured from timesheets" expects no hours, so its weight is not
 // left as hours nobody can ever log.
 //
@@ -243,9 +244,12 @@ function validateScoring(s) {
 // EVIDENCE, NOT THE RATING OF RECORD — the client's choice, "shown
 // beside, manager decides". Nothing here writes into an evaluation.
 
-// The client's ladder, as given on 6 Oct: "A+ < 100%, A < 80%, B+ < 70%",
-// with B below 40% from their earlier message the same day.
-const DEFAULT_KRA_BANDS = [{ label: 'A+', min: 80 }, { label: 'A', min: 70 }, { label: 'B+', min: 40 }, { label: 'B', min: 0 }];
+// The client's ladder, as finally given on 6 Oct: "A+ more than 100%,
+// A more than 80%, B+ more than 70%, B below 69%". Each band starts AT its
+// figure: somebody who worked exactly the expected hours (100%) has met
+// the KRA in full, and an A+ that needed one minute of overtime would be
+// a rating for staying late rather than for the work.
+const DEFAULT_KRA_BANDS = [{ label: 'A+', min: 100 }, { label: 'A', min: 80 }, { label: 'B+', min: 70 }, { label: 'B', min: 0 }];
 
 /**
  * @param {object} att   the return of timesheet-kra-match.attribute()
@@ -286,7 +290,7 @@ function kraRatings(att, cfg = {}, win = {}) {
       return { ...row, measured: true, expected_hours: expected || null, effort_pct: null, rating: null,
         reason: !(row.weight > 0) ? 'This KRA carries no weight' : !(required > 0) ? 'No working days' : 'No mapped hours yet' };
     }
-    const effort = round1(clamp((row.hours / expected) * 100, 0, 100));
+    const effort = round1(Math.max(0, (row.hours / expected) * 100));
     return { ...row, measured: true, expected_hours: expected, effort_pct: effort,
       rating: gradeFor(effort, bands), reason: null };
   });

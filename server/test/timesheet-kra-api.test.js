@@ -256,7 +256,7 @@ test('EACH KRA GETS A TIMESHEET RATING — hours worked against hours required',
   const by = Object.fromEntries(v.kra_ratings.ratings.map((r) => [r.title, r]));
   assert.equal(by['Ticket Resolution'].expected_hours, 100.8);
   assert.equal(by['Ticket Resolution'].effort_pct, 39.7, '40 of 100.8 hours');
-  assert.equal(by['Ticket Resolution'].rating, 'B', 'below 40% is B');
+  assert.equal(by['Ticket Resolution'].rating, 'B', '39.7% is B');
   assert.equal(by['CSAT Score'].rating, 'B');
 
   // The cycle view the manager and HOD rate from covers the days the
@@ -267,9 +267,10 @@ test('EACH KRA GETS A TIMESHEET RATING — hours worked against hours required',
   assert.deepEqual([c.body.window.from, c.body.window.to], ['2026-09-01', '2026-09-09']);
   assert.equal(c.body.kra_ratings.required_hours, 56);
   const cy = Object.fromEntries(c.body.kra_ratings.ratings.map((r) => [r.title, r]));
-  assert.equal(cy['Ticket Resolution'].rating, 'A+', '40 h against 33.6 expected');
+  assert.equal(cy['Ticket Resolution'].effort_pct, 119, '40 h against 33.6 expected — overtime shows');
+  assert.equal(cy['Ticket Resolution'].rating, 'A+');
   assert.equal(cy['Client Reporting'].effort_pct, 71.4, '8 h against 11.2 expected');
-  assert.equal(cy['Client Reporting'].rating, 'A');
+  assert.equal(cy['Client Reporting'].rating, 'B+', '71.4% is B+');
   assert.equal((await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'emp')).status, 200, 'the employee sees their own');
   assert.equal((await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'other')).status, 403, 'a stranger does not');
 
