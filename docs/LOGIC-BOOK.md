@@ -1,6 +1,6 @@
-# Agentic PMS — the logic book
+# Performance Management System — the logic book
 
-How the product actually works, tab by tab: what each screen reads, what it
+How the product actually works, section by section: what each screen reads, what it
 writes, and the rules that decide whether it lets you.
 
 It is written for somebody who has to answer "why did it do that?" — a
@@ -161,17 +161,23 @@ the **HR tab itself** in their menu.
 
 ---
 
-# Part 2 — The five tabs
+# Part 2 — The five role sections
 
-Tabs are groups in `frontend/src/App.jsx`; an item appears only if the
-viewer holds its page permission, and a group whose every item is filtered
-out disappears entirely.
+Since 6 Oct the screen is a white top bar (product name, page search,
+notifications, help, account) over a navy sidebar. The sidebar starts with
+**Dashboard** and then five role sections — **Self, Manager, HOD, HRBP,
+HR** — each opening into its pages. They are groups in
+`frontend/src/App.jsx`; an item appears only if the viewer holds its page
+permission, and a section whose every item is filtered out disappears
+entirely. The search box finds only pages the viewer may open. The help
+menu shows the build the screen is running, and a tab left open across a
+deploy shows a *Reload now* bar (`BuildWatch`).
 
-## 2.1 Self — 14 pages, everyone
+## 2.1 Self — 13 pages plus Dashboard, everyone
 
 | Page | Route | What governs it |
 |---|---|---|
-| Home | `/home` | §2.6 |
+| Dashboard | `/home` | Top of the sidebar, §2.6 |
 | My KRAs | `/my/kras` | Sheet status machine, §3.1. Weights must total exactly 100 to submit |
 | My Growth | `/my/growth` | Opens on **your** KRA submission, §3.2. Short-term and long-term aspiration are separate records |
 | Connects | `/team/connects` | 1-on-1 log. Action items carry `sort_order` — `created_at` ties inside one transaction |
@@ -196,12 +202,12 @@ says "No published ratings yet" and what will change that.
 | Page | Route | What governs it |
 |---|---|---|
 | Nominate for RnR | `/rnr/nominate` | §3.10 |
-| Manager Dashboard | `/team/dashboard` | The Home page one scope out |
+| Manager Dashboard | `/team/dashboard` | The Dashboard one scope out |
 | Team Overview | `/team/overview` | Every report, all phases at a glance |
 | Team KRA Sheets | `/team/kra-sheets` | Approve or return. A return **must** carry a comment — refused 422, *"the employee must know why"* (`approvals.js`) |
 | Team Target Achievements | `/team/growth` | Growth-plan decisions |
 | Team Mid-Year | `/team/midyear` | Manager half of the checkpoint |
-| Team Evaluation | `/team/eval` | Opens at `manager_eval` |
+| Team Evaluation | `/team/eval` | Opens at `manager_eval`. Each KRA shows its timesheet rating beside the manager's buttons, §3.7 |
 | Team Competencies | `/team/competencies` | Manager assessment per report |
 | Timesheet | `/team/timesheet` | Where the mapping is done, §3.7 |
 
@@ -213,7 +219,7 @@ sits in the queue of somebody who no longer manages them.
 
 | Page | Route | What governs it |
 |---|---|---|
-| HOD Review | `/hod` | Opens at `hod_eval`. Shows manager **and** HOD ratings per KRA |
+| HOD Review | `/hod` | Opens at `hod_eval`. Shows employee, manager and timesheet ratings per KRA |
 | RnR Approvals | `/rnr/approvals/delivery-head` | Stage 2 of §3.10 |
 
 The `hod` role grants access to the *screen*; `core.department_heads` decides
@@ -262,24 +268,34 @@ administration.
   assessment. These carry no approve button, because bulk-approving one
   would mean writing an empty evaluation in someone else's name.
 
-## 2.6 Home
+## 2.6 Dashboard
 
-Home answers *what now?*, in this order:
+The Dashboard (`/home`, `HomePage.jsx`) answers *what now?*, laid out to the
+reference the client sent on 6 Oct:
 
-1. **The cycle card** — name, phase, and who this cycle covers (§3.6).
-2. **The stat strip** — KRAs, weight, goals, connects, team size, rating.
-3. **The action band** — the single most urgent thing, chosen server-side.
-   A list of five things nobody reads.
-4. **Surveys waiting on you** — capped at four with the remainder as a
-   link, collapsible, and the count stays visible when collapsed.
-5. **Requested to manager** — what you are waiting on someone else for.
-6. **My desk** — what is outstanding, one tile per real count. An empty
-   desk means an empty desk; the row is never padded with zeroes.
-7. **Pending requests / My team / Cycle administration** — by permission.
+1. **Greeting band** — good morning/afternoon, the date, and the single most
+   urgent thing, chosen server-side, with its link.
+2. **Four attention cards** — what is outstanding, in the order it blocks
+   people: evaluations to write, reports with no connect logged, employees
+   with no manager, approvals pending, a returned KRA sheet, mid-year or
+   annual review due, open connect actions. Only real counts get a card;
+   with fewer than four, the row is completed with the person's own counts
+   (KRAs and weight, connects, growth goals, rating) — never zeroes.
+3. **Surveys waiting on you** — capped at four with the remainder as a
+   link; collapsible, and the count stays visible when collapsed.
+4. **PMS Cycle – Current Status** — the seven working phases as steps
+   (KRA Setting → Publish), "Step n of 7", and who this cycle covers (§3.6).
+5. **Quick Actions** — four shortcuts, chosen from pages the viewer may
+   open, so none leads to an access-denied screen.
+6. **Requested to manager** — what you are waiting on someone else for.
+7. **My Team** (managers, and HR over everyone) — reports, KRA sheets
+   approved, connects pending, evaluation completion; tabs for KRA
+   approvals, evaluation status and connects; a department filter and
+   name search; one row per person with KRA, growth plan, annual review,
+   connects and evaluation status.
 
-Tiles are **not** hidden when their phase has not arrived; they say when
-they open. A tile that vanishes makes people ask whether they have lost
-access.
+The old "My performance" block was removed on 5 Oct: every link in it is in
+the menu already.
 
 ---
 
