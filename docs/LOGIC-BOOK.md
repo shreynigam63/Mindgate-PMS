@@ -375,7 +375,7 @@ scoring (`timesheet-kra-score`), rules (`timesheet-rules`). Attribution has
 to be arguable on its own, and a scoring change must never quietly move
 where somebody's hours were said to go.
 
-What ships is **coverage reporting, not a rating**:
+What ships for the sheet as a whole is **coverage reporting**, plus a **rating per KRA** (below):
 
 | Number | Meaning |
 |---|---|
@@ -389,6 +389,30 @@ breadth over value: on the real client month, every hour in one KRA scored
 14%, while an hour in each of seven would have scored 100%.
 
 The monthly rollup feeds Calibration as a **suggestion only**.
+
+### Timesheet rating per KRA (added 6 Oct)
+
+Asked for directly: *"there should be rating against KRA as per timesheet
+filled"*. For every KRA measured from timesheets:
+
+| Step | Formula |
+|---|---|
+| effort share | hours on the KRA ÷ hours on all measured KRAs |
+| expected share | the KRA's weight ÷ weight of all measured KRAs |
+| effort % | effort share ÷ expected share × 100, capped at 100 |
+| rating | effort % on the tenant's bands (A+ ≥ 90, A ≥ 75, B+ ≥ 60, B ≥ 45, C) |
+
+A 30% KRA that received 30% of the placed hours rates A+; half of that is
+50%; none is C. Only proportions count, so part-timers and partial months
+are rated fairly. KRAs marked *not measured from timesheets* are not rated
+and are left out of everyone's expected share. No mapped hours → no rating,
+with a sentence saying why; a thin mapping (below the tenant's minimum
+mapped %) still rates but is flagged on screen.
+
+Where it shows: the **Timesheet** page (per month), and beside each KRA on
+**Team Evaluation** and **HOD Review** (over the cycle so far). It is
+**evidence, never the rating of record** — the client's choice, "shown
+beside, manager decides". Nothing writes it into an evaluation.
 
 ## 3.8 Competencies
 

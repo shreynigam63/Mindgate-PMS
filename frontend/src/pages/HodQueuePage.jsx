@@ -4,6 +4,7 @@ import { api, phaseLabel, phaseColor } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import { grade } from '../grade';
+import { useTimesheetRatings, TimesheetRatingChip, TimesheetRatingNote } from '../TimesheetRating';
 
 // Matches Self-Appraisal/Team Evaluation's convention: per-KRA ratings in
 // letter grades, overall figures in descriptive wording — fixed local
@@ -67,6 +68,7 @@ function HodRow({ q, editable, reload, scale }) {
   const [v, setV] = useState(q.hod_rating ?? '');
   const [comment, setComment] = useState('');
   const [err, setErr] = useState(null);
+  const ts = useTimesheetRatings(q.employee_id);
 
   useEffect(() => {
     api(`/pms/hod/queue/${q.employee_id}/kras`).then(setDetail).catch(e => setDetailErr(e.message));
@@ -87,6 +89,7 @@ function HodRow({ q, editable, reload, scale }) {
       {detail && (
         <div className="space-y-2">
           {!detail.kras.length && <p className="text-xs text-navy-400">No KRAs found for this employee this cycle.</p>}
+          {!!detail.kras.length && <TimesheetRatingNote data={ts} />}
           {detail.kras.map(k => {
             const self = detail.self_entries[k.id] && detail.self_entries[k.id].self_rating;
             const mgr = detail.manager_entries[k.id] && detail.manager_entries[k.id].rating;
@@ -101,6 +104,7 @@ function HodRow({ q, editable, reload, scale }) {
                   <p>Employee: <b>{grade(self, scale)}</b></p>
                   <p>Manager: <b>{grade(mgr, scale)}</b></p>
                 </div>
+                <TimesheetRatingChip data={ts} kraId={k.id} />
                 {mgrComment && <p className="text-navy-500"><b>Manager's comment:</b> {mgrComment}</p>}
               </div>
             );

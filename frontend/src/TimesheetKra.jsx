@@ -371,7 +371,7 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
       {!!(s.withheld || []).length && (
         <div className="card p-3 border-l-4 border-amber2-500 space-y-1">
           <p className="text-[11px] font-semibold text-navy-900">
-            <Info size={12} className="inline mr-1 -mt-px" />No rating is produced from this screen
+            <Info size={12} className="inline mr-1 -mt-px" />No overall monthly score — the per-KRA ratings below are shown, the single score is not
           </p>
           <ul className="list-disc ml-5 text-[11.5px] text-navy-600 space-y-0.5">
             {s.withheld.map((w, i) => <li key={i}>{w}</li>)}
@@ -393,6 +393,11 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
 
       {/* The KRAs. */}
       <div className="card p-4">
+        {d.kra_ratings && d.kra_ratings.note && (
+          <p className={`text-[11px] mb-2 ${d.kra_ratings.thin ? 'text-amber-700' : 'text-navy-500'}`}>
+            <Info size={11} className="inline mr-1 -mt-px" />{d.kra_ratings.note}
+          </p>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
           <p className="lbl">Where the hours went</p>
           <span className="text-[10px] text-navy-400">
@@ -409,6 +414,7 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                 <th className="px-3 py-2 text-right">Hours</th>
                 <th className="px-3 py-2 text-right">Share</th>
                 <th className="px-3 py-2 w-40">Effort vs weight</th>
+                <th className="px-3 py-2">Timesheet rating</th>
               </tr>
             </thead>
             <tbody>
@@ -436,10 +442,24 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                   <td className="px-3 py-2">
                     {k.scorable ? <ShareBar share={k.share_pct} target={k.weight} /> : null}
                   </td>
+                  {/* The KRA's own rating from this window's hours — see
+                      kraRatings on the server. Evidence for whoever rates
+                      the KRA; it does not set the appraisal rating. */}
+                  <td className="px-3 py-2">{(() => {
+                    const r = ((d.kra_ratings || {}).ratings || []).find((x) => x.kra_id === k.kra_id);
+                    if (!r || !r.measured) return <span className="text-navy-300">—</span>;
+                    if (!r.rating) return <span className="text-[10.5px] text-navy-400">{r.reason}</span>;
+                    return (
+                      <span title={`${r.share_pct}% of placed hours against an expected ${r.expected_pct}%`}>
+                        <span className="chip bg-navy-700 text-white">{r.rating}</span>
+                        <span className="text-[10.5px] text-navy-500 ml-1.5">effort {r.effort_pct}%</span>
+                      </span>
+                    );
+                  })()}</td>
                 </tr>
               ))}
               {!kras.length && (
-                <tr><td colSpan="5" className="px-3 py-8 text-center text-navy-400">
+                <tr><td colSpan="6" className="px-3 py-8 text-center text-navy-400">
                   No KRAs on this person's sheet for the current cycle.
                 </td></tr>
               )}

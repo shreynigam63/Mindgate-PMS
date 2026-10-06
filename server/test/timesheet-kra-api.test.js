@@ -246,6 +246,34 @@ test('the manager maps the month and every number moves', { skip }, async () => 
   assert.deepEqual(v.uncovered.map((u) => u.title), ['CSAT Score']);
 });
 
+test('EACH KRA GETS A TIMESHEET RATING — its share of the effort against its weight', { skip }, async () => {
+  // Asked for on 6 Oct: "there should be rating against KRA as per
+  // timesheet filled". After the mapping above: 40 h on Ticket Resolution
+  // (60%), 8 h on Client Reporting (20%), none on CSAT Score (20%).
+  const v = (await api(`/pms/timesheet/kra/employee/${ids.emp}?${WIN}`)).body;
+  const by = Object.fromEntries(v.kra_ratings.ratings.map((r) => [r.title, r]));
+  assert.equal(by['Ticket Resolution'].rating, 'A+', 'more than its share is full marks, never above');
+  assert.equal(by['Ticket Resolution'].effort_pct, 100);
+  assert.equal(by['Client Reporting'].effort_pct, 83.3, '16.7% of the hours against an expected 20%');
+  assert.equal(by['Client Reporting'].rating, 'A');
+  assert.equal(by['CSAT Score'].effort_pct, 0);
+  assert.equal(by['CSAT Score'].rating, 'C', 'a weighted KRA with no logged work rates at the bottom');
+  assert.equal(v.kra_ratings.thin, false, 'every considered hour is mapped');
+
+  // The cycle view the manager and HOD rate from: the whole cycle so
+  // far, and the same answer for the same hours.
+  const c = await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'mgr');
+  assert.equal(c.status, 200, JSON.stringify(c.body));
+  assert.equal(c.body.window.from, '2026-04-01', 'from the cycle\'s opening date');
+  assert.equal(c.body.kra_ratings.ratings.find((r) => r.title === 'Client Reporting').rating, 'A');
+  assert.equal((await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'emp')).status, 200, 'the employee sees their own');
+  assert.equal((await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'other')).status, 403, 'a stranger does not');
+
+  // Evidence only: nothing was written into an evaluation.
+  const ev = (await db.query(`SELECT count(*)::int n FROM pms.manager_evaluations WHERE tenant_id=$1`, [tenantId])).rows[0].n;
+  assert.equal(ev, 0);
+});
+
 test('the mapping is audited with what was asserted', { skip }, async () => {
   // "Why did my hours move" must have a queryable answer, the same rule
   // as every other state change that can affect a rating. audit() is

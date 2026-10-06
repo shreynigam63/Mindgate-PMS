@@ -204,4 +204,83 @@ function validateScoring(s) {
   return null;
 }
 
-module.exports = { summarise, gradeFor, validateScoring };
+// ---------------------------------------------------------------------------
+// A RATING FOR EACH KRA, from the timesheet. Added 6 Oct.
+//
+// Asked for directly: "there should be rating against KRA as per
+// timesheet filled". The coverage numbers above describe the sheet as a
+// whole; nothing turned one KRA's logged effort into a rating for that
+// KRA, which is what was wanted. The client chose the basis:
+//
+//   "Hours on the KRA as a share of all mapped hours, compared with the
+//    KRA's weight … rates as per efforts of employee working for
+//    particular KRA. Works for part-timers and partial months."
+//
+// So, per timesheet-measured KRA:
+//
+//   effort share   = hours on this KRA / hours on all measured KRAs
+//   expected share = this KRA's weight / weight of all measured KRAs
+//   effort %       = effort share / expected share, capped at 100
+//
+// A 30% KRA that got 30% of the effort scores 100% and the top band; one
+// that got 15% scores 50%; one that got none scores 0. Capped because
+// more than its share on one KRA is less than theirs on another, and
+// that shortfall is rated where it happened. Expected share is over the
+// MEASURED KRAs only, for the same reason weighted coverage is: a KRA
+// marked "not measured from timesheets" would otherwise sit in every
+// denominator as a permanent zero.
+//
+// THIS IS EVIDENCE, NOT THE RATING OF RECORD — also the client's choice
+// ("shown beside, manager decides"). It is never written into a manager
+// or HOD evaluation. The bands are the tenant's (kra_bands if HR set
+// them, else the same ladder as the monthly indicator) and no rating is
+// invented when there is nothing to rate: no mapped hours means no
+// rating and a sentence saying why. A thin mapping is flagged on every
+// row rather than hidden, because a rating on 13% of the hours is still
+// worth showing a manager, as long as it says it is on 13%.
+
+/**
+ * @param {object} att  the return of timesheet-kra-match.attribute()
+ * @param {object} cfg  the `scoring` blob
+ * @returns {{ratings:object[], basis_hours:number, mapped_pct:number, thin:boolean, note:string|null}}
+ */
+function kraRatings(att, cfg = {}) {
+  const bands = Array.isArray(cfg.kra_bands) && cfg.kra_bands.length ? cfg.kra_bands : cfg.bands;
+  const minMapped = Number(cfg.min_mapped_pct);
+  const all = att.by_kra || [];
+  const measured = all.filter((k) => k.scorable);
+  const basis = measured.reduce((t, k) => t + (Number(k.hours) || 0), 0);
+  const weightAll = measured.reduce((t, k) => t + (Number(k.weight) || 0), 0);
+  const mappedPct = Number(att.totals && att.totals.mapped_pct) || 0;
+  const thin = Number.isFinite(minMapped) && mappedPct < minMapped;
+
+  let note = null;
+  if (!all.length) note = 'No KRA sheet for this cycle, so there is nothing to rate the hours against.';
+  else if (!measured.length) note = 'Every KRA is marked as not measured from timesheets.';
+  else if (!(basis > 0)) note = 'None of the logged hours are placed against a KRA yet. Map the work items to rate each KRA.';
+  else if (thin) {
+    note = `Based on ${round1(basis)} h placed against KRAs — ${mappedPct}% of the hours logged, `
+      + `below the ${minMapped}% this tenant expects. Treat these as indicative until more items are mapped.`;
+  }
+
+  const ratings = all.map((k) => {
+    const row = { kra_id: k.kra_id, title: k.title, weight: Number(k.weight) || 0, hours: Number(k.hours) || 0 };
+    if (!k.scorable) {
+      return { ...row, measured: false, effort_pct: null, rating: null,
+        reason: k.untracked_reason || 'Not measured from timesheets' };
+    }
+    if (!(basis > 0) || !(weightAll > 0) || !(row.weight > 0)) {
+      return { ...row, measured: true, effort_pct: null, rating: null, share_pct: null,
+        expected_pct: weightAll > 0 ? round1((row.weight / weightAll) * 100) : null,
+        reason: !(row.weight > 0) ? 'This KRA carries no weight' : 'No mapped hours yet' };
+    }
+    const share = row.hours / basis;
+    const expected = row.weight / weightAll;
+    const effort = round1(clamp((share / expected) * 100, 0, 100));
+    return { ...row, measured: true, share_pct: round1(share * 100), expected_pct: round1(expected * 100),
+      effort_pct: effort, rating: gradeFor(effort, bands), reason: null };
+  });
+  return { ratings, basis_hours: round1(basis), mapped_pct: mappedPct, thin, note };
+}
+
+module.exports = { summarise, gradeFor, validateScoring, kraRatings };

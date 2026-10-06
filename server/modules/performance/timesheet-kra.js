@@ -250,6 +250,8 @@ async function reportFor(req, target, q) {
   const compliancePct = entries.length && agg && agg.work > 0 ? agg.pct : null;
 
   const sum = score.summarise(att, va, compliancePct, cfg.scoring);
+  // One rating per KRA from the same attribution — see kraRatings.
+  const kraRating = score.kraRatings(att, cfg.scoring);
 
   return {
     employee: target,
@@ -269,6 +271,7 @@ async function reportFor(req, target, q) {
     compliance: cyc || comp.total,
     compliance_is_cycle: !!cyc,
     summary: sum,
+    kra_ratings: kraRating,
     scoring: cfg.scoring,
   };
 }
@@ -281,6 +284,50 @@ router.get('/me', async (req, res) => {
   } catch (e) {
     logger.error('timesheet-kra me', { error: e.message });
     res.status(500).json({ error: 'Could not build your KRA timesheet view' });
+  }
+});
+
+// THE CYCLE'S PER-KRA TIMESHEET RATING, for the people who rate: the
+// manager on Team Evaluation and the HOD on HOD Review. Over the whole
+// appraisal cycle so far (opens_at to today), not one month — a KRA
+// rating in an appraisal is about the year, and a single month would
+// mark down a KRA whose work happened in another quarter.
+//
+// Evidence only: nothing here writes into an evaluation. See
+// timesheet-kra-score.js kraRatings.
+router.get('/ratings/:id', async (req, res) => {
+  try {
+    const target = await employeeOr404(req, res, req.params.id);
+    if (!target) return;
+    let ok = await canRead(req, target);
+    if (!ok && await hasPermission(req.user, 'pms_hod')) {
+      // The HOD of this person's department rates them too.
+      ok = (await db.query(
+        `SELECT 1 FROM core.department_heads dh JOIN core.employees e
+            ON e.tenant_id = dh.tenant_id AND e.department = dh.department
+          WHERE dh.tenant_id=$1 AND dh.employee_id=$2 AND e.id=$3`,
+        [T(req), req.user.id, target.id])).rows.length > 0;
+    }
+    if (!ok) return res.status(403).json({ error: 'You can only see the timesheet rating of someone you review' });
+    const cycle = await activeCycle(T(req));
+    const today = new Date().toISOString().slice(0, 10);
+    // to_char, not a Date: a date column read as a JS Date sits at local
+    // midnight, and toISOString on a box east of UTC moves it a day back.
+    let from = cycle ? ((await db.query(
+      `SELECT to_char(opens_at,'YYYY-MM-DD') d FROM pms.cycles WHERE tenant_id=$1 AND id=$2`,
+      [T(req), cycle.id])).rows[0] || {}).d || null : null;
+    if (!from) {
+      const first = (await db.query(
+        `SELECT to_char(min(log_date),'YYYY-MM-DD') d FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2`,
+        [T(req), target.id])).rows[0];
+      from = (first && first.d) || today;
+    }
+    const r = await reportFor(req, target, { from, to: today < from ? from : today });
+    res.json({ employee_id: target.id, cycle: r.cycle, window: r.window, has_entries: r.has_entries,
+      totals: r.totals, kra_ratings: r.kra_ratings });
+  } catch (e) {
+    logger.error('timesheet-kra ratings', { error: e.message });
+    res.status(500).json({ error: 'Could not build the timesheet rating' });
   }
 });
 

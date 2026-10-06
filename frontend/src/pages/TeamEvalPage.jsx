@@ -4,6 +4,7 @@ import { api, phaseLabel, phaseColor, KraBullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
 import PageHead from '../PageHead';
+import { useTimesheetRatings, TimesheetRatingChip, TimesheetRatingNote } from '../TimesheetRating';
 import SearchBox, { matches } from '../SearchBox';
 import StatusTabs, { statusTabs } from '../StatusTabs';
 import Grade, { grade } from '../grade';
@@ -210,6 +211,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
   const [err, setErr] = useState(null);
   const [saveState, setSaveState] = useState('idle');
   const timer = useRef(null);
+  const ts = useTimesheetRatings(employeeId);
 
   useEffect(() => {
     api(`/pms/team/evaluations/${employeeId}/kras`).then(r => setKras(r.kras)).catch(e => setErr(e.message));
@@ -286,6 +288,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
         {saveState === 'saving' && <span className="text-[11px] text-amber-600">Saving…</span>}
         {saveState === 'saved' && <span className="text-[11px] text-emerald-600">Saved ✓</span>}
       </div>
+      <TimesheetRatingNote data={ts} />
       {kras.map(k => {
         const selfRating = selfEntries[k.id] && selfEntries[k.id].self_rating;
         const selfNarrative = selfEntries[k.id] && selfEntries[k.id].narrative;
@@ -299,6 +302,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
             {selfRating != null && (
               <p className="text-[11px] text-navy-500">Employee's self-rating: <b>{grade(selfRating, scale)}</b></p>
             )}
+            <TimesheetRatingChip data={ts} kraId={k.id} />
             {/* Requested: show what the employee actually wrote, not just
                 their rating — paired directly above the comment box below,
                 so it's clear the manager's comment is responding to this.
