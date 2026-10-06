@@ -48,16 +48,23 @@ this role:
     "Condition": {
       "StringEquals": {
         "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-        "token.actions.githubusercontent.com:sub": "repo:shreynigam63/Mindgate-PMS:ref:refs/heads/main"
+        "token.actions.githubusercontent.com:sub": "repo:shreynigam63/Mindgate-PMS:environment:production"
       }
     }
   }]
 }
 ```
 
-> Using `workflow_dispatch` from another branch? Add that `sub` too, or
-> widen to `repo:shreynigam63/Mindgate-PMS:*`. Widen only as far as you
-> actually need — that string is the whole access control.
+> **CORRECTED 6 Oct.** This said `ref:refs/heads/main`, which can never
+> match: the deploy job declares `environment: production`, and a job
+> with an environment is identified to AWS as
+> `repo:<owner>/<repo>:environment:<name>`, not by its branch. Every
+> AssumeRole would have been refused. What limits deploys to `main` is
+> now the `production` environment's deployment-branch rule (section 3),
+> so set that rule — without it, any branch could run in `production`.
+>
+> A step-by-step console version of this guide, for whoever holds the AWS
+> admin login, is `docs/DEPLOY-FROM-GITHUB.md`.
 
 Permissions — `policy.json`. Only the one instance, only the one document,
 and reading back the result. Replace `<ACCOUNT_ID>`, `<REGION>`,
@@ -108,7 +115,9 @@ still have it deploy; keep the instance list to exactly one.
 Neither identifier is a password, but keeping them out of the logs keeps
 the instance id out of a public fork's build output.
 
-**Settings → Environments → `production`** — add required reviewers here if
+**Settings → Environments → `production`** — set **Deployment branches**
+to `main` only (required: the AWS trust policy trusts this environment, so
+this rule is what keeps other branches out). Add required reviewers here if
 you want a human to approve each deploy. The workflow already targets that
 environment, so protection rules apply with no further change.
 
