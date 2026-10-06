@@ -239,8 +239,17 @@ jobs:
           # prevent.
           case "$OUT" in
             *"NOTHING NEW was deployed"*)
-              echo "::error::update.sh reported no change — the box did not move to this commit."
-              exit 1 ;;
+              # No change is only a failure when the box is NOT already on
+              # this commit. On 6 Oct the first working run found the box
+              # already on it — somebody had run update.sh by hand minutes
+              # earlier — and went red for doing exactly the right thing.
+              AT=$(printf '%s' "$OUT" | sed -n 's/.*still at \([0-9a-f]\{7,\}\).*/\1/p' | tail -1)
+              if [ -n "$AT" ] && [ "${GITHUB_SHA#"$AT"}" != "$GITHUB_SHA" ]; then
+                echo "::notice::The box was already on ${AT} — nothing to deploy, and nothing wrong."
+              else
+                echo "::error::update.sh reported no change — the box is on ${AT:-an unknown commit}, not ${GITHUB_SHA:0:7}."
+                exit 1
+              fi ;;
             *"Healthy."*) echo "Deploy moved the checkout and the API came back healthy." ;;
             *) echo "::error::update.sh did not report a healthy finish."; exit 1 ;;
           esac
