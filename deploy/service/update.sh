@@ -54,6 +54,14 @@ rsync -a --delete "${APP_DIR}/frontend/dist/" "${WEB_ROOT}/"
 # its own files.
 chown -R root:root "${APP_DIR}/server"
 
+# Repo-owned, NON-SECRET settings (currently just AI_MODEL) are pushed
+# into the instance env file here, BEFORE the restart, so the service
+# comes back on the value the repository says rather than one deploy
+# later. Secrets are refused by name inside the script — api.env stays the
+# instance's, which is why it is otherwise never touched.
+echo "==> Reconciling managed settings"
+"${APP_DIR}/deploy/service/reconcile-settings.sh" /etc/agentic-pms/api.env
+
 echo "==> Restarting"
 systemctl restart agentic-pms-api
 for i in $(seq 1 45); do

@@ -147,9 +147,20 @@ The request body is plain `model / max_tokens / system / messages`: no
 matters, because current models reject several of those outright — so a
 model change here stays a one-line change with no code behind it.
 
-An instance already running keeps whatever is in its own env file; moving it
-is one edit to `AI_MODEL` in `/etc/agentic-pms/api.env` and a restart. The
-boot line reports which model is in use.
+**A deploy now carries the model.** `AI_MODEL` lives in
+`deploy/service/managed-settings.env`, and `update.sh` reconciles it into
+`/etc/agentic-pms/api.env` before restarting — so changing it in the
+repository and deploying does what you would expect, which it did not
+before.
+
+Only non-secret keys may be managed this way. `reconcile-settings.sh`
+refuses, by name, anything shaped like a credential — `ANTHROPIC_API_KEY`,
+`DATABASE_URL`, `JWT_SECRET` and their kind stay owned by the instance and
+untouched, which is why `api.env` is otherwise never written by a deploy.
+
+To pin one box to a different model, add `UNMANAGED=AI_MODEL` to its
+`api.env`; the deploy will leave it alone and say so in its output. The
+boot line reports which model is actually in use.
 
 ---
 

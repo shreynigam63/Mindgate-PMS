@@ -486,7 +486,8 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 | Connect questions | `pms.connect_questions` |
 | HRBP remits | `core.hrbp_scope` |
 | Department heads | `core.department_heads` |
-| AI on/off, model | `ANTHROPIC_API_KEY`, `AI_MODEL` in `/etc/agentic-pms/api.env` |
+| AI on/off | `ANTHROPIC_API_KEY` in `/etc/agentic-pms/api.env` — instance-owned, never written by a deploy |
+| AI model | `deploy/service/managed-settings.env`, pushed into `api.env` by every deploy (`UNMANAGED=AI_MODEL` pins a box) |
 
 ---
 
