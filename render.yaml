@@ -116,7 +116,7 @@ services:
       # plain model/max_tokens/system/messages, so newer models are
       # drop-in with no code change. Not a secret — safe as a literal.
       - key: AI_MODEL
-        value: claude-opus-5
+        value: claude-opus-5-5
   - type: web
     name: agentic-pms-frontend
     env: static

@@ -30,7 +30,7 @@ never been given. Supplying the key is the whole change.
 The gate is a single runtime check in `server/core/ai.js`:
 
 ```js
-const MODEL = process.env.AI_MODEL || 'claude-sonnet-4-5';
+const MODEL = process.env.AI_MODEL || 'claude-opus-5-5';
 
 function aiEnabled() { return !!process.env.ANTHROPIC_API_KEY; }
 
@@ -137,11 +137,19 @@ redeploying for this change.
 ### The second variable
 
 `AI_MODEL` selects the model. It is **not** a secret and belongs in version
-control. The code falls back to `claude-sonnet-4-5` if it is unset, which is a
-generation behind — both `render.yaml` and the systemd installer already set
-`claude-opus-5`, so on a current instance there is nothing to do here. The
-request body is plain `model / max_tokens / system / messages`, so a newer
-model is drop-in with no code change.
+control. Everything now says `claude-opus-5-5` — `render.yaml`, the systemd
+installer, the Docker compose file and the code's own fallback — so an
+instance with the variable unset still runs the current model instead of one
+several generations behind, which is what the fallback used to mean.
+
+The request body is plain `model / max_tokens / system / messages`: no
+`temperature`, no `thinking`, no `tool_choice`, no assistant prefill. That
+matters, because current models reject several of those outright — so a
+model change here stays a one-line change with no code behind it.
+
+An instance already running keeps whatever is in its own env file; moving it
+is one edit to `AI_MODEL` in `/etc/agentic-pms/api.env` and a restart. The
+boot line reports which model is in use.
 
 ---
 

@@ -77,7 +77,7 @@ services:
       # Optional. Absent, every agentic endpoint returns a clean 503 and
       # the rest of the app is unaffected.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      AI_MODEL: ${AI_MODEL:-claude-opus-5}
+      AI_MODEL: ${AI_MODEL:-claude-opus-5-5}
       TZ: ${TZ:-Asia/Kolkata}
     # No `ports:` on purpose — the API is reached only through web's proxy.
 

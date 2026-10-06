@@ -348,8 +348,9 @@ every later Blueprint sync. **Never give it a `value:` in `render.yaml`** —
 that would commit a live key to the repository and re-apply it on every
 sync.
 
-`AI_MODEL` selects the model (`claude-opus-5` in `render.yaml`; the code
-default is a generation behind). Not a secret.
+`AI_MODEL` selects the model — `claude-opus-5-5` everywhere, and the same
+value is the code's fallback, so an instance with the variable unset still
+runs the current model rather than one a generation behind. Not a secret.
 
 Two AI features have preconditions worth knowing before you demo them:
 

@@ -302,7 +302,7 @@ AUTH_DEV=true
 # Optional. Empty = no AI: every agentic endpoint returns a clean 503 and
 # nothing else in the app changes.
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-AI_MODEL=${AI_MODEL:-claude-opus-5}
+AI_MODEL=${AI_MODEL:-claude-opus-5-5}
 
 PORT=8080
 

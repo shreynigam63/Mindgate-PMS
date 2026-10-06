@@ -15,7 +15,7 @@ const crypto = require('crypto');
 const db = require('./db');
 const logger = require('./logger');
 
-const MODEL = process.env.AI_MODEL || 'claude-sonnet-4-5';
+const MODEL = process.env.AI_MODEL || 'claude-opus-5-5';
 const API = 'https://api.anthropic.com/v1/messages';
 
 function aiEnabled() { return !!process.env.ANTHROPIC_API_KEY; }
