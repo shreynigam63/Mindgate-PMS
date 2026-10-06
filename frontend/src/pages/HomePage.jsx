@@ -59,12 +59,12 @@ const fmt = (n) => (typeof n === 'number' ? (n < 10 && n >= 0 ? String(n).padSta
 function Kpi({ icon: Icon, hue, n, label, to, hint }) {
   const body = (
     <>
-      <span className="kpi-i"><Icon size={26} /></span>
+      <span className="kpi-i"><Icon size={20} /></span>
       <span className="min-w-0 flex-1">
         <span className="kpi-n">{fmt(n)}</span>
         <span className="kpi-l">{label}</span>
       </span>
-      {to && <ChevronRight size={20} className="text-navy-700 shrink-0" />}
+      {to && <ChevronRight size={17} className="text-navy-700 shrink-0" />}
     </>
   );
   const cls = `kpi kpi-${KPI_HUE[hue] || 'blue'}`;
@@ -101,9 +101,9 @@ function QuickActions({ user }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {list.map(({ to, label, icon: Icon, bg, fg }) => (
           <NavLink key={to} to={to} className="qa" style={{ background: bg }}>
-            <Icon size={24} style={{ color: fg }} className="shrink-0" />
+            <Icon size={19} style={{ color: fg }} className="shrink-0" />
             <span className="qa-t">{label}</span>
-            <ChevronRight size={16} className="text-navy-600 shrink-0" />
+            <ChevronRight size={15} className="text-navy-600 shrink-0" />
           </NavLink>
         ))}
       </div>
@@ -150,8 +150,8 @@ function TeamPanel({ team }) {
   const wide = ov && ov.scope === 'all_employees';
   return (
     <div className="panel !p-0">
-      <div className="flex flex-wrap items-end gap-x-8 gap-y-2 px-5 pt-4">
-        <span className="text-[19px] font-bold text-navy-900 pb-2.5">My Team</span>
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-2 px-4 pt-3">
+        <span className="text-[16px] font-bold text-navy-900 pb-2">My Team</span>
         <div className="tabbar flex-1 border-b-0">
           {TABS.map(([k, label]) => (
             <button key={k} type="button" className={tab === k ? 'on' : ''} onClick={() => { setTab(k); setShown(8); }}>{label}</button>
@@ -160,22 +160,22 @@ function TeamPanel({ team }) {
         <NavLink to="/team/overview" className="panel-link pb-2.5">View full team <ArrowRight size={15} /></NavLink>
       </div>
       <div className="border-t border-navy-100" />
-      <div className="px-5 py-4 flex flex-wrap items-center gap-x-10 gap-y-3">
+      <div className="px-4 py-3 flex flex-wrap items-center gap-x-8 gap-y-2">
         {[
           [Users, '#e6efff', '#2563eb', rows.length, wide ? 'Total Employees' : 'Total Reports'],
           [CheckCircle2, '#e7f7ee', '#1f9d5c', approved, 'KRA Sheets Approved'],
           [MessageCircle, '#fff1dc', '#e7860d', noConnect, 'Connects Pending'],
         ].map(([Icon, bg, fg, n, l]) => (
           <div key={l} className="flex items-center gap-3">
-            <span className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ background: bg, color: fg }}><Icon size={20} /></span>
-            <span><span className="block text-[19px] font-bold text-navy-900 leading-none">{n.toLocaleString('en-IN')}</span>
+            <span className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: bg, color: fg }}><Icon size={17} /></span>
+            <span><span className="block text-[16px] font-bold text-navy-900 leading-none">{n.toLocaleString('en-IN')}</span>
               <span className="block text-[12.5px] text-navy-500 mt-1">{l}</span></span>
           </div>
         ))}
         <div className="flex items-center gap-3">
-          <span className="w-11 h-11 rounded-full" style={{ background: `conic-gradient(#2563eb 0 ${evPct * 0.6}%, #f59e0b 0 ${evPct}%, #e8ecf3 0)`,
-            WebkitMask: 'radial-gradient(circle 13px, transparent 98%, #000 100%)', mask: 'radial-gradient(circle 13px, transparent 98%, #000 100%)' }} />
-          <span><span className="block text-[19px] font-bold text-navy-900 leading-none">{evPct}%</span>
+          <span className="w-9 h-9 rounded-full" style={{ background: `conic-gradient(#2563eb 0 ${evPct * 0.6}%, #f59e0b 0 ${evPct}%, #e8ecf3 0)`,
+            WebkitMask: 'radial-gradient(circle 10px, transparent 98%, #000 100%)', mask: 'radial-gradient(circle 10px, transparent 98%, #000 100%)' }} />
+          <span><span className="block text-[16px] font-bold text-navy-900 leading-none">{evPct}%</span>
             <span className="block text-[12.5px] text-navy-500 mt-1">Evaluation Completion</span></span>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
@@ -191,7 +191,7 @@ function TeamPanel({ team }) {
           </select>
         </div>
       </div>
-      <div className="px-5 pb-4 overflow-x-auto">
+      <div className="px-4 pb-3 overflow-x-auto">
         {!ov ? <p className="text-sm text-navy-400 py-4">Loading your team…</p>
           : !list.length ? <p className="text-sm text-navy-500 py-4">{rows.length ? 'Nobody matches this view.' : 'No one reports to you in the current cycle.'}</p>
           : (
@@ -214,7 +214,7 @@ function TeamPanel({ team }) {
                     <td className="text-center">{r.connects_this_cycle
                       ? <span className="pill pill-blue">{r.connects_this_cycle}</span> : <Tick />}</td>
                     <td><span className={`pill ${evc}`}>{ev}</span></td>
-                    <td><NavLink to="/team/overview" className="inline-flex px-4 py-1.5 rounded-lg border border-navy-100 text-brand-600 font-semibold text-[13px] hover:bg-brand-50">View</NavLink></td>
+                    <td><NavLink to="/team/overview" className="inline-flex px-3 py-1 rounded-lg border border-navy-100 text-brand-600 font-semibold text-[12px] hover:bg-brand-50">View</NavLink></td>
                   </tr>
                 );
               })}
@@ -294,18 +294,18 @@ export default function HomePage({ user }) {
   const first = String(user && user.name ? user.name : '').split(/\s+/)[0] || 'there';
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="greet">
         <Summit className="greet-art" />
         <div className="relative z-[1] min-w-0">
-          <p className="flex items-center gap-2 text-[17px] font-medium text-navy-800">
-            <Sun size={26} className="text-amber-400" /> {greeting()}
+          <p className="flex items-center gap-2 text-[14px] font-medium text-navy-800">
+            <Sun size={20} className="text-amber-400" /> {greeting()}
           </p>
-          <h1 className="text-[34px] font-extrabold leading-tight" style={{ color: '#13235a' }}>{first} <span aria-hidden="true">👋</span></h1>
-          <p className="text-[15.5px] text-navy-600">Here’s what needs your attention today.</p>
+          <h1 className="text-[24px] font-extrabold leading-tight" style={{ color: '#13235a' }}>{first} <span aria-hidden="true">👋</span></h1>
+          <p className="text-[13px] text-navy-600">Here’s what needs your attention today.</p>
           {/* The one thing waiting on this person — the server picks it. */}
           {action && action.tone !== 'clear' && (
-            <p className="mt-2 text-[13px] flex flex-wrap items-center gap-2">
+            <p className="mt-1.5 text-[12.5px] flex flex-wrap items-center gap-2">
               <span className="pill pill-red">Action needed</span>
               <b className="text-navy-900">{action.title}</b>
               {action.cta && <NavLink to={action.to} className="inline-flex items-center gap-1 font-semibold text-brand-600">{action.cta} <ArrowRight size={13} /></NavLink>}
@@ -317,7 +317,7 @@ export default function HomePage({ user }) {
           {new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="kpirow">
         {cards.map(({ key, ...x }) => <Kpi key={key} {...x} />)}
       </div>
 

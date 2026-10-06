@@ -311,10 +311,10 @@ body {
    App.jsx for the one place the sidebar departs from the picture. */
 body { background: #f3f6fc; }
 
-.topbar { @apply sticky top-0 z-40 bg-white flex items-center gap-3 px-3 lg:px-5 h-[68px];
+.topbar { @apply sticky top-0 z-40 bg-white flex items-center gap-3 px-3 lg:px-5 h-[58px];
   border-bottom: 1px solid #e7ecf5; }
 .topbar-brand { @apply flex items-center gap-3 lg:w-[400px] shrink-0 min-w-0; }
-.wordmark { @apply flex items-center gap-2.5 text-[19px] font-extrabold leading-none whitespace-nowrap;
+.wordmark { @apply flex items-center gap-2.5 text-[17.5px] font-extrabold leading-none whitespace-nowrap;
   color: #1d3b8f; letter-spacing: -0.01em; }
 /* The reference's four dots, as a 2x2 mark beside the name. */
 .wordmark-mark { @apply grid grid-cols-2 gap-[3px] shrink-0; }
@@ -323,70 +323,75 @@ body { background: #f3f6fc; }
 .wordmark-mark i:nth-child(2) { background: #fb8c00; }
 .wordmark-mark i:nth-child(3) { background: #1e88e5; }
 .wordmark-mark i:nth-child(4) { background: #3949ab; }
-.topsearch { @apply relative w-full max-w-[600px] flex items-center gap-2.5 px-4 h-11 rounded-xl bg-white;
+.topsearch { @apply relative w-full max-w-[560px] flex items-center gap-2.5 px-3.5 h-10 rounded-xl bg-white;
   border: 1px solid #dfe5f0; }
 .topsearch:focus-within { border-color: #2f7fe8; box-shadow: 0 0 0 3px #cfe1fc; }
 .topsearch input { @apply flex-1 min-w-0 bg-transparent text-[13.5px] outline-none placeholder:text-navy-400; }
-.topsearch-pop { @apply absolute left-0 right-0 top-[48px] bg-white rounded-xl py-1.5 z-50;
+.topsearch-pop { @apply absolute left-0 right-0 top-[44px] bg-white rounded-xl py-1.5 z-50;
   border: 1px solid #e3e9f3; box-shadow: 0 16px 40px -12px rgba(16,31,61,.25); }
 .topsearch-pop button { @apply w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-navy-800 hover:bg-brand-50; }
-.topicon { @apply w-10 h-10 rounded-xl flex items-center justify-center text-navy-700 hover:bg-navy-50; }
-.avatar { @apply w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-[15px] shrink-0;
+.topicon { @apply w-9 h-9 rounded-xl flex items-center justify-center text-navy-700 hover:bg-navy-50; }
+.avatar { @apply w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-[14px] shrink-0;
   background: linear-gradient(135deg, #3b6fe0, #2b4fc4); }
-.menu-pop { @apply absolute right-0 top-[50px] bg-white rounded-xl z-50;
+.menu-pop { @apply absolute right-0 top-[46px] bg-white rounded-xl z-50;
   border: 1px solid #e3e9f3; box-shadow: 0 16px 40px -12px rgba(16,31,61,.25); }
 .menu-item { @apply w-full flex items-center gap-2 px-3 py-2 text-[13px] text-navy-700 hover:bg-navy-50; }
 
-.sidebar { @apply fixed lg:sticky z-40 top-[68px] left-0 w-[244px] shrink-0 flex flex-col text-white
+.sidebar { @apply fixed lg:sticky z-40 top-[58px] left-0 w-[232px] shrink-0 flex flex-col text-white
   -translate-x-full lg:translate-x-0 transition-transform;
-  height: calc(100vh - 68px);
+  height: calc(100vh - 58px);
   background: linear-gradient(180deg, #172a55 0%, #13234a 55%, #101d3f 100%);
   border-top-right-radius: 22px; }
 .sidebar-open { @apply translate-x-0; }
 .sidebar-scroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
 .side-item { @apply flex items-center gap-3 rounded-xl text-white/80 transition-colors w-full; }
 .side-item:hover { @apply bg-white/[.07] text-white; }
-.side-top { @apply px-3.5 py-3 text-[14.5px] font-semibold; }
+.side-top { @apply px-3 py-2.5 text-[14px] font-semibold; }
 .side-group-here { @apply text-white; }
 .side-count { @apply text-[10.5px] font-bold rounded-full px-1.5 py-0.5 bg-white/10 text-white/80; }
 .side-sub { @apply mt-0.5 mb-1.5 ml-3 pl-2.5 space-y-0.5 border-l border-white/10; }
-.side-leaf { @apply px-3 py-2 text-[13px] font-medium; }
+.side-leaf { @apply px-3 py-1.5 text-[12.5px] font-medium; }
 .side-on, .side-on:hover { @apply text-white font-semibold;
   background: linear-gradient(135deg, #2f7fe8, #1f63d6); box-shadow: 0 8px 18px -8px rgba(47,127,232,.8); }
-.side-card { @apply relative m-3 mt-2 rounded-2xl overflow-hidden px-4 pt-4 pb-0 h-[188px] shrink-0 hidden lg:block;
+.side-card { @apply relative m-3 mt-2 rounded-2xl overflow-hidden px-4 pt-3 pb-0 h-[150px] shrink-0 hidden lg:block;
   background: linear-gradient(170deg, #eef4ff 0%, #d9e6fd 100%); }
-.side-card p { @apply text-[15px] leading-snug italic font-medium; color: #1d3b8f; }
-.side-card-art { @apply absolute bottom-0 left-0 w-full h-[110px]; }
-@media (max-height: 760px) { .side-card { @apply hidden; } }
+.side-card p { @apply text-[13.5px] leading-snug italic font-medium; color: #1d3b8f; }
+.side-card-art { @apply absolute bottom-0 left-0 w-full h-[80px]; }
+@media (max-height: 700px) { .side-card { @apply hidden; } }
 
 .buildbar { @apply flex flex-wrap items-center justify-center gap-2 px-4 py-2 text-[12.5px] font-medium text-white;
   background: linear-gradient(90deg, #1f63d6, #2f7fe8); }
 .buildbar button { @apply ml-1 px-3 py-1 rounded-lg bg-white text-brand-700 font-bold text-[12px]; }
 
 /* ---- Home, to the reference ------------------------------------------- */
-.greet { @apply relative overflow-hidden rounded-2xl px-6 py-5 min-h-[136px] flex items-center;
+.greet { @apply relative overflow-hidden rounded-2xl px-5 py-3 flex items-center;
   background: linear-gradient(100deg, #f4f1ff 0%, #eaf0ff 45%, #e6efff 70%, #fdeee8 100%);
   border: 1px solid #e5e9f7; }
-.greet-art { @apply absolute bottom-0 h-[128px] w-[340px] hidden md:block; right: 190px; }
+.greet-art { @apply absolute bottom-0 h-[92px] w-[250px] hidden md:block; right: 200px; }
 @media (max-width: 1279px) { .greet-art { right: 0; opacity: .55; } }
-.greet-quote { @apply absolute right-6 top-5 text-right text-[16px] leading-snug hidden lg:block; color: #22305a; }
-.greet-date { @apply absolute right-4 bottom-3 hidden md:flex items-center gap-1.5 text-[12px] font-medium px-2.5 py-1 rounded-lg bg-white/85;
+.greet-quote { @apply absolute right-5 top-3 text-right text-[13.5px] leading-snug hidden lg:block; color: #22305a; }
+.greet-date { @apply absolute right-4 bottom-2.5 hidden md:flex items-center gap-1.5 text-[11.5px] font-medium px-2 py-0.5 rounded-lg bg-white/85;
   color: #33415f; }
 
-.kpi { @apply rounded-2xl px-5 py-4 flex items-center gap-4 transition-transform min-w-0; border: 1px solid transparent; }
+/* Cards share the row and fill it: five fit on one line on a wide screen,
+   and where they do wrap the last row stretches, so there is never a hole
+   beside a lone card — the "gaps" the client circled on 1 Oct. */
+.kpirow { @apply flex flex-wrap gap-3; }
+.kpirow > * { flex: 1 1 230px; }
+.kpi { @apply rounded-2xl px-4 py-2.5 flex items-center gap-3 transition-transform min-w-0; border: 1px solid transparent; }
 a.kpi:hover { transform: translateY(-2px); }
-.kpi-i { @apply w-14 h-14 rounded-2xl flex items-center justify-center shrink-0; }
-.kpi-n { @apply block text-[28px] font-extrabold leading-none tabular-nums; }
-.kpi-l { @apply block text-[14px] text-navy-700 mt-1.5 leading-tight; }
+.kpi-i { @apply w-10 h-10 rounded-xl flex items-center justify-center shrink-0; }
+.kpi-n { @apply block text-[21px] font-extrabold leading-none tabular-nums; }
+.kpi-l { @apply block text-[12.5px] text-navy-700 mt-1 leading-tight; }
 .kpi-red    { background: #fdeef0; border-color: #fadbe0; } .kpi-red .kpi-i { background: #fbd5dc; color: #e0435f; } .kpi-red .kpi-n { color: #c62f4b; }
 .kpi-amber  { background: #fff4e6; border-color: #fde6c8; } .kpi-amber .kpi-i { background: #ffe1b8; color: #e7860d; } .kpi-amber .kpi-n { color: #b45309; }
 .kpi-green  { background: #e9f8f0; border-color: #d2f0e0; } .kpi-green .kpi-i { background: #c9eedb; color: #1f9d5c; } .kpi-green .kpi-n { color: #14532d; }
 .kpi-violet { background: #f3effe; border-color: #e5dcfc; } .kpi-violet .kpi-i { background: #e2d7fc; color: #7c4dde; } .kpi-violet .kpi-n { color: #3b1d8f; }
 .kpi-blue   { background: #ecf3ff; border-color: #d8e6fd; } .kpi-blue .kpi-i { background: #d3e3fd; color: #2563eb; } .kpi-blue .kpi-n { color: #1e3a8a; }
 
-.panel { @apply bg-white rounded-2xl p-4 min-w-0; border: 1px solid #e6ebf4; box-shadow: 0 1px 2px rgba(16,31,61,.03), 0 6px 20px -10px rgba(16,31,61,.10); }
-.panel-h { @apply flex items-center gap-2.5 mb-3; }
-.panel-t { @apply text-[16.5px] font-bold text-navy-900; }
+.panel { @apply bg-white rounded-2xl p-3.5 min-w-0; border: 1px solid #e6ebf4; box-shadow: 0 1px 2px rgba(16,31,61,.03), 0 6px 20px -10px rgba(16,31,61,.10); }
+.panel-h { @apply flex items-center gap-2.5 mb-2.5; }
+.panel-t { @apply text-[15px] font-bold text-navy-900; }
 .panel-link { @apply ml-auto inline-flex items-center gap-1 text-[13px] font-semibold text-brand-600 hover:text-brand-700; }
 .pill { @apply inline-flex items-center text-[11.5px] font-semibold px-2.5 py-1 rounded-md whitespace-nowrap; }
 .pill-red { background: #fde8eb; color: #d23a55; }
@@ -401,19 +406,19 @@ a.kpi:hover { transform: translateY(-2px); }
 .step-next { background: #e3e7ef; box-shadow: 0 0 0 4px #f1f3f8; }
 .step-next::after { content: ''; @apply w-2.5 h-2.5 rounded-full bg-white; }
 
-.qa { @apply rounded-2xl p-3 flex items-center gap-2.5 min-h-[76px] transition-transform; }
+.qa { @apply rounded-xl px-3 py-2 flex items-center gap-2.5 min-h-[46px] transition-transform; }
 .qa:hover { transform: translateY(-2px); }
 .qa-t { @apply flex-1 text-[13px] font-semibold leading-snug text-navy-900; }
 
 .tabbar { @apply flex items-end gap-6 border-b border-navy-100 overflow-x-auto; }
-.tabbar button { @apply pb-2.5 pt-1 text-[14px] text-navy-600 whitespace-nowrap border-b-2 border-transparent -mb-px; }
+.tabbar button { @apply pb-2 pt-1 text-[13px] text-navy-600 whitespace-nowrap border-b-2 border-transparent -mb-px; }
 .tabbar button.on { @apply text-brand-600 font-semibold border-brand-600; }
-.tbl { @apply w-full text-[13.5px]; }
-.tbl thead th { @apply text-left font-semibold text-navy-700 bg-[#f5f7fb] px-3 py-2.5 whitespace-nowrap; }
+.tbl { @apply w-full text-[12.5px]; }
+.tbl thead th { @apply text-left font-semibold text-navy-700 bg-[#f5f7fb] px-3 py-2 whitespace-nowrap; }
 .tbl thead th:first-child { @apply rounded-l-lg; }
 .tbl thead th:last-child { @apply rounded-r-lg; }
-.tbl td { @apply px-3 py-2.5 border-b border-[#eef1f6] whitespace-nowrap; }
-.ini { @apply w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold shrink-0; background: #e8efff; color: #2f5bd3; }
+.tbl td { @apply px-3 py-1.5 border-b border-[#eef1f6] whitespace-nowrap; }
+.ini { @apply w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-bold shrink-0; background: #e8efff; color: #2f5bd3; }
 .tick { @apply w-[22px] h-[22px] rounded-full inline-flex items-center justify-center; }
 .tick-ok { background: #22a35a; color: #fff; }
 .tick-warn { background: #f59e0b; color: #fff; }
