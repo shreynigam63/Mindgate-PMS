@@ -75,7 +75,8 @@ async function sendMail(tenantId, { to, subject, html, kind }) {
   }
   await db.query(`INSERT INTO core.notif_log (tenant_id, to_email, subject, kind, mode, outcome, detail)
                   VALUES ($1,$2,$3,$4,$5,$6,$7)`, [tenantId, to, subject, kind || 'generic', mode, outcome, detail]);
-  return { sent: outcome === 'sent', mode, outcome };
+  // detail is the SMTP error, so a test send can say why it failed.
+  return { sent: outcome === 'sent', mode, outcome, detail };
 }
 
-module.exports = { sendMail, sendMode };
+module.exports = { sendMail, sendMode, smtpConfig };

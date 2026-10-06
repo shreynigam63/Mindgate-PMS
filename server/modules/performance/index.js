@@ -2114,6 +2114,120 @@ router.put('/hr/settings/:key', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---- EMAIL: live or simulated, and the SMTP it sends through -------------
+//
+// Asked for on 6 Oct ("yes build the settings screen"): until now the send
+// mode and the SMTP account had no screen and were set by hand on the
+// server, and the onboarding tracker's Email SPOC was telling people to
+// "switch mail to live in Settings" — a screen that did not exist.
+//
+// THE PASSWORD IS WRITE-ONLY. It is never returned, never audited, and a
+// blank one on save keeps what is stored. Values in the server's own
+// environment (SMTP_* in api.env) are shown as "from the server" and are
+// overridden by anything saved here, which is the order mail.js reads them.
+const SMTP_FIELDS = ['host', 'port', 'user', 'from', 'secure'];
+
+async function mailView(tenantId) {
+  const { sendMode, smtpConfig } = require('../../core/mail');
+  const row = (await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='smtp'`, [tenantId])).rows[0];
+  const saved = (row && row.value) || {};
+  const eff = await smtpConfig(tenantId);
+  const from = (k, envKey) => (saved[k] ? 'settings' : process.env[envKey] ? 'server' : null);
+  return {
+    mode: await sendMode(tenantId),
+    smtp: {
+      host: saved.host || '', port: saved.port || '', user: saved.user || '', from: saved.from || '',
+      secure: saved.secure == null ? null : !!saved.secure,
+      pass_set: !!saved.pass,
+    },
+    // What will actually be used, and where each part comes from.
+    effective: {
+      host: eff.host || null, port: eff.port, user: eff.user || null, from: eff.from || null, secure: eff.secure,
+      pass_set: !!eff.pass,
+      source: { host: from('host', 'SMTP_HOST'), user: from('user', 'SMTP_USER'), pass: from('pass', 'SMTP_PASS'), from: from('from', 'MAIL_FROM') },
+    },
+    ready: !!(eff.host && eff.from),
+  };
+}
+
+router.get('/hr/mail', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    res.json(await mailView(T(req)));
+  } catch (e) { logger.error('mail settings get', { error: e.message }); res.status(500).json({ error: 'Could not load the email settings' }); }
+});
+
+router.put('/hr/mail', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    const b = req.body || {};
+    if (b.mode !== undefined && !['simulated', 'live'].includes(b.mode)) {
+      return res.status(422).json({ error: 'Email mode must be "simulated" or "live".' });
+    }
+    if (b.smtp !== undefined) {
+      const sm = b.smtp || {};
+      const row = (await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='smtp'`, [T(req)])).rows[0];
+      const cur = (row && row.value) || {};
+      const next = { ...cur };
+      for (const k of SMTP_FIELDS) {
+        if (sm[k] === undefined) continue;
+        if (k === 'secure') { next.secure = sm.secure === null ? undefined : !!sm.secure; continue; }
+        const v = String(sm[k] == null ? '' : sm[k]).trim();
+        if (v) next[k] = v; else delete next[k];
+      }
+      if (next.port !== undefined) {
+        const n = Number(next.port);
+        if (!Number.isInteger(n) || n < 1 || n > 65535) return res.status(422).json({ error: `Port must be a whole number from 1 to 65535 — got "${next.port}".` });
+        next.port = n;
+      }
+      if (next.host && !/^[A-Za-z0-9.-]+$/.test(next.host)) return res.status(422).json({ error: `"${next.host}" is not a server name.` });
+      if (next.from && !/^([^<>]*<)?[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+>?$/.test(next.from)) {
+        return res.status(422).json({ error: `"${next.from}" is not a From address.` });
+      }
+      // Blank means "keep it". Clearing it is its own explicit flag, so a
+      // form left blank can never wipe a working password.
+      if (sm.clear_pass === true) delete next.pass;
+      else if (typeof sm.pass === 'string' && sm.pass !== '') next.pass = sm.pass;
+      await db.query(
+        `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'smtp',$2::jsonb)
+         ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
+        [T(req), JSON.stringify(next)]);
+      const { pass, ...shown } = next;
+      audit(req, 'MAIL_SMTP_CHANGED', null, null, { ...shown, pass_changed: typeof sm.pass === 'string' && sm.pass !== '' || sm.clear_pass === true });
+    }
+    if (b.mode !== undefined) {
+      const view = await mailView(T(req));
+      // Saved settings first (above), so turning live on in the same save
+      // as entering the server is judged on the new values.
+      if (b.mode === 'live' && !view.ready) {
+        return res.status(422).json({ error: 'Live email needs an SMTP server and a From address first.' });
+      }
+      await db.query(
+        `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'mail_send_mode',$2::jsonb)
+         ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
+        [T(req), JSON.stringify({ mode: b.mode })]);
+      audit(req, b.mode === 'live' ? 'MAIL_LIVE_ENABLED' : 'MAIL_SET_SIMULATED', null, null, { mode: b.mode });
+    }
+    res.json(await mailView(T(req)));
+  } catch (e) { logger.error('mail settings put', { error: e.message }); res.status(500).json({ error: 'Could not save the email settings' }); }
+});
+
+// One email to the person pressing the button, through exactly the path
+// every other email takes — so "the test worked" means the product works.
+router.post('/hr/mail/test', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    const { sendMail } = require('../../core/mail');
+    const r = await sendMail(T(req), {
+      to: req.user.email, kind: 'test',
+      subject: 'Performance Management System — test email',
+      html: '<p>This is a test email from the Performance Management System. If you are reading it, email is working.</p>',
+    });
+    audit(req, 'MAIL_TEST_SENT', null, null, { to: req.user.email, outcome: r.outcome });
+    res.json({ to: req.user.email, ...r });
+  } catch (e) { logger.error('mail test', { error: e.message }); res.status(500).json({ error: 'Could not send the test email' }); }
+});
+
 router.get('/hr/kra-library/:designation', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });

@@ -11,9 +11,11 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Current to build `b2d3a2b`**, deployed on 6 October 2026 at
-pms.agentichumans.in. The build a screen is running is shown in its **?**
-menu, and `/api/v1/health` reports the same commit.
+**Live at pms.agentichumans.in: build `b2d3a2b`** (6 October 2026). This
+edition also describes the two settings screens built after it — **HR →
+Settings → Email** and **HR → Timesheet → Settings → KRA rating** — which
+reach the live site with the next deploy. The build a screen is running is
+shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
 
@@ -454,15 +456,16 @@ decides". Nothing writes it into an evaluation.
 Who sees it: the employee (their own), their manager, the HOD of their
 department, and HR (`GET /api/v1/pms/timesheet/kra/ratings/:employeeId`).
 
-**Configuring it.** The bands (`kra_bands`) and hours per day
-(`hours_per_day`, default 8) sit in the timesheet scoring settings
-(`core.admin_settings`, key `timesheet`, `scoring`), with the overall
-score's switches (`auto_score`, `min_mapped_pct`, the 50/30/20 weights).
-**There is no screen for these yet**: HR changes them through
-`PUT /api/v1/pms/timesheet/kra/scoring`, which validates them (every band
-needs a label, one band must start at 0, hours per day 0–24) and audits the
-change. The working-day calendar — cycle start day and holidays — is on
-**HR → Timesheet → Settings**.
+**Configuring it: HR → Timesheet → Settings → *KRA rating from the
+timesheet*.** Hours per working day, the "indicative below this % mapped"
+threshold, and the bands (label and starting %; add or remove a band), with
+a worked check line that recomputes as you type. Saved to the timesheet
+scoring settings (`core.admin_settings`, key `timesheet`, `scoring`)
+through `PUT /api/v1/pms/timesheet/kra/scoring`, which validates them
+(every band needs a label, one band must start at 0, hours per day 0–24),
+audits the change, and leaves the overall score's own switch as it was. The
+working-day calendar — cycle start day and holidays — is the card above it.
+An HRBP cannot change either: they apply to everybody.
 
 ## 3.8 Competencies
 
@@ -575,12 +578,17 @@ opens to their week, day by day, then Day-7 feedback.
   employee master can be copied in. Where the owner is "A to B" (e.g.
   *HR Ops → IT*) the email goes to B, the one doing the work. A desk with
   no address set is named on screen and nothing is sent.
-- **Email mode.** `core.admin_settings` key `mail_send_mode`:
-  `simulated` (the product default — logged in `core.notif_log`, not
-  delivered) or `live`. Live needs SMTP: `SMTP_HOST`, `SMTP_PORT`,
-  `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` in `/etc/agentic-pms/api.env`, or
-  the `smtp` setting. **There is no screen for either yet**; the
-  administrator sets them.
+- **Email mode: HR → Settings → Email.** *Simulated* (the product default
+  — every email logged in `core.notif_log`, none delivered) or *Live*.
+  Live needs a mail server: server, port, username, password, From
+  address and SSL, set on the same card, or `SMTP_*` / `MAIL_FROM` in
+  `/etc/agentic-pms/api.env` (shown there as "from the server"; a value
+  saved on the card wins). Live cannot be switched on without a server
+  and a From address. **The password is write-only**: never shown again,
+  never in the audit log, and a blank field on save keeps it; removing it
+  is a separate button. *Send a test email to me* goes through the same
+  path every email takes and reports delivered, recorded or the server's
+  error. The card is HR's alone — an HRBP does not see it.
 
 Verified against all 288 real rows of the workbook: planned date, status
 and days overdue match on every one. Three workbook faults were corrected
@@ -620,11 +628,11 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 | Department heads | `core.department_heads` (HR → HOD) |
 | Super 50 rule, KRA Library scope | HR → Settings |
 | Timesheet calendar (cycle start day, holidays, compliance thresholds) | HR → Timesheet → Settings |
-| Timesheet KRA rating bands, hours per day; overall score switches | `core.admin_settings` `timesheet.scoring`, via `PUT /pms/timesheet/kra/scoring` — no screen yet |
+| Timesheet KRA rating bands, hours per day, indicative threshold | HR → Timesheet → Settings → KRA rating from the timesheet |
 | Which KRA a work item serves; KRAs not measured from timesheets | Manager → Timesheet (mapping), HR mapping backlog |
 | Onboarding activity matrix, day themes, Day-7 statements | `people.onboarding_activities`, `_days`, `_feedback_questions` (seeded from the client's workbook) |
 | Onboarding holidays, SPOC email addresses | New Hire Insights → First-Week Journey → Holidays / SPOCs |
-| Email live or simulated; SMTP | `core.admin_settings` `mail_send_mode`; `SMTP_*` in `api.env` — no screen yet |
+| Email live or simulated; mail server; test email | HR → Settings → Email |
 | AI on/off | `ANTHROPIC_API_KEY` in `/etc/agentic-pms/api.env` — instance-owned, never written by a deploy |
 | AI model | `deploy/service/managed-settings.env`, pushed into `api.env` by every deploy (`UNMANAGED=AI_MODEL` pins a box) |
 
@@ -647,6 +655,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code at `b2d3a2b`, the build deployed on 6 October
-2026. Where this book and the code disagree, the code is right and this
-book is a bug.*
+*Checked against the code on 6 October 2026 (live: `b2d3a2b`; plus the
+settings screens on the dev branch). Where this book and the code disagree,
+the code is right and this book is a bug.*

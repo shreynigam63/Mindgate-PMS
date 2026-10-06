@@ -16,6 +16,7 @@ import PageHead from '../PageHead';
 import TimesheetDashboard from '../TimesheetDashboard';
 import TimesheetTabs from '../TimesheetTabs';
 import TimesheetKra from '../TimesheetKra';
+import KraRatingSettings from '../KraRatingSettings';
 import { TimesheetRoster } from './TeamTimesheetPage';
 import SearchBox from '../SearchBox';
 import {
@@ -501,6 +502,7 @@ export default function HrTimesheetPage() {
       </PageHead>
 
       {showSettings && <Settings settings={d.settings} onSaved={() => load()} />}
+      {showSettings && <KraRatingSettings />}
 
       <TimesheetTabs value={view} onChange={setView} />
       {view === 'kra' ? <Backlog onOpen={setOpen} /> : <>

@@ -40,7 +40,9 @@ const hrbpScope = require('../people').hrbpScope;
 // they change applies to everybody — so an HRBP reads them and cannot
 // write them. Matched as a prefix against the path inside this router.
 // Not lent at all, in either direction: these decide who sees what.
-const HR_ONLY = ['/hrbp/admin'];
+// '/hr/mail' too: the SMTP account the whole product sends through is not
+// a remit's to read or change.
+const HR_ONLY = ['/hrbp/admin', '/hr/mail'];
 
 // What an HRBP is lent for the life of one request. Named rather than a
 // wildcard so that adding one is a decision somebody has to write down.
@@ -63,6 +65,9 @@ const TENANT_WIDE = [
   '/onboarding/holidays',
   '/onboarding/activities',
   '/onboarding/spocs',
+  // The timesheet calendar and the KRA rating bands apply to everybody.
+  '/timesheet/settings',
+  '/timesheet/kra/scoring',
 ];
 
 // The keys a payload uses to name whose record a row is. Checked in this

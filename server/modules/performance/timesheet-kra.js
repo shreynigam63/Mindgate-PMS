@@ -714,7 +714,11 @@ router.put('/scoring', async (req, res) => {
     const next = {
       ...cur.scoring,
       ...b,
-      auto_score: b.auto_score === true,
+      // Kept unless the caller names it. The rating-settings screen saves
+      // only the bands, hours per day and minimum mapped %; reading a
+      // missing auto_score as false would switch the overall score off
+      // for the whole tenant as a side effect of editing a band.
+      auto_score: b.auto_score === undefined ? cur.scoring.auto_score === true : b.auto_score === true,
       weight_coverage: Number(b.weight_coverage == null ? cur.scoring.weight_coverage : b.weight_coverage),
       weight_compliance: Number(b.weight_compliance == null ? cur.scoring.weight_compliance : b.weight_compliance),
       weight_value_add: Number(b.weight_value_add == null ? cur.scoring.weight_value_add : b.weight_value_add),

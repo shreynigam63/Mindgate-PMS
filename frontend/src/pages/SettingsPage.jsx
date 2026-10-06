@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import EmailSettings from '../EmailSettings';
 
 // HR Admin → Settings.
 //
@@ -154,6 +155,8 @@ export default function SettingsPage() {
         sub={<>
         Tenant-wide configuration. Changes take effect immediately for everyone.
         </>} />
+
+      <EmailSettings />
 
       <ConnectQuestions />
 
