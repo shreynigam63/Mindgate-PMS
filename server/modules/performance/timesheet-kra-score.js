@@ -228,10 +228,10 @@ function validateScoring(s) {
 //   KRA effort %    = hours placed against the KRA ÷ KRA expected h,
 //                     capped at 100
 //   rating          = effort % on the tenant's KRA bands — by default
-//                     A+ from 80, A from 40, B below 40
+//                     A+ from 80, A from 70, B+ from 40, B below 40
 //
 // e.g. 140 required hours, a 25% KRA → 35 h expected; 17.5 h on it is
-// 50% → A. The weight is shared only over MEASURED KRAs: a KRA marked
+// 50% → B+. The weight is shared only over MEASURED KRAs: a KRA marked
 // "not measured from timesheets" expects no hours, so its weight is not
 // left as hours nobody can ever log.
 //
@@ -243,7 +243,9 @@ function validateScoring(s) {
 // EVIDENCE, NOT THE RATING OF RECORD — the client's choice, "shown
 // beside, manager decides". Nothing here writes into an evaluation.
 
-const DEFAULT_KRA_BANDS = [{ label: 'A+', min: 80 }, { label: 'A', min: 40 }, { label: 'B', min: 0 }];
+// The client's ladder, as given on 6 Oct: "A+ < 100%, A < 80%, B+ < 70%",
+// with B below 40% from their earlier message the same day.
+const DEFAULT_KRA_BANDS = [{ label: 'A+', min: 80 }, { label: 'A', min: 70 }, { label: 'B+', min: 40 }, { label: 'B', min: 0 }];
 
 /**
  * @param {object} att   the return of timesheet-kra-match.attribute()

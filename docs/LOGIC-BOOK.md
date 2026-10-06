@@ -412,15 +412,17 @@ Specified by the client: *"if 1 KRA weighs 25%, it will be based on ratings
 like A+, A, B+, B as per no of hours worked … I have to work 140 hours and
 I have worked 70 hours … <40% will have B rating, <80% will be A and <100%
 will be A+."*
+Ladder confirmed by the client the same day: *"A+ < 100%, A < 80%, B+ <
+70%"*, with B below 40%.
 
 | Step | Formula |
 |---|---|
 | required hours | working days in the period × hours per day (8 by default; weekends and the timesheet holiday list skipped) |
 | KRA expected hours | required hours × the KRA's weight ÷ weight of the KRAs measured from timesheets |
 | KRA effort % | hours placed against the KRA ÷ its expected hours, capped at 100 |
-| rating | **A+** from 80%, **A** from 40%, **B** below 40% (editable as `kra_bands`) |
+| rating | **A+** 80–100%, **A** 70–79%, **B+** 40–69%, **B** below 40% (editable as `kra_bands`) |
 
-Example: 140 h required, a 25% KRA expects 35 h; 17.5 h on it is 50% → A.
+Example: 140 h required, a 25% KRA expects 35 h; 17.5 h on it is 50% → B+; 28 h is 80% → A+.
 A KRA *not measured from timesheets* expects no hours and its weight is
 shared across the others. Hours not yet mapped to a KRA count for none, so
 ratings rise as items are mapped.

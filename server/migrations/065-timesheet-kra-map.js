@@ -147,13 +147,14 @@ const DEFAULT_SCORING = {
   min_mapped_pct: 80,
   // The per-KRA rating (timesheet-kra-score.js kraRatings), asked for on
   // 6 Oct: required hours are working days × this, and the client's
-  // ladder — "<40% will have B rating, <80% will be A and <100% will be
-  // A+". Read through scoringFor's merge with these defaults, so a tenant
-  // whose scoring blob predates them still gets them.
+  // ladder — "A+ < 100%, A < 80%, B+ < 70%", B below 40%. Read through
+  // scoringFor's merge with these defaults, so a tenant whose scoring
+  // blob predates them still gets them.
   hours_per_day: 8,
   kra_bands: [
     { label: 'A+', min: 80 },
-    { label: 'A',  min: 40 },
+    { label: 'A',  min: 70 },
+    { label: 'B+', min: 40 },
     { label: 'B',  min: 0  },
   ],
   // Labels and cut-offs for the monthly indicator. The same ladder as

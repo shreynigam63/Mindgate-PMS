@@ -194,15 +194,17 @@ test('THE CLIENT\'S EXAMPLE: 140 required hours, a 25% KRA expects 35 h', () => 
   assert.equal(by.a.expected_hours, 35);
   assert.equal(by.a.effort_pct, 100); assert.equal(by.a.rating, 'A+');
   assert.equal(by.b.effort_pct, 50, '70 of 140 is 50% — the same rule on one KRA');
-  assert.equal(by.b.rating, 'A', '40% up to 80% is A');
+  assert.equal(by.b.rating, 'B+', '40% up to 70% is B+');
   assert.equal(by.c.effort_pct, 28.6); assert.equal(by.c.rating, 'B', 'below 40% is B');
   assert.equal(by.d.rating, 'B');
 });
 
-test('the client\'s ladder: B below 40, A from 40, A+ from 80, capped at 100', () => {
+test('the client\'s ladder: A+ from 80, A from 70, B+ from 40, B below — capped at 100', () => {
   const at = (h) => KR([K('a', 100, h)], 10).ratings[0];   // 80 h required
-  assert.equal(at(31.9).rating, 'B');
-  assert.equal(at(32).rating, 'A', 'exactly 40% is A');
+  assert.equal(at(31.9).rating, 'B', 'below 40% is B');
+  assert.equal(at(32).rating, 'B+', 'exactly 40% is B+');
+  assert.equal(at(55.9).rating, 'B+', '69.9% is still B+');
+  assert.equal(at(56).rating, 'A', 'exactly 70% is A');
   assert.equal(at(63.9).rating, 'A');
   assert.equal(at(64).rating, 'A+', 'exactly 80% is A+');
   assert.equal(at(200).effort_pct, 100, 'overtime does not score above 100');
