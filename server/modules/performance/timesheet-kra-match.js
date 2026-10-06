@@ -13,8 +13,16 @@
 // THE ORDER OF PRECEDENCE, and why it is this way round
 //
 //   1. an explicit mapping   a human said "this item is that KRA"
-//   2. a keyword match       the KRA's own words appear in the text
-//   3. nothing               and it says so
+//   2. the KRA's own name    the item is NAMED after a KRA on the sheet
+//   3. a keyword match       the KRA's own words appear in the text
+//   4. nothing               and it says so
+//
+// (2) was added on 6 Oct, after a client upload in which the item names
+// had been changed to KRA titles — "Code review, security & architectural
+// compliance", "Client escalation response & resolution" — and the screen
+// still said 0% mapped. Nothing matched on a KRA's title then, only on its
+// keywords, so naming an item after the KRA it serves did nothing. A title
+// is a stronger signal than a keyword: somebody chose to write it there.
 //
 // A mapping beats a keyword because it is a fact somebody asserted,
 // where a keyword is a guess about somebody else's free text. Running
@@ -65,8 +73,18 @@ const haystackOf = (e) => `${e.item_name || ''} \u0000 ${e.description || ''}`;
 
 // The key an item is mapped by. The export's own id when it has one —
 // stable across renames — and the lowercased name when it does not.
-function itemKeyOf(e) {
+//
+// ONE ID, SEVERAL NAMES. The same client upload reused one Item Id
+// (U5P-I58) for rows named "GFF Activities" and rows renamed to a KRA
+// title. Grouped by id alone, every row took the first row's name and the
+// renamed ones vanished into it. So when an id carries more than one name
+// in the window, each name becomes its own item, keyed `id::name`. A
+// mapping saved against the bare id still applies to all of them (see
+// attribute), so nothing mapped before this change is lost.
+const normName = (v) => String(v == null ? '' : v).trim().replace(/\s+/g, ' ').replace(/[.\s]+$/, '').toLowerCase();
+function itemKeyOf(e, splitIds = null) {
   const id = String(e.item_id == null ? '' : e.item_id).trim().toLowerCase();
+  if (id && splitIds && splitIds.has(id)) return `${id}::${normName(e.item_name)}`;
   if (id) return id;
   return String(e.item_name == null ? '' : e.item_name).trim().replace(/\s+/g, ' ').toLowerCase();
 }
@@ -114,12 +132,22 @@ function attribute(entries, kras, map = []) {
   // property of the ITEM, not of each log against it. Grouping also
   // means the screen can offer "map this item" once instead of once per
   // row.
+  const namesById = new Map();
+  for (const e of entries) {
+    const id = String(e.item_id == null ? '' : e.item_id).trim().toLowerCase();
+    if (!id) continue;
+    if (!namesById.has(id)) namesById.set(id, new Set());
+    namesById.get(id).add(normName(e.item_name));
+  }
+  const splitIds = new Set([...namesById].filter(([, n]) => n.size > 1).map(([id]) => id));
+
   const items = new Map();
   for (const e of entries) {
-    const key = itemKeyOf(e);
+    const key = itemKeyOf(e, splitIds);
     if (!items.has(key)) {
       items.set(key, {
         item_key: key,
+        base_key: itemKeyOf(e),
         item_id: e.item_id || null,
         item_label: e.item_name || '(no item name)',
         item_type: e.item_type || null,
@@ -159,8 +187,23 @@ function attribute(entries, kras, map = []) {
       matched_keywords: [],
     };
 
-    const m = byKey.get(it.item_key);
-    if (m && m.decision === 'excluded') {
+    // A mapping on this exact item wins; then the KRA's own name; then a
+    // mapping saved on the bare id before the id was split; then keywords.
+    const own = byKey.get(it.item_key);
+    const label = normName(it.item_label);
+    const titled = own ? [] : kras.filter((k) => {
+      const t = normName(k.title);
+      return t && (label === t || (t.length >= 12 && containsPhrase(label, t)));
+    });
+    const m = own || (titled.length ? null : (it.base_key !== it.item_key ? byKey.get(it.base_key) : null));
+    if (titled.length === 1) {
+      row.how = 'title';
+      row.kra_id = String(titled[0].id);
+      row.kra_title = titled[0].title;
+    } else if (titled.length > 1) {
+      row.how = 'ambiguous';
+      row.candidates = titled.map((k) => ({ kra_id: String(k.id), kra_title: k.title, keywords: [] }));
+    } else if (m && m.decision === 'excluded') {
       row.how = 'excluded';
       row.note = m.note || null;
     } else if (m && m.kra_id && kraById.has(String(m.kra_id))) {

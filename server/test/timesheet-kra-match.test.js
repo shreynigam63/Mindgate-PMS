@@ -229,3 +229,60 @@ test('nothing logged produces zeroes and no crash', () => {
   assert.equal(r.totals.mapped_pct, 0, 'not NaN');
   assert.equal(r.by_kra.length, 3, 'the KRAs are still listed, at zero');
 });
+
+// ---- 6 Oct: items named after a KRA, and one id carrying several names ----
+// From the client's own upload (timesheet_75000024144661_updated.xlsx,
+// 21 Aug – 20 Sep): they renamed items to their KRA titles and the screen
+// still said 0% mapped. Both causes are pinned here.
+{
+  const E = (id, name, hours) => ({ item_id: id, item_name: name, hours, log_date: '2026-09-01', description: '' });
+  const KRAS = [
+    { id: 'k1', title: 'Code review, security & architectural compliance', weight: 20, keywords: [] },
+    { id: 'k2', title: 'Client escalation response & resolution', weight: 15, keywords: [] },
+    { id: 'k3', title: 'Project milestone delivery & CR budget adherence', weight: 15, keywords: [] },
+  ];
+  const MONTH = [
+    E('U5P-I58', 'GFF Activities', 48),
+    E('U5P-I72', 'Client escalation response & resolution', 40),
+    E('U5P-I58', 'Code review, security & architectural compliance', 56),
+  ];
+
+  test('AN ITEM NAMED AFTER A KRA IS ATTRIBUTED TO IT, with no keywords and no mapping', () => {
+    const a = m.attribute(MONTH, KRAS, []);
+    const by = Object.fromEntries(a.items.map((i) => [i.item_label, i]));
+    assert.equal(by['Client escalation response & resolution'].how, 'title');
+    assert.equal(by['Client escalation response & resolution'].kra_id, 'k2');
+    assert.equal(a.totals.attributed, 96);
+    assert.equal(a.totals.mapped_pct, 66.7, 'was 0% on the client\'s upload');
+  });
+
+  test('ONE ITEM ID WITH TWO NAMES IS TWO ITEMS, so a renamed row is not swallowed by the first name', () => {
+    const a = m.attribute(MONTH, KRAS, []);
+    const keys = a.items.map((i) => i.item_key).sort();
+    assert.deepEqual(keys, ['u5p-i58::code review, security & architectural compliance', 'u5p-i58::gff activities', 'u5p-i72']);
+    const gff = a.items.find((i) => i.item_label === 'GFF Activities');
+    assert.equal(gff.how, 'unmapped', 'a name that is not a KRA still needs a person to map it');
+    assert.equal(gff.hours, 48);
+  });
+
+  test('a mapping saved on the bare id still applies after the split, but the KRA name wins for its own rows', () => {
+    const a = m.attribute(MONTH, KRAS, [{ item_key: 'u5p-i58', decision: 'kra', kra_id: 'k3' }]);
+    const by = Object.fromEntries(a.items.map((i) => [i.item_label, i]));
+    assert.equal(by['GFF Activities'].how, 'mapped');
+    assert.equal(by['GFF Activities'].kra_id, 'k3');
+    assert.equal(by['Code review, security & architectural compliance'].how, 'title');
+    assert.equal(by['Code review, security & architectural compliance'].kra_id, 'k1');
+  });
+
+  test('an explicit mapping of the exact item still beats the name', () => {
+    const a = m.attribute(MONTH, KRAS, [{ item_key: 'u5p-i72', decision: 'kra', kra_id: 'k3' }]);
+    assert.equal(a.items.find((i) => i.item_key === 'u5p-i72').kra_id, 'k3');
+  });
+
+  test('names match ignoring case, spacing and a trailing full stop — but a short title must match whole', () => {
+    const a = m.attribute([E('X1', '  client ESCALATION response &  resolution. ', 5)], KRAS, []);
+    assert.equal(a.items[0].how, 'title');
+    const short = m.attribute([E('X2', 'QA work on the release', 5)], [{ id: 's', title: 'QA', weight: 100, keywords: [] }], []);
+    assert.equal(short.items[0].how, 'unmapped', 'a short title is not hunted for inside longer names');
+  });
+}

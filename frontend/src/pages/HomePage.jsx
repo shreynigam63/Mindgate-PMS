@@ -4,9 +4,9 @@ import { api } from '../utils/api';
 import { grade } from '../grade';
 import {
   Target, TrendingUp, MessageCircle, Clock, ClipboardList, Star, Users, CheckCircle2, BarChart3,
-  ArrowRight, ListChecks, UserX, FileWarning, Send, Hourglass, CalendarClock, HeartHandshake,
-  ChevronDown, ChevronRight, Check, FileText, MessageSquareText, PenLine, CircleCheckBig, Sun,
-  CalendarDays, Heart, Minus, AlertCircle, Search,
+  ArrowRight, ListChecks, UserX, FileWarning, Send, Hourglass, HeartHandshake,
+  ChevronRight, Check, FileText, MessageSquareText, PenLine, CircleCheckBig, Sun,
+  CalendarDays, Minus, AlertCircle, Search,
 } from 'lucide-react';
 import Summit from '../Summit';
 
@@ -77,77 +77,6 @@ const greeting = () => {
   return h < 12 ? 'Good morning,' : h < 17 ? 'Good afternoon,' : 'Good evening,';
 };
 
-// THE CYCLE AS STEPS. The reference draws five; this product's cycle has
-// seven working phases (phase-machine.js ORDER, without draft and closed),
-// and drawing five would mean merging or hiding real ones.
-const STEPS = [
-  ['kra_open', 'KRA', 'Setting'], ['mid_year_review', 'Mid-Year', 'Review'],
-  ['self_appraisal', 'Annual', 'Review'], ['manager_eval', 'Manager', 'Evaluation'],
-  ['hod_eval', 'HOD', 'Review'], ['calibration', 'Calibra-', 'tion'], ['publish', 'Publish', ''],
-];
-
-function CycleCard({ cycle, el }) {
-  if (!cycle) {
-    return (
-      <div className="panel">
-        <div className="panel-h"><span className="panel-t">PMS Cycle – Current Status</span></div>
-        <p className="text-sm text-navy-500">No appraisal cycle is running. HR opens one from Cycles.</p>
-      </div>
-    );
-  }
-  const at = cycle.phase === 'closed' ? STEPS.length : STEPS.findIndex(([k]) => k === cycle.phase);
-  const pct = at < 0 ? 0 : Math.round((at / STEPS.length) * 100);
-  return (
-    <div className="panel flex flex-col">
-      <div className="panel-h">
-        <span className="panel-t">PMS Cycle – Current Status</span>
-        <span className="ml-auto text-[13.5px] text-navy-500 whitespace-nowrap">{/^FY/i.test(String(cycle.fiscal_year)) ? cycle.fiscal_year : `FY ${cycle.fiscal_year}`}</span>
-      </div>
-      <div className="relative grid mt-1" style={{ gridTemplateColumns: `repeat(${STEPS.length}, minmax(0, 1fr))` }}>
-        <div className="absolute top-4 h-[3px] bg-[#e3e7ef]" style={{ left: `${50 / STEPS.length}%`, right: `${50 / STEPS.length}%` }} />
-        <div className="absolute top-4 h-[3px] bg-[#22a35a]"
-          style={{ left: `${50 / STEPS.length}%`, width: `${Math.max(0, Math.min(at, STEPS.length - 1)) * (100 / STEPS.length)}%` }} />
-        {STEPS.map(([k, a, b], i) => {
-          const state = i < at ? 'done' : i === at ? 'now' : 'next';
-          return (
-            <div key={k} className="text-center min-w-0">
-              <span className={`step-dot step-${state}`}>{state === 'done' && <Check size={16} strokeWidth={3} />}</span>
-              <p className="text-[11.5px] font-semibold text-navy-800 mt-2 leading-tight">{a}<br />{b}</p>
-              <p className={`text-[10.5px] mt-1 ${state === 'now' ? 'text-brand-600 font-bold' : 'text-navy-400'}`}>
-                {state === 'done' ? 'Done' : state === 'now' ? 'In progress' : 'Upcoming'}
-              </p>
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex items-center gap-3 mt-4">
-        <div className="flex-1 h-2.5 rounded-full bg-[#e8ecf3] overflow-hidden">
-          <div className="h-full rounded-full bg-gradient-to-r from-brand-600 to-brand-500" style={{ width: `${pct}%` }} />
-        </div>
-        <span className="text-[12.5px] font-semibold text-navy-700 whitespace-nowrap">
-          {cycle.phase === 'closed' ? 'Cycle closed' : at < 0 ? 'Not started' : `Step ${at + 1} of ${STEPS.length}`}
-        </span>
-      </div>
-      {/* WHO THIS CYCLE COVERS — the joining cut-off, asked for on 24 Sep,
-          kept from the old cycle card in a single line. */}
-      {el && el.mine && (
-        <p className="text-[11.5px] text-navy-500 mt-3 flex flex-wrap items-center gap-1.5">
-          <CalendarClock size={13} className="text-navy-400" />
-          {el.mine.label
-            ? <>Your next appraisal: <b className="text-navy-900">{el.mine.label}</b>
-                <span className={`pill ${el.mine.in_this_cycle ? 'pill-green' : 'pill-amber'}`}>
-                  {el.mine.in_this_cycle ? 'you are in this cycle' : 'not in this cycle'}
-                </span></>
-            : <span className="text-amber2-600">{el.mine.detail}</span>}
-        </p>
-      )}
-      {/* Both sentences, as asked for on 24 Sep — the second is the same
-          rule read from the other end, for whoever is NOT in this cycle. */}
-      {el && <p className="text-[11px] text-navy-400 mt-1 leading-snug">{el.line_in} {el.line_out}</p>}
-    </div>
-  );
-}
-
 // Four shortcuts, chosen by what this person can actually open, in the
 // order the reference uses for a manager. Each is filtered through the
 // same page list the sidebar uses, so a shortcut can never lead to
@@ -169,7 +98,7 @@ function QuickActions({ user }) {
   return (
     <div className="panel">
       <div className="panel-h"><span className="panel-t">Quick Actions</span></div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {list.map(({ to, label, icon: Icon, bg, fg }) => (
           <NavLink key={to} to={to} className="qa" style={{ background: bg }}>
             <Icon size={24} style={{ color: fg }} className="shrink-0" />
@@ -181,13 +110,6 @@ function QuickActions({ user }) {
     </div>
   );
 }
-
-const SURVEY_ICON = [
-  { icon: Heart, bg: '#fde7ef', fg: '#ec4899' },
-  { icon: Users, bg: '#efe9fd', fg: '#7c4dde' },
-  { icon: FileText, bg: '#e6efff', fg: '#2563eb' },
-  { icon: MessageSquareText, bg: '#e7f7ee', fg: '#1f9d5c' },
-];
 
 // The reference's My Team block: four counts, tabs that narrow the list,
 // a department filter, and one row per person. Read from the same
@@ -317,52 +239,15 @@ const waited = (iso) => {
   return d <= 0 ? 'today' : d === 1 ? 'waiting 1 day' : `waiting ${d} days`;
 };
 
-// HOW MANY SURVEY ROWS THE HOME PAGE WILL CARRY.
-//
-// This list was unbounded. One open survey per row is right for the two
-// or three a person normally owes; an employee invited to twelve — a
-// manager assessment per report, say, plus the lifecycle forms — got a
-// wall of identical rows that pushed My desk, their KRAs and every other
-// section below the fold. The page then answers "what now?" with a
-// scrollbar.
-//
-// Capped rather than counted: "12 surveys" is a number nobody acts on,
-// whereas four named forms plus "8 more waiting on you" keeps the thing
-// somebody will click AND states what is not shown. Nothing is hidden —
-// the remainder is a link to the page that lists all of them.
-const SURVEYS_SHOWN = 4;
-
-
 export default function HomePage({ user }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
-  // Surveys waiting on this person, asked for on 28 Sep. Read straight
-  // from the engagement module's own endpoint rather than folded into
-  // /pms/home — performance must not reach into engagement's tables.
-  // Its failure is swallowed ON PURPOSE: a survey prompt is an addition
-  // to the home page, not a precondition for it.
-  const [surveys, setSurveys] = useState([]);
-  // COLLAPSIBLE, AND IT REMEMBERS (1 Oct): "be hidden or open in one
-  // click". Open by default; the choice is kept per browser.
-  const [openSurveys, setOpenSurveys] = useState(() => {
-    try { return localStorage.getItem('apms_home_surveys') !== 'closed'; } catch { return true; }
-  });
-  const toggleSurveys = () => setOpenSurveys((v) => {
-    try { localStorage.setItem('apms_home_surveys', v ? 'closed' : 'open'); } catch { /* private window */ }
-    return !v;
-  });
   useEffect(() => { api('/pms/home').then(setD).catch(e => setErr(e.message)); }, []);
-  useEffect(() => {
-    api('/engagement/my/invitations')
-      .then((r) => setSurveys((r.invitations || []).filter((i) => !i.completed_at)))
-      .catch(() => setSurveys([]));
-  }, []);
 
   if (err) return <p className="text-sm text-rose-600">{err}</p>;
   if (!d) return <p className="text-sm text-navy-400">Loading…</p>;
 
   const { cycle, me = {}, team, admin, action } = d;
-  const el = d.eligibility;
   const phase = cycle ? cycle.phase : null;
   const evalOpen = phase === 'manager_eval' || phase === 'hod_eval';
   const goals = me.goals || {};
@@ -436,55 +321,13 @@ export default function HomePage({ user }) {
         {cards.map(({ key, ...x }) => <Kpi key={key} {...x} />)}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-[1.1fr_1.15fr_0.95fr] gap-4">
-        <div className="panel">
-          {/* THE COUNT STAYS VISIBLE WHEN THE LIST IS SHUT — the header is
-              the button and carries the sentence. */}
-          <button type="button" onClick={toggleSurveys} aria-expanded={openSurveys}
-            className="panel-h w-full text-left flex-wrap">
-            <span className="panel-t">Surveys waiting on you</span>
-            <span className="pill pill-red">{surveys.length} pending</span>
-            <span className="text-[11.5px] text-navy-400 basis-full sm:basis-auto">
-              {surveys.length} open {surveys.length === 1 ? 'form has' : 'forms have'} not been answered yet
-            </span>
-            <span className="ml-auto inline-flex items-center gap-0.5 text-[12.5px] font-semibold text-brand-600">
-              {openSurveys ? 'Hide' : 'Show'}
-              <ChevronDown size={14} className={`transition-transform ${openSurveys ? '' : '-rotate-90'}`} />
-            </span>
-          </button>
-          <div className={`divide-y divide-[#eef1f6] ${openSurveys ? '' : 'hidden'}`}>
-            {surveys.length === 0 && <p className="text-[13px] text-navy-500 py-2">Nothing to answer — you are up to date.</p>}
-            {surveys.slice(0, SURVEYS_SHOWN).map((s, i) => {
-              const ic = SURVEY_ICON[i % SURVEY_ICON.length];
-              return (
-                <NavLink key={`${s.id}-${s.subject_employee_id || 'self'}`} to="/engagement"
-                  className="py-2.5 flex items-center gap-3 hover:bg-navy-50/50 rounded-lg">
-                  <span className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: ic.bg, color: ic.fg }}>
-                    <ic.icon size={20} fill={i % SURVEY_ICON.length === 0 ? ic.fg : 'none'} />
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-[14px] font-semibold text-navy-900 truncate">
-                      {s.title}{s.subject_name && <span className="text-navy-500 font-normal"> — about {s.subject_name}</span>}
-                    </span>
-                    <span className="block text-[12px] text-navy-400 truncate">
-                      {s.description || (s.anonymity_default ? 'Anonymous' : 'Attributed')}
-                    </span>
-                  </span>
-                  <span className="pill pill-red">Pending</span>
-                  <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-brand-600">Answer <ArrowRight size={14} /></span>
-                </NavLink>
-              );
-            })}
-            {surveys.length > SURVEYS_SHOWN && (
-              <NavLink to="/engagement" className="py-2.5 flex items-center gap-1.5 text-[12.5px] font-semibold text-brand-600">
-                {surveys.length - SURVEYS_SHOWN} more waiting on you — open My Surveys <ArrowRight size={13} />
-              </NavLink>
-            )}
-          </div>
-        </div>
-        <CycleCard cycle={cycle} el={el} />
-        <QuickActions user={user} />
-      </div>
+      {/* SURVEYS AND THE CYCLE STEPPER WERE HERE, beside Quick Actions.
+          Removed on 6 Oct, asked for directly: "please remove these two
+          tabs from homepage", with Quick Actions extended "in single line
+          to look better". A survey still reaches the person through My
+          Surveys and its notification; the cycle's phase is on Cycles and
+          on every page that it opens or shuts. */}
+      <QuickActions user={user} />
 
       {/* WHAT THIS PERSON HAS ASKED FOR AND IS WAITING ON — listed, so they
           know exactly who to chase. */}

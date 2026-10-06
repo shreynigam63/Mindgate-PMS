@@ -217,8 +217,8 @@ says "No published ratings yet" and what will change that.
 
 | Page | Route | What governs it |
 |---|---|---|
+| Manager Dashboard | `/team/dashboard` | The Dashboard one scope out. First in the section, so opening Manager lands here |
 | Nominate for RnR | `/rnr/nominate` | §3.10 |
-| Manager Dashboard | `/team/dashboard` | The Dashboard one scope out |
 | Team Overview | `/team/overview` | Every report, all phases at a glance |
 | Team KRA Sheets | `/team/kra-sheets` | Each KRA shows the report's timesheet hours and rating, §3.7. Approve or return. A return **must** carry a comment — refused 422, *"the employee must know why"* (`approvals.js`) |
 | Team Target Achievements | `/team/growth` | Growth-plan decisions |
@@ -286,8 +286,7 @@ administration.
 
 ## 2.6 Dashboard
 
-The Dashboard (`/home`, `HomePage.jsx`) answers *what now?*, laid out to the
-reference the client sent on 6 Oct:
+The Dashboard (`/home`, `HomePage.jsx`) answers *what now?*:
 
 1. **Greeting band** — good morning/afternoon, the date, and the single most
    urgent thing, chosen server-side, with its link.
@@ -297,21 +296,20 @@ reference the client sent on 6 Oct:
    annual review due, open connect actions. Only real counts get a card;
    with fewer than four, the row is completed with the person's own counts
    (KRAs and weight, connects, growth goals, rating) — never zeroes.
-3. **Surveys waiting on you** — capped at four with the remainder as a
-   link; collapsible, and the count stays visible when collapsed.
-4. **PMS Cycle – Current Status** — the seven working phases as steps
-   (KRA Setting → Publish), "Step n of 7", and who this cycle covers (§3.6).
-5. **Quick Actions** — four shortcuts, chosen from pages the viewer may
-   open, so none leads to an access-denied screen.
-6. **Requested to manager** — what you are waiting on someone else for.
-7. **My Team** (managers, and HR over everyone) — reports, KRA sheets
+3. **Quick Actions** — four shortcuts on one line, chosen from pages the
+   viewer may open, so none leads to an access-denied screen.
+4. **Requested to manager** — what you are waiting on someone else for.
+5. **My Team** (managers, and HR over everyone) — reports, KRA sheets
    approved, connects pending, evaluation completion; tabs for KRA
    approvals, evaluation status and connects; a department filter and
-   name search; one row per person with KRA, growth plan, annual review,
-   connects and evaluation status.
+   name search; one row per person.
 
-The old "My performance" block was removed on 5 Oct: every link in it is in
-the menu already.
+**Removed on request:** "My performance" (5 Oct — every link was already in
+the menu); and on 6 Oct the **Surveys waiting on you** list and the **PMS
+Cycle – Current Status** card (*"please remove these two tabs from
+homepage"*). Surveys are still on **Self → My Surveys** and in
+notifications. The cycle eligibility rule (§3.6) is still computed and
+returned by `/pms/home`; it simply has no card on Home now.
 
 ---
 
@@ -421,6 +419,26 @@ breadth over value: on the real client month, every hour in one KRA scored
 14%, while an hour in each of seven would have scored 100%.
 
 The monthly rollup feeds Calibration as a **suggestion only**.
+
+**How an hour reaches a KRA**, in order (`timesheet-kra-match.js`):
+
+1. **An explicit mapping** — a manager or HR said "this item is that KRA".
+2. **The KRA's own name** — the item is named after a KRA on the person's
+   sheet (ignoring case, spacing and a trailing full stop; a title of 12+
+   characters also matches when it appears inside a longer item name). Added
+   6 Oct after a client upload renamed items to KRA titles and still showed
+   0%: until then only keywords matched.
+3. **A keyword** — the KRA's keywords appear in the item name or
+   description.
+4. **Nothing** — the hours stay unplaced and the screen says so. Two KRAs
+   matching the same item give it to neither ("ambiguous").
+
+**One Item Id, several names.** When the same Item Id carries different
+item names in a period (the client's U5P-I58 was both *GFF Activities* and
+*Code review, security & architectural compliance*), each name is its own
+item, so a renamed row is not swallowed by the first name. A mapping saved
+on the bare Item Id still applies to every name under it, except where the
+name is a KRA title.
 
 ### Timesheet rating per KRA (6 Oct)
 

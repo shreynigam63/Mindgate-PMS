@@ -29,6 +29,8 @@ import {
 export const HOW = {
   mapped:    { label: 'Mapped',      chip: 'bg-teal-100 text-teal-700',     icon: Link2,
                help: 'A manager said this item belongs to that KRA.' },
+  title:     { label: 'By KRA name', chip: 'bg-teal-100 text-teal-700',     icon: Target,
+               help: 'Placed because the item is named after this KRA. Map it to put it somewhere else.' },
   keyword:   { label: 'By keyword',  chip: 'bg-lagoon-50 text-lagoon-700',  icon: Sparkles,
                help: 'Placed because the KRA’s own keywords appear in the item text.' },
   ambiguous: { label: 'Ambiguous',   chip: 'bg-amber-100 text-amber-700',   icon: HelpCircle,

@@ -129,12 +129,15 @@ const NAV = [
     { to: '/people', label: 'People Hub', icon: User },
   ]},
   { group: 'Manager', hue: 'lagoon', icon: Users, items: [
-    { to: '/rnr/nominate', label: 'Nominate for RnR', icon: Award },
     // Added 24 Sep on request: the Manager tab's own landing page, the
     // same thing /home is for a person's own work. First in the group
     // because it is where a manager now starts, and because it links on
     // to everything below it.
     { to: '/team/dashboard', label: 'Manager Dashboard', icon: Gauge },
+    // Moved down on 6 Oct, asked for directly: "manager dashboard should
+    // be first instead of nominate for RnR". Opening the Manager section
+    // lands on its first page, so the dashboard is now where it starts.
+    { to: '/rnr/nominate', label: 'Nominate for RnR', icon: Award },
     { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard },
     { to: '/team/kra-sheets', label: 'Team KRA Sheets', icon: ClipboardList },
     // Split out of /my/growth on 23 Sep for the same reason the Mid-Year

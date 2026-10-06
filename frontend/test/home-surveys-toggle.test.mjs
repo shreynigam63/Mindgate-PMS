@@ -1,21 +1,11 @@
-// node --test — the "Surveys waiting on you" collapse.
+// node --test — Home after 6 Oct.
 //
-// Asked for on 1 Oct: "surveys waiting for you can have toggle view which
-// can be hidden or open in one click."
-//
-// Three things make this a feature rather than a `hidden` class, and all
-// three are pinned below:
-//
-//   1. ONE CLICK, both ways. Shut and open again without a reload.
-//   2. THE COUNT SURVIVES THE COLLAPSE. Collapsing is meant to buy back
-//      vertical space, not to hide that seven forms are waiting. If the
-//      sentence went away with the list, somebody who shut it once would
-//      never learn they owe anything — which is worse than the gap the
-//      collapse was for. This is the assertion that matters.
-//   3. THE CHOICE STICKS. Re-shutting it on every visit is not a
-//      preference, it is a chore.
-//
-// Skips cleanly when the stack is not up.
+// This file pinned the collapsible "Surveys waiting on you" list (asked
+// for on 1 Oct). On 6 Oct the client asked for it, and the cycle card
+// beside it, to go: "please remove these two tabs from homepage", and for
+// Quick Actions to sit "in single line to look better". These tests pin
+// that instead — and that a survey is still reachable, since removing a
+// prompt must not remove the form.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert';
 import { chromium } from 'playwright-core';
@@ -38,116 +28,45 @@ before(async () => {
 after(async () => { if (browser) await browser.close(); });
 const needStack = (t) => { if (!up) { t.skip('dev stack not running (API 8080 + Vite 5190)'); return true; } return false; };
 
-async function openHome(email) {
+async function open(email, path, width = 1440) {
   const token = (await (await fetch(`${API}/api/v1/auth/dev-login`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: PASS }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: PASS }),
   })).json()).token;
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const ctx = await browser.newContext({ viewport: { width, height: 1000 } });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(APP, { waitUntil: 'domcontentloaded' });
   await page.evaluate((t) => localStorage.setItem('apms_token', t), token);
-  await page.goto(`${APP}/home`, { waitUntil: 'networkidle' });
+  await page.goto(APP + path, { waitUntil: 'networkidle' });
   await page.waitForTimeout(900);
   return { ctx, page, errors };
 }
 
-// Scoped to main: since 6 Oct the sidebar's role groups are
-// aria-expanded buttons too.
-const toggle = (page) => page.locator('main button[aria-expanded]').first();
-// SCOPED TO THE CARD, AND :visible. Two ways this locator was wrong
-// before it was right, both found by running it:
-//   - a bare locator counts DOM nodes, and the collapse sets `hidden`
-//     (display:none), so the rows stay in the DOM and the count never
-//     changed — every assertion below passed against a toggle that did
-//     nothing;
-//   - `a[href="/engagement"]` also matches the nav's own "My Surveys"
-//     item, which is in the header on every page, so a shut section
-//     still counted one.
-// The card is the toggle's next sibling, which is the only thing the
-// collapse actually governs.
-const rows = (page) => page.locator('main button[aria-expanded] + div a:visible');
-
-test('the survey list hides and opens in one click, and says so', async (t) => {
+test('Home no longer carries the survey list or the cycle card', async (t) => {
   if (needStack(t)) return;
-  const { ctx, page, errors } = await openHome('admin@shot.in');
-
-  const btn = toggle(page);
-  assert.equal(await btn.count(), 1, 'the header is the toggle');
-  assert.equal(await btn.getAttribute('aria-expanded'), 'true', 'open by default');
-  const openRows = await rows(page).count();
-  assert.ok(openRows > 0, 'there are survey rows to begin with');
-  assert.match(await btn.innerText(), /Hide/, 'an open section offers to hide');
-
-  await btn.click();
-  await page.waitForTimeout(300);
-  assert.equal(await btn.getAttribute('aria-expanded'), 'false', 'one click shuts it');
-  assert.equal(await rows(page).count(), 0, 'and the rows are gone');
-  assert.match(await btn.innerText(), /Show/, 'a shut section offers to show');
-
-  await btn.click();
-  await page.waitForTimeout(300);
-  assert.equal(await rows(page).count(), openRows, 'one click brings every row back');
-
+  const { ctx, page, errors } = await open('mgr@shot.in', '/home');
+  const main = await page.locator('main').innerText();
+  assert.ok(!/Surveys waiting on you/.test(main), 'the survey list is gone');
+  assert.ok(!/PMS Cycle – Current Status/.test(main), 'and the cycle card');
+  assert.match(main, /Quick Actions/);
   assert.deepEqual(errors, []);
   await ctx.close();
 });
 
-// THE ONE THAT MATTERS. Written second on purpose: the first version of
-// this feature could have put the count inside the collapsing block and
-// still passed every assertion above.
-test('collapsing hides the list, never the fact that forms are waiting', async (t) => {
+test('Quick Actions sit on one line on a desktop screen', async (t) => {
   if (needStack(t)) return;
-  const { ctx, page, errors } = await openHome('admin@shot.in');
-
-  const btn = toggle(page);
-  const said = await btn.innerText();
-  const m = said.match(/(\d+) open forms? ha(?:s|ve) not been answered yet/);
-  assert.ok(m, `the open header states the count — got ${JSON.stringify(said)}`);
-
-  await btn.click();
-  await page.waitForTimeout(300);
-  assert.equal(await rows(page).count(), 0, 'shut');
-  const stillSaid = await btn.innerText();
-  assert.match(stillSaid, new RegExp(`${m[1]} open forms? ha(?:s|ve) not been answered yet`),
-    `the count must survive the collapse — got ${JSON.stringify(stillSaid)}`);
-  // And it is still on the page as text, not only in an attribute.
-  assert.ok((await page.locator('body').textContent()).includes(`${m[1]} open form`),
-    'the sentence is readable on the page while the list is shut');
-
-  assert.deepEqual(errors, []);
+  const { ctx, page } = await open('mgr@shot.in', '/home');
+  const tops = await page.locator('main a.qa').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+  assert.ok(tops.length >= 2, `quick actions are there — got ${tops.length}`);
+  assert.equal(new Set(tops).size, 1, `one row, not two — tops were ${tops.join(', ')}`);
   await ctx.close();
 });
 
-test('the choice survives a reload, per browser', async (t) => {
+test('a survey is still one click from the menu', async (t) => {
   if (needStack(t)) return;
-  const { ctx, page, errors } = await openHome('admin@shot.in');
-
-  await toggle(page).click();
-  await page.waitForTimeout(300);
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(900);
-  assert.equal(await toggle(page).getAttribute('aria-expanded'), 'false',
-    'it came back shut, so nobody has to shut it twice');
-  assert.equal(await rows(page).count(), 0);
-
-  // Re-opening sticks the same way.
-  await toggle(page).click();
-  await page.waitForTimeout(300);
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(900);
-  assert.equal(await toggle(page).getAttribute('aria-expanded'), 'true', 'and open sticks too');
-
+  const { ctx, page, errors } = await open('mgr@shot.in', '/engagement');
+  assert.ok(!/not part of your access/i.test(await page.locator('main').innerText()), 'My Surveys opens');
   assert.deepEqual(errors, []);
   await ctx.close();
-
-  // A FRESH BROWSER IS NOT AFFECTED. The preference is per-viewer, so it
-  // must not leak through anything shared — if this ever came back shut,
-  // the choice would be living somewhere it should not.
-  const fresh = await openHome('admin@shot.in');
-  assert.equal(await toggle(fresh.page).getAttribute('aria-expanded'), 'true',
-    'a browser that never shut it gets the default');
-  await fresh.ctx.close();
 });

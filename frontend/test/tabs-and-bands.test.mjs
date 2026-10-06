@@ -785,29 +785,26 @@ test('HOD is its own tab, and no longer sits under Manager', async (t) => {
   await e.ctx.close();
 });
 
-test('the cycle card states who is eligible, and when yours is', async (t) => {
+test('the eligibility rule is still computed, though Home no longer shows the cycle card', async (t) => {
   if (needStack(t)) return;
-  // Asked for on 24 Sep, pointing at this card: "employee joined on or
-  // before 31st Dec 2026 will be eligible for July 2027" and "employee
-  // joined on or after 01st Jan 2027 will be eligible for July 2028".
-  // Point 5, "suggestion of next appraisal", is the line under it.
+  // The cycle card that carried this (asked for on 24 Sep: "employee
+  // joined on or before 31st Dec 2026 will be eligible for July 2027")
+  // was removed from Home on 6 Oct, on request: "please remove these two
+  // tabs from homepage". The rule itself is untouched, so it is pinned at
+  // the API rather than on a screen that no longer shows it.
+  const tok = (await (await fetch(`${API}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'emp@shot.in', password: PASS }),
+  })).json()).token;
+  const home = await (await fetch(`${API}/api/v1/pms/home`, { headers: { Authorization: `Bearer ${tok}` } })).json();
+  assert.ok(home.eligibility, 'still returned by /pms/home');
+  assert.match(home.eligibility.line_in, /eligible for the July 2027 appraisal/i);
+
   const { ctx, page, errors } = await open('emp@shot.in', '/home');
   const main = await page.locator('main').innerText();
-  assert.match(main, /joined on or before 31 December 2026 are eligible for the July 2027 appraisal/i);
-  assert.match(main, /joined on or after 1 January 2027 are eligible for the July 2028 appraisal/i);
-  assert.match(main, /Your next appraisal/i, 'and the employee is told their own');
+  assert.ok(!/PMS Cycle – Current Status/.test(main), 'the cycle card is gone from Home');
   assert.deepEqual(errors, []);
   await ctx.close();
-
-  // Somebody who joined AFTER the cut-off is told they are not in this
-  // one — which is the half of the rule that is easy to get wrong. The
-  // demo master seeds hod@shot.in with a February 2027 joining date
-  // for exactly this; every other demo login is well before it.
-  const p = await open('hod@shot.in', '/home');
-  const pMain = await p.page.locator('main').innerText();
-  assert.match(pMain, /July 2028/);
-  assert.match(pMain, /not in this cycle/i);
-  await p.ctx.close();
 });
 
 test('ratings read as letters, never as bare numbers', async (t) => {
