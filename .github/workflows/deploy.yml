@@ -42,6 +42,14 @@ permissions:
   contents: read
   id-token: write          # required to mint the OIDC token
 
+# RUNNERS AND ACTION VERSIONS, set on 7 Oct after two GitHub notices:
+#   - ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026. Pinned to 24.04 so
+#     the test job's Postgres service and Node install do not change under
+#     a deploy without anyone choosing it. Moving up is a one-word edit,
+#     made deliberately, with a run to prove it.
+#   - Node 20 is retired on GitHub runners. checkout and setup-node v5 and
+#     configure-aws-credentials v6 are their first Node 24 releases (each
+#     needs runner >= 2.327.1, which GitHub-hosted runners have).
 jobs:
   # ---------------------------------------------------------------- tests
   # The gate. An automatic deploy with no gate is worse than a manual one,
@@ -53,7 +61,7 @@ jobs:
   # real gap — it is the suite that catches layout and nav regressions —
   # and it stays a pre-merge step run locally until somebody builds it.
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
       postgres:
@@ -68,8 +76,8 @@ jobs:
           --health-retries 10
         ports: ['5432:5432']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
@@ -138,7 +146,7 @@ jobs:
   # cleanly on a repository that has not been wired to AWS yet.
   preflight:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       configured: ${{ steps.check.outputs.configured }}
     steps:
@@ -163,14 +171,14 @@ jobs:
   deploy:
     needs: preflight
     if: needs.preflight.outputs.configured == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Add required reviewers to this environment in repository settings to
     # make production deploys need a human approval.
     environment: production
     steps:
       - name: Assume the deploy role (OIDC, no stored keys)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: gha-deploy-${{ github.run_id }}
