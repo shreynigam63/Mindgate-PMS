@@ -572,7 +572,7 @@ function Readiness({ r }) {
 // AI aspiring-career suggestions. Constrained server-side to the
 // transitions HR configured from the employee's current role, so anything
 // it proposes is a role the select below will actually accept.
-function CareerAiPanel({ onUse, horizon, draft }) {
+function CareerAiPanel({ onUse, horizon, draft, shortTerm }) {
   // Single choice, not a basket: the form holds ONE target role, so a
   // second pick replaces the first rather than adding to it.
   const [pickKey, setPickKey] = useState(null);
@@ -611,7 +611,9 @@ function CareerAiPanel({ onUse, horizon, draft }) {
       accent="indigo"
       title="+ Where could I aim next?"
       description={horizon === 'long_term'
-        ? 'Reads what you have filled in below — target role, experience, skills, plan — against where the Career Pathing Matrix leads from your role (up to three steps), and suggests a three-year-plus aspiration.'
+        ? (shortTerm
+          ? `Builds on your short-term goal (${shortTerm.target_role}): suggests where you could go after it — role, timeline, growth plan and milestones — from the Career Pathing Matrix and what you have filled in.`
+          : 'Suggests a three-year-plus aspiration from the Career Pathing Matrix and what you have filled in. Set your Short-Term goal first and this builds on it.')
         : 'Reads what you have filled in below — target role, experience, skills, plan — against the career paths HR has configured from your role, and suggests a one-to-two year aspiration.'}
       idleLabel="Suggest a path"
       againLabel="Suggest again"
@@ -738,10 +740,13 @@ function CareerPathCard() {
   const [saved, setSaved] = useState(false);
   const load = (h = horizon) => api(`/people/career/my-path?horizon=${h}`).then(r => {
     setData(r);
+    // Long-Term: experience and skills are the same person as on
+    // Short-Term, so a blank one starts from there (unsaved until Save).
+    const st = r.short_term_goal || {};
     setForm({ target_role: r.path?.target_role || '', target_timeline: r.path?.target_timeline || '',
       plan: r.path?.plan || '',
-      years_experience: r.path?.years_experience ?? '',
-      skills_interests: r.path?.skills_interests || '' });
+      years_experience: r.path?.years_experience ?? st.years_experience ?? '',
+      skills_interests: r.path?.skills_interests || st.skills_interests || '' });
     setMilestones((r.milestones || []).map(m => ({ ...m, target_date: m.target_date ? String(m.target_date).slice(0, 10) : '' })));
   }).catch(e => setErr(e.message));
   // Reloaded per horizon: the two tabs hold different answers and
@@ -817,11 +822,21 @@ function CareerPathCard() {
         </div>
       )}
       <CareerPathGap d={data.path_diagnostics} />
+      {/* What the Long-Term tab builds on. */}
+      {horizon === 'long_term' && (data.short_term_goal ? (
+        <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 text-xs text-indigo-900">
+          Builds on your short-term goal: <b>{data.short_term_goal.target_role}</b>
+          {data.short_term_goal.target_timeline && <> in {data.short_term_goal.target_timeline}</>}.
+          {' '}The suggestion below starts from there.
+        </div>
+      ) : (
+        <p className="text-[11.5px] text-navy-500">Set your <b>Short-Term</b> goal first — the long-term suggestion builds on it.</p>
+      ))}
       {/* "Use this one" sets the target role — that is the choice made —
           and FILLS ONLY WHAT IS BLANK (8 Oct). It used to overwrite the
           growth plan and drop years of experience and skills from the
           form, so the next Save wiped what the employee had typed. */}
-      {editable && <CareerAiPanel horizon={horizon} draft={form} onUse={(a) => {
+      {editable && <CareerAiPanel horizon={horizon} draft={form} shortTerm={data.short_term_goal} onUse={(a) => {
         const blank = (v) => v == null || String(v).trim() === '';
         const suggestedPlan = [a.fit, (a.competencies_to_build || []).length ? `Competencies to build:\n- ${a.competencies_to_build.join('\n- ')}` : null,
           (a.first_steps || []).length ? `First steps:\n- ${a.first_steps.join('\n- ')}` : null].filter(Boolean).join('\n\n');
@@ -830,6 +845,8 @@ function CareerPathCard() {
           target_role: a.target_role || fm.target_role,
           target_timeline: blank(fm.target_timeline) ? (a.typical_time || '') : fm.target_timeline,
           plan: blank(fm.plan) ? suggestedPlan : fm.plan,
+          years_experience: blank(fm.years_experience) ? (data.short_term_goal?.years_experience ?? '') : fm.years_experience,
+          skills_interests: blank(fm.skills_interests) ? (data.short_term_goal?.skills_interests || '') : fm.skills_interests,
         }));
         // Suggested milestones land as editable drafts with no date —
         // a date is required to save, so the employee has to commit to

@@ -898,10 +898,36 @@ router.post('/career-suggest', async (req, res) => {
     };
     const anyTyped = Object.values(current).some((v) => v != null);
 
+    // LONG-TERM BUILDS ON SHORT-TERM (8 Oct: "AI suggest long term goals
+    // ... as per his short term goal"). The saved Short-Term answer and its
+    // milestones go with a Long-Term request, and each long-term rung is
+    // marked when it runs THROUGH the short-term target role — the next
+    // step after the one already planned. Experience and skills are the
+    // same person on both tabs, so a blank on Long-Term reads Short-Term's.
+    let shortTerm = null;
+    if (horizon === 'long_term') {
+      const stRow = (await db.query(
+        `SELECT id, target_role, target_timeline, plan, years_experience, skills_interests
+           FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`,
+        [T(req), req.user.id])).rows[0];
+      if (stRow && stRow.target_role) {
+        const ms = (await db.query(
+          `SELECT title, to_char(target_date,'YYYY-MM-DD') target_date FROM people.career_milestones
+            WHERE career_path_id=$1 ORDER BY sort_order, created_at LIMIT 10`, [stRow.id])).rows;
+        shortTerm = { target_role: stRow.target_role, target_timeline: stRow.target_timeline,
+          plan: stRow.plan ? String(stRow.plan).slice(0, 2000) : null, milestones: ms };
+        if (current.years_experience == null && stRow.years_experience != null) current.years_experience = Number(stRow.years_experience);
+        if (!current.skills_interests && stRow.skills_interests) current.skills_interests = String(stRow.skills_interests).slice(0, 2000);
+      }
+    }
+    const stTarget = shortTerm ? String(shortTerm.target_role).trim().toLowerCase() : null;
+
     const input = {
       employee: { name: emp.name, designation: emp.designation, department: emp.department, role_band: emp.role_band, joined: emp.date_of_joining },
       horizon: horizon === 'long_term' ? 'long_term: three years and beyond' : 'short_term: the next one to two years',
-      current_aspiration: anyTyped ? current : null,
+      current_aspiration: anyTyped || current.years_experience != null || current.skills_interests ? current : null,
+      // Long-Term only: the plan already made for the next move.
+      ...(horizon === 'long_term' ? { short_term_goal: shortTerm } : {}),
       // The two questions the form now asks (migration 046). TOTAL
       // professional experience, which is not tenure here — someone who
       // joined last year may have fifteen years behind them — and what
@@ -916,6 +942,7 @@ router.post('/career-suggest', async (req, res) => {
       configured_transitions: transitions.map((t) => ({
         to_role: t.to_role, to_level: t.to_level,
         ...(t.steps ? { steps_up: t.steps, via: t.via } : {}),
+        ...(stTarget ? { builds_on_short_term_goal: (t.via || []).some((v) => String(v).trim().toLowerCase() === stTarget) } : {}),
         typical_time_months: t.typical_time_months,
         required_competencies: t.required_competencies || [],
       })),
@@ -932,6 +959,19 @@ long_term: three years and beyond, where a configured_transition may be
 two or three rungs up — steps_up and via say how), given their current
 designation and department, and you give them a straight read on whether
 they are ready for it.
+
+LONG-TERM BUILDS ON SHORT-TERM. When short_term_goal is present (long_term
+only), the employee has already planned their next move. Propose the
+long-term role as what comes AFTER it: prefer configured_transitions with
+builds_on_short_term_goal true; only if none, use the others and say why.
+Never propose the short-term target role itself as the long-term one.
+Write the fit as continuing from the short-term goal ("once you are a
+<short-term role> …"), give typical_time as the time from now (the
+matrix's figure for the whole climb), make first_steps things to start
+alongside the short-term plan, and make the suggested_milestones the
+steps AFTER the short-term milestones — never repeat one of those. If
+short_term_goal is null, say once in notes that setting the short-term
+goal first would sharpen this, and work from the rest.
 
 START FROM WHAT THE EMPLOYEE HAS WRITTEN. current_aspiration holds what
 they have filled in on the form — a target role they are considering,

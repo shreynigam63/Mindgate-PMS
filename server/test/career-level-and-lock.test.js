@@ -185,3 +185,31 @@ test('THE AI STARTS FROM WHAT IS ON THE FORM — unsaved, and on the tab being l
     assert.match(seen.system, /START FROM WHAT THE EMPLOYEE HAS WRITTEN/);
   } finally { ai.narrate = real; }
 });
+
+test('LONG-TERM BUILDS ON THE SHORT-TERM GOAL: it is sent, its blanks are filled from it, and the next rung is marked', { skip }, async () => {
+  await db.query(`UPDATE people.career_paths SET years_experience=6, skills_interests='Estimation, APIs'
+                   WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
+  const tab = await api('GET', '/career/my-path?horizon=long_term');
+  assert.equal(tab.body.short_term_goal.target_role, 'Senior Software Developer', 'the tab shows what it builds on');
+  assert.equal(Number(tab.body.short_term_goal.years_experience), 6);
+  assert.equal((await api('GET', '/career/my-path?horizon=short_term')).body.short_term_goal, null);
+
+  const ai = require('../core/ai');
+  const real = ai.narrate;
+  let seen = null;
+  ai.narrate = async (args) => { seen = args; return { draft: { aspirations: [] } }; };
+  try {
+    await fetch(`${base}/api/v1/agentic/career-suggest`, { method: 'POST',
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ horizon: 'long_term', draft: { target_role: '', years_experience: '', skills_interests: '', plan: '' } }) });
+    const input = seen.input;
+    assert.equal(input.short_term_goal.target_role, 'Senior Software Developer');
+    assert.deepEqual(input.short_term_goal.milestones.map((m) => m.title), ['Own estimation for a sprint']);
+    assert.equal(input.self_reported.years_experience, 6, 'blank on Long-Term — taken from Short-Term');
+    assert.equal(input.self_reported.skills_and_interests, 'Estimation, APIs');
+    const lead = input.configured_transitions.find((t) => t.to_role === 'Tech Lead');
+    assert.equal(lead.builds_on_short_term_goal, true, 'Tech Lead comes after the short-term Senior Software Developer');
+    assert.equal(input.configured_transitions.find((t) => t.to_role === 'Senior Software Developer').builds_on_short_term_goal, false);
+    assert.match(seen.system, /LONG-TERM BUILDS ON SHORT-TERM/);
+  } finally { ai.narrate = real; }
+});

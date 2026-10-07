@@ -381,6 +381,20 @@ sets the target role and fills **only blank fields** (timeline, growth
 plan); it never overwrites what the employee wrote, and adds suggested
 milestones not already listed, undated.
 
+**Long-Term builds on Short-Term** (8 Oct). The Long-Term tab shows the
+saved short-term goal it continues from ("Builds on your short-term goal:
+Senior Software Developer in 12–18 months"), and its experience and
+skills start from the short-term answers when blank — the same person on
+both tabs. A Long-Term suggestion is sent the short-term target role,
+timeline, plan and milestones; each matrix rung that runs *through* the
+short-term target is marked, and the model proposes the role that comes
+**after** it — never the short-term role itself — with the time from now
+for the whole climb, first steps to start alongside the short-term plan,
+and milestones that follow the short-term ones without repeating them.
+**Use this one** fills the blank long-term fields: target role,
+timeline, growth plan, milestones, and experience and skills from
+Short-Term. With no short-term goal yet, the tab says to set it first.
+
 ## 3.3 Ratings: numbers in the database, letters on screen
 
 Ratings stay **numeric** in storage — a weighted average of per-KRA scores

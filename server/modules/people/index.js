@@ -995,7 +995,14 @@ router.get('/career/my-path', async (req, res) => {
     // transition exists but was excluded on level.
     const diagnostics = eligibleTargetRoles.length ? null : await careerPathDiagnostics(T(req), req.user.id);
     const gw = await growthWindowFor(T(req), req.user.id, horizon);
-    res.json({ path: p || null, horizon, horizons_filled: filled, milestones, progress_pct: careerProgress(milestones),
+    // The Long-Term tab shows the short-term goal it builds on, and fills
+    // its blank experience and skills from it (8 Oct).
+    const st = rows.find((r) => r.horizon === 'short_term');
+    const shortTermGoal = horizon === 'long_term' && st && st.target_role
+      ? { target_role: st.target_role, target_timeline: st.target_timeline,
+          years_experience: st.years_experience, skills_interests: st.skills_interests }
+      : null;
+    res.json({ path: p || null, horizon, short_term_goal: shortTermGoal, horizons_filled: filled, milestones, progress_pct: careerProgress(milestones),
       current: { designation: me.designation || null, department: me.department || null,
                  role_band: me.role_band || null, date_of_joining: me.date_of_joining || null },
       eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
