@@ -1056,16 +1056,24 @@ router.put('/career/my-path', async (req, res) => {
     if (eligibleTargetRoles.length && !eligibleTargetRoles.includes(target_role) && !keptLongTerm) {
       return res.status(422).json({ error: `target_role must be one of the transitions configured from your current role in the Career Pathing Matrix: ${eligibleTargetRoles.join(', ')}` });
     }
+    // A field the request does not send is KEPT, not cleared (8 Oct): the
+    // Short-Term tab now asks only for the role and its timeline — the
+    // experience, skills, growth plan and milestones live on Long-Term —
+    // and saving it must not wipe what an older version stored there.
+    const body = req.body || {};
+    const sent = (k) => Object.prototype.hasOwnProperty.call(body, k);
     await db.query(
       `INSERT INTO people.career_paths
          (tenant_id, employee_id, horizon, target_role, target_timeline, plan, years_experience, skills_interests)
        VALUES ($1,$2,$8,$3,$4,$5,$6,$7)
        ON CONFLICT (tenant_id, employee_id, horizon) DO UPDATE SET
          target_role=EXCLUDED.target_role, target_timeline=EXCLUDED.target_timeline,
-         plan=EXCLUDED.plan, years_experience=EXCLUDED.years_experience,
-         skills_interests=EXCLUDED.skills_interests, updated_at=now()`,
+         plan=CASE WHEN $9 THEN EXCLUDED.plan ELSE people.career_paths.plan END,
+         years_experience=CASE WHEN $10 THEN EXCLUDED.years_experience ELSE people.career_paths.years_experience END,
+         skills_interests=CASE WHEN $11 THEN EXCLUDED.skills_interests ELSE people.career_paths.skills_interests END,
+         updated_at=now()`,
       [T(req), req.user.id, target_role.trim(), (target_timeline || '').trim() || null, plan || null,
-       years, (skills_interests || '').trim() || null, horizon]);
+       years, (skills_interests || '').trim() || null, horizon, sent('plan'), sent('years_experience'), sent('skills_interests')]);
     res.json({ ok: true, horizon });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

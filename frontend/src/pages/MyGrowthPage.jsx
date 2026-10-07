@@ -614,7 +614,7 @@ function CareerAiPanel({ onUse, horizon, draft, shortTerm }) {
         ? (shortTerm
           ? `Builds on your short-term goal (${shortTerm.target_role}): suggests where you could go after it — role, timeline, growth plan and milestones — from the Career Pathing Matrix and what you have filled in.`
           : 'Suggests a three-year-plus aspiration from the Career Pathing Matrix and what you have filled in. Set your Short-Term goal first and this builds on it.')
-        : 'Reads what you have filled in below — target role, experience, skills, plan — against the career paths HR has configured from your role, and suggests a one-to-two year aspiration.'}
+        : 'Suggests your next move — a role HR has configured from yours in the Career Pathing Matrix, with its timeline — and reads your readiness from the experience and skills on your Long-Term tab.'}
       idleLabel="Suggest a path"
       againLabel="Suggest again"
       modalTitle={horizon === 'long_term' ? 'Possible long-term roles' : 'Possible next roles'}
@@ -763,14 +763,20 @@ function CareerPathCard() {
   const save = async () => {
     setErr(null); setSaved(false);
     if (!form.target_role.trim()) { setErr('A target role is required.'); return; }
-    const missingDate = milestones.findIndex(m => m.title.trim() && !m.target_date);
+    const longTerm = horizon === 'long_term';
+    const missingDate = longTerm ? milestones.findIndex(m => m.title.trim() && !m.target_date) : -1;
     if (missingDate >= 0) { setErr(`Milestone ${missingDate + 1} needs a target date.`); return; }
     try {
-      await api('/people/career/my-path', { method: 'PUT', body: JSON.stringify({ ...form, horizon }) });
-      await api('/people/career/my-milestones', {
-        method: 'PUT',
-        body: JSON.stringify({ horizon, milestones: milestones.filter(m => m.title.trim()) }),
-      });
+      // Short-Term is the role and its timeline only (8 Oct); the rest of
+      // the form belongs to Long-Term, and is not sent — so not cleared.
+      await api('/people/career/my-path', { method: 'PUT', body: JSON.stringify(longTerm ? { ...form, horizon }
+        : { horizon, target_role: form.target_role, target_timeline: form.target_timeline }) });
+      if (longTerm) {
+        await api('/people/career/my-milestones', {
+          method: 'PUT',
+          body: JSON.stringify({ horizon, milestones: milestones.filter(m => m.title.trim()) }),
+        });
+      }
       setSaved(true); load();
     } catch (e) { setErr(e.message); }
   };
@@ -881,7 +887,9 @@ function CareerPathCard() {
           <b>{data.path.target_role}</b> is not yet on the Career Pathing Matrix’s path from your role — HR can add the steps that lead to it.
         </p>
       )}
-      {editable && <CareerAiPanel horizon={horizon} draft={form} shortTerm={data.short_term_goal} onUse={(a) => {
+      {editable && <CareerAiPanel horizon={horizon}
+        draft={horizon === 'long_term' ? form : { target_role: form.target_role, target_timeline: form.target_timeline }}
+        shortTerm={data.short_term_goal} onUse={(a) => {
         const blank = (v) => v == null || String(v).trim() === '';
         const suggestedPlan = [a.fit, (a.competencies_to_build || []).length ? `Competencies to build:\n- ${a.competencies_to_build.join('\n- ')}` : null,
           (a.first_steps || []).length ? `First steps:\n- ${a.first_steps.join('\n- ')}` : null].filter(Boolean).join('\n\n');
@@ -906,7 +914,7 @@ function CareerPathCard() {
         // a date is required to save, so the employee has to commit to
         // one rather than accept whatever the model would have guessed.
         // One already on the list by that title is not added twice.
-        if ((a.suggested_milestones || []).length) {
+        if (horizon === 'long_term' && (a.suggested_milestones || []).length) {
           setMilestones((ms) => {
             const have = new Set(ms.map((m) => String(m.title || '').trim().toLowerCase()));
             return [...ms, ...a.suggested_milestones.filter((m) => !have.has(String(m.title || '').trim().toLowerCase())).map((m) => ({
@@ -951,6 +959,17 @@ function CareerPathCard() {
           </p>
         )}
       </div>
+      {/* LONG-TERM ONLY (8 Oct: "these fields … should be available only on
+          long term growth"). Short-Term is the next move: a role from the
+          matrix and its timeline. Experience, skills, the growth plan and
+          milestones are asked once, on Long-Term. */}
+      {horizon === 'short_term' ? (
+        <p className="text-[11.5px] text-navy-400">
+          Your experience, skills, growth plan and milestones go on the{' '}
+          <button type="button" className="font-semibold text-brand-600" onClick={() => setHorizon('long_term')}>Long-Term</button> tab.
+        </p>
+      ) : (
+      <>
       {/* THE TWO QUESTIONS, asked on 23 Sep so the readiness read has
           something to work from. Both are self-reported and the AI is
           told to treat them as claims, not facts. Total experience is
@@ -1029,6 +1048,8 @@ function CareerPathCard() {
         )}
         {!editable && milestones.length > 0 && <p className="text-[11px] text-navy-400">Milestone text is editable once your KRAs are submitted — progress can be updated any time.</p>}
       </div>
+      </>
+      )}
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {editable ? (
         <>

@@ -11,9 +11,9 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `cbd0212`** (7 October 2026). This
-edition also describes the matrix-derived timeline and moving a short-term
-goal to Long-Term (§3.2) on the dev branch, which reach the live site with the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `4e9d532`** (7 October 2026). This
+edition also describes Short-Term asking only the role and timeline (§3.2)
+on the dev branch, which reach the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -369,6 +369,15 @@ offers one rung; **Long-Term walks up to three rungs** along rows HR wrote
 (each To Role and To Level becoming the next From), with times added up
 and competencies combined. The target role is validated against the same
 list. HR's "matches N employees" counter uses the same level rule.
+
+**What each tab asks** (8 Oct). **Short-Term** is the next move only:
+*Target role* (from the matrix) and *Expected timeline*. **Long-Term**
+asks the rest — total years of experience, skills and interests, growth
+plan and milestones. Saving Short-Term sends only its two fields, and a
+field a save does not send is kept, so anything an older version stored
+on Short-Term is not wiped (it is simply not shown). The Short-Term AI
+reads experience and skills from the Long-Term tab for its readiness
+read, and ignores any growth plan left on Short-Term.
 
 **Expected timeline comes from the matrix** (8 Oct). Choosing a target
 role — from the list or with *Use this one* — sets Expected timeline to
@@ -832,6 +841,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 8 October 2026 (live: `cbd0212`; plus the
-the Aspiring Career fixes, on the dev branch). Where this book and the code disagree,
+*Checked against the code on 8 October 2026 (live: `4e9d532`; plus the
+Short-Term asking only the role and timeline, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

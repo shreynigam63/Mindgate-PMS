@@ -904,6 +904,18 @@ router.post('/career-suggest', async (req, res) => {
     // marked when it runs THROUGH the short-term target role — the next
     // step after the one already planned. Experience and skills are the
     // same person on both tabs, so a blank on Long-Term reads Short-Term's.
+    // Short-Term has no growth plan of its own any more (8 Oct) — one
+    // stored there by an older version is not the employee's current word.
+    if (horizon === 'short_term') current.plan = null;
+    // Experience and skills are asked on Long-Term only (8 Oct); a
+    // Short-Term request reads them from there for the readiness read.
+    if (horizon === 'short_term' && (current.years_experience == null || !current.skills_interests)) {
+      const lt = (await db.query(
+        `SELECT years_experience, skills_interests FROM people.career_paths
+          WHERE tenant_id=$1 AND employee_id=$2 AND horizon='long_term'`, [T(req), req.user.id])).rows[0];
+      if (lt && current.years_experience == null && lt.years_experience != null) current.years_experience = Number(lt.years_experience);
+      if (lt && !current.skills_interests && lt.skills_interests) current.skills_interests = String(lt.skills_interests).slice(0, 2000);
+    }
     let shortTerm = null;
     if (horizon === 'long_term') {
       const stRow = (await db.query(

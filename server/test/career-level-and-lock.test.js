@@ -261,3 +261,38 @@ test('THE TIMELINE COMES FROM THE MATRIX, and a long-term goal saved as short-te
   assert.equal(again.status, 409);
   assert.match(again.body.error, /Long-Term already has a goal \(Lead - Technical\)/);
 });
+
+// 8 Oct: experience, skills, growth plan and milestones are asked on
+// Long-Term only; Short-Term is the next role and its timeline.
+test('SHORT-TERM IS THE ROLE AND ITS TIMELINE: saving it keeps the rest, and its AI reads experience and skills from Long-Term', { skip }, async () => {
+  await phase('kra_open');
+  await db.query(`UPDATE people.career_paths SET plan='old plan', years_experience=3, skills_interests='old skills'
+                   WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
+  await db.query(`UPDATE people.career_paths SET years_experience=9, skills_interests='Leadership, APIs'
+                   WHERE tenant_id=$1 AND employee_id=$2 AND horizon='long_term'`, [tenantId, empId]);
+  assert.equal((await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Senior Software Developer', target_timeline: '24 months' })).status, 200);
+  const row = (await db.query(`SELECT plan, years_experience, skills_interests FROM people.career_paths
+                                 WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId])).rows[0];
+  assert.deepEqual([row.plan, Number(row.years_experience), row.skills_interests], ['old plan', 3, 'old skills'], 'not sent, so not cleared');
+
+  const ai = require('../core/ai');
+  const real = ai.narrate;
+  let seen = null;
+  ai.narrate = async (args) => { seen = args; return { draft: { aspirations: [] } }; };
+  try {
+    await fetch(`${base}/api/v1/agentic/career-suggest`, { method: 'POST',
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ horizon: 'short_term', draft: { target_role: 'Senior Software Developer', target_timeline: '24 months' } }) });
+    assert.equal(seen.input.current_aspiration.plan, null, 'an old short-term plan is not the employee\'s current word');
+    // The saved short-term facts (3, old skills) are still there; with them
+    // set, they are used — the long-term ones fill only a blank.
+    assert.equal(seen.input.self_reported.years_experience, 3);
+    await db.query(`UPDATE people.career_paths SET years_experience=NULL, skills_interests=NULL
+                     WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
+    await fetch(`${base}/api/v1/agentic/career-suggest`, { method: 'POST',
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ horizon: 'short_term', draft: { target_role: 'Senior Software Developer' } }) });
+    assert.equal(seen.input.self_reported.years_experience, 9, 'from the Long-Term tab');
+    assert.equal(seen.input.self_reported.skills_and_interests, 'Leadership, APIs');
+  } finally { ai.narrate = real; }
+});
