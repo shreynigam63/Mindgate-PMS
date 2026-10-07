@@ -73,7 +73,9 @@ test('a joiner\'s week opens from the list, day by day, with the Day-7 feedback'
   await row.click();
   await page.waitForTimeout(1200);
   const main = await page.locator('main').innerText();
-  assert.match(main, /Pre-Day 1 · Readiness/);
+  assert.match(main, /Day 1 · Readiness, Welcome/i);
+  assert.match(main, /Before joining — readiness/i);
+  assert.ok(!/Pre-Day 1/.test(main), 'no Pre-Day 1 any more');
   assert.match(main, /Day 7 · Feedback & Alignment/);
   assert.match(main, /Day-7 feedback/);
   assert.match(main, /All joiners/);

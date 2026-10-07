@@ -268,7 +268,7 @@ function Matrix({ days, onClose }) {
           </tbody>
         </table>
       </div>
-      {days && days.length > 0 && <p className="text-[11.5px] text-navy-400 mt-3">Days run Pre-Day 1 (two working days before joining) to Day 7 (six working days after).</p>}
+      {days && days.length > 0 && <p className="text-[11.5px] text-navy-400 mt-3">Days run Day 1 to Day 7 (six working days after joining). Day 1’s readiness activities are planned two working days before joining.</p>}
     </div>
   );
 }
@@ -548,7 +548,7 @@ function PersonalEmail({ joiner, onSaved }) {
       </span>
       <span className="block text-[11.5px] text-navy-400 mt-1">
         {err ? <span className="text-rose-600">{err}</span> : ok ? <span className="text-leaf-600">Saved.</span>
-          : <>Pre-Day 1 emails go here. From day one they go to {joiner.email ? <b>{joiner.email}</b> : 'the company address (none on the master yet)'}.</>}
+          : <>Readiness emails before joining go here. From day one they go to {joiner.email ? <b>{joiner.email}</b> : 'the company address (none on the master yet)'}.</>}
       </span>
     </div>
   );
@@ -626,13 +626,19 @@ function JoinerWeek({ id, asOf, days, onBack, onChanged }) {
       {byDay.map((x) => {
         const done = x.tasks.filter((t) => t.status === 'Completed').length;
         const late = x.tasks.filter((t) => t.status === 'Overdue').length;
+        // Day 1 holds the readiness activities too (8 Oct: "pre-day and
+        // Day 1 both should come under Day 1 only"). They are planned
+        // before the date of joining, so they lead, under their own line.
+        const before = x.tasks.filter((t) => t.day_offset < 0);
+        const onDay = x.tasks.filter((t) => !(t.day_offset < 0));
+        const row = (t) => <TaskRow key={`${t.id}-${t.updated_at || ''}`} t={t} asOf={asOf} onSaved={refresh} canOperate={!!d.can_operate} />;
         return (
           <div key={x.day} className="panel">
             <div className="panel-h flex-wrap">
               <span className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-[12px] font-extrabold shrink-0"
                 style={{ background: DAY_HUE[x.i % DAY_HUE.length] }}>{x.day === 'Pre-Day 1' ? 'Pre' : x.day.replace('Day ', 'D')}</span>
               <span>
-                <span className="block panel-t leading-tight">{x.day} · {x.theme}</span>
+                <span className="block panel-t leading-tight">{x.day} · {before.length ? `Readiness, ${x.theme}` : x.theme}</span>
                 <span className="block text-[12.5px] italic text-navy-500">“{x.question}”</span>
               </span>
               <span className="ml-auto flex items-center gap-2">
@@ -644,9 +650,16 @@ function JoinerWeek({ id, asOf, days, onBack, onChanged }) {
                 )}
               </span>
             </div>
-            <div className="space-y-1.5">
-              {x.tasks.map((t) => <TaskRow key={`${t.id}-${t.updated_at || ''}`} t={t} asOf={asOf} onSaved={refresh} canOperate={!!d.can_operate} />)}
-            </div>
+            {before.length > 0 ? (
+              <div className="space-y-1.5">
+                <p className="lbl !mb-0 pt-1">Before joining — readiness</p>
+                {before.map(row)}
+                {onDay.length > 0 && <p className="lbl !mb-0 pt-2">On the day</p>}
+                {onDay.map(row)}
+              </div>
+            ) : (
+              <div className="space-y-1.5">{x.tasks.map(row)}</div>
+            )}
           </div>
         );
       })}

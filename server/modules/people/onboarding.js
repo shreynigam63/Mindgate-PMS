@@ -209,7 +209,10 @@ router.get('/', async (req, res) => {
     const { joiners } = await load(T(req), asOf, await remitIds(req));
     const days = (await db.query(
       `SELECT day_label AS day, theme, question, answer FROM people.onboarding_days WHERE tenant_id=$1 ORDER BY sort`,
-      [T(req)])).rows;
+      [T(req)])).rows
+      // The seeded "Pre-Day 1" row has no activities of its own since its
+      // readiness rows moved into Day 1 (8 Oct); left in the table, not shown.
+      .filter((d) => cal.DAY_ORDER.includes(d.day));
     // The list leaves the tasks behind — the screen opens one joiner at a
     // time, and 48 rows x every joiner is most of the payload for nothing.
     const list = joiners.map(({ tasks, ...j }) => j);
@@ -562,7 +565,7 @@ const isSent = (t) => SENT.includes(t.last_email_outcome);
 // whose email is theirs to send — worked out here from the activity's
 // SPOC role, the joiner's manager / buddy / HR POC and the SPOC list,
 // never from the request. Not yet sent, not yet done, due within a week
-// (Pre-Day 1 emails want to go before the joiner arrives) or overdue.
+// (readiness emails want to go before the joiner arrives) or overdue.
 router.get('/my-emails', async (req, res) => {
   try {
     const me = String(req.user.email || '').toLowerCase();

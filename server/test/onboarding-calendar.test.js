@@ -45,8 +45,10 @@ test('the Joiners sheet: Day 7 date and where each sample joiner is on the Repor
   }
 });
 
-test('before joining: Pre-Day 1 inside the readiness window, Not joined before it', () => {
-  assert.equal(cal.currentDay('2026-10-08', AS_OF, H, cal.workday('2026-10-08', -2, H)), 'Pre-Day 1');
+// 8 Oct: no Pre-Day 1 any more — readiness belongs to Day 1, and before
+// the date of joining a joiner is simply not joined yet.
+test('before joining: Not joined, inside the readiness window and before it', () => {
+  assert.equal(cal.currentDay('2026-10-08', AS_OF, H, cal.workday('2026-10-08', -2, H)), 'Not joined');
   assert.equal(cal.currentDay('2026-10-20', AS_OF, H, cal.workday('2026-10-20', -2, H)), 'Not joined');
 });
 
@@ -59,11 +61,12 @@ test('status and lateness, as the Tracker sheet computed them', () => {
   assert.equal(cal.daysOverdue('2026-10-01', AS_OF, H), 2, 'the holiday in between is not a day late');
 });
 
-test('the day label follows the offset — the workbook\'s Readiness rows said Day 1 and were planned before joining', () => {
-  assert.equal(cal.dayLabel(-2), 'Pre-Day 1');
+test('the Readiness rows are Day 1, as the workbook says, though planned before joining', () => {
+  assert.equal(cal.dayLabel(-2), 'Day 1');
   assert.equal(cal.dayLabel(0), 'Day 1');
   assert.equal(cal.dayLabel(6), 'Day 7');
-  assert.deepEqual(cal.DAY_ORDER.length, 8);
+  assert.deepEqual(cal.DAY_ORDER, ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7']);
+  assert.equal(cal.workday('2026-09-24', -2), '2026-09-22', 'the date still comes from the offset');
 });
 
 test('the shipped activity matrix is the client\'s 48 rows, ending on Day 7', () => {
@@ -72,7 +75,7 @@ test('the shipped activity matrix is the client\'s 48 rows, ending on Day 7', ()
   assert.equal(new Set(ACTIVITIES.map((a) => a[0])).size, 48, 'codes are unique');
   const byDay = {};
   for (const a of ACTIVITIES) byDay[cal.dayLabel(a[7])] = (byDay[cal.dayLabel(a[7])] || 0) + 1;
-  assert.deepEqual(byDay, { 'Pre-Day 1': 6, 'Day 1': 10, 'Day 2': 5, 'Day 3': 7, 'Day 4': 6, 'Day 5': 4, 'Day 6': 5, 'Day 7': 5 });
+  assert.deepEqual(byDay, { 'Day 1': 16, 'Day 2': 5, 'Day 3': 7, 'Day 4': 6, 'Day 5': 4, 'Day 6': 5, 'Day 7': 5 });
   assert.ok(ACTIVITIES.every((a) => a[4].length > 0), 'every activity names at least one owner group');
   assert.ok(!ACTIVITIES.some((a) => a[3] !== a[3].trim()), 'owners are trimmed — the sheet had trailing spaces');
   assert.equal(QUESTIONS.length, 7);

@@ -138,7 +138,7 @@ test('HR starts a joiner from the master: one task per activity, dated from the 
   assert.equal(j.day7_date, '2026-10-05');
   assert.equal(j.current_day, 'After Day 7');
   const intimation = j.tasks.find((t) => t.code === 1);
-  assert.equal(intimation.day, 'Pre-Day 1');
+  assert.equal(intimation.day, 'Day 1', 'readiness is part of Day 1 (8 Oct)');
   assert.equal(intimation.planned_date, '2026-09-22');
   assert.equal(j.tasks.find((t) => t.code === 48).planned_date, '2026-10-05');
   assert.equal(j.overdue, 48);
@@ -148,7 +148,7 @@ test('HR starts a joiner from the master: one task per activity, dated from the 
 
 test('marking work done moves the joiner, the day and the dashboard', { skip }, async () => {
   const w = (await req('GET', `/joiners/${ids.puneJoiner}?asOf=2026-10-06`, hrTok)).body.joiner;
-  const pre = w.tasks.filter((t) => t.day === 'Pre-Day 1').map((t) => t.id);
+  const pre = w.tasks.filter((t) => t.day_offset < 0).map((t) => t.id);
   const done = await req('POST', `/joiners/${ids.puneJoiner}/complete`, hrTok, { task_ids: pre, completed_on: '2026-09-22' });
   assert.equal(done.body.updated, 6);
 
@@ -161,7 +161,8 @@ test('marking work done moves the joiner, the day and the dashboard', { skip }, 
   assert.equal(d.kpis.in_onboarding, 1);
   assert.equal(d.kpis.overdue, 42);
   assert.equal(d.kpis.open_issues, 1);
-  assert.equal(d.by_day.find((x) => x.day === 'Pre-Day 1').pct, 100);
+  assert.equal(d.by_day.find((x) => x.day === 'Day 1').pct, 37.5, 'the 6 readiness rows of Day 1\'s 16');
+  assert.equal(d.by_day.find((x) => x.day === 'Pre-Day 1'), undefined);
   const hr = d.by_owner.find((o) => o.owner === 'HR');
   assert.ok(hr && hr.completed >= 6, 'the six readiness rows are HR\'s');
   assert.ok(d.by_owner.find((o) => o.owner === 'IT'), 'a shared "HR Ops → IT" row counts for IT too');

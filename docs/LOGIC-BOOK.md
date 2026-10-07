@@ -11,9 +11,9 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `4c9a76a`** (8 October 2026). This
-edition describes exactly what is deployed — nothing here is waiting on a
-later release. The build a screen is running is
+**Live at pms.agentichumans.in: build `820a661`** (8 October 2026). This
+edition also describes readiness moving under Day 1 (§3.12), on the dev
+branch, which reaches the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -677,13 +677,22 @@ opens to their week, day by day, then Day-7 feedback.
 - **Starting a joiner creates one task per active activity** — 48 from
   the client's Activity Matrix.
 - **Planned date** = `WORKDAY(DOJ, offset, holidays)`: weekends and the
-  Holidays list are skipped; offset −2 is Pre-Day 1, 0 is Day 1, 6 is
-  Day 7. Never stored — a holiday added later moves every plan.
+  Holidays list are skipped; 0 is the date of joining, 6 is Day 7. Never
+  stored — a holiday added later moves every plan.
+- **Day 1 includes readiness** (8 Oct: "pre-day and Day 1 both should
+  come under Day 1 only", as the client's workbook labelled them). The six
+  readiness activities (offset −2) are part of **Day 1**, listed first
+  within it under *Before joining — readiness*, then *On the day*; the
+  day reads *Day 1 · Readiness, Welcome & Belonging*. Their dates do not
+  move — still two working days before joining, because they must be done
+  before the joiner arrives. There is no Pre-Day 1 any more; *By day of
+  the journey* starts at Day 1.
 - **Status** on the Report Date: *Completed* (has a completion date),
   *Overdue* (planned date passed), *Due Today*, *Upcoming*. Days overdue =
   `NETWORKDAYS(planned, report date) − 1`.
 - **Joiner status**: *Completed* when every task is; else *N overdue*;
-  else *On track*. *Where*: Not joined / Pre-Day 1 / Day n / After Day 7.
+  else *On track*. *Where*: Not joined (any time before the date of
+  joining) / Day n / After Day 7.
 - **Day-7 feedback**: 1–5 on seven statements; average shown per joiner
   and across joiners.
 - **Dashboard**: joiners in onboarding, due today, overdue, average
@@ -803,10 +812,12 @@ opens to their week, day by day, then Day-7 feedback.
   HRBP does not see it.
 
 Verified against all 288 real rows of the workbook: planned date, status
-and days overdue match on every one. Three workbook faults were corrected
-rather than copied: the Day column (Readiness rows said Day 1 but were
-planned before joining), 55 tracker rows per joiner for 48 activities,
-and the Ownership sheet counting "Recruiter" as IT.
+and days overdue match on every one. Two workbook faults were corrected
+rather than copied: 55 tracker rows per joiner for 48 activities, and the
+Ownership sheet counting "Recruiter" as IT. (A third — Readiness rows
+labelled Day 1 though planned before joining — was split out as
+"Pre-Day 1" on 6 Oct and put back under Day 1 at the client's request on
+8 Oct.)
 
 ## 3.13 Reminders
 
@@ -870,5 +881,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 8 October 2026 (live: `4c9a76a`). Where this book and the code disagree,
+*Checked against the code on 8 October 2026 (live: `820a661`; plus
+readiness under Day 1, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

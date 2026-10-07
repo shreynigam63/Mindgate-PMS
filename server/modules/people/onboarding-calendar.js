@@ -57,8 +57,14 @@ function networkdays(a, b, holidays = new Set()) {
  * (the six Readiness rows said Day 1 while being planned two working days
  * before joining, so its Journey sheet counted Pre-Day 1 as empty).
  */
-const dayLabel = (offset) => (offset < 0 ? 'Pre-Day 1' : `Day ${offset + 1}`);
-const DAY_ORDER = ['Pre-Day 1', 'Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
+//
+// 8 Oct: "pre-day and Day 1 both should come under Day 1 only" — which is
+// how the client's own workbook labelled them. The readiness activities
+// are part of Day 1 again; their DATES do not move (still planned from the
+// offset, two working days before joining — they have to be ready before
+// the joiner arrives). The screen lists them first within Day 1.
+const dayLabel = (offset) => (offset < 0 ? 'Day 1' : `Day ${offset + 1}`);
+const DAY_ORDER = ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
 
 /**
  * One task's status on a given date. Same four words as the workbook.
@@ -76,12 +82,15 @@ function daysOverdue(planned, asOf, holidays) {
 }
 
 /**
- * Where a joiner is in their week. Not joined / Pre-Day 1 / Day n /
- * After Day 7. `preStart` is the earliest planned date on their tracker.
+ * Where a joiner is in their week. Not joined / Day n / After Day 7.
+ * Before the date of joining it is "Not joined", readiness work or not —
+ * there is no Pre-Day 1 any more (8 Oct). `preStart` is kept so callers
+ * need not change.
  */
+// eslint-disable-next-line no-unused-vars
 function currentDay(doj, asOf, holidays, preStart) {
   const day7 = workday(doj, 6, holidays);
-  if (asOf < doj) return preStart && asOf >= preStart ? 'Pre-Day 1' : 'Not joined';
+  if (asOf < doj) return 'Not joined';
   if (asOf > day7) return 'After Day 7';
   return `Day ${Math.max(1, networkdays(doj, asOf, holidays))}`;
 }
