@@ -3,7 +3,7 @@ import { Send, Paperclip, Trash2, Download } from 'lucide-react';
 import { api, phaseLabel, phaseColor, API_BASE } from '../utils/api';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
-import ReviewKraEditor from './ReviewKraEditor';
+import { useKraEdit, KraEditBar, KraHead } from './ReviewKraEditor';
 import PageHead from '../PageHead';
 import Grade, { grade } from '../grade';
 
@@ -41,6 +41,10 @@ export default function SelfAppraisalPage() {
       }
     }).catch(e => setErr(e.message));
   }, []);
+  // KRA, KPI and weightage, edited in the KRA cards below (7 Oct). Reloads
+  // only the page data, so the ratings already typed are kept.
+  const kraEdit = useKraEdit(data && data.appraisal ? data.appraisal.employee_id : null,
+    () => api('/pms/my/self-appraisal').then((r) => setData(r)).catch(() => {}));
 
   const persist = async (patch) => {
     setState('saving');
@@ -105,21 +109,11 @@ export default function SelfAppraisalPage() {
         {isAnnual && <p className="text-[10px] text-navy-400">Your own assessment. Your manager sets the official annual rating.</p>}
       </div>
 
-      {/* KRA, KPI and weightage stay editable through the review (7 Oct).
-          Reloads only the KRA list, so ratings typed above are kept. */}
-      {a.employee_id && (
-        <div className="card p-3">
-          <ReviewKraEditor employeeId={a.employee_id}
-            onSaved={() => api('/pms/my/self-appraisal').then((r) => setData(r)).catch(() => {})} />
-        </div>
-      )}
+      {kraEdit.allowed || kraEdit.note ? <div className="card p-3"><KraEditBar edit={kraEdit} /></div> : null}
       {!data.kras.length && <div className="card p-4 text-sm text-amber-700 bg-amber-50 border-amber-200">No approved KRAs found — complete KRA setting first.</div>}
-      {data.kras.map(k => (
+      {data.kras.map((k, i) => (
         <div key={k.id} className="card p-3 space-y-2">
-          <div className="flex justify-between items-baseline">
-            <p className="text-sm font-semibold">{k.title}</p>
-            <span className="text-[11px] text-navy-400">{k.weight}%</span>
-          </div>
+          <KraHead edit={kraEdit} k={k} index={i} />
           {/* Requested: per-KRA A+-C ratings visible on annual cycles too,
               not just mid-year. These are the sole input to the overall
               self-rating on every cycle type — the only "which rating

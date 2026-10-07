@@ -372,8 +372,12 @@ manager returns the KRA with any feedback."*
 editable in mid year, annual review."* In `mid_year_review`,
 `self_appraisal` and `manager_eval` (`reviewKraEditable`), the employee and
 their manager (or HR) may change an existing KRA's title, KPI (`measures`)
-and weight from the review screens — Mid-Year Review, Team Mid-Year, Annual
-Review, Team Evaluation — through `GET`/`PUT /pms/review/kras/:employeeId`.
+and weight in the rating cards themselves, on Mid-Year Review, Team Mid-Year,
+Annual Review and Team Evaluation. An **Edit KRAs, KPIs & weightage** button
+at the top of the list turns every card's title, KPI and weight into fields,
+with a running total and Save / Cancel. It is one edit across all the
+cards, not a pencil per card, because the weights must total 100 across the
+sheet. The routes are `GET`/`PUT /pms/review/kras/:employeeId`.
 The rules:
 
 - the same KRAs, by id: none added or removed, because ratings are keyed to them;

@@ -4,7 +4,7 @@ import { api, phaseLabel, phaseColor, KraBullets, Bullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
-import ReviewKraEditor from './ReviewKraEditor';
+import { useKraEdit, KraEditBar, KraHead } from './ReviewKraEditor';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import Grade, { grade } from '../grade';
@@ -79,7 +79,7 @@ function StatusPill({ label, signed }) {
 // against it. On demand, not automatic: one call per KRA per journey means
 // a page that reviewed everything on load would fire N calls per open, and
 // cost would scale with headcount x KRAs for feedback nobody asked for.
-function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, employeeId, counterpart }) {
+function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, employeeId, counterpart, kraEdit }) {
   const [local, setLocal] = useState(() => entries || {});
   const [reviews, setReviews] = useState({});
   const [busy, setBusy] = useState(null);
@@ -124,17 +124,15 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
 
   return (
     <div className="space-y-2">
+      {/* KRA, KPI and weightage are edited HERE, in the rating cards
+          themselves (7 Oct) — see ReviewKraEditor.jsx. */}
+      <KraEditBar edit={kraEdit} />
       {kras.map((k, i) => {
         const r = reviews[k.id];
         const theirs = counterpart && counterpart[k.id];
         return (
           <div key={k.id} className="border border-navy-100 rounded-xl p-3 space-y-2">
-            <div className="flex flex-wrap items-baseline gap-2">
-              <span className="text-[10px] font-mono text-navy-400">KRA {i + 1}</span>
-              <p className="text-sm font-semibold flex-1 min-w-[12ch]">{k.title}</p>
-              <span className="chip bg-navy-50 text-navy-600">{Number(k.weight)}%</span>
-            </div>
-            {k.measures && <p className="text-[11px] text-navy-400">KPI: {k.measures}</p>}
+            <KraHead edit={kraEdit} k={k} index={i} />
 
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="lbl mb-0">Rating</span>
@@ -389,6 +387,7 @@ function MyMidYearCard() {
     setErr(null);
   }).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
+  const kraEdit = useKraEdit(data && data.checkin ? data.checkin.employee_id : null, load);
 
   const persist = async (patch) => {
     setSaveState('saving');
@@ -538,9 +537,6 @@ function MyMidYearCard() {
         </AiModal>
       )}
 
-      {/* KRA, KPI and weightage stay editable through the review (7 Oct). */}
-      {data.checkin && data.checkin.employee_id && <ReviewKraEditor employeeId={data.checkin.employee_id} onSaved={load} />}
-
       {/* ONE COLUMN, NOT TWO, since 23 Sep. The right-hand column was
           "From the manager" — their mid-year rating and narrative,
           withheld until HR published and shown after. Removed at the
@@ -558,7 +554,7 @@ function MyMidYearCard() {
           <p className="text-[10px] uppercase font-bold text-navy-400">Your mid-year</p>
           {hasKras ? (
             <>
-              <KraScoringList kras={data.kras} entries={data.checkin.self_entries} scale={data.cycle.rating_scale}
+              <KraScoringList kras={data.kras} entries={data.checkin.self_entries} scale={data.cycle.rating_scale} kraEdit={kraEdit}
                 editable={editable} perspective="self"
                 onPatch={(entries) => persist({ entries })} />
               <DerivedOverall scoring={data.scoring} kras={data.kras} scale={data.cycle.rating_scale} />
@@ -658,6 +654,7 @@ function TeamMidYearDetail({ employeeId }) {
     setErr(null);
   }).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [employeeId]);
+  const kraEdit = useKraEdit(employeeId, load);
 
   const persist = async (patch) => {
     setSaveState('saving');
@@ -747,11 +744,10 @@ function TeamMidYearDetail({ employeeId }) {
           {(draft.gaps || []).length > 0 && <p className="text-amber-700">Input gaps: {draft.gaps.join(' · ')}</p>}
         </AiModal>
       )}
-      <ReviewKraEditor employeeId={employeeId} onSaved={load} title="Their KRAs, KPIs & weightage" />
       {hasKras ? (
         <>
           <p className="text-[10px] uppercase font-bold text-navy-400">Rate each KRA</p>
-          <KraScoringList kras={data.kras} entries={data.checkin.manager_entries} scale={data.cycle.rating_scale}
+          <KraScoringList kras={data.kras} entries={data.checkin.manager_entries} scale={data.cycle.rating_scale} kraEdit={kraEdit}
             editable={editable} perspective="manager" employeeId={employeeId}
             counterpart={data.checkin.self_entries}
             onPatch={(entries) => persist({ entries })} />

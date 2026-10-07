@@ -4,7 +4,7 @@ import { Sparkles, Send, ChevronDown, ChevronRight, ShieldAlert } from 'lucide-r
 import { api, phaseLabel, phaseColor, KraBullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
-import ReviewKraEditor from './ReviewKraEditor';
+import { useKraEdit, KraEditBar, KraHead } from './ReviewKraEditor';
 import PageHead from '../PageHead';
 import { useTimesheetRatings, TimesheetRatingChip, TimesheetRatingNote } from '../TimesheetRating';
 import SearchBox, { matches } from '../SearchBox';
@@ -85,6 +85,8 @@ function EvalEditor({ t, phase, scale, reload }) {
   const [drafting, setDrafting] = useState(false);
   const [keptKey, setKeptKey] = useState(0);
   const [kraKey, setKraKey] = useState(0);
+  // KRA, KPI and weightage, edited in the rating cards (7 Oct).
+  const kraEdit = useKraEdit(t.employee_id, () => setKraKey((k) => k + 1));
   const timer = useRef(null);
   const editable = phase === 'manager_eval' && t.eval_status !== 'submitted';
 
@@ -130,10 +132,7 @@ function EvalEditor({ t, phase, scale, reload }) {
           weighted average of the KRA ratings here, the same way mid-year
           has always worked, and the server computes it from the approved
           KRA weights rather than trusting this number. */}
-      {/* KRA, KPI and weightage stay editable through the review (7 Oct);
-          the ratings below reload so the weights they show are current. */}
-      <ReviewKraEditor employeeId={t.employee_id} onSaved={() => setKraKey((k) => k + 1)} title="Their KRAs, KPIs & weightage" />
-      <PerKraRating key={kraKey} employeeId={t.employee_id} scale={scale} editable={editable} overallRating={f.overall_rating}
+      <PerKraRating reloadKey={kraKey} kraEdit={kraEdit} employeeId={t.employee_id} scale={scale} editable={editable} overallRating={f.overall_rating}
         selfSubmitted={t.self_status === 'submitted'}
         selfEntries={t.self_entries || {}} onOverallChange={(v) => setF(s => ({ ...s, overall_rating: v }))} />
       <div className="flex flex-wrap items-center gap-2">
@@ -222,7 +221,7 @@ function EvalEditor({ t, phase, scale, reload }) {
 // overall computed server-side as the weighted average — see
 // PUT /team/evaluations/:employeeId. Employee's own self-rating per KRA
 // is shown alongside (read-only) for direct comparison while rating.
-function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries, onOverallChange, hideOverallFooter, selfSubmitted }) {
+function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries, onOverallChange, hideOverallFooter, selfSubmitted, kraEdit, reloadKey }) {
   const [kras, setKras] = useState(null);
   const [entries, setEntries] = useState({});
   const [err, setErr] = useState(null);
@@ -232,7 +231,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
 
   useEffect(() => {
     api(`/pms/team/evaluations/${employeeId}/kras`).then(r => setKras(r.kras)).catch(e => setErr(e.message));
-  }, [employeeId]);
+  }, [employeeId, reloadKey]);
 
   const persistEntries = async (next) => {
     setSaveState('saving');
@@ -306,16 +305,14 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
         {saveState === 'saved' && <span className="text-[11px] text-emerald-600">Saved ✓</span>}
       </div>
       <TimesheetRatingNote data={ts} />
-      {kras.map(k => {
+      <KraEditBar edit={kraEdit} />
+      {kras.map((k, i) => {
         const selfRating = selfEntries[k.id] && selfEntries[k.id].self_rating;
         const selfNarrative = selfEntries[k.id] && selfEntries[k.id].narrative;
         const myRating = (entries[k.id] || {}).rating;
         return (
           <div key={k.id} className="bg-navy-50 rounded-lg p-3 space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold flex-1">{k.title}</p>
-              <span className="text-[11px] text-navy-400">{k.weight}%</span>
-            </div>
+            <KraHead edit={kraEdit} k={k} index={i} compact />
             {selfRating != null && (
               <p className="text-[11px] text-navy-500">Employee's self-rating: <b>{grade(selfRating, scale)}</b></p>
             )}
