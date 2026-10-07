@@ -108,20 +108,55 @@ test('bad server details are refused with a sentence', { skip }, async () => {
   assert.equal((await req('PUT', '/hr/mail', hrTok, { mode: 'sometimes' })).status, 422);
 });
 
-test('live can be switched on once a server is set, and the test email goes through the real path', { skip }, async () => {
-  const on = await req('PUT', '/hr/mail', hrTok, { mode: 'live' });
-  assert.equal(on.status, 200, JSON.stringify(on.body));
-  assert.equal(on.body.mode, 'live');
-  // No real SMTP server here: the send fails, and the failure is reported, not hidden.
+// 7 Oct: connect → test → live, held by the server. Port 2 on loopback
+// refuses at once, so "the server could not be reached" is real and fast.
+test('LIVE WAITS FOR A DELIVERED TEST, and the test reaches the real server even while simulated', { skip }, async () => {
+  const set = await req('PUT', '/hr/mail', hrTok, { smtp: { provider: 'other', host: '127.0.0.1', port: 2, user: 'pms@example.com', from: 'PMS <pms@example.com>' } });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  assert.equal(set.body.stage, 'untested');
+  assert.equal(set.body.smtp.provider, 'other');
+
+  const early = await req('PUT', '/hr/mail', hrTok, { mode: 'live' });
+  assert.equal(early.status, 422);
+  assert.match(early.body.error, /Send a test email first/);
+
+  // Simulated, yet the test goes to the server: and fails, with a reason
+  // a person can act on as well as the server's own words.
   const t = await req('POST', '/hr/mail/test', hrTok);
   assert.equal(t.status, 200);
   assert.equal(t.body.to, 'hr@set.x');
   assert.equal(t.body.outcome, 'failed');
-  assert.ok(t.body.detail, 'with the reason');
-  const off = await req('PUT', '/hr/mail', hrTok, { mode: 'simulated' });
+  assert.ok(t.body.detail, 'with the server\'s reason');
+  assert.match(t.body.hint, /Could not reach the mail server/);
+  assert.equal(t.body.view.stage, 'test_failed');
+  assert.equal((await req('PUT', '/hr/mail', hrTok, { mode: 'live' })).status, 422, 'a failed test does not open Live');
+
+  // A delivered test (no SMTP server here, so its record is written as
+  // the test route writes it) opens Live.
+  await db.query(`INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'mail_last_test',$2::jsonb)
+    ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value`, [tenantId, JSON.stringify({ ok: true, at: new Date().toISOString(), to: 'hr@set.x', detail: null })]);
+  assert.equal((await req('GET', '/hr/mail', hrTok)).body.stage, 'ready');
+  const on = await req('PUT', '/hr/mail', hrTok, { mode: 'live' });
+  assert.equal(on.status, 200, JSON.stringify(on.body));
+  assert.equal(on.body.stage, 'live');
+
+  // Changing the mailbox throws the old test away.
+  const off = await req('PUT', '/hr/mail', hrTok, { mode: 'simulated', smtp: { pass: 'a-new-one' } });
   assert.equal(off.body.mode, 'simulated');
-  const sim = await req('POST', '/hr/mail/test', hrTok);
-  assert.equal(sim.body.outcome, 'simulated');
+  assert.equal(off.body.stage, 'untested');
+  assert.equal(off.body.last_test, null);
+  assert.equal((await req('PUT', '/hr/mail', hrTok, { smtp: { provider: 'yahoo' } })).status, 422);
+});
+
+test('mail server errors are put in words HR can act on', () => {
+  const { explain } = require('../core/mail');
+  assert.match(explain('535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Tenant'), /Authenticated SMTP/);
+  assert.match(explain('534-5.7.9 Application-specific password required'), /app password/);
+  assert.match(explain('Invalid login: 535 Authentication failed'), /mailbox or password was not accepted/);
+  assert.match(explain('getaddrinfo ENOTFOUND smtp.nowhere'), /could not be found/);
+  assert.match(explain('connect ECONNREFUSED 127.0.0.1:2'), /Could not reach/);
+  assert.match(explain('554 5.2.252 SendAsDenied; pms@x not allowed to send as hr@x'), /Send-As/);
+  assert.equal(explain(null), null);
 });
 
 test('an HRBP and an employee reach none of the email settings', { skip }, async () => {

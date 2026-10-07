@@ -11,10 +11,9 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `c66a755`** (7 October 2026). This
-edition also describes the corrected First-Week Journey emails and the
-HR Ops role (§3.12) on the dev branch, which reach the live site with the
-next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `3b7524d`** (7 October 2026). This
+edition also describes the simplified Email settings (§3.12) on the dev
+branch, which reach the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -634,19 +633,39 @@ opens to their week, day by day, then Day-7 feedback.
   without it the server refuses and the tracker shows the failure. While
   mail is in *simulated* mode the email is recorded, not delivered — the
   screen says so and offers *Open in my mail app*.
-- **Email mode: HR → Settings → Email.** *Simulated* (the product default
-  — every email logged in `core.notif_log`, none delivered) or *Live*.
-  Live needs a mail server: server, port, username, password, From
-  address and SSL, set on the same card, or `SMTP_*` / `MAIL_FROM` in
-  `/etc/agentic-pms/api.env` (shown there as "from the server"; a value
-  saved on the card wins). Live cannot be switched on without a server
-  and a From address. **The password is write-only**: never shown again,
-  never in the audit log, and a blank field on save keeps it; removing it
-  is a separate button. *Send a test email to me* goes through the same
-  path every email takes and reports delivered, recorded or the server's
-  error. The card is HR's alone — an HRBP does not see it. The same card
-  carries the *send onboarding emails as the SPOC* switch above
-  (`core.admin_settings` `mail_identity`, audited `MAIL_IDENTITY_CHANGED`).
+- **Email: HR → Settings → Email — three steps** (simplified for HR on
+  7 Oct). Until email is *Live* (the product default is *Simulated*),
+  every email is logged in `core.notif_log` and none is delivered.
+  1. **Connect the mailbox.** Pick *Microsoft 365*, *Google Workspace* or
+     *Other*, then type the mailbox (e.g. `pms@company.com`) and its
+     password — for Google an app password. The provider fills in server,
+     port and STARTTLS; the mailbox is the sign-in and the From address,
+     under the sender name "Performance Management System". Sender name,
+     a different sign-in username, and (for *Other*) server, port and SSL
+     sit under *Advanced (for IT)*. `SMTP_*` / `MAIL_FROM` in
+     `/etc/agentic-pms/api.env` still work; a value saved on the card wins.
+  2. **Send a test email to yourself.** It is **really delivered, even in
+     Simulated mode** — only to the person pressing it — through the same
+     transport every email uses (`core/mail.js` `deliver`), and gives up
+     after 20 seconds. A failure comes back as a sentence to act on
+     (`explain`: Authenticated SMTP off in Microsoft 365, Google app
+     password needed, wrong password, server unreachable, Send-As refused)
+     with the server's own words beneath. The result is kept
+     (`admin_settings` `mail_last_test`).
+  3. **Go live** — offered only once a test has been delivered. The server
+     enforces the order: PUT `mode: live` is refused until the last test
+     succeeded, and saving the mailbox again throws the old test away, so
+     a changed password is tested again. *Switch back to recorded-only*
+     returns to Simulated.
+
+  The badge says where HR is: *Not set up*, *Next: send a test email*,
+  *Test failed*, *Ready to go live*, *Live*. **The password is
+  write-only**: never shown again, never in the audit log, and a blank
+  field on save keeps it; removing it is a separate button. The card is
+  HR's alone — an HRBP does not see it. Below the steps, *Joiners see
+  First-Week Journey emails as coming from*: **the PMS mailbox, on behalf
+  of the SPOC** (default) or **the SPOC's own address** (needs Send-As) —
+  `admin_settings` `mail_identity`, audited `MAIL_IDENTITY_CHANGED`.
 
 Verified against all 288 real rows of the workbook: planned date, status
 and days overdue match on every one. Three workbook faults were corrected
@@ -693,7 +712,7 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 | Which SPOC sends each onboarding activity's email | `people.onboarding_activities.sender_role` (seeded from the client's matrix) |
 | A joiner's personal email (used before joining) | The joiner's week → *Personal email (before joining)* |
 | Who ticks onboarding tasks | Permission `onboarding_ops` — in the `hr_ops`, `hr` and `hrbp` bundles; role `hr_ops` set on Employees |
-| Email live or simulated; mail server; test email; onboarding emails as the SPOC's own address | HR → Settings → Email |
+| Email: provider, mailbox and password; test email; Go live; who joiners see onboarding emails from | HR → Settings → Email (three steps) |
 | AI on/off | `ANTHROPIC_API_KEY` in `/etc/agentic-pms/api.env` — instance-owned, never written by a deploy |
 | AI model | `deploy/service/managed-settings.env`, pushed into `api.env` by every deploy (`UNMANAGED=AI_MODEL` pins a box) |
 
@@ -716,6 +735,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 7 October 2026 (live: `c66a755`; plus the
-First-Week Journey corrections on the dev branch). Where this book and the code disagree,
+*Checked against the code on 7 October 2026 (live: `3b7524d`; plus the
+simplified Email settings on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

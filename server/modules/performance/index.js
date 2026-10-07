@@ -2125,7 +2125,19 @@ router.put('/hr/settings/:key', async (req, res) => {
 // blank one on save keeps what is stored. Values in the server's own
 // environment (SMTP_* in api.env) are shown as "from the server" and are
 // overridden by anything saved here, which is the order mail.js reads them.
-const SMTP_FIELDS = ['host', 'port', 'user', 'from', 'secure'];
+//
+// SIMPLIFIED FOR HR on 7 Oct ("can we make this setup more simple as for
+// HR users"). The screen now asks for a provider, a mailbox and its
+// password; the server details are filled in from the provider and sit
+// under Advanced. Three steps, in order: connect, send a test, go live —
+// and the server holds the order: Live is refused until a test email has
+// actually been delivered with the settings as they now stand. Saving the
+// mailbox again clears the test, so a changed password is tested again.
+const SMTP_FIELDS = ['host', 'port', 'user', 'from', 'secure', 'provider'];
+const PROVIDERS = ['microsoft365', 'google', 'other'];
+
+const setting = async (tenantId, key) =>
+  ((await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key=$2`, [tenantId, key])).rows[0] || {}).value || null;
 
 async function mailView(tenantId) {
   const { sendMode, smtpConfig } = require('../../core/mail');
@@ -2133,11 +2145,21 @@ async function mailView(tenantId) {
   const saved = (row && row.value) || {};
   const eff = await smtpConfig(tenantId);
   const from = (k, envKey) => (saved[k] ? 'settings' : process.env[envKey] ? 'server' : null);
+  const mode = await sendMode(tenantId);
+  const ready = !!(eff.host && eff.from);
+  const lastTest = await setting(tenantId, 'mail_last_test');
+  const { explain } = require('../../core/mail');
   return {
-    mode: await sendMode(tenantId),
+    mode,
+    // Where HR is in the three steps, for the badge and for which button
+    // is offered: not_set_up → untested / test_failed → ready → live.
+    stage: mode === 'live' ? 'live' : !ready ? 'not_set_up'
+      : !lastTest ? 'untested' : lastTest.ok ? 'ready' : 'test_failed',
+    last_test: lastTest ? { ...lastTest, hint: lastTest.ok ? null : explain(lastTest.detail) } : null,
     smtp: {
       host: saved.host || '', port: saved.port || '', user: saved.user || '', from: saved.from || '',
       secure: saved.secure == null ? null : !!saved.secure,
+      provider: saved.provider || null,
       pass_set: !!saved.pass,
     },
     // What will actually be used, and where each part comes from.
@@ -2146,7 +2168,7 @@ async function mailView(tenantId) {
       pass_set: !!eff.pass,
       source: { host: from('host', 'SMTP_HOST'), user: from('user', 'SMTP_USER'), pass: from('pass', 'SMTP_PASS'), from: from('from', 'MAIL_FROM') },
     },
-    ready: !!(eff.host && eff.from),
+    ready,
     // Onboarding emails to joiners (7 Oct): From the SPOC's own address,
     // or the system address carrying the SPOC's name with the SPOC as
     // Reply-To. See people/onboarding.js.
@@ -2176,6 +2198,9 @@ router.put('/hr/mail', async (req, res) => {
       for (const k of SMTP_FIELDS) {
         if (sm[k] === undefined) continue;
         if (k === 'secure') { next.secure = sm.secure === null ? undefined : !!sm.secure; continue; }
+        if (k === 'provider' && sm.provider && !PROVIDERS.includes(sm.provider)) {
+          return res.status(422).json({ error: `Provider must be one of: ${PROVIDERS.join(', ')}.` });
+        }
         const v = String(sm[k] == null ? '' : sm[k]).trim();
         if (v) next[k] = v; else delete next[k];
       }
@@ -2196,6 +2221,9 @@ router.put('/hr/mail', async (req, res) => {
         `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'smtp',$2::jsonb)
          ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
         [T(req), JSON.stringify(next)]);
+      // New settings, new test: a test passed with the old password says
+      // nothing about the new one.
+      await db.query(`DELETE FROM core.admin_settings WHERE tenant_id=$1 AND key='mail_last_test'`, [T(req)]);
       const { pass, ...shown } = next;
       audit(req, 'MAIL_SMTP_CHANGED', null, null, { ...shown, pass_changed: typeof sm.pass === 'string' && sm.pass !== '' || sm.clear_pass === true });
     }
@@ -2213,6 +2241,9 @@ router.put('/hr/mail', async (req, res) => {
       if (b.mode === 'live' && !view.ready) {
         return res.status(422).json({ error: 'Live email needs an SMTP server and a From address first.' });
       }
+      if (b.mode === 'live' && view.mode !== 'live' && !(view.last_test && view.last_test.ok)) {
+        return res.status(422).json({ error: 'Send a test email first — Live is switched on only after a test email has been delivered with these settings.' });
+      }
       await db.query(
         `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'mail_send_mode',$2::jsonb)
          ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
@@ -2223,19 +2254,36 @@ router.put('/hr/mail', async (req, res) => {
   } catch (e) { logger.error('mail settings put', { error: e.message }); res.status(500).json({ error: 'Could not save the email settings' }); }
 });
 
-// One email to the person pressing the button, through exactly the path
-// every other email takes — so "the test worked" means the product works.
+// One email to the person pressing the button, through the same mail
+// server and the same transport every other email uses. It is delivered
+// for real EVEN IN SIMULATED MODE — only to the person who asked — because
+// a test that is merely recorded proves nothing, and proving the server
+// works is what has to happen before Live. The result is kept: Live waits
+// for a delivered one.
 router.post('/hr/mail/test', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
-    const { sendMail } = require('../../core/mail');
-    const r = await sendMail(T(req), {
-      to: req.user.email, kind: 'test',
-      subject: 'Performance Management System — test email',
-      html: '<p>This is a test email from the Performance Management System. If you are reading it, email is working.</p>',
-    });
-    audit(req, 'MAIL_TEST_SENT', null, null, { to: req.user.email, outcome: r.outcome });
-    res.json({ to: req.user.email, ...r });
+    const { smtpConfig, deliver, explain, sendMode, ensureLogTable } = require('../../core/mail');
+    const cfg = await smtpConfig(T(req));
+    const to = req.user.email;
+    const subject = 'Performance Management System — test email';
+    let detail = null;
+    try {
+      await deliver(cfg, { to, subject,
+        html: '<p>This is a test email from the Performance Management System. If you are reading it, email is working.</p>' });
+    } catch (e) { detail = e.message; logger.warn('mail test failed', { error: e.message }); }
+    const ok = !detail;
+    const at = new Date().toISOString();
+    await ensureLogTable();
+    await db.query(`INSERT INTO core.notif_log (tenant_id, to_email, subject, kind, mode, outcome, detail)
+                    VALUES ($1,$2,$3,'test','test',$4,$5)`, [T(req), to, subject, ok ? 'sent' : 'failed', detail]);
+    await db.query(
+      `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'mail_last_test',$2::jsonb)
+       ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
+      [T(req), JSON.stringify({ ok, at, to, detail })]);
+    audit(req, 'MAIL_TEST_SENT', null, null, { to, outcome: ok ? 'sent' : 'failed' });
+    res.json({ to, outcome: ok ? 'sent' : 'failed', detail, hint: ok ? null : explain(detail),
+      mode: await sendMode(T(req)), view: await mailView(T(req)) });
   } catch (e) { logger.error('mail test', { error: e.message }); res.status(500).json({ error: 'Could not send the test email' }); }
 });
 
