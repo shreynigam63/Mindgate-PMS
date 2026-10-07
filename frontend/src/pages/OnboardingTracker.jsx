@@ -319,9 +319,9 @@ function JoinerEmail({ taskId, onSent, onClose }) {
             <span className="text-[11.5px] text-navy-400">{d.to.why}</span></>
           : <span className="text-[12px] text-amber-700">{d.to_missing}</span>}
       </div>
-      {!d.send_as_spoc && !from.missing && (
+      {!from.missing && (
         <p className="text-[11.5px] text-navy-400">
-          It leaves from the system mailbox under {from.name}’s name, with {from.name} in copy — replies go to {from.name}.
+          Sent from {from.name}’s own address; replies go to {from.name}.
         </p>
       )}
       {d.mail_mode !== 'live' && (
@@ -343,7 +343,7 @@ function JoinerEmail({ taskId, onSent, onClose }) {
           <span className={`text-[12px] ${done.outcome === 'sent' ? 'text-leaf-600' : 'text-amber-700'}`}>
             {done.outcome === 'sent' ? `Sent to ${done.to}, from ${done.from}.`
               : done.outcome === 'simulated' ? `Recorded for ${done.to} — not delivered (simulated mail).`
-                : `Not delivered: ${done.detail || done.outcome}. Try "Open in my mail app".`}
+                : `Not delivered: ${done.hint || done.detail || done.outcome}`}
           </span>
         )}
         {err && <span className="text-[12px] text-rose-600">{err}</span>}

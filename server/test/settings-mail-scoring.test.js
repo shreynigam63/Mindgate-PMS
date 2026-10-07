@@ -155,7 +155,7 @@ test('mail server errors are put in words HR can act on', () => {
   assert.match(explain('Invalid login: 535 Authentication failed'), /mailbox or password was not accepted/);
   assert.match(explain('getaddrinfo ENOTFOUND smtp.nowhere'), /could not be found/);
   assert.match(explain('connect ECONNREFUSED 127.0.0.1:2'), /Could not reach/);
-  assert.match(explain('554 5.2.252 SendAsDenied; pms@x not allowed to send as hr@x'), /Send-As/);
+  assert.match(explain('554 5.2.252 SendAsDenied; pms@x not allowed to send as hr@x'), /Send As/);
   assert.equal(explain(null), null);
 });
 

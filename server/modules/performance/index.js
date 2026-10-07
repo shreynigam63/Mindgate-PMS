@@ -2169,10 +2169,6 @@ async function mailView(tenantId) {
       source: { host: from('host', 'SMTP_HOST'), user: from('user', 'SMTP_USER'), pass: from('pass', 'SMTP_PASS'), from: from('from', 'MAIL_FROM') },
     },
     ready,
-    // Onboarding emails to joiners (7 Oct): From the SPOC's own address,
-    // or the system address carrying the SPOC's name with the SPOC as
-    // Reply-To. See people/onboarding.js.
-    send_as_spoc: !!(((await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='mail_identity'`, [tenantId])).rows[0] || {}).value || {}).send_as_spoc,
   };
 }
 
@@ -2226,13 +2222,6 @@ router.put('/hr/mail', async (req, res) => {
       await db.query(`DELETE FROM core.admin_settings WHERE tenant_id=$1 AND key='mail_last_test'`, [T(req)]);
       const { pass, ...shown } = next;
       audit(req, 'MAIL_SMTP_CHANGED', null, null, { ...shown, pass_changed: typeof sm.pass === 'string' && sm.pass !== '' || sm.clear_pass === true });
-    }
-    if (b.send_as_spoc !== undefined) {
-      await db.query(
-        `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'mail_identity',$2::jsonb)
-         ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
-        [T(req), JSON.stringify({ send_as_spoc: b.send_as_spoc === true })]);
-      audit(req, 'MAIL_IDENTITY_CHANGED', null, null, { send_as_spoc: b.send_as_spoc === true });
     }
     if (b.mode !== undefined) {
       const view = await mailView(T(req));

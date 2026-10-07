@@ -93,7 +93,7 @@ function explain(detail) {
     return 'The mailbox or password was not accepted. Check both — and for Microsoft 365, that IT has turned on "Authenticated SMTP" for this mailbox.';
   }
   if (/SendAsDenied|not allowed to send as|5\.7\.60|Sender address rejected/i.test(d)) {
-    return 'The mail server will not let this mailbox send as that address. Use the PMS mailbox as the sender, or ask IT to grant Send-As.';
+    return 'The mail server will not let the PMS mailbox send as this SPOC. IT needs to give the PMS mailbox “Send As” permission for the SPOC’s address — once per SPOC.';
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(d)) return 'The mail server name could not be found. Check the server under Advanced.';
   if (/ETIMEDOUT|ECONNREFUSED|ECONNRESET|Greeting never received|Connection timeout/i.test(d)) {
@@ -107,10 +107,9 @@ function explain(detail) {
 }
 
 // The one entry point modules use. Returns {sent, mode}.
-// `from` / `replyTo` / `cc` are optional. A caller that names a `from`
-// gets it only when it is an address the account may send as — see
-// onboarding.js, which decides that from the "send as the SPOC" setting;
-// otherwise the configured From is kept and the person is Reply-To.
+// `from` / `replyTo` / `cc` are optional. A `from` other than the
+// configured mailbox is a Send-As (onboarding.js sends as the SPOC): the
+// mail server must allow it, and refuses otherwise — reported, not hidden.
 async function sendMail(tenantId, { to, subject, html, kind, from, replyTo, cc }) {
   await ensureLogTable();
   const mode = await sendMode(tenantId);

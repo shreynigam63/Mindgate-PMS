@@ -11,9 +11,9 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `3b7524d`** (7 October 2026). This
-edition also describes the simplified Email settings (§3.12) on the dev
-branch, which reach the live site with the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `174922b`** (7 October 2026). This
+edition also describes onboarding emails always sent as the SPOC (§3.12)
+on the dev branch, which reach the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -624,15 +624,17 @@ opens to their week, day by day, then Day-7 feedback.
   the employee master; the personal one if the master has none. With
   neither, the screen says so and nothing is sent. Both addresses are
   worked out on the server, never taken from the request.
-- **How it leaves** (HR → Settings → Email → *Onboarding emails*). Off
-  (default): from the configured From address under the SPOC's name —
-  `"Priya Nair (Manager)" <pms@…>` — with the SPOC as Reply-To and in
-  copy, so replies reach the SPOC and the SPOC sees what was sent; every
-  mail server accepts this. On: from the SPOC's own address, which needs
-  Send-As permission for the PMS mail account on the client's mail server;
-  without it the server refuses and the tracker shows the failure. While
-  mail is in *simulated* mode the email is recorded, not delivered — the
-  screen says so and offers *Open in my mail app*.
+- **How it leaves: from the SPOC's own address, always** (decided
+  7 Oct; the earlier choice of "the PMS mailbox on behalf of the SPOC"
+  is gone). The PMS mailbox set under HR → Settings → Email signs in to
+  the mail server and sends **as** the SPOC, so IT must grant that
+  mailbox **Send As** permission for each SPOC address once (and for
+  managers, buddies and HR POCs, who send from their own addresses too).
+  The Settings card lists the SPOC addresses to hand to IT. Without the
+  permission the mail server refuses, and the tracker shows why in words;
+  nothing is quietly sent under another name instead. Replies go to the
+  SPOC. While mail is in *simulated* mode the email is recorded, not
+  delivered — the screen says so and offers *Open in my mail app*.
 - **Email: HR → Settings → Email — three steps** (simplified for HR on
   7 Oct). Until email is *Live* (the product default is *Simulated*),
   every email is logged in `core.notif_log` and none is delivered.
@@ -662,10 +664,9 @@ opens to their week, day by day, then Day-7 feedback.
   *Test failed*, *Ready to go live*, *Live*. **The password is
   write-only**: never shown again, never in the audit log, and a blank
   field on save keeps it; removing it is a separate button. The card is
-  HR's alone — an HRBP does not see it. Below the steps, *Joiners see
-  First-Week Journey emails as coming from*: **the PMS mailbox, on behalf
-  of the SPOC** (default) or **the SPOC's own address** (needs Send-As) —
-  `admin_settings` `mail_identity`, audited `MAIL_IDENTITY_CHANGED`.
+  HR's alone — an HRBP does not see it. Below the steps the card says
+  that First-Week Journey emails go from each SPOC's own address and lists
+  the SPOC addresses IT must grant Send As for.
 
 Verified against all 288 real rows of the workbook: planned date, status
 and days overdue match on every one. Three workbook faults were corrected
@@ -712,7 +713,7 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 | Which SPOC sends each onboarding activity's email | `people.onboarding_activities.sender_role` (seeded from the client's matrix) |
 | A joiner's personal email (used before joining) | The joiner's week → *Personal email (before joining)* |
 | Who ticks onboarding tasks | Permission `onboarding_ops` — in the `hr_ops`, `hr` and `hrbp` bundles; role `hr_ops` set on Employees |
-| Email: provider, mailbox and password; test email; Go live; who joiners see onboarding emails from | HR → Settings → Email (three steps) |
+| Email: provider, PMS mailbox and password; test email; Go live (onboarding emails are always sent as the SPOC) | HR → Settings → Email (three steps) |
 | AI on/off | `ANTHROPIC_API_KEY` in `/etc/agentic-pms/api.env` — instance-owned, never written by a deploy |
 | AI model | `deploy/service/managed-settings.env`, pushed into `api.env` by every deploy (`UNMANAGED=AI_MODEL` pins a box) |
 
@@ -735,6 +736,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 7 October 2026 (live: `3b7524d`; plus the
-simplified Email settings on the dev branch). Where this book and the code disagree,
+*Checked against the code on 7 October 2026 (live: `174922b`; plus the
+onboarding emails sent as the SPOC, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

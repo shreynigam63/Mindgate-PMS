@@ -41,9 +41,9 @@ async function open(email, path) {
 test('HR sets email up in three steps, with server details out of the way', async (t) => {
   if (!up) { t.skip('dev stack not running'); return; }
   const { ctx, page, errors } = await open('hr@shot.in', '/admin/settings');
-  const card = page.locator('.card', { hasText: 'Connect the mailbox' });
+  const card = page.locator('.card', { hasText: 'Connect the PMS mailbox' });
   const text = await card.innerText();
-  for (const s of ['Microsoft 365', 'Google Workspace', 'Other', 'Mailbox', 'Send a test email to yourself', 'Go live', 'on behalf of the SPOC']) {
+  for (const s of ['Microsoft 365', 'Google Workspace', 'Other', 'Mailbox', 'Send a test email to yourself', 'Go live', 'from each SPOC’s own address', 'Send As']) {
     assert.ok(text.includes(s), `shows "${s}"`);
   }
   assert.ok(!/Port/.test(text), 'server details stay under Advanced until asked for');

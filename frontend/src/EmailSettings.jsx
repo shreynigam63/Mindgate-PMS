@@ -69,6 +69,7 @@ export default function EmailSettings() {
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [denied, setDenied] = useState(false);
+  const [spocs, setSpocs] = useState(null);
 
   const take = (r) => {
     setD(r);
@@ -86,6 +87,8 @@ export default function EmailSettings() {
   };
   useEffect(() => {
     api('/pms/hr/mail').then(take).catch((e) => (e.status === 403 ? setDenied(true) : setErr(e.message)));
+    // The desks whose address the onboarding emails are sent as.
+    api('/people/onboarding/spocs').then((r) => setSpocs((r.spocs || []).filter((x) => x.email))).catch(() => setSpocs(null));
   }, []);
 
   // An HRBP opens this page too; the email account is HR's alone.
@@ -138,7 +141,7 @@ export default function EmailSettings() {
         recorded but nobody receives it. Three steps to switch it on:
       </p>
 
-      <Step n={1} title="Connect the mailbox the emails are sent from" done={d.ready && stage !== 'not_set_up'}>
+      <Step n={1} title="Connect the PMS mailbox that sends the emails" done={d.ready && stage !== 'not_set_up'}>
         <div className="grid grid-cols-3 gap-2">
           {Object.entries(PROVIDERS).map(([k, v]) => (
             <button key={k} type="button" onClick={() => { setF({ ...f, provider: k }); if (k === 'other') setAdv(true); }}
@@ -246,18 +249,24 @@ export default function EmailSettings() {
         )}
       </Step>
 
-      {/* Who a First-Week Journey email says it is from. The first is what
-          every mail server accepts; the second needs Send-As from IT. */}
+      {/* FIRST-WEEK JOURNEY EMAILS GO FROM EACH SPOC'S OWN ADDRESS (decided
+          7 Oct). The mailbox above signs in and sends them AS the SPOC, so
+          IT grants it Send-As for each SPOC address once — listed here so
+          HR can hand IT the list. */}
       <div className="border-t border-navy-100 pt-3 space-y-1.5">
-        <p className="font-semibold text-[13px] text-navy-900">Joiners see First-Week Journey emails as coming from</p>
-        {[[false, 'The PMS mailbox, on behalf of the SPOC', 'Recommended — works with every mail server. Shows the SPOC’s name; the SPOC is copied in and replies go to them.'],
-          [true, 'The SPOC’s own address', 'IT must first allow the PMS mailbox to “Send As” each SPOC. Without that, the mail server refuses and the tracker shows why.']].map(([v, label, sub]) => (
-          <label key={String(v)} className="flex items-start gap-2 text-[12px] text-navy-700 cursor-pointer">
-            <input type="radio" name="send-as" className="mt-0.5" disabled={busy} checked={!!d.send_as_spoc === v}
-              onChange={() => save({ send_as_spoc: v })} />
-            <span><b>{label}</b><span className="block text-[11px] text-navy-400">{sub}</span></span>
-          </label>
-        ))}
+        <p className="font-semibold text-[13px] text-navy-900">First-Week Journey emails go from each SPOC’s own address</p>
+        <p className="text-[11.5px] text-navy-500">
+          The mailbox above sends them as the SPOC who owns the activity. Ask IT to give it <b>“Send As”</b> permission
+          for each SPOC address below — once. Until then, those emails are refused and the tracker says why.
+        </p>
+        {spocs && (spocs.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {spocs.map((x) => <span key={x.role} className="chip bg-navy-50 text-navy-700">{x.role}: {x.email}</span>)}
+          </div>
+        ) : <p className="text-[11.5px] text-amber-700">No SPOC addresses yet — set them under New Hire Insights → First-Week Journey → SPOCs.</p>)}
+        <p className="text-[11px] text-navy-400">
+          Managers, buddies and HR POCs send from their own addresses too; IT can grant the PMS mailbox Send-As for them, or for everyone, the same way.
+        </p>
       </div>
 
       <p className="text-[11px] text-navy-400"><ShieldCheck size={11} className="inline mr-1" />

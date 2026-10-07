@@ -510,15 +510,13 @@ router.put('/spocs/:role', async (req, res) => {
 // THE JOINER'S EMAIL for one task: FROM the SPOC who owns the activity,
 // TO the joiner (see migration 083 and onboarding-spoc.js).
 //
-// How it leaves: by default the configured From address carries the SPOC's
-// NAME, with the SPOC as Reply-To and in copy — every mail server accepts
-// that. With "send as the SPOC" on (HR → Settings → Email) the From is the
-// SPOC's own address, which the mail server must allow the PMS account to
-// send as; without that permission it refuses, and the failure is shown.
-async function sendAsSpoc(tenantId) {
-  const r = (await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='mail_identity'`, [tenantId])).rows[0];
-  return !!(r && r.value && r.value.send_as_spoc);
-}
+// How it leaves: FROM THE SPOC'S OWN ADDRESS, always (decided 7 Oct —
+// there used to be a choice of "the PMS mailbox on behalf of the SPOC").
+// The PMS mailbox set under HR → Settings → Email signs in to the mail
+// server and sends AS the SPOC, which needs IT to grant that mailbox
+// Send-As rights for each SPOC address once. Without them the server
+// refuses, and the tracker shows the refusal in words (core/mail.js
+// explain) — nothing is quietly sent under another name instead.
 
 async function emailPlan(req, taskId) {
   const tj = await taskWithJoiner(req, taskId);
@@ -543,7 +541,7 @@ router.get('/tasks/:id/email', async (req, res) => {
       from: p.from, to: p.to ? { name: p.joiner.name, ...p.to } : null,
       to_missing: p.to ? null : `${p.joiner.name} has no email address — add a personal email on this joiner.`,
       ...spoc.draft(p.task, p.joiner, p.from.missing ? null : p.from),
-      history, mail_mode: await sendMode(T(req)), send_as_spoc: await sendAsSpoc(T(req)),
+      history, mail_mode: await sendMode(T(req)),
       can_send: await canOperate(req),
     });
   } catch (e) { logger.error('onboarding email draft', { error: e.message }); res.status(500).json({ error: 'Could not prepare the email.' }); }
@@ -562,23 +560,19 @@ router.post('/tasks/:id/email', async (req, res) => {
     if (!p) return res.status(404).json({ error: 'No such task on your tracker.' });
     if (p.from.missing) return res.status(400).json({ error: p.from.missing });
     if (!p.to) return res.status(400).json({ error: `${p.joiner.name} has no email address — add a personal email on this joiner.` });
-    const { smtpConfig } = require('../../core/mail');
-    const cfg = await smtpConfig(T(req));
-    const asSpoc = await sendAsSpoc(T(req));
+    const { explain } = require('../../core/mail');
     const quoted = (n) => `"${String(n || '').replace(/["\\]/g, '')}"`;
-    const fromHeader = asSpoc
-      ? `${quoted(p.from.name)} <${p.from.email}>`
-      : (cfg.from ? `${quoted(`${p.from.name} (${p.from.role})`)} <${String(cfg.from).replace(/^.*<([^>]+)>.*$/, '$1')}>` : undefined);
     const r = await sendMail(T(req), {
       to: p.to.email, subject, html: spoc.toHtml(body), kind: 'onboarding_task',
-      from: fromHeader, replyTo: p.from.email, cc: asSpoc ? undefined : p.from.email,
+      from: `${quoted(p.from.name)} <${p.from.email}>`, replyTo: p.from.email,
     });
     await db.query(
       `INSERT INTO people.onboarding_task_emails (tenant_id, task_id, to_emails, from_email, sender_role, subject, mode, outcome, sent_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [T(req), req.params.id, [p.to.email], p.from.email, p.from.role, subject, r.mode, r.outcome, req.user.email]);
     audit(req, 'onboarding_task_email', { task_id: req.params.id, to: p.to.email, from: p.from.email, outcome: r.outcome });
-    res.json({ to: p.to.email, from: p.from.email, mode: r.mode, outcome: r.outcome, detail: r.detail || null });
+    res.json({ to: p.to.email, from: p.from.email, mode: r.mode, outcome: r.outcome, detail: r.detail || null,
+      hint: r.outcome === 'failed' ? explain(r.detail) : null });
   } catch (e) { logger.error('onboarding email send', { error: e.message }); res.status(500).json({ error: 'Could not send the email.' }); }
 });
 
