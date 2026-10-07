@@ -1002,7 +1002,21 @@ router.get('/career/my-path', async (req, res) => {
       ? { target_role: st.target_role, target_timeline: st.target_timeline,
           years_experience: st.years_experience, skills_interests: st.skills_interests }
       : null;
-    res.json({ path: p || null, horizon, short_term_goal: shortTermGoal, horizons_filled: filled, milestones, progress_pct: careerProgress(milestones),
+    // Each role's time from the matrix, so the form's Expected timeline
+    // comes from HR's figure rather than from whatever was typed for a
+    // different role (8 Oct). And a saved target that is not on this tab's
+    // list — typically a long-term role saved as short-term before the
+    // matrix matched — is flagged, so the screen can offer to move it.
+    const targetOptions = [];
+    for (const t of transitions) {
+      if (!targetOptions.some((o) => o.role === t.to_role)) {
+        targetOptions.push({ role: t.to_role, typical_time_months: t.typical_time_months ?? null,
+          min_time_months: t.min_time_months ?? null, steps: t.steps || 1 });
+      }
+    }
+    const staleTarget = !!(p && p.target_role && eligibleTargetRoles.length && !eligibleTargetRoles.includes(p.target_role));
+    res.json({ path: p || null, horizon, short_term_goal: shortTermGoal,
+      target_options: targetOptions, stale_target: staleTarget, horizons_filled: filled, milestones, progress_pct: careerProgress(milestones),
       current: { designation: me.designation || null, department: me.department || null,
                  role_band: me.role_band || null, date_of_joining: me.date_of_joining || null },
       eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
@@ -1031,7 +1045,15 @@ router.put('/career/my-path', async (req, res) => {
     }
     const transitions = await targetsFor(T(req), req.user.id, horizon);
     const eligibleTargetRoles = [...new Set(transitions.map((t) => t.to_role))];
-    if (eligibleTargetRoles.length && !eligibleTargetRoles.includes(target_role)) {
+    // A long-term goal already saved may stay while HR has not yet written
+    // the steps to it (it is where the person wants to END UP, and the
+    // matrix may not reach that far) — otherwise moving it to Long-Term
+    // would leave a tab that can never be saved again. A NEW target must
+    // still come from the matrix.
+    const keptLongTerm = horizon === 'long_term' && (await db.query(
+      `SELECT 1 FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='long_term' AND target_role=$3`,
+      [T(req), req.user.id, String(target_role).trim()])).rows.length > 0;
+    if (eligibleTargetRoles.length && !eligibleTargetRoles.includes(target_role) && !keptLongTerm) {
       return res.status(422).json({ error: `target_role must be one of the transitions configured from your current role in the Career Pathing Matrix: ${eligibleTargetRoles.join(', ')}` });
     }
     await db.query(
@@ -1048,6 +1070,52 @@ router.put('/career/my-path', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// MOVE THE SHORT-TERM GOAL TO LONG-TERM (8 Oct). Before the matrix
+// matched, Short-Term accepted any role, and employees saved where they
+// want to END UP ("Lead - Technical, 72 months") as their next move. Now
+// that Short-Term offers only real next moves, that answer — role,
+// timeline, plan and milestones — belongs on Long-Term. One click moves
+// it there and leaves Short-Term to be filled with the next move;
+// experience and skills stay on both. Refused when Long-Term already has
+// a goal, so nothing is overwritten.
+router.post('/career/my-path/move-to-long-term', async (req, res) => {
+  try {
+    for (const h of HORIZONS) {
+      const gw = await growthWindowFor(T(req), req.user.id, h);
+      if (!gw.window.ok) return res.status(409).json({ error: careerShutMessage(gw.phase, gw.window) });
+    }
+    const rows = (await db.query(
+      `SELECT * FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [T(req), req.user.id])).rows;
+    const st = rows.find((r) => r.horizon === 'short_term');
+    const lt = rows.find((r) => r.horizon === 'long_term');
+    if (!st || !st.target_role) return res.status(400).json({ error: 'There is no short-term goal to move.' });
+    if (lt && lt.target_role) {
+      return res.status(409).json({ error: `Long-Term already has a goal (${lt.target_role}) — change it there first.` });
+    }
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      let ltId = lt && lt.id;
+      if (ltId) {
+        await client.query(
+          `UPDATE people.career_paths SET target_role=$2, target_timeline=$3, plan=COALESCE(NULLIF(BTRIM(plan),''), $4),
+                  years_experience=COALESCE(years_experience,$5), skills_interests=COALESCE(NULLIF(BTRIM(skills_interests),''),$6), updated_at=now()
+            WHERE id=$1`, [ltId, st.target_role, st.target_timeline, st.plan, st.years_experience, st.skills_interests]);
+      } else {
+        ltId = (await client.query(
+          `INSERT INTO people.career_paths (tenant_id, employee_id, horizon, target_role, target_timeline, plan, years_experience, skills_interests)
+           VALUES ($1,$2,'long_term',$3,$4,$5,$6,$7) RETURNING id`,
+          [T(req), req.user.id, st.target_role, st.target_timeline, st.plan, st.years_experience, st.skills_interests])).rows[0].id;
+      }
+      await client.query(`UPDATE people.career_milestones SET career_path_id=$1 WHERE career_path_id=$2`, [ltId, st.id]);
+      await client.query(
+        `UPDATE people.career_paths SET target_role=NULL, target_timeline=NULL, plan=NULL, updated_at=now() WHERE id=$1`, [st.id]);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+    res.json({ ok: true, moved: st.target_role });
+  } catch (e) { logger.error('career move to long-term', { error: e.message }); res.status(500).json({ error: 'Could not move the goal' }); }
+});
 
 // ---- Aspiring Career milestones ------------------------------------------
 // What turns an aspiration into a plan: the steps towards the target role,

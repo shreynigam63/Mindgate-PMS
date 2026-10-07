@@ -11,9 +11,9 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `a573546`** (7 October 2026). This
-edition also describes the Aspiring Career fixes — long-term lock, level
-matching, AI from the form (§3.2) — on the dev branch, which reach the live site with the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `cbd0212`** (7 October 2026). This
+edition also describes the matrix-derived timeline and moving a short-term
+goal to Long-Term (§3.2) on the dev branch, which reach the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -369,6 +369,23 @@ offers one rung; **Long-Term walks up to three rungs** along rows HR wrote
 (each To Role and To Level becoming the next From), with times added up
 and competencies combined. The target role is validated against the same
 list. HR's "matches N employees" counter uses the same level rule.
+
+**Expected timeline comes from the matrix** (8 Oct). Choosing a target
+role — from the list or with *Use this one* — sets Expected timeline to
+the matrix's typical time for that move (on Long-Term, the whole climb),
+shown underneath with the minimum ("typically 24 months for this move, at
+least 18 months"). A changed role no longer keeps the timeline typed for
+the previous one; a growth plan written for a different role is flagged
+("This plan was written for … — update it"). **A saved goal that is not
+on the tab's list** is shown as such rather than silently replaced. On
+Short-Term it is usually where the person wants to end up, saved before
+the matrix matched; **Move it to Long-Term** (`POST
+/people/career/my-path/move-to-long-term`) takes its role, timeline, plan
+and milestones there in one step and clears Short-Term for the next move
+(experience and skills stay on both). It is refused when Long-Term already
+has a goal. A long-term goal already saved may be kept while HR has not
+yet written the steps to it; a new long-term target must come from the
+matrix.
 
 **Where could I aim next? (AI).** Sends the tab's horizon and **what is on
 the form, saved or not** — target role, timeline, growth plan, years of
@@ -815,6 +832,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 8 October 2026 (live: `a573546`; plus the
+*Checked against the code on 8 October 2026 (live: `cbd0212`; plus the
 the Aspiring Career fixes, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

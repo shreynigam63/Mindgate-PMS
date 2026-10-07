@@ -738,8 +738,12 @@ function CareerPathCard() {
   const [milestones, setMilestones] = useState([]);
   const [err, setErr] = useState(null);
   const [saved, setSaved] = useState(false);
+  // The role the saved plan and timeline were written for, so a change of
+  // role can say they need redoing (8 Oct).
+  const [savedRole, setSavedRole] = useState('');
   const load = (h = horizon) => api(`/people/career/my-path?horizon=${h}`).then(r => {
     setData(r);
+    setSavedRole(r.path?.target_role || '');
     // Long-Term: experience and skills are the same person as on
     // Short-Term, so a blank one starts from there (unsaved until Save).
     const st = r.short_term_goal || {};
@@ -782,6 +786,25 @@ function CareerPathCard() {
 
   if (err && !data) return <div className="card p-4"><p className="text-sm text-rose-600">{err}</p></div>;
   if (!data) return <div className="card p-4"><p className="text-sm text-navy-400">Loading…</p></div>;
+
+  // EXPECTED TIMELINE COMES FROM THE MATRIX (8 Oct: "its expected
+  // timelines shows wrong"). Choosing a role sets it to HR's typical time
+  // for that move — on Long-Term, the whole climb — instead of keeping
+  // whatever was typed for a different role.
+  const option = (role) => (data.target_options || []).find((o) => o.role === role) || null;
+  const months = (m) => (m == null ? '' : `${m} months`);
+  const pickRole = (role) => setForm((f) => {
+    if (role === f.target_role) return f;
+    const o = option(role);
+    return { ...f, target_role: role, target_timeline: o && o.typical_time_months != null ? months(o.typical_time_months) : '' };
+  });
+  const moveToLongTerm = async () => {
+    setErr(null);
+    try { await api('/people/career/my-path/move-to-long-term', { method: 'POST' }); setHorizon('long_term'); }
+    catch (e) { setErr(e.message); }
+  };
+  const chosen = option(form.target_role);
+  const planForOtherRole = savedRole && form.target_role && savedRole !== form.target_role && String(form.plan || '').trim();
 
   // Fix guide item #6 follow-up: Career Path now opens alongside
   // Development Plan once HR locks KRA and advances to Growth Planning,
@@ -836,18 +859,49 @@ function CareerPathCard() {
           and FILLS ONLY WHAT IS BLANK (8 Oct). It used to overwrite the
           growth plan and drop years of experience and skills from the
           form, so the next Save wiped what the employee had typed. */}
+      {/* A saved goal that is not on this tab's list. On Short-Term it is
+          usually where the person wants to END UP, saved before the
+          matrix matched — offered a one-click move to Long-Term. */}
+      {data.stale_target && horizon === 'short_term' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs space-y-1.5">
+          <p className="text-navy-700">
+            Your saved short-term goal, <b>{data.path.target_role}</b>{data.path.target_timeline ? <> ({data.path.target_timeline})</> : null}, is not
+            a next move from your role in the Career Pathing Matrix — it reads as a <b>long-term</b> goal.
+            {' '}Move it before saving a new short-term goal, or saving replaces it.
+          </p>
+          {editable && (
+            <button type="button" className="btn-sec !py-1 !text-[11px]" onClick={moveToLongTerm}>
+              Move it to Long-Term, with its plan and milestones
+            </button>
+          )}
+        </div>
+      )}
+      {data.stale_target && horizon === 'long_term' && (
+        <p className="text-[11.5px] text-amber-700">
+          <b>{data.path.target_role}</b> is not yet on the Career Pathing Matrix’s path from your role — HR can add the steps that lead to it.
+        </p>
+      )}
       {editable && <CareerAiPanel horizon={horizon} draft={form} shortTerm={data.short_term_goal} onUse={(a) => {
         const blank = (v) => v == null || String(v).trim() === '';
         const suggestedPlan = [a.fit, (a.competencies_to_build || []).length ? `Competencies to build:\n- ${a.competencies_to_build.join('\n- ')}` : null,
           (a.first_steps || []).length ? `First steps:\n- ${a.first_steps.join('\n- ')}` : null].filter(Boolean).join('\n\n');
-        setForm((fm) => ({
+        // A DIFFERENT role brings its own timeline (from the matrix) and
+        // plan — what was written for the old role no longer applies. The
+        // same role only fills what is blank.
+        setForm((fm) => {
+          const changed = !!a.target_role && a.target_role !== fm.target_role;
+          const o = option(a.target_role);
+          const matrixTime = o && o.typical_time_months != null ? months(o.typical_time_months) : (a.typical_time || '');
+          return {
           ...fm,
           target_role: a.target_role || fm.target_role,
-          target_timeline: blank(fm.target_timeline) ? (a.typical_time || '') : fm.target_timeline,
-          plan: blank(fm.plan) ? suggestedPlan : fm.plan,
+          target_timeline: changed || blank(fm.target_timeline) ? matrixTime : fm.target_timeline,
+          plan: changed || blank(fm.plan) ? suggestedPlan : fm.plan,
           years_experience: blank(fm.years_experience) ? (data.short_term_goal?.years_experience ?? '') : fm.years_experience,
           skills_interests: blank(fm.skills_interests) ? (data.short_term_goal?.skills_interests || '') : fm.skills_interests,
-        }));
+          };
+        });
+        if (a.target_role) setSavedRole(a.target_role);
         // Suggested milestones land as editable drafts with no date —
         // a date is required to save, so the employee has to commit to
         // one rather than accept whatever the model would have guessed.
@@ -865,8 +919,13 @@ function CareerPathCard() {
       <div>
         <label className="lbl">Target role</label>
         {data.eligible_target_roles.length ? (
-          <select className="inp" value={form.target_role} disabled={!editable} onChange={e => setForm(f => ({ ...f, target_role: e.target.value }))}>
+          <select className="inp" value={form.target_role} disabled={!editable} onChange={e => pickRole(e.target.value)}>
             <option value="">—</option>
+            {/* A saved role that is no longer on the list is shown, not
+                silently swapped for the first option. */}
+            {form.target_role && !data.eligible_target_roles.includes(form.target_role) && (
+              <option value={form.target_role} disabled>{form.target_role} (saved — not on this list)</option>
+            )}
             {data.eligible_target_roles.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
         ) : (
@@ -880,6 +939,17 @@ function CareerPathCard() {
       <div>
         <label className="lbl">Expected timeline</label>
         <input className="inp" value={form.target_timeline} disabled={!editable} onChange={e => setForm(f => ({ ...f, target_timeline: e.target.value }))} placeholder="e.g. 12-18 months" />
+        {chosen && chosen.typical_time_months != null && (
+          <p className="text-[11px] text-navy-400 mt-1">
+            Career Pathing Matrix: typically <b>{months(chosen.typical_time_months)}</b>
+            {chosen.steps > 1 ? ` for the ${chosen.steps} steps` : ' for this move'}
+            {chosen.min_time_months != null && chosen.steps === 1 ? `, at least ${months(chosen.min_time_months)}` : ''}.
+            {form.target_timeline !== months(chosen.typical_time_months) && editable && (
+              <button type="button" className="ml-1 font-semibold text-brand-600"
+                onClick={() => setForm(f => ({ ...f, target_timeline: months(chosen.typical_time_months) }))}>Use it</button>
+            )}
+          </p>
+        )}
       </div>
       {/* THE TWO QUESTIONS, asked on 23 Sep so the readiness read has
           something to work from. Both are self-reported and the AI is
@@ -908,6 +978,9 @@ function CareerPathCard() {
       </div>
       <div>
         <label className="lbl">Growth plan</label>
+        {planForOtherRole && (
+          <p className="text-[11.5px] text-amber-700 mb-1">This plan was written for <b>{savedRole}</b> — update it for <b>{form.target_role}</b>, or use <i>Suggest a path</i>.</p>
+        )}
         <textarea className="inp" rows={4} value={form.plan} disabled={!editable} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))} placeholder="How you plan to get there" />
       </div>
 

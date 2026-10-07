@@ -213,3 +213,51 @@ test('LONG-TERM BUILDS ON THE SHORT-TERM GOAL: it is sent, its blanks are filled
     assert.match(seen.system, /LONG-TERM BUILDS ON SHORT-TERM/);
   } finally { ai.narrate = real; }
 });
+
+// 8 Oct: "short term goals are derived from career pathing matrix, but its
+// expected timelines shows wrong and also long term goals details are also
+// visible which should not be visible for short term goals".
+test('THE TIMELINE COMES FROM THE MATRIX, and a long-term goal saved as short-term is flagged and can be moved', { skip }, async () => {
+  await phase('kra_open');
+  const st = await api('GET', '/career/my-path?horizon=short_term');
+  assert.deepEqual(st.body.target_options.map((o) => [o.role, o.typical_time_months, o.steps]), [['Senior Software Developer', 24, 1]]);
+  const lt = await api('GET', '/career/my-path?horizon=long_term');
+  assert.equal(lt.body.target_options.find((o) => o.role === 'Tech Lead').typical_time_months, 54, 'the whole climb');
+
+  // The screenshot's state: Short-Term holds where they want to END UP,
+  // saved before the matrix matched; Long-Term is empty.
+  await db.query(`UPDATE people.career_paths SET target_role='Lead - Technical', target_timeline='72 months', plan='Move into technical leadership'
+                   WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
+  await db.query(`UPDATE people.career_paths SET target_role=NULL, target_timeline=NULL, plan=NULL
+                   WHERE tenant_id=$1 AND employee_id=$2 AND horizon='long_term'`, [tenantId, empId]);
+  const stMs = (await api('GET', '/career/my-path?horizon=short_term')).body;
+  assert.equal(stMs.stale_target, true, 'not a next move from this role');
+  const before = stMs.milestones.map((m) => m.title);
+
+  const mv = await api('POST', '/career/my-path/move-to-long-term');
+  assert.equal(mv.status, 200, JSON.stringify(mv.body));
+  const after = await api('GET', '/career/my-path?horizon=long_term');
+  assert.equal(after.body.path.target_role, 'Lead - Technical');
+  assert.equal(after.body.path.target_timeline, '72 months');
+  assert.equal(after.body.path.plan, 'Move into technical leadership');
+  assert.ok(before.length > 0);
+  for (const t of before) assert.ok(after.body.milestones.some((m) => m.title === t), `its milestone "${t}" goes with it`);
+  const emptied = (await api('GET', '/career/my-path?horizon=short_term')).body;
+  assert.deepEqual(emptied.milestones, []);
+  assert.equal(emptied.path.target_role, null);
+  assert.equal(emptied.path.plan, null);
+  assert.equal(Number(emptied.path.years_experience), 6, 'experience and skills stay on Short-Term');
+  assert.equal(emptied.stale_target, false);
+  assert.deepEqual(emptied.horizons_filled, ['long_term']);
+
+  // The moved goal is not on the matrix's path yet — Long-Term can still be
+  // saved with it; a NEW off-matrix role still cannot.
+  assert.equal((await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Lead - Technical', target_timeline: '72 months', plan: 'Edited' })).status, 200);
+  assert.equal((await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Chief Architect' })).status, 422);
+
+  // Nothing is overwritten: Long-Term now has a goal, so a second move is refused.
+  await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Senior Software Developer', target_timeline: '24 months' });
+  const again = await api('POST', '/career/my-path/move-to-long-term');
+  assert.equal(again.status, 409);
+  assert.match(again.body.error, /Long-Term already has a goal \(Lead - Technical\)/);
+});
