@@ -11,9 +11,9 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `6e4f19e`** (7 October 2026). This
-edition also describes onboarding emails sent by each SPOC from their own
-Gmail, with no setup (§3.12), on the dev branch, which reach the live site with the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `a573546`** (7 October 2026). This
+edition also describes the Aspiring Career fixes — long-term lock, level
+matching, AI from the form (§3.2) — on the dev branch, which reach the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -194,7 +194,7 @@ deploy shows a *Reload now* bar (`BuildWatch`).
 |---|---|---|
 | Dashboard | `/home` | Top of the sidebar, §2.6 |
 | My KRAs | `/my/kras` | Sheet status machine, §3.1. Weights must total exactly 100 to submit. Each KRA shows its timesheet hours and rating, §3.7 |
-| My Growth | `/my/growth` | Opens on **your** KRA submission, §3.2. Short-term and long-term aspiration are separate records |
+| My Growth | `/my/growth` | Opens on **your** KRA submission, §3.2. Short-term and long-term aspiration are separate records; long-term stays editable through Manager Evaluation |
 | Connects | `/team/connects` | 1-on-1 log. Action items carry `sort_order` — `created_at` ties inside one transaction |
 | Mid-Year Review | `/my/midyear` | Opens at `mid_year_review`, stays open to end of Annual Review. Per-KRA ratings with a computed overall |
 | Annual Review | `/my/self-appraisal` | Opens at `self_appraisal`. Locks permanently on sign-off |
@@ -346,6 +346,40 @@ manager returns the KRA with any feedback."*
 The intent of the older "don't write a plan against KRAs you are still
 inventing" rule survives in the submission condition: at that point the
 sheet is out of your hands, weights totalling 100 and all.
+
+**Aspiring Career, per horizon** (`aspirationEditable()`, 8 Oct). The
+**Short-Term** tab follows the rule above. The **Long-Term** tab opens the
+same way and stays open **through Manager Evaluation**; from **HOD Review**
+on it is locked, whatever else has reopened — a returned plan included.
+Each tab has its own target role, plan and milestones (milestones typed on
+Long-Term used to be saved onto Short-Term). Milestone *progress* stays
+editable all year, on both.
+
+**Which roles a tab offers — the Career Pathing Matrix.** Rows match on
+the employee's designation (From Role), department (blank = company-wide)
+and level. **Levels are compared as grade and band, not as text**
+(`people/career-level.js`): "Band 6", "E3" and "E3 · Band 6" are the same
+rung for an employee whose band is "E3 · Band 6"; "E2 · Band 6" or
+"Band 7" is not; blank means any level. Before 8 Oct the matrix's
+"Band 6" never matched the master's "E3 · Band 6", and employees were told
+their path "does not match your level". The same move written several
+times — once per department, or with differently written levels — is
+offered **once**, the employee's own department's row first. Short-Term
+offers one rung; **Long-Term walks up to three rungs** along rows HR wrote
+(each To Role and To Level becoming the next From), with times added up
+and competencies combined. The target role is validated against the same
+list. HR's "matches N employees" counter uses the same level rule.
+
+**Where could I aim next? (AI).** Sends the tab's horizon and **what is on
+the form, saved or not** — target role, timeline, growth plan, years of
+experience, skills and interests (a blank field falls back to what was
+last saved on that tab). The model starts from those, assesses a named
+target role first, and may only propose roles the matrix offers for that
+tab. When nothing matches, the box above the form says why — none
+configured, other departments only, level, or deactivated. **Use this one**
+sets the target role and fills **only blank fields** (timeline, growth
+plan); it never overwrites what the employee wrote, and adds suggested
+milestones not already listed, undated.
 
 ## 3.3 Ratings: numbers in the database, letters on screen
 
@@ -767,6 +801,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 7 October 2026 (live: `6e4f19e`; plus the
-SPOCs sending from their own Gmail, on the dev branch). Where this book and the code disagree,
+*Checked against the code on 8 October 2026 (live: `a573546`; plus the
+the Aspiring Career fixes, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

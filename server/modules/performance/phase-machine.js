@@ -242,6 +242,27 @@ function growthEditable(phase, { sheetStatus = null, planStatus = null } = {}) {
     error: `Growth planning is not open (phase: ${phase || 'none'})` };
 }
 
+// THE ASPIRING CAREER, per horizon (8 Oct: "long term goals will be
+// editable till manager evaluation, it should be locked once advanced to
+// HOD cycle"). Short-Term follows the growth plan's own window above.
+// Long-Term opens the same way and stays open one phase longer — through
+// Manager Evaluation, where the manager is reading it — and is locked for
+// good from HOD Review on, whatever else has reopened.
+const LONG_TERM_LAST_PHASE = 'manager_eval';
+
+function aspirationEditable(phase, { sheetStatus = null, planStatus = null, horizon = 'short_term' } = {}) {
+  if (horizon !== 'long_term') return growthEditable(phase, { sheetStatus, planStatus });
+  const i = ORDER.indexOf(phase);
+  const last = ORDER.indexOf(LONG_TERM_LAST_PHASE);
+  if (i > last) {
+    return { ok: false, reason: 'long_term_closed',
+      error: 'Your long-term career aspiration is locked — the cycle has moved on to HOD Review.' };
+  }
+  if (phase === 'kra_open') return growthEditable(phase, { sheetStatus });
+  if (i > ORDER.indexOf('kra_open') && i <= last) return { ok: true, via: 'phase' };
+  return { ok: false, reason: 'phase', error: `Growth planning is not open (phase: ${phase || 'none'})` };
+}
+
 // KRA weight rule: total must be exactly 100 to submit (tolerance for
 // numeric drift: 0.01).
 function weightsValid(kras) {
@@ -249,4 +270,4 @@ function weightsValid(kras) {
   return { ok: Math.abs(total - 100) < 0.01, total: +total.toFixed(2) };
 }
 
-module.exports = { ORDER, canAdvance, canRollback, canCancel, phaseAllows, weightsValid, growthEditable };
+module.exports = { ORDER, canAdvance, canRollback, canCancel, phaseAllows, weightsValid, growthEditable, aspirationEditable, LONG_TERM_LAST_PHASE };

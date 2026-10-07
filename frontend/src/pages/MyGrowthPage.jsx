@@ -572,7 +572,7 @@ function Readiness({ r }) {
 // AI aspiring-career suggestions. Constrained server-side to the
 // transitions HR configured from the employee's current role, so anything
 // it proposes is a role the select below will actually accept.
-function CareerAiPanel({ onUse }) {
+function CareerAiPanel({ onUse, horizon, draft }) {
   // Single choice, not a basket: the form holds ONE target role, so a
   // second pick replaces the first rather than adding to it.
   const [pickKey, setPickKey] = useState(null);
@@ -610,13 +610,17 @@ function CareerAiPanel({ onUse }) {
     <AiDraftPanel
       accent="indigo"
       title="+ Where could I aim next?"
-      description="Reads your designation and department against the career paths HR has configured, and suggests what a one-to-two year aspiration could look like."
+      description={horizon === 'long_term'
+        ? 'Reads what you have filled in below — target role, experience, skills, plan — against where the Career Pathing Matrix leads from your role (up to three steps), and suggests a three-year-plus aspiration.'
+        : 'Reads what you have filled in below — target role, experience, skills, plan — against the career paths HR has configured from your role, and suggests a one-to-two year aspiration.'}
       idleLabel="Suggest a path"
       againLabel="Suggest again"
-      modalTitle="Possible next roles"
-      run={async () => { setUsed(null); const r = await api('/agentic/career-suggest', { method: 'POST' }); return r.draft; }}
+      modalTitle={horizon === 'long_term' ? 'Possible long-term roles' : 'Possible next roles'}
+      // What is on the form goes with the request, saved or not, so the
+      // suggestion starts from the employee's own answers (8 Oct).
+      run={async () => { setUsed(null); const r = await api('/agentic/career-suggest', { method: 'POST', body: JSON.stringify({ horizon, draft }) }); return r.draft; }}
       summary={(d) => {
-        if (d.no_path_configured) return 'No career path configured from your current role';
+        if (d.no_path_configured) return 'No matching career path in the matrix';
         const n = (d.aspirations || []).length;
         return `${n} possible next role${n === 1 ? '' : 's'}`;
       }}
@@ -630,7 +634,7 @@ function CareerAiPanel({ onUse }) {
               Use this one
             </button>
             <span className="text-navy-500">
-              {used ? `“${used}” is filled in below — edit it, then save.` : 'Pick one; it fills in the form behind this window.'}
+              {used ? `“${used}” is filled in below — edit it, then save.` : 'Pick one; it sets the target role and fills only the fields you left blank.'}
             </span>
           </div>
         );
@@ -638,7 +642,7 @@ function CareerAiPanel({ onUse }) {
     >
       {(d) => (
         <div className="space-y-2">
-          {d.no_path_configured && <p className="text-amber-700">No career path is configured from your current role yet — HR needs to define one in the Career Pathing Matrix.</p>}
+          {d.no_path_configured && <p className="text-amber-700">No role could be suggested from the Career Pathing Matrix for your role and level — the note above the form says why, and who can fix it.</p>}
           {/* THE READINESS READ, from the two questions on the form.
               Asked for on 23 Sep: benchmark, competencies, and whether
               they are eligible. It leads, because it is the question the
@@ -686,6 +690,13 @@ function CareerPathGap({ d }) {
         </p>
       </div>
     );
+  }
+  if (d.reason === 'department_mismatch') {
+    return <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs">
+      <p className="font-bold text-amber-800">Career paths from your role exist, but for other departments</p>
+      <p className="text-navy-600">The matrix has paths from <b>{d.designation}</b> only for {(d.excluded_by_department || []).join(', ')}.
+        Ask HR to add one for {d.department ? <b>{d.department}</b> : 'your department'}, or make one company-wide (blank department).</p>
+    </div>;
   }
   if (d.reason === 'all_inactive') {
     return <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs">
@@ -749,7 +760,7 @@ function CareerPathCard() {
       await api('/people/career/my-path', { method: 'PUT', body: JSON.stringify({ ...form, horizon }) });
       await api('/people/career/my-milestones', {
         method: 'PUT',
-        body: JSON.stringify({ milestones: milestones.filter(m => m.title.trim()) }),
+        body: JSON.stringify({ horizon, milestones: milestones.filter(m => m.title.trim()) }),
       });
       setSaved(true); load();
     } catch (e) { setErr(e.message); }
@@ -806,20 +817,31 @@ function CareerPathCard() {
         </div>
       )}
       <CareerPathGap d={data.path_diagnostics} />
-      {editable && <CareerAiPanel onUse={(a) => {
+      {/* "Use this one" sets the target role — that is the choice made —
+          and FILLS ONLY WHAT IS BLANK (8 Oct). It used to overwrite the
+          growth plan and drop years of experience and skills from the
+          form, so the next Save wiped what the employee had typed. */}
+      {editable && <CareerAiPanel horizon={horizon} draft={form} onUse={(a) => {
+        const blank = (v) => v == null || String(v).trim() === '';
+        const suggestedPlan = [a.fit, (a.competencies_to_build || []).length ? `Competencies to build:\n- ${a.competencies_to_build.join('\n- ')}` : null,
+          (a.first_steps || []).length ? `First steps:\n- ${a.first_steps.join('\n- ')}` : null].filter(Boolean).join('\n\n');
         setForm((fm) => ({
+          ...fm,
           target_role: a.target_role || fm.target_role,
-          target_timeline: a.typical_time || fm.target_timeline,
-          plan: [a.fit, (a.competencies_to_build || []).length ? `Competencies to build:\n- ${a.competencies_to_build.join('\n- ')}` : null,
-                 (a.first_steps || []).length ? `First steps:\n- ${a.first_steps.join('\n- ')}` : null].filter(Boolean).join('\n\n'),
+          target_timeline: blank(fm.target_timeline) ? (a.typical_time || '') : fm.target_timeline,
+          plan: blank(fm.plan) ? suggestedPlan : fm.plan,
         }));
         // Suggested milestones land as editable drafts with no date —
         // a date is required to save, so the employee has to commit to
         // one rather than accept whatever the model would have guessed.
+        // One already on the list by that title is not added twice.
         if ((a.suggested_milestones || []).length) {
-          setMilestones((ms) => [...ms, ...a.suggested_milestones.map((m) => ({
-            title: m.title, description: m.description || '', target_date: '', progress_pct: 0,
-          }))]);
+          setMilestones((ms) => {
+            const have = new Set(ms.map((m) => String(m.title || '').trim().toLowerCase()));
+            return [...ms, ...a.suggested_milestones.filter((m) => !have.has(String(m.title || '').trim().toLowerCase())).map((m) => ({
+              title: m.title, description: m.description || '', target_date: '', progress_pct: 0,
+            }))];
+          });
         }
       }} />}
       {editable && <p className="text-[11px] text-navy-400">Unsaved until you press <b>Save</b>.</p>}
@@ -833,7 +855,10 @@ function CareerPathCard() {
         ) : (
           <input className="inp" value={form.target_role} disabled={!editable} onChange={e => setForm(f => ({ ...f, target_role: e.target.value }))} placeholder="e.g. Staff Engineer" />
         )}
-        {data.eligible_target_roles.length > 0 && <p className="text-[11px] text-navy-400 mt-1">Limited to transitions HR has configured from your current role in the Career Pathing Matrix.</p>}
+        {data.eligible_target_roles.length > 0 && <p className="text-[11px] text-navy-400 mt-1">
+          {horizon === 'long_term'
+            ? 'Roles the Career Pathing Matrix leads to from your current role — up to three steps ahead.'
+            : 'Limited to transitions HR has configured from your current role in the Career Pathing Matrix.'}</p>}
       </div>
       <div>
         <label className="lbl">Expected timeline</label>
@@ -924,7 +949,11 @@ function CareerPathCard() {
         <p className="text-xs text-navy-400">
           {data.shut_because === 'kra_not_submitted'
             ? <>Submit your KRAs to your manager and this opens straight away.</>
-            : <>Aspiring Career editing opens once you submit your KRAs for this cycle.</>}
+            : data.shut_because === 'long_term_closed'
+              ? <>Your long-term aspiration is locked — it was open through Manager Evaluation, and the cycle has moved on to HOD Review.</>
+              : data.shut_because === 'phase' && data.cycle_phase && !['draft', 'kra_open'].includes(data.cycle_phase)
+                ? <>{horizon === 'long_term' ? 'Long-term' : 'Short-term'} aspiration editing is closed for this phase ({phaseLabel(data.cycle_phase)}).{horizon === 'short_term' && data.cycle_phase === 'manager_eval' ? ' The Long-Term tab stays open through Manager Evaluation.' : ''}</>
+                : <>Aspiring Career editing opens once you submit your KRAs for this cycle.</>}
         </p>
       )}
     </div>

@@ -72,20 +72,23 @@ async function activeCyclePhase(tenantId) {
 //
 // The rule itself lives in performance/phase-machine (pure, no db) so the
 // two modules cannot drift apart; this reads the one fact that file cannot.
-async function growthWindowFor(tenantId, employeeId) {
+// Per horizon since 8 Oct: Long-Term stays open through Manager
+// Evaluation and locks at HOD Review (pm.aspirationEditable).
+async function growthWindowFor(tenantId, employeeId, horizon = 'short_term') {
   const c = await activeCycle(tenantId);
-  if (!c) return { phase: null, window: pm.growthEditable(null, {}) };
+  if (!c) return { phase: null, window: pm.aspirationEditable(null, { horizon }) };
   const sheet = (await db.query(
     `SELECT status FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
     [tenantId, c.id, employeeId])).rows[0];
-  return { phase: c.phase, window: pm.growthEditable(c.phase, { sheetStatus: sheet ? sheet.status : null }) };
+  return { phase: c.phase, window: pm.aspirationEditable(c.phase, { sheetStatus: sheet ? sheet.status : null, horizon }) };
 }
 
 // One message, so the employee is told the same thing whichever of the two
 // routes refused them, and it names the single action that opens it.
 const careerShutMessage = (phase, w) => (w.reason === 'kra_not_submitted'
   ? 'Submit your KRAs to your manager first — Aspiring Career opens the moment you do'
-  : `Aspiring Career editing is not open (phase: ${phase || 'no active cycle'}) — it opens in KRA Setting and Growth Planning, once you submit your KRAs`);
+  : w.reason === 'long_term_closed' ? w.error
+    : `Aspiring Career editing is not open (phase: ${phase || 'no active cycle'}) — it opens in KRA Setting and Growth Planning, once you submit your KRAs`);
 
 // ---- Awards -----------------------------------------------------------------
 router.get('/awards', async (req, res) => {
@@ -378,14 +381,14 @@ router.get('/career/match-count', async (req, res) => {
     const fromRole = (req.query.from_role || '').trim();
     if (!fromRole) return res.json({ count: 0, from_role: null });
     const fromLevel = (req.query.from_level || '').trim() || null;
+    // The same level rule employees are matched by (career-level.js), so
+    // the count HR sees is the count that will actually get the path.
     const r = await db.query(
-      `SELECT COUNT(*)::int AS n FROM core.employees
-        WHERE tenant_id=$1 AND status='active'
-          AND LOWER(TRIM(designation)) = LOWER(TRIM($2))
-          AND ($3::text IS NULL
-               OR LOWER(TRIM(COALESCE(role_band, ''))) = LOWER(TRIM($3)))`,
-      [T(req), fromRole, fromLevel]);
-    res.json({ count: r.rows[0].n, from_role: fromRole, from_level: fromLevel });
+      `SELECT role_band FROM core.employees
+        WHERE tenant_id=$1 AND status='active' AND LOWER(TRIM(designation)) = LOWER(TRIM($2))`,
+      [T(req), fromRole]);
+    const n = r.rows.filter((e) => levelMatches(fromLevel, e.role_band)).length;
+    res.json({ count: n, from_role: fromRole, from_level: fromLevel });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -810,34 +813,89 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
 // department is company-wide and applies to everyone — which is what
 // every row written before 044 is, so an existing matrix keeps working
 // untouched. A rung WITH a department applies only there.
+//
+// THE LEVEL is no longer compared as text (8 Oct): "Band 6" on the matrix
+// and "E3 · Band 6" on the employee master are the same rung. See
+// career-level.js — grade and band are read separately.
+const { levelMatches } = require('./career-level');
 const TRANSITION_MATCH = `
   LOWER(TRIM(from_role)) = LOWER(TRIM($2))
-  AND (NULLIF(TRIM(COALESCE(from_level, '')), '') IS NULL
-       OR LOWER(TRIM(from_level)) = LOWER(TRIM(COALESCE($3, ''))))
   AND (NULLIF(TRIM(COALESCE(department, '')), '') IS NULL
-       OR LOWER(TRIM(department)) = LOWER(TRIM(COALESCE($4, ''))))`;
+       OR LOWER(TRIM(department)) = LOWER(TRIM(COALESCE($3, ''))))`;
 
-// The move a rung describes, ignoring which department wrote it. Two
-// rows with the same move are the same step offered twice, and the
-// employee must be shown ONE of them.
-const MOVE_KEY = `LOWER(BTRIM(from_role)), LOWER(BTRIM(COALESCE(from_level,''))),
-                  LOWER(BTRIM(to_role)),   LOWER(BTRIM(COALESCE(to_level,'')))`;
+const lc = (v) => String(v == null ? '' : v).trim().toLowerCase();
 
 async function eligibleTransitionsFor(tenantId, employeeId) {
   const emp = (await db.query(`SELECT designation, role_band, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp || !emp.designation) return [];
-  // MOST SPECIFIC WINS. Where a department has written its own version of
-  // a move AND a company-wide version exists, the employee sees their
-  // department's — with its competencies and its time-in-role figures,
-  // which is the whole reason the column was asked for. Showing both
-  // would offer the same step twice with contradictory requirements.
-  const r = await db.query(
-    `SELECT DISTINCT ON (${MOVE_KEY}) *
-       FROM people.career_transitions
-      WHERE tenant_id=$1 AND active=true AND ${TRANSITION_MATCH}
-      ORDER BY ${MOVE_KEY}, (COALESCE(BTRIM(department),'') <> '') DESC`,
-    [tenantId, emp.designation, emp.role_band || null, emp.department || null]);
-  return r.rows;
+  return transitionsFrom(tenantId, emp.designation, emp.role_band, emp.department);
+}
+
+// The moves open from one role at one level in one department — the
+// employee's own rung, or (for the long-term ladder below) a rung they
+// would reach first.
+async function transitionsFrom(tenantId, role, level, department) {
+  const emp = { role_band: level };
+  const rows = (await db.query(
+    `SELECT * FROM people.career_transitions WHERE tenant_id=$1 AND active=true AND ${TRANSITION_MATCH}`,
+    [tenantId, role, department || null])).rows
+    .filter((t) => levelMatches(t.from_level, emp.role_band));
+  // ONE ROW PER TARGET ROLE. The same move written several times — once
+  // per department in the suggested matrix, or as "Band 6" and as
+  // "E3 · Band 6" — is one step for this employee. MOST SPECIFIC WINS:
+  // their own department's row over a company-wide one (its competencies
+  // and time-in-role are why the column exists), then a row naming a
+  // level over one that applies to any level, then the one whose level
+  // text is exactly theirs.
+  const rank = (t) => [lc(t.department) ? 0 : 1, lc(t.from_level) ? 0 : 1, lc(t.from_level) === lc(emp.role_band) ? 0 : 1];
+  const best = new Map();
+  for (const t of rows) {
+    const k = lc(t.to_role);
+    const cur = best.get(k);
+    if (!cur || rank(t).join() < rank(cur).join()) best.set(k, t);
+  }
+  return [...best.values()].sort((a, b) => lc(a.to_role).localeCompare(lc(b.to_role)));
+}
+
+// THE LONG-TERM LADDER (8 Oct). The matrix holds one rung per row, which
+// is right for Short-Term — one to two years — and wrong for Long-Term,
+// "three years and beyond", which is usually two or three rungs up. So
+// Long-Term walks the matrix: from the employee's role and level, each
+// move's To Role and To Level become the next rung's From. Every step is
+// still a row HR wrote; nothing is invented. Times add up; competencies
+// are the union, in order.
+async function careerLadderFor(tenantId, employeeId, maxSteps = 3) {
+  const emp = (await db.query(`SELECT designation, role_band, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+  if (!emp || !emp.designation) return [];
+  const out = new Map();
+  let frontier = [{ role: emp.designation, level: emp.role_band, via: [], months: 0, comps: [] }];
+  const seen = new Set([lc(emp.designation)]);
+  for (let step = 1; step <= maxSteps && frontier.length; step += 1) {
+    const next = [];
+    for (const f of frontier) {
+      for (const t of await transitionsFrom(tenantId, f.role, f.level, emp.department)) {
+        const k = lc(t.to_role);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const months = t.typical_time_months == null || f.months == null ? null : f.months + Number(t.typical_time_months);
+        const comps = [...new Set([...f.comps, ...(t.required_competencies || [])])];
+        const rung = { to_role: t.to_role, to_level: t.to_level, steps: step, via: f.via,
+          typical_time_months: months, required_competencies: comps };
+        out.set(k, rung);
+        next.push({ role: t.to_role, level: t.to_level, via: [...f.via, t.to_role], months, comps });
+      }
+    }
+    frontier = next;
+  }
+  return [...out.values()];
+}
+
+// The roles a horizon may aim at: Short-Term, one rung; Long-Term, up to
+// three. The form's dropdown, its validation and the AI all read this.
+async function targetsFor(tenantId, employeeId, horizon) {
+  return horizon === 'long_term'
+    ? careerLadderFor(tenantId, employeeId, 3)
+    : eligibleTransitionsFor(tenantId, employeeId);
 }
 
 // Why an employee has no eligible transitions.
@@ -886,12 +944,16 @@ async function careerPathDiagnostics(tenantId, employeeId) {
   // Configured and active, so the only thing left that can exclude them is
   // the level. Report both sides of the comparison — the whole failure was
   // that neither was visible.
-  return {
-    ...base,
-    reason: 'level_mismatch',
-    matched: 0,
-    excluded_by_level: active.map((t) => ({ to_role: t.to_role, requires_level: t.from_level })),
-  };
+  // Only the rungs that apply in this employee's department, and each
+  // move once — the same move written for four departments used to be
+  // listed four times.
+  const seen = new Set();
+  const excluded = active.filter((t) => mine(t.department)).filter((t) => {
+    const k = `${lc(t.to_role)}|${lc(t.from_level)}`;
+    if (seen.has(k)) return false;
+    seen.add(k); return true;
+  }).map((t) => ({ to_role: t.to_role, requires_level: t.from_level }));
+  return { ...base, reason: 'level_mismatch', matched: 0, excluded_by_level: excluded };
 }
 
 // Two horizons, not one. Asked for: Aspiring Career "structured into
@@ -925,14 +987,14 @@ router.get('/career/my-path', async (req, res) => {
       `SELECT designation, department, role_band, date_of_joining
          FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0] || {};
     const milestones = await milestonesFor(p ? p.id : null);
-    const transitions = await eligibleTransitionsFor(T(req), req.user.id);
+    const transitions = await targetsFor(T(req), req.user.id, horizon);
     const eligibleTargetRoles = [...new Set(transitions.map((t) => t.to_role))].sort();
     const phase = await activeCyclePhase(T(req));
     // path_diagnostics explains an EMPTY eligible list. Without it the UI
     // could only say "nothing configured", which is wrong whenever a
     // transition exists but was excluded on level.
     const diagnostics = eligibleTargetRoles.length ? null : await careerPathDiagnostics(T(req), req.user.id);
-    const gw = await growthWindowFor(T(req), req.user.id);
+    const gw = await growthWindowFor(T(req), req.user.id, horizon);
     res.json({ path: p || null, horizon, horizons_filled: filled, milestones, progress_pct: careerProgress(milestones),
       current: { designation: me.designation || null, department: me.department || null,
                  role_band: me.role_band || null, date_of_joining: me.date_of_joining || null },
@@ -945,10 +1007,11 @@ router.get('/career/my-path', async (req, res) => {
 
 router.put('/career/my-path', async (req, res) => {
   try {
-    const gw = await growthWindowFor(T(req), req.user.id);
+    // The horizon first: the two tabs lock at different phases.
+    const horizon = horizonOf(req.body && req.body.horizon);
+    const gw = await growthWindowFor(T(req), req.user.id, horizon);
     if (!gw.window.ok) return res.status(409).json({ error: careerShutMessage(gw.phase, gw.window) });
     const { target_role, target_timeline, plan, years_experience, skills_interests } = req.body || {};
-    const horizon = horizonOf(req.body && req.body.horizon);
     if (!target_role || !String(target_role).trim()) return res.status(400).json({ error: 'target_role required' });
     // Blank is a real answer — "I have not said yet" — and must not
     // become 0.0 years, which would read as a fact nobody stated.
@@ -959,7 +1022,7 @@ router.put('/career/my-path', async (req, res) => {
         return res.status(422).json({ error: 'Total years of experience must be a number between 0 and 60.' });
       }
     }
-    const transitions = await eligibleTransitionsFor(T(req), req.user.id);
+    const transitions = await targetsFor(T(req), req.user.id, horizon);
     const eligibleTargetRoles = [...new Set(transitions.map((t) => t.to_role))];
     if (eligibleTargetRoles.length && !eligibleTargetRoles.includes(target_role)) {
       return res.status(422).json({ error: `target_role must be one of the transitions configured from your current role in the Career Pathing Matrix: ${eligibleTargetRoles.join(', ')}` });
@@ -991,9 +1054,9 @@ router.put('/career/my-path', async (req, res) => {
 //   after you actually did it, which makes the number worthless.
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-async function myCareerPathId(tenantId, employeeId) {
+async function myCareerPathId(tenantId, employeeId, horizon = 'short_term') {
   const r = await db.query(
-    `SELECT id FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, employeeId]);
+    `SELECT id FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon=$3`, [tenantId, employeeId, horizon]);
   return r.rows[0] ? r.rows[0].id : null;
 }
 
@@ -1019,9 +1082,12 @@ function careerProgress(milestones) {
 // shape as the development plan's goals editor.
 router.put('/career/my-milestones', async (req, res) => {
   try {
-    const gw = await growthWindowFor(T(req), req.user.id);
+    // Each tab's milestones belong to that tab's path — they used to be
+    // written to Short-Term whichever tab they were typed on.
+    const horizon = horizonOf((req.body && req.body.horizon) || req.query.horizon);
+    const gw = await growthWindowFor(T(req), req.user.id, horizon);
     if (!gw.window.ok) return res.status(409).json({ error: careerShutMessage(gw.phase, gw.window) });
-    const pathId = await myCareerPathId(T(req), req.user.id);
+    const pathId = await myCareerPathId(T(req), req.user.id, horizon);
     if (!pathId) return res.status(409).json({ error: 'Set your target role first — milestones are the steps towards it' });
 
     const list = Array.isArray((req.body || {}).milestones) ? req.body.milestones : null;
@@ -1087,10 +1153,10 @@ router.put('/career/my-milestones/:id/progress', async (req, res) => {
       `UPDATE people.career_milestones m SET progress_pct=$1, updated_at=now()
          FROM people.career_paths p
         WHERE m.id=$2 AND m.career_path_id=p.id AND p.tenant_id=$3 AND p.employee_id=$4
-        RETURNING m.id`,
+        RETURNING m.id, m.career_path_id`,
       [Math.round(progress), req.params.id, T(req), req.user.id]);
     if (!r.rows[0]) return res.status(404).json({ error: 'milestone not found' });
-    const milestones = await milestonesFor(await myCareerPathId(T(req), req.user.id));
+    const milestones = await milestonesFor(r.rows[0].career_path_id);
     res.json({ ok: true, progress_pct: careerProgress(milestones), milestones });
   } catch (e) { logger.error('career milestone progress', { error: e.message }); res.status(500).json({ error: 'Could not update progress' }); }
 });
@@ -1134,11 +1200,13 @@ router.get('/career/team', async (req, res) => {
 // into its tables. The agentic module needs this to fold career progress
 // into a review assist, and going through here means a change to how a
 // career path is stored is one edit, not a hunt across the repo.
-async function careerPathFor(tenantId, employeeId) {
+async function careerPathFor(tenantId, employeeId, horizon = 'short_term') {
+  // One horizon — without it, an employee with both tabs filled got
+  // whichever row the database happened to return first.
   const r = await db.query(
-    `SELECT id, target_role, target_timeline, plan, updated_at
-       FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`,
-    [tenantId, employeeId]);
+    `SELECT id, horizon, target_role, target_timeline, plan, updated_at
+       FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon=$3`,
+    [tenantId, employeeId, horizon]);
   const path = r.rows[0];
   if (!path) return null;
   // Milestones come with it. The review assist was written to read "any
@@ -1167,6 +1235,6 @@ const hrbpScope = require('./hrbp-scope');
 router.use('/onboarding', require('./onboarding').router);
 router.use('/', require('./rnr').router);
 
-module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor,
+module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor,
                    transitionsWorkbook, suggestedTransitionRows,
                    TRANSITION_HEADERS, TRANSITION_BANNER, SUGGESTED_BANNER };

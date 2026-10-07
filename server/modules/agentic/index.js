@@ -14,7 +14,7 @@ const { requireConsent } = require('../../core/consent');
 // house rule that modules never import each other's internals. This is
 // also what guarantees career suggestions stay inside the set the
 // career-path form accepts — both resolve eligibility through it.
-const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor } = require('../people');
+const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor } = require('../people');
 // Same house rule, the other direction: the appraisal summary narrates the
 // performance module's own consolidation rather than re-gathering it.
 const { buildAnnualReviewSummary, kraSuggestionCandidates } = require('../performance');
@@ -866,7 +866,14 @@ router.post('/career-suggest', async (req, res) => {
     if (!emp) return res.status(404).json({ error: 'employee record not found' });
     if (!emp.designation) return res.status(409).json({ error: 'Your designation is not set — ask HR to complete your record before asking for career suggestions.' });
 
-    const transitions = await eligibleTransitionsFor(T(req), req.user.id);
+    // WHICH TAB, AND WHAT IS ON IT (8 Oct: the AI should suggest from the
+    // details the employee has filled in). The form sends its current
+    // values, saved or not; whatever it leaves blank is taken from what
+    // was last saved on that tab. Long-Term reads the matrix up to three
+    // rungs ahead; Short-Term, one.
+    const b = req.body || {};
+    const horizon = b.horizon === 'long_term' ? 'long_term' : 'short_term';
+    const transitions = await targetsFor(T(req), req.user.id, horizon);
     // Why the list is empty, when it is. Previously the model was handed a
     // bare empty array and — correctly, given that input — told the
     // employee no path was configured. That was FALSE whenever a
@@ -874,28 +881,41 @@ router.post('/career-suggest', async (req, res) => {
     // sent HR hunting for a row that was already there. The model can only
     // be as accurate as its input, so the input now carries the reason.
     const diagnostics = transitions.length ? null : await careerPathDiagnostics(T(req), req.user.id);
-    const current = (await db.query(
+    const saved = (await db.query(
       `SELECT target_role, target_timeline, plan, years_experience, skills_interests
-         FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`,
-      [T(req), req.user.id])).rows[0];
+         FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon=$3`,
+      [T(req), req.user.id, horizon])).rows[0] || {};
+    const typed = b.draft && typeof b.draft === 'object' ? b.draft : {};
+    const pick = (k, max) => {
+      const v = typed[k] != null && String(typed[k]).trim() !== '' ? typed[k] : saved[k];
+      return v == null || String(v).trim() === '' ? null : String(v).trim().slice(0, max);
+    };
+    const yrs = pick('years_experience', 10);
+    const current = {
+      target_role: pick('target_role', 200), target_timeline: pick('target_timeline', 100),
+      plan: pick('plan', 4000), skills_interests: pick('skills_interests', 2000),
+      years_experience: yrs != null && Number.isFinite(Number(yrs)) ? Number(yrs) : null,
+    };
+    const anyTyped = Object.values(current).some((v) => v != null);
 
     const input = {
       employee: { name: emp.name, designation: emp.designation, department: emp.department, role_band: emp.role_band, joined: emp.date_of_joining },
-      current_aspiration: current || null,
+      horizon: horizon === 'long_term' ? 'long_term: three years and beyond' : 'short_term: the next one to two years',
+      current_aspiration: anyTyped ? current : null,
       // The two questions the form now asks (migration 046). TOTAL
       // professional experience, which is not tenure here — someone who
       // joined last year may have fifteen years behind them — and what
       // the person says they are good at and drawn to. Both are
       // self-reported, and the prompt is told to treat them that way.
       self_reported: {
-        years_experience: current && current.years_experience != null
-          ? Number(current.years_experience) : null,
-        skills_and_interests: (current && current.skills_interests) || null,
+        years_experience: current.years_experience,
+        skills_and_interests: current.skills_interests,
       },
       // The closed list. Empty means HR has configured no ladder from this
       // role — reported as such rather than filled in by the model.
       configured_transitions: transitions.map((t) => ({
         to_role: t.to_role, to_level: t.to_level,
+        ...(t.steps ? { steps_up: t.steps, via: t.via } : {}),
         typical_time_months: t.typical_time_months,
         required_competencies: t.required_competencies || [],
       })),
@@ -907,8 +927,20 @@ router.post('/career-suggest', async (req, res) => {
       tenantId: T(req), kind: 'career_suggest', ref: { employee_id: req.user.id },
       requestedBy: req.user.email, input, maxTokens: 1400,
       system: `You help an employee think about the role they might aspire to over the
-next one to two years, given their current designation and department,
-and you give them a straight read on whether they are ready for it.
+horizon given in the input (short_term: the next one to two years;
+long_term: three years and beyond, where a configured_transition may be
+two or three rungs up — steps_up and via say how), given their current
+designation and department, and you give them a straight read on whether
+they are ready for it.
+
+START FROM WHAT THE EMPLOYEE HAS WRITTEN. current_aspiration holds what
+they have filled in on the form — a target role they are considering,
+a timeline, their growth plan, their experience, skills and interests.
+If they named a target role that is in configured_transitions, assess
+that one first. Build the fit, first steps and milestones on their own
+plan, skills and interests rather than generic advice, and say where
+their plan already covers a required competency. Where they left
+something blank, work without it and say what it would have added.
 
 self_reported carries two answers the employee typed: total years of
 professional experience, and their own account of their skills and
@@ -933,13 +965,15 @@ you must report THAT reason rather than assuming nothing exists:
   sends people looking for the wrong thing.
 - all_inactive: the path exists but every transition from this role is
   deactivated; HR can reactivate it.
+- department_mismatch: paths from this role exist, but only for other
+  departments (excluded_by_department lists them); HR can add one for the
+  employee's department or make one company-wide (blank department).
 - no_designation: the employee has no designation on their record, so
   nothing can be matched until HR sets it.
 Use the matrix's own typical_time_months and required_competencies rather
 than estimating your own. You never suggest, imply or hint at a
 performance rating or score, and you never promise a promotion — you are
 describing what an aspiration would require, not what will happen.
-Respond ONLY with JSON:
 Each suggested_milestone must be a step the employee could actually put a
 date against and mark progress on — "Lead one delivery workstream
 end to end", not "grow as a leader". Three to five per aspiration, in the
@@ -950,7 +984,10 @@ Respond ONLY with JSON:
  "notes":["anything the employee should discuss with their manager or HR"],
  "readiness":{"verdict":"ready | nearly | not_yet | cannot_assess","summary":"one short sentence, addressed to the employee","benchmark":"what the organisation typically expects for this move, from typical_time_months and required_competencies — say when the input gives you nothing","have":["competencies the required list asks for that their self-reported skills plausibly cover"],"gaps":["competencies the required list asks for that they have not evidenced"],"next_steps":["at most 3 concrete things that would close the biggest gap"]}}`,
     });
-    res.json({ ok: true, ...out, note: 'Suggestions only — limited to the transitions HR has configured from your current role.' });
+    res.json({ ok: true, ...out, horizon,
+      note: horizon === 'long_term'
+        ? 'Suggestions only — limited to where the Career Pathing Matrix leads from your current role, up to three steps.'
+        : 'Suggestions only — limited to the transitions HR has configured from your current role.' });
   } catch (e) { fail(res, e); }
 });
 
