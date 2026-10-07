@@ -2140,13 +2140,15 @@ const setting = async (tenantId, key) =>
   ((await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key=$2`, [tenantId, key])).rows[0] || {}).value || null;
 
 async function mailView(tenantId) {
-  const { sendMode, smtpConfig } = require('../../core/mail');
+  const { sendMode, transportConfig, transportReady } = require('../../core/mail');
   const row = (await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='smtp'`, [tenantId])).rows[0];
   const saved = (row && row.value) || {};
-  const eff = await smtpConfig(tenantId);
+  const tc = await transportConfig(tenantId);
+  const eff = tc.smtp;
+  const g = tc.google.key || {};
   const from = (k, envKey) => (saved[k] ? 'settings' : process.env[envKey] ? 'server' : null);
   const mode = await sendMode(tenantId);
-  const ready = !!(eff.host && eff.from);
+  const ready = transportReady(tc);
   const lastTest = await setting(tenantId, 'mail_last_test');
   const { explain } = require('../../core/mail');
   return {
@@ -2156,6 +2158,13 @@ async function mailView(tenantId) {
     stage: mode === 'live' ? 'live' : !ready ? 'not_set_up'
       : !lastTest ? 'untested' : lastTest.ok ? 'ready' : 'test_failed',
     last_test: lastTest ? { ...lastTest, hint: lastTest.ok ? null : explain(lastTest.detail) } : null,
+    // 'google': each email sent from the person's own Gmail (core/gmail.js).
+    // 'smtp': one mailbox. The private key is never part of this view.
+    transport: tc.transport,
+    google: {
+      connected: !!tc.google.key, client_email: g.client_email || null, client_id: g.client_id || null,
+      project_id: g.project_id || null, sender: tc.google.sender, scope: require('../../core/gmail').SCOPE,
+    },
     smtp: {
       host: saved.host || '', port: saved.port || '', user: saved.user || '', from: saved.from || '',
       secure: saved.secure == null ? null : !!saved.secure,
@@ -2223,12 +2232,54 @@ router.put('/hr/mail', async (req, res) => {
       const { pass, ...shown } = next;
       audit(req, 'MAIL_SMTP_CHANGED', null, null, { ...shown, pass_changed: typeof sm.pass === 'string' && sm.pass !== '' || sm.clear_pass === true });
     }
+    // GOOGLE WORKSPACE: the service-account key (write-only, like the SMTP
+    // password) and the address reminders are sent as.
+    if (b.google !== undefined) {
+      const gb = b.google || {};
+      const cur = (await setting(T(req), 'google_workspace')) || {};
+      let next = { ...cur };
+      let keyChanged = false;
+      if (gb.disconnect === true) { next = { sender: cur.sender }; keyChanged = true; }
+      if (gb.key_json !== undefined && gb.key_json !== '') {
+        try { Object.assign(next, require('../../core/gmail').parseKey(gb.key_json)); keyChanged = true; }
+        catch (e) { return res.status(422).json({ error: e.message }); }
+      }
+      if (gb.sender !== undefined) {
+        const v = String(gb.sender || '').trim().toLowerCase();
+        if (v && !/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$/.test(v)) return res.status(422).json({ error: `"${v}" is not an email address.` });
+        if (v) next.sender = v; else delete next.sender;
+      }
+      await db.query(
+        `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'google_workspace',$2::jsonb)
+         ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`, [T(req), JSON.stringify(next)]);
+      await db.query(`DELETE FROM core.admin_settings WHERE tenant_id=$1 AND key='mail_last_test'`, [T(req)]);
+      audit(req, 'MAIL_GOOGLE_CHANGED', null, null, { client_email: next.client_email || null, sender: next.sender || null, key_changed: keyChanged });
+    }
+    if (b.transport !== undefined) {
+      if (!['google', 'smtp'].includes(b.transport)) return res.status(422).json({ error: 'Transport must be "google" or "smtp".' });
+      const cur = await setting(T(req), 'mail_transport');
+      if (!cur || cur.transport !== b.transport) {
+        await db.query(
+          `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'mail_transport',$2::jsonb)
+           ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`, [T(req), JSON.stringify({ transport: b.transport })]);
+        // A different way out is a different thing to test — and while
+        // live, switching it would send through an untested path, so it
+        // drops back to recorded-only until tested.
+        await db.query(`DELETE FROM core.admin_settings WHERE tenant_id=$1 AND key='mail_last_test'`, [T(req)]);
+        if ((await mailView(T(req))).mode === 'live' && b.mode !== 'live') {
+          await db.query(`UPDATE core.admin_settings SET value='{"mode":"simulated"}'::jsonb, updated_at=now() WHERE tenant_id=$1 AND key='mail_send_mode'`, [T(req)]);
+        }
+        audit(req, 'MAIL_TRANSPORT_CHANGED', null, null, { transport: b.transport });
+      }
+    }
     if (b.mode !== undefined) {
       const view = await mailView(T(req));
       // Saved settings first (above), so turning live on in the same save
       // as entering the server is judged on the new values.
       if (b.mode === 'live' && !view.ready) {
-        return res.status(422).json({ error: 'Live email needs an SMTP server and a From address first.' });
+        return res.status(422).json({ error: view.transport === 'google'
+          ? 'Live email needs Google Workspace connected and a reminders sender first.'
+          : 'Live email needs an SMTP server and a From address first.' });
       }
       if (b.mode === 'live' && view.mode !== 'live' && !(view.last_test && view.last_test.ok)) {
         return res.status(422).json({ error: 'Send a test email first — Live is switched on only after a test email has been delivered with these settings.' });
@@ -2252,8 +2303,8 @@ router.put('/hr/mail', async (req, res) => {
 router.post('/hr/mail/test', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
-    const { smtpConfig, deliver, explain, sendMode, ensureLogTable } = require('../../core/mail');
-    const cfg = await smtpConfig(T(req));
+    const { transportConfig, deliver, explain, sendMode, ensureLogTable } = require('../../core/mail');
+    const cfg = await transportConfig(T(req));
     const to = req.user.email;
     const subject = 'Performance Management System — test email';
     let detail = null;

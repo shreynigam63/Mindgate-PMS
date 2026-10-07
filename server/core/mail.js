@@ -36,6 +36,27 @@ async function smtpConfig(tenantId) {
   return { host, port, user, pass, from, secure };
 }
 
+// HOW mail leaves: 'google' (Gmail API, sending as each person — see
+// core/gmail.js) or 'smtp' (one mailbox, above). Chosen on HR → Settings
+// → Email; an instance that never chose keeps SMTP, as before.
+const DEFAULT_SENDER_NAME = 'Performance Management System';
+const addrOf = (s) => { const m = String(s || '').match(/<([^>]+)>/); return (m ? m[1] : String(s || '')).trim().toLowerCase(); };
+
+async function transportConfig(tenantId) {
+  const rows = (await db.query(
+    `SELECT key, value FROM core.admin_settings WHERE tenant_id=$1 AND key IN ('mail_transport','google_workspace')`, [tenantId])).rows;
+  const get = (k) => ((rows.find((r) => r.key === k) || {}).value) || {};
+  const google = get('google_workspace');
+  return {
+    transport: get('mail_transport').transport === 'google' ? 'google' : 'smtp',
+    smtp: await smtpConfig(tenantId),
+    google: { key: google.private_key ? google : null, sender: google.sender || null },
+  };
+}
+
+const transportReady = (tc) => (tc.transport === 'google'
+  ? !!(tc.google.key && tc.google.sender) : !!(tc.smtp.host && tc.smtp.from));
+
 async function ensureLogTable() {
   await db.query(`CREATE TABLE IF NOT EXISTS core.notif_log (
     id bigserial PRIMARY KEY, tenant_id uuid, at timestamptz NOT NULL DEFAULT now(),
@@ -46,7 +67,21 @@ async function ensureLogTable() {
 // server's own reason when it cannot. Used by sendMail in live mode, and
 // by the settings screen's test, which must reach the real server even
 // while everything else is still simulated — that is the point of a test.
-async function deliver(cfg, msg, limitMs = 20000) {
+async function deliver(tc, msg, limitMs = 20000) {
+  if (tc.transport === 'google') {
+    const g = tc.google;
+    if (!g.key) throw new Error('Google Workspace is not connected — upload the key under Settings → Email');
+    if (!g.sender && !msg.from) throw new Error('No sender address for reminders — set it under Settings → Email');
+    // The person it is sent as is the From address: the SPOC for an
+    // onboarding email, the reminders sender otherwise. Gmail sends from
+    // that person's own mailbox; there is no other account in between.
+    const from = msg.from || `"${DEFAULT_SENDER_NAME}" <${g.sender}>`;
+    return require('./gmail').sendAs(g.key, addrOf(from), { ...msg, from });
+  }
+  return deliverSmtp(tc.smtp, msg, limitMs);
+}
+
+async function deliverSmtp(cfg, msg, limitMs) {
   // Default to smtp once a host is configured: an instance that has
   // filled in SMTP has said what it wants, and making them ALSO set
   // MAIL_PROVIDER was a second switch nobody could see was off.
@@ -83,6 +118,20 @@ async function deliver(cfg, msg, limitMs = 20000) {
 // Matched on the codes and phrases the common servers actually send.
 function explain(detail) {
   const d = String(detail || '');
+  // Google Workspace (core/gmail.js).
+  if (/unauthorized_client/i.test(d)) {
+    return 'Google has not authorised the PMS yet. In the Google Admin console → Security → Access and data control → API controls → Domain-wide delegation, add the PMS’s client ID (shown on this card) with the scope https://www.googleapis.com/auth/gmail.send. It can take a few minutes to start working.';
+  }
+  if (/invalid_grant/i.test(d) && /Not a valid email|Invalid email|user ID|not.*found/i.test(d)) {
+    return 'This address is not a user in Mindgate’s Google Workspace — perhaps a Google Group or a typo. Emails can only be sent as a real (or shared) Workspace user.';
+  }
+  if (/invalid_grant/i.test(d)) return 'Google refused the key. Check the server clock, or download a fresh JSON key for the service account and upload it again.';
+  if (/accessNotConfigured|has not been used in project|SERVICE_DISABLED|Gmail API has not been/i.test(d)) {
+    return 'The Gmail API is switched off in the Google Cloud project. Turn it on: Google Cloud console → APIs & Services → Library → Gmail API → Enable.';
+  }
+  if (/Gmail send as .*(FAILED_PRECONDITION|Precondition)/i.test(d)) {
+    return 'That user has no Gmail mailbox (Gmail is off for them, or the account is suspended). Use an address that has Gmail.';
+  }
   if (/SmtpClientAuthentication is disabled|5\.7\.139|basic authentication is disabled/i.test(d)) {
     return 'Microsoft 365 refused password sign-in for this mailbox. IT needs to turn on "Authenticated SMTP" for it in the Microsoft 365 admin centre — or, if the company has switched password sign-in off altogether, tell us and we will set up "Sign in with Microsoft" instead.';
   }
@@ -116,7 +165,7 @@ async function sendMail(tenantId, { to, subject, html, kind, from, replyTo, cc }
   let outcome = 'simulated', detail = null;
   if (mode === 'live') {
     try {
-      await deliver(await smtpConfig(tenantId), { to, subject, html, from, replyTo, cc });
+      await deliver(await transportConfig(tenantId), { to, subject, html, from, replyTo, cc });
     } catch (e) { outcome = 'failed'; detail = e.message; logger.warn('mail send failed', { to, subject, error: e.message }); }
     if (!detail) outcome = 'sent';
   }
@@ -126,4 +175,4 @@ async function sendMail(tenantId, { to, subject, html, kind, from, replyTo, cc }
   return { sent: outcome === 'sent', mode, outcome, detail };
 }
 
-module.exports = { sendMail, sendMode, smtpConfig, deliver, explain, ensureLogTable };
+module.exports = { sendMail, sendMode, smtpConfig, transportConfig, transportReady, deliver, explain, ensureLogTable, addrOf };

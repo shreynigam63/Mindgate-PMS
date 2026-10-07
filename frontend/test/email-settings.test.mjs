@@ -38,21 +38,30 @@ async function open(email, path) {
   return { ctx, page, errors };
 }
 
-test('HR sets email up in three steps, with server details out of the way', async (t) => {
+test('HR sets email up in three steps; Google Workspace sends from each person\'s own Gmail', async (t) => {
   if (!up) { t.skip('dev stack not running'); return; }
   const { ctx, page, errors } = await open('hr@shot.in', '/admin/settings');
-  const card = page.locator('.card', { hasText: 'Connect the PMS mailbox' });
-  const text = await card.innerText();
-  for (const s of ['Microsoft 365', 'Google Workspace', 'Other', 'Mailbox', 'Send a test email to yourself', 'Go live', 'from each SPOC’s own address', 'Send As']) {
+  const card = page.locator('.card', { hasText: 'Send a test email to yourself' });
+  let text = await card.innerText();
+  for (const s of ['Google Workspace', 'Microsoft 365', 'Other', 'Send a test email to yourself', 'Go live', 'from each SPOC’s own address']) {
     assert.ok(text.includes(s), `shows "${s}"`);
   }
-  assert.ok(!/Port/.test(text), 'server details stay under Advanced until asked for');
-  const stage = (await (await fetch(`${API}/api/v1/pms/hr/mail`, { headers: { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('apms_token'))}` } })).json()).stage;
-  if (stage !== 'ready' && stage !== 'live') {
+  const tok = await page.evaluate(() => localStorage.getItem('apms_token'));
+  const view = await (await fetch(`${API}/api/v1/pms/hr/mail`, { headers: { Authorization: `Bearer ${tok}` } })).json();
+  if (view.transport === 'google' || !view.smtp.host) {
+    assert.match(text, /no PMS mailbox and no passwords/i, 'Google is the way in when nothing else is set');
+    assert.ok(/Upload the key file|Key uploaded/.test(text));
+    assert.match(text, /Reminders and notifications are sent from/);
+    assert.ok(!/Password/.test(text), 'no password for Google');
+  }
+  if (view.stage !== 'ready' && view.stage !== 'live') {
     assert.equal(await card.getByRole('button', { name: 'Go live' }).isDisabled(), true, 'Go live waits for a delivered test');
   }
-  await card.getByRole('button', { name: /Advanced/ }).click();
-  assert.match(await card.innerText(), /smtp\.office365\.com|Server/);
+  await card.getByRole('button', { name: /Microsoft 365/ }).click();
+  text = await card.innerText();
+  assert.match(text, /Mailbox/);
+  assert.match(text, /Send As/);
+  assert.ok(!/\bPort\b/.test(text), 'server details stay under Advanced until asked for');
   assert.deepEqual(errors, []);
   await ctx.close();
 });

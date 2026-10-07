@@ -12,8 +12,8 @@ book can be checked against the code rather than believed.
 Once those are clear, most of Part 2 is predictable.
 
 **Live at pms.agentichumans.in: build `174922b`** (7 October 2026). This
-edition also describes onboarding emails always sent as the SPOC (§3.12)
-on the dev branch, which reach the live site with the next deploy. The build a screen is running is
+edition also describes sending through Google Workspace from each SPOC's
+own Gmail (§3.12) on the dev branch, which reach the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -625,48 +625,58 @@ opens to their week, day by day, then Day-7 feedback.
   neither, the screen says so and nothing is sent. Both addresses are
   worked out on the server, never taken from the request.
 - **How it leaves: from the SPOC's own address, always** (decided
-  7 Oct; the earlier choice of "the PMS mailbox on behalf of the SPOC"
-  is gone). The PMS mailbox set under HR → Settings → Email signs in to
-  the mail server and sends **as** the SPOC, so IT must grant that
-  mailbox **Send As** permission for each SPOC address once (and for
-  managers, buddies and HR POCs, who send from their own addresses too).
-  The Settings card lists the SPOC addresses to hand to IT. Without the
-  permission the mail server refuses, and the tracker shows why in words;
-  nothing is quietly sent under another name instead. Replies go to the
-  SPOC. While mail is in *simulated* mode the email is recorded, not
-  delivered — the screen says so and offers *Open in my mail app*.
-- **Email: HR → Settings → Email — three steps** (simplified for HR on
-  7 Oct). Until email is *Live* (the product default is *Simulated*),
-  every email is logged in `core.notif_log` and none is delivered.
-  1. **Connect the mailbox.** Pick *Microsoft 365*, *Google Workspace* or
-     *Other*, then type the mailbox (e.g. `pms@company.com`) and its
-     password — for Google an app password. The provider fills in server,
-     port and STARTTLS; the mailbox is the sign-in and the From address,
-     under the sender name "Performance Management System". Sender name,
-     a different sign-in username, and (for *Other*) server, port and SSL
-     sit under *Advanced (for IT)*. `SMTP_*` / `MAIL_FROM` in
-     `/etc/agentic-pms/api.env` still work; a value saved on the card wins.
-  2. **Send a test email to yourself.** It is **really delivered, even in
-     Simulated mode** — only to the person pressing it — through the same
-     transport every email uses (`core/mail.js` `deliver`), and gives up
-     after 20 seconds. A failure comes back as a sentence to act on
-     (`explain`: Authenticated SMTP off in Microsoft 365, Google app
-     password needed, wrong password, server unreachable, Send-As refused)
-     with the server's own words beneath. The result is kept
-     (`admin_settings` `mail_last_test`).
-  3. **Go live** — offered only once a test has been delivered. The server
-     enforces the order: PUT `mode: live` is refused until the last test
-     succeeded, and saving the mailbox again throws the old test away, so
-     a changed password is tested again. *Switch back to recorded-only*
-     returns to Simulated.
+  7 Oct). With **Google Workspace** connected — Mindgate's case — it is
+  sent from the SPOC's own Gmail (`core/gmail.js`): no PMS mailbox, no
+  passwords; it sits in the SPOC's Sent folder and replies reach them.
+  With a single **SMTP mailbox** instead (Microsoft 365 / Other), that
+  mailbox sends *as* the SPOC, which needs IT to grant it **Send As** for
+  each SPOC address. Either way a refusal is shown in words; nothing is
+  quietly sent under another name. While mail is in *simulated* mode the
+  email is recorded, not delivered — the screen says so and offers *Open
+  in my mail app*.
+- **Email: HR → Settings → Email — three steps.** Until email is *Live*
+  (the default is *Simulated*), every email is logged in `core.notif_log`
+  and none is delivered.
+  1. **Connect.** Three choices:
+     - **Google Workspace** (Mindgate; the default when nothing else is
+       set). IT, once: enable the Gmail API in a Google Cloud project,
+       create a service account and download its JSON key, upload the key
+       here, then in the Google Admin console → Security → API controls →
+       *Domain-wide delegation* add the service account's **Client ID**
+       (shown on the card after upload) with the one scope
+       `https://www.googleapis.com/auth/gmail.send`. HR sets the address
+       **reminders and notifications** are sent from (a real or shared
+       Workspace user — a Google Group cannot send). Every email is then
+       sent from the person's own Gmail: the PMS signs an RS256 token
+       request for that person (`sub`) and posts the message to the Gmail
+       API. That authorisation lets the PMS *send* (never read) as any user
+       in the domain, so it only ever sends as an address it worked out
+       itself — the activity's SPOC, the joiner's manager, buddy or HR
+       POC, or the reminders sender — never one from a request; every send
+       is logged with who it was from. The key is write-only and never
+       audited.
+     - **Microsoft 365** / **Other**: one mailbox and its password; the
+       provider fills in server, port and STARTTLS (*Advanced (for IT)*
+       holds the rest). It sends onboarding emails *as* the SPOC, needing
+       Send As from IT. `SMTP_*` / `MAIL_FROM` in `api.env` still work.
+  2. **Send a test email to yourself** — really delivered even in
+     Simulated mode, only to the person pressing it, through the same
+     transport every email uses; gives up after 20 seconds; a failure comes
+     back as a sentence (`core/mail.js` `explain`: Google not yet
+     authorised, Gmail API off, not a Workspace user, Authenticated SMTP
+     off, wrong password, server unreachable, Send As refused) with the
+     server's own words beneath. With Google, **each SPOC address is
+     checked as well, without sending anything** (`GET
+     /people/onboarding/spocs/check`): Google refuses a token for a group,
+     a typo or an outsider.
+  3. **Go live** — offered only after a delivered test; the server refuses
+     it otherwise. Saving new connection details, or switching between
+     Google and a mailbox, throws the old test away (and a switch while
+     live drops back to recorded-only until tested).
 
   The badge says where HR is: *Not set up*, *Next: send a test email*,
-  *Test failed*, *Ready to go live*, *Live*. **The password is
-  write-only**: never shown again, never in the audit log, and a blank
-  field on save keeps it; removing it is a separate button. The card is
-  HR's alone — an HRBP does not see it. Below the steps the card says
-  that First-Week Journey emails go from each SPOC's own address and lists
-  the SPOC addresses IT must grant Send As for.
+  *Test failed*, *Ready to go live*, *Live*. The card is HR's alone — an
+  HRBP does not see it.
 
 Verified against all 288 real rows of the workbook: planned date, status
 and days overdue match on every one. Three workbook faults were corrected
@@ -713,7 +723,7 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 | Which SPOC sends each onboarding activity's email | `people.onboarding_activities.sender_role` (seeded from the client's matrix) |
 | A joiner's personal email (used before joining) | The joiner's week → *Personal email (before joining)* |
 | Who ticks onboarding tasks | Permission `onboarding_ops` — in the `hr_ops`, `hr` and `hrbp` bundles; role `hr_ops` set on Employees |
-| Email: provider, PMS mailbox and password; test email; Go live (onboarding emails are always sent as the SPOC) | HR → Settings → Email (three steps) |
+| Email: Google Workspace key and reminders sender, or a mailbox and password; test email (and SPOC address check); Go live | HR → Settings → Email (three steps) |
 | AI on/off | `ANTHROPIC_API_KEY` in `/etc/agentic-pms/api.env` — instance-owned, never written by a deploy |
 | AI model | `deploy/service/managed-settings.env`, pushed into `api.env` by every deploy (`UNMANAGED=AI_MODEL` pins a box) |
 
@@ -737,5 +747,5 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 ---
 
 *Checked against the code on 7 October 2026 (live: `174922b`; plus the
-onboarding emails sent as the SPOC, on the dev branch). Where this book and the code disagree,
+sending from each SPOC's own Gmail, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

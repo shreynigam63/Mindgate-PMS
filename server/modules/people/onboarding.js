@@ -486,6 +486,29 @@ router.get('/spocs', async (req, res) => {
   } catch (e) { logger.error('onboarding spocs', { error: e.message }); res.status(500).json({ error: 'Could not load the SPOCs.' }); }
 });
 
+// Can each SPOC address actually be sent from? With Google Workspace this
+// is answerable without sending anything: Google issues a token for a
+// real user and refuses one for a group, a typo or someone outside the
+// domain. With a single SMTP mailbox it is not — only a send shows a
+// refused Send-As — so the answer is "not checkable" rather than a guess.
+router.get('/spocs/check', async (req, res) => {
+  if (!(await guard(req, res))) return;
+  try {
+    const { transportConfig, explain } = require('../../core/mail');
+    const tc = await transportConfig(T(req));
+    const dir = await directoryFor(T(req));
+    const listed = ROLES.filter((r) => dir[r] && dir[r].email).map((role) => ({ role, name: dir[role].name, email: dir[role].email }));
+    if (tc.transport !== 'google' || !tc.google.key) return res.json({ checkable: false, transport: tc.transport, spocs: listed });
+    const { canSendAs } = require('../../core/gmail');
+    const spocs = [];
+    for (const x of listed) {
+      const r = await canSendAs(tc.google.key, x.email.toLowerCase());
+      spocs.push({ ...x, ok: r.ok, detail: r.detail || null, hint: r.ok ? null : explain(r.detail) });
+    }
+    res.json({ checkable: true, transport: 'google', spocs });
+  } catch (e) { logger.error('onboarding spoc check', { error: e.message }); res.status(500).json({ error: 'Could not check the SPOC addresses.' }); }
+});
+
 router.put('/spocs/:role', async (req, res) => {
   if (!(await guard(req, res))) return;
   const role = String(req.params.role);
@@ -510,13 +533,13 @@ router.put('/spocs/:role', async (req, res) => {
 // THE JOINER'S EMAIL for one task: FROM the SPOC who owns the activity,
 // TO the joiner (see migration 083 and onboarding-spoc.js).
 //
-// How it leaves: FROM THE SPOC'S OWN ADDRESS, always (decided 7 Oct —
-// there used to be a choice of "the PMS mailbox on behalf of the SPOC").
-// The PMS mailbox set under HR → Settings → Email signs in to the mail
-// server and sends AS the SPOC, which needs IT to grant that mailbox
-// Send-As rights for each SPOC address once. Without them the server
-// refuses, and the tracker shows the refusal in words (core/mail.js
-// explain) — nothing is quietly sent under another name instead.
+// How it leaves: FROM THE SPOC'S OWN ADDRESS, always (decided 7 Oct).
+// With Google Workspace connected (Mindgate's case) it is sent from the
+// SPOC's own Gmail — core/gmail.js, no mailbox in between. With a single
+// SMTP mailbox instead, that mailbox sends AS the SPOC, which needs IT to
+// grant it Send-As for each SPOC address. Either way a refusal is shown in
+// words (core/mail.js explain) — nothing is quietly sent under another
+// name instead.
 
 async function emailPlan(req, taskId) {
   const tj = await taskWithJoiner(req, taskId);
