@@ -296,3 +296,22 @@ test('HOD TEAM COMPETENCIES: every employee in the departments they head, by dep
   const pages = (await db.query(`SELECT route, required_permission FROM core.page_permission WHERE tenant_id=$1 AND page IN ('hod_competencies','team_pip') ORDER BY page`, [S.t])).rows;
   assert.deepEqual(pages, [{ route: '/hod/competencies', required_permission: 'pms_hod' }, { route: '/team/pip', required_permission: 'pms_team_eval' }]);
 });
+
+test('CONNECTS: HR also means an HR department or designation, matched as a word', { skip }, async () => {
+  const ins = async (name, email, dept, desig) => (await db.query(
+    `INSERT INTO core.employees (tenant_id, name, email, status, department, designation)
+     VALUES ($1,$2,$3,'active',$4,$5) RETURNING id`, [S.t, name, email, dept, desig])).rows[0].id;
+  const byDept = await ins('Oct People Ops', 'o-pops@x.com', 'Human Resources', 'Executive');
+  const byDesig = await ins('Oct Head HR', 'o-headhr@x.com', 'Leadership', 'Head of HR');
+  const notHr = await ins('Oct Chrome', 'o-chrome@x.com', 'Delivery', 'Chrome Engineer');
+  const r = await api('/pms/connects/people', S.tok.emp);
+  const ids = r.body.hr.map((h) => h.id);
+  assert.ok(ids.includes(byDept), 'someone in the Human Resources department is HR');
+  assert.ok(ids.includes(byDesig), 'a Head of HR in another department is HR');
+  assert.ok(!ids.includes(notHr), '"hr" inside another word does not count');
+  assert.equal(r.body.hr.find((h) => h.id === byDept).matched_by, 'department');
+  assert.equal(ids[0], S.hrbp, 'role holders still come first');
+  const ok = await post('/pms/connects', S.tok.emp, { employee_id: S.emp, held_at: '2026-10-04', include_hr: true, hr_id: byDesig });
+  assert.equal(ok.status, 200, 'and can be picked');
+  assert.equal(ok.body.hr_id, byDesig);
+});

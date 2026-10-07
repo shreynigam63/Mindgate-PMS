@@ -201,12 +201,14 @@ function NewConnectForm({ me, team, onSaved }) {
             <select className="inp mt-1.5" value={hrId} onChange={(e) => setHrId(e.target.value)}>
               <option value="">Select HR…</option>
               {((people && people.hr) || []).map((h) => (
-                <option key={h.id} value={h.id}>{h.name}{h.role === 'hrbp' ? ' (HRBP)' : ' (HR)'}{h.id === people.suggested_hr_id ? ' — suggested' : ''}</option>
+                <option key={h.id} value={h.id}>
+                  {h.name} · {h.designation || (h.role === 'hrbp' ? 'HRBP' : 'HR')}{h.id === people.suggested_hr_id ? ' — suggested' : ''}
+                </option>
               ))}
             </select>
           )}
           {needHr && people && !(people.hr || []).length && (
-            <p className="text-[11px] text-amber-700 mt-1">Nobody holds an HR role yet — ask HR to set one up.</p>
+            <p className="text-[11px] text-amber-700 mt-1">Nobody is in HR yet — no one holds an HR role or has an HR department or designation in the employee master.</p>
           )}
         </div>
       </div>

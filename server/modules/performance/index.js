@@ -5927,7 +5927,7 @@ router.post('/connects', async (req, res) => {
     let hrId = null;
     if (include_hr) {
       const hr = await connectHrOptions(T(req), employee_id);
-      if (!hr.people.length) return res.status(422).json({ error: 'Nobody in HR is set up yet — ask HR to assign the HR or HRBP role.' });
+      if (!hr.people.length) return res.status(422).json({ error: 'Nobody is in HR yet — no one holds an HR role or sits in an HR department or designation.' });
       hrId = hr_id || hr.suggested_hr_id || hr.people[0].id;
       if (!hr.people.some((p) => p.id === hrId)) return res.status(422).json({ error: 'The HR person picked does not hold an HR role.' });
     }
@@ -6107,24 +6107,51 @@ router.put('/connects/questions', async (req, res) => {
 // connect with anyone. Name, designation and department only: the picker
 // needs nothing more, and people_admin still guards the full directory.
 const CONNECT_HR_ROLES = ['hr', 'hrbp'];
+// WHO COUNTS AS HR (7 Oct): "it should also consider from designation /
+// department of employees." The login role alone left the list empty on a
+// tenant where nobody had been given the hr or hrbp role yet, although the
+// employee master plainly had an HR department. So HR is anyone holding
+// the role, OR anyone whose department or designation says HR — "Human
+// Resources", "HR", "HR Manager", "Head of HR", "HR Business Partner",
+// "People & Culture". Matched as a word, so "Christopher" or "Shriram"
+// never count. Thresholds and labels in data, not code, would be the next
+// step if a client names the function something else entirely.
+const HR_WORDS = String.raw`(^|[^a-z])(hr|hrbp|hrd|hrm)([^a-z]|$)|human\s*resource|people\s*(and|&)\s*culture|people\s*(ops|operations|team)|talent\s*management`;
 async function connectHrOptions(tenantId, employeeId) {
   const people = (await db.query(
-    `SELECT e.id, e.name, e.email, e.designation, e.department, ur.role
+    `SELECT e.id, e.name, e.email, e.designation, e.department, ur.role AS login_role,
+            CASE
+              WHEN ur.role = ANY($2) THEN ur.role
+              WHEN COALESCE(e.designation,'') ~* '(^|[^a-z])hrbp([^a-z]|$)|business\s*partner' THEN 'hrbp'
+              ELSE 'hr'
+            END AS role,
+            CASE WHEN ur.role = ANY($2) THEN 'role'
+                 WHEN COALESCE(e.department,'') ~* $3 THEN 'department'
+                 ELSE 'designation' END AS matched_by
        FROM core.employees e
-       JOIN core.user_roles ur ON ur.tenant_id=e.tenant_id AND lower(ur.email)=lower(e.email)
-      WHERE e.tenant_id=$1 AND e.status='active' AND e.archived_at IS NULL AND ur.role = ANY($2)
-      ORDER BY (ur.role='hrbp') DESC, e.name`, [tenantId, CONNECT_HR_ROLES])).rows;
+       LEFT JOIN core.user_roles ur ON ur.tenant_id=e.tenant_id AND lower(ur.email)=lower(e.email)
+      WHERE e.tenant_id=$1 AND e.status='active' AND e.archived_at IS NULL
+        AND (ur.role = ANY($2) OR COALESCE(e.department,'') ~* $3 OR COALESCE(e.designation,'') ~* $3)
+      ORDER BY (ur.role = ANY($2)) DESC NULLS LAST,
+               (COALESCE(e.designation,'') ~* '(^|[^a-z])hrbp([^a-z]|$)|business\s*partner' OR ur.role='hrbp') DESC, e.name`,
+    [tenantId, CONNECT_HR_ROLES, HR_WORDS])).rows;
   let suggested = null;
   const emp = employeeId ? (await db.query(
     `SELECT location, hod_name FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0] : null;
   if (emp) {
     const { hrbpScope } = require('../people');
-    for (const p of people.filter((x) => x.role === 'hrbp')) {
+    for (const p of people.filter((x) => x.login_role === 'hrbp')) {
       const remit = await hrbpScope.remitFor(tenantId, p.email);
       if (!remit.empty && hrbpScope.matches(remit, emp)) { suggested = p.id; break; }
     }
   }
-  if (!suggested) { const hr = people.find((x) => x.role === 'hr'); suggested = hr ? hr.id : (people[0] ? people[0].id : null); }
+  // No HRBP covering this person: an HR role-holder, else the first person
+  // from the HR department — never the employee themselves.
+  if (!suggested) {
+    const pool = people.filter((x) => x.id !== employeeId);
+    const hr = pool.find((x) => x.login_role === 'hr') || pool[0];
+    suggested = hr ? hr.id : null;
+  }
   return { people, suggested_hr_id: suggested };
 }
 
@@ -6137,7 +6164,8 @@ router.get('/connects/people', async (req, res) => {
         ORDER BY name`, [T(req), req.user.id])).rows;
     const hr = await connectHrOptions(T(req), req.query.employee_id || req.user.id);
     res.json({ people, my_manager_id: me ? me.manager_id : null,
-      hr: hr.people.map(({ id, name, designation, department, role }) => ({ id, name, designation, department, role })),
+      hr: hr.people.filter((p) => p.id !== req.user.id)
+        .map(({ id, name, designation, department, role, matched_by }) => ({ id, name, designation, department, role, matched_by })),
       suggested_hr_id: hr.suggested_hr_id });
   } catch (e) { logger.error('connect people', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
