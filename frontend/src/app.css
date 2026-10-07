@@ -377,7 +377,7 @@ body { background: #f3f6fc; }
    and where they do wrap the last row stretches, so there is never a hole
    beside a lone card — the "gaps" the client circled on 1 Oct. */
 .kpirow { @apply flex flex-wrap gap-3; }
-.kpirow > * { flex: 1 1 230px; }
+.kpirow > * { flex: 1 1 190px; }
 .kpi { @apply rounded-2xl px-4 py-2.5 flex items-center gap-3 transition-transform min-w-0; border: 1px solid transparent; }
 a.kpi:hover { transform: translateY(-2px); }
 .kpi-i { @apply w-10 h-10 rounded-xl flex items-center justify-center shrink-0; }

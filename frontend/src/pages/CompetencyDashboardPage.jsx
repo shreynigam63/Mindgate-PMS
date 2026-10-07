@@ -5,6 +5,7 @@ import { ScaleLegend } from '../CompetencyScale';
 import {
   Users, Gauge, AlertTriangle, TrendingDown, Download, ClipboardCheck, Layers,
 } from 'lucide-react';
+import Kpi from '../Kpi';
 
 // The HR Dashboard sheet of the client's workbook — "complete
 // competency of the organization".
@@ -29,17 +30,10 @@ const PRIORITY = {
   Met: 'bg-emerald-100 text-emerald-700',
 };
 
-function Stat({ icon: Icon, hue, n, label, sub }) {
-  return (
-    <div className="stat">
-      <span className={`stat-i si-${hue}`}><Icon size={22} /></span>
-      <span className="stat-t">
-        <span className="stat-l">{label}</span>
-        <span className="stat-n">{n}</span>
-        {sub && <span className="block text-[10.5px] text-navy-400 mt-0.5">{sub}</span>}
-      </span>
-    </div>
-  );
+// The main Dashboard's card (../Kpi.jsx) — the old white stat tile was
+// replaced on 7 Oct so every dashboard reads the same.
+function Stat(props) {
+  return <Kpi {...props} />;
 }
 
 const num = (v) => (v == null ? '—' : v.toFixed(2));
@@ -94,11 +88,11 @@ export default function CompetencyDashboardPage() {
       </PageHead>
 
       {/* Coverage before averages, always. */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="kpirow">
         <Stat icon={Users} hue="navy" n={c.employees ?? 0} label="Employees in scope" />
-        <Stat icon={ClipboardCheck} hue="lagoon" n={`${c.self_submitted ?? 0}`}
+        <Stat icon={ClipboardCheck} hue="lagoon" n={c.self_submitted ?? 0}
           label="Self-assessments in" sub={`of ${c.employees ?? 0}`} />
-        <Stat icon={Gauge} hue="violet" n={`${c.manager_submitted ?? 0}`}
+        <Stat icon={Gauge} hue="violet" n={c.manager_submitted ?? 0}
           label="Manager assessments in" sub={`${pct}% of the organisation`} />
         <Stat icon={AlertTriangle} hue="red" n={o.below_required ?? 0} label="Ratings below required" />
       </div>

@@ -18,18 +18,12 @@ import TimesheetDashboard, { RatingChip } from '../TimesheetDashboard';
 import TimesheetTabs from '../TimesheetTabs';
 import TimesheetKra from '../TimesheetKra';
 import { Users, CheckCircle2, AlertTriangle, XCircle, ChevronLeft } from 'lucide-react';
+import Kpi from '../Kpi';
 
-function Stat({ icon: Icon, hue, n, label, sub }) {
-  return (
-    <div className="stat">
-      <span className={`stat-i si-${hue}`}><Icon size={22} /></span>
-      <span className="stat-t">
-        <span className="stat-l">{label}</span>
-        <span className="stat-n">{n}</span>
-        {sub && <span className="block text-[10.5px] text-navy-400 mt-0.5">{sub}</span>}
-      </span>
-    </div>
-  );
+// The main Dashboard's card (../Kpi.jsx) — the old white stat tile was
+// replaced on 7 Oct so every dashboard reads the same.
+function Stat(props) {
+  return <Kpi {...props} />;
 }
 
 export function TimesheetRoster({ rows, onOpen, q, setQ, showDepartment }) {
@@ -151,7 +145,7 @@ export default function TeamTimesheetPage() {
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="Team Timesheet" hue="lagoon"
         sub="Timesheet compliance for the people who report to you. Click anyone for their full record." />
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="kpirow">
         <Stat icon={Users} hue="lagoon" n={rows.length} label="Your reportees"
           sub={`${withData.length} have uploaded`} />
         <Stat icon={CheckCircle2} hue="leaf" n={withData.filter((r) => r.rating === 'Green').length} label="Green" />

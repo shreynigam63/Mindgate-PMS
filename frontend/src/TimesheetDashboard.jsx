@@ -15,6 +15,7 @@ import { useState } from 'react';
 import {
   CalendarCheck, CalendarX, Clock, Gauge, CheckCircle2, XCircle, AlertTriangle,
 } from 'lucide-react';
+import Kpi from './Kpi';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -40,17 +41,10 @@ export function RatingChip({ rating, children }) {
   );
 }
 
-function Stat({ icon: Icon, hue, n, label, sub }) {
-  return (
-    <div className="stat">
-      <span className={`stat-i si-${hue}`}><Icon size={22} /></span>
-      <span className="stat-t">
-        <span className="stat-l">{label}</span>
-        <span className="stat-n">{n}</span>
-        {sub && <span className="block text-[10.5px] text-navy-400 mt-0.5">{sub}</span>}
-      </span>
-    </div>
-  );
+// The main Dashboard's card (../Kpi.jsx) — the old white stat tile was
+// replaced on 7 Oct so every dashboard reads the same.
+function Stat(props) {
+  return <Kpi {...props} />;
 }
 
 // Filled % per cycle. An SVG rather than a chart library: seven bars, two
@@ -166,7 +160,7 @@ export default function TimesheetDashboard({ report, compact }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="kpirow">
         <Stat icon={Gauge} hue="navy" n={`${t.pct}%`} label="Overall filled"
           sub={t.rating} />
         <Stat icon={CalendarCheck} hue="lagoon" n={t.filled} label="Days filled"

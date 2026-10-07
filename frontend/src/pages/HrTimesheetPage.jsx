@@ -23,6 +23,7 @@ import {
   Users, CheckCircle2, AlertTriangle, XCircle, Clock, ChevronLeft, SlidersHorizontal, Save,
   Link2Off, Target, ClipboardList, Lock, FileSearch,
 } from 'lucide-react';
+import Kpi from '../Kpi';
 
 // ---- closing a period, and the year-end rollup (phase 4) --------------
 //
@@ -310,7 +311,7 @@ function Backlog({ onOpen }) {
       <Period />
       <ClosePeriod windows={b.windows} onClosed={() => setClosedAt((n) => n + 1)} />
       <Rollup reloadKey={closedAt} />
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="kpirow">
         <Stat icon={Target} hue="violet" n={`${t.mapped_pct}%`} label="Hours placed"
           sub={`${t.mapped_hours} of ${t.hours} logged`} />
         <Stat icon={Link2Off} hue="amber" n={t.unmapped_items} label="Items unplaced"
@@ -382,17 +383,10 @@ function Backlog({ onOpen }) {
   );
 }
 
-function Stat({ icon: Icon, hue, n, label, sub }) {
-  return (
-    <div className="stat">
-      <span className={`stat-i si-${hue}`}><Icon size={22} /></span>
-      <span className="stat-t">
-        <span className="stat-l">{label}</span>
-        <span className="stat-n">{n}</span>
-        {sub && <span className="block text-[10.5px] text-navy-400 mt-0.5">{sub}</span>}
-      </span>
-    </div>
-  );
+// The main Dashboard's card (../Kpi.jsx) — the old white stat tile was
+// replaced on 7 Oct so every dashboard reads the same.
+function Stat(props) {
+  return <Kpi {...props} />;
 }
 
 function Settings({ settings, onSaved }) {
@@ -506,7 +500,7 @@ export default function HrTimesheetPage() {
 
       <TimesheetTabs value={view} onChange={setView} />
       {view === 'kra' ? <Backlog onOpen={setOpen} /> : <>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="kpirow">
         <Stat icon={Users} hue="violet" n={t.employees ?? 0} label="Employees in scope"
           sub={`${t.with_data ?? 0} have uploaded`} />
         <Stat icon={CheckCircle2} hue="leaf" n={t.green ?? 0} label="Green" />

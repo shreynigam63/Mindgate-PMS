@@ -9,6 +9,7 @@ import {
   CalendarDays, Minus, AlertCircle, Search,
 } from 'lucide-react';
 import Summit from '../Summit';
+import SharedKpi from '../Kpi';
 import MyOnboardingEmails from './MyOnboardingEmails';
 import { SHOW_FIRST_WEEK_JOURNEY } from '../features';
 
@@ -53,25 +54,11 @@ import { SHOW_FIRST_WEEK_JOURNEY } from '../features';
 // the cycle complete"), the card shows the figure it does have instead
 // (which step of the cycle this is), rather than inventing one.
 
-// The four colours of the reference's attention cards, by what the card
-// means rather than by position.
-const KPI_HUE = { red: 'red', amber: 'amber', leaf: 'green', violet: 'violet', navy: 'blue', azure: 'blue', lagoon: 'blue' };
-const fmt = (n) => (typeof n === 'number' ? (n < 10 && n >= 0 ? String(n).padStart(2, '0') : n.toLocaleString('en-IN')) : n);
-
-export function Kpi({ icon: Icon, hue, n, label, to, hint }) {
-  const body = (
-    <>
-      <span className="kpi-i"><Icon size={20} /></span>
-      <span className="min-w-0 flex-1">
-        <span className="kpi-n">{fmt(n)}</span>
-        <span className="kpi-l">{label}</span>
-      </span>
-      {to && <ChevronRight size={17} className="text-navy-700 shrink-0" />}
-    </>
-  );
-  const cls = `kpi kpi-${KPI_HUE[hue] || 'blue'}`;
-  return to ? <NavLink to={to} className={cls} title={hint}>{body}</NavLink>
-            : <div className={`${cls} opacity-80`} title={hint}>{body}</div>;
+// The attention card lives in ../Kpi.jsx now, shared with every other
+// dashboard. A card with nowhere to go is shown muted here — on this page
+// that only happens to My rating before anything is published.
+export function Kpi(props) {
+  return <SharedKpi muted={!props.to} {...props} />;
 }
 
 export const greeting = () => {

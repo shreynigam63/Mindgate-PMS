@@ -11,8 +11,8 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `f22c54f`** (7 October 2026). It
-carries:
+**Live at pms.agentichumans.in** (7 October 2026). The build is in the
+**?** menu and at `/api/v1/health`. It carries:
 
 - connects with anyone, and the HR question (§2.1);
 - KRA, KPI and weightage editable in the reviews (§3.1);
@@ -21,12 +21,10 @@ carries:
 - the HOD's Team Competencies (§2.3);
 - the bell-curve chart on Calibration (§3.4).
 
-This edition also describes three changes on the dev branch, which reach
-the live site with the next deploy:
-
 - the Manager Dashboard rebuilt on the main Dashboard's design (§2.2);
 - the HRBP tab trimmed to eleven pages (§2.4);
-- deleting a survey (§3.11).
+- deleting a survey (§3.11);
+- one card design on every dashboard (§1.4).
 
 The build a screen is running is shown in its **?** menu, and
 `/api/v1/health` reports the same commit.
@@ -174,6 +172,18 @@ drives both menu and guard, so giving an HRBP the `/admin/*` rows would put
 the **HR section itself** in their menu.
 
 ## 1.4 Four house rules visible on every screen
+
+**One card design on every dashboard (7 Oct).** The client asked to
+"update all old UI to new UI". So every dashboard's count strip now uses
+the main Dashboard's pastel attention card, from `frontend/src/Kpi.jsx`.
+That covers:
+
+- Home and the Manager Dashboard;
+- the Competency Dashboard;
+- the HR, HRBP and team Timesheet dashboards;
+- the employee's own timesheet summary.
+
+Before this, the last four drew their own white stat tile.
 
 1. **Deterministic numbers; AI narrates.** Every rating, score and
    distribution is SQL. The agentic module drafts *text*, always labelled a
@@ -1005,6 +1015,5 @@ it. Opening, editing, gate reviews and closing are audited and notified.
 
 ---
 
-*Checked against the code on 7 October 2026 (live: `f22c54f`; plus the
-dev-branch changes listed at the top). Where this book and the code disagree,
+*Checked against the code on 7 October 2026. Where this book and the code disagree,
 the code is right and this book is a bug.*
