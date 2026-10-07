@@ -187,7 +187,7 @@ function Holidays({ onClose, onChanged }) {
   );
 }
 
-// The company-wide SPOC desks a task email can go to. Manager and Buddy
+// The SPOC desks each activity's email is sent from. Manager and Buddy
 // come from each joiner's record, so they are listed but not set here.
 function Spocs({ onClose }) {
   const [list, setList] = useState(null);
@@ -209,7 +209,7 @@ function Spocs({ onClose }) {
       <div className="panel-h">
         <Contact size={18} className="text-brand-600" />
         <span className="panel-t">SPOCs</span>
-        <span className="text-[12px] text-navy-400">Who each task's “Email SPOC” goes to</span>
+        <span className="text-[12px] text-navy-400">Who each activity’s email is sent FROM, to the joiner</span>
         <button type="button" className="ml-auto topicon !w-8 !h-8" onClick={onClose} aria-label="Close"><X size={16} /></button>
       </div>
       {err && <p className="text-[12.5px] text-rose-600 mb-2">{err}</p>}
@@ -226,7 +226,7 @@ function Spocs({ onClose }) {
                 <button type="button" className="btn-sec" onClick={() => save(x.role)}>Save</button>
                 {saved === x.role && <span className="text-[12px] text-leaf-600">Saved</span>}
                 {x.note && <span className="basis-full text-[11.5px] text-navy-400 pl-[7.5rem]">{x.note}</span>}
-                {!x.email && <span className="text-[11.5px] text-amber-700">not set — tasks for {x.role} cannot be emailed</span>}
+                {!x.email && <span className="text-[11.5px] text-amber-700">not set — {x.role}’s activities cannot be emailed to joiners</span>}
               </>
             )}
           </div>
@@ -249,7 +249,7 @@ function Matrix({ days, onClose }) {
       </div>
       <div className="overflow-x-auto">
         <table className="tbl">
-          <thead><tr><th>#</th><th>Day</th><th>Theme</th><th>Activity</th><th>Owner</th><th>What we do</th><th>Expected outcome</th><th>Ack</th></tr></thead>
+          <thead><tr><th>#</th><th>Day</th><th>Theme</th><th>Activity</th><th>Owner</th><th>Email from</th><th>What we do</th><th>Expected outcome</th><th>Ack</th></tr></thead>
           <tbody>
             {(acts || []).map((a) => (
               <tr key={a.id}>
@@ -258,6 +258,7 @@ function Matrix({ days, onClose }) {
                 <td className="text-navy-500">{a.theme}</td>
                 <td className="font-semibold text-navy-900">{a.activity}{!a.mandatory && <span className="pill pill-gray ml-1.5">optional</span>}</td>
                 <td className="text-navy-600">{a.owner}</td>
+                <td className="text-navy-600">{a.sender_role || '—'}</td>
                 <td className="!whitespace-normal min-w-[260px] text-navy-600">{a.process}</td>
                 <td className="!whitespace-normal min-w-[200px] text-navy-500">{a.outcome}</td>
                 <td>{a.ack_required ? 'Yes' : '—'}</td>
@@ -271,14 +272,15 @@ function Matrix({ days, onClose }) {
   );
 }
 
-// EMAIL THE SPOC. Asked for on 6 Oct: "clicking on each option should
-// initiate email to particular spoc working for that task". The server
-// decides who it goes to (the joiner's manager or buddy from their
-// record; the IT, Admin, Recruiter… desks from the SPOC list) and drafts
-// the text; it is editable here before it goes. When this instance's mail
-// is still in simulated mode the email is logged, not delivered, and the
-// screen says so — with a button to send it from your own mail app.
-function EmailSpoc({ taskId, onSent, onClose }) {
+// THE JOINER'S EMAIL for one task. Corrected on 7 Oct: the first-week
+// mails go TO the new joiner, FROM the SPOC who owns the activity — the
+// IT desk sends the laptop mail, the manager sends the goal-setting mail.
+// The server works out both addresses (the SPOC from the SPOCs list or the
+// joiner's own manager/buddy/HR POC; the joiner's personal address before
+// they join, their company address after) and drafts the text, which is
+// editable here before it goes. In simulated mode it is logged, not
+// delivered, and the screen says so.
+function JoinerEmail({ taskId, onSent, onClose }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
   const [subject, setSubject] = useState('');
@@ -298,20 +300,30 @@ function EmailSpoc({ taskId, onSent, onClose }) {
     catch (e) { setErr(e.message); }
     setBusy(false);
   };
-  const mailto = `mailto:${d.to.map((x) => x.email).join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const from = d.from || {};
+  const ready = !from.missing && !!d.to;
+  const mailto = d.to ? `mailto:${d.to.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
   return (
-    <div className="px-3 pb-3 pt-3 border-t border-[#eef1f6] space-y-2.5 bg-[#f8faff]">
+    <div className="px-3 pb-3 pt-3 border-t border-[#eef1f6] space-y-2 bg-[#f8faff]">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="lbl !mb-0">To</span>
-        {d.to.map((x) => (
-          <span key={x.email} className="pill pill-blue" title={x.email}>{x.role}: {x.name || x.email} &lt;{x.email}&gt;</span>
-        ))}
-        {!d.to.length && <span className="text-[12px] text-navy-500">Nobody yet —</span>}
+        <span className="lbl !mb-0 w-10">From</span>
+        {from.missing
+          ? <span className="text-[12px] text-amber-700">{from.role ? `${from.role}: ` : ''}{from.missing}</span>
+          : <span className="pill pill-green" title={from.email}>{from.role}: {from.name} &lt;{from.email}&gt;</span>}
         <button type="button" className="ml-auto topicon !w-7 !h-7" onClick={onClose} aria-label="Close"><X size={14} /></button>
       </div>
-      {d.missing.map((m) => (
-        <p key={m.role} className="text-[12px] text-amber-700">{m.role}: {m.why}</p>
-      ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="lbl !mb-0 w-10">To</span>
+        {d.to
+          ? <><span className="pill pill-blue" title={d.to.email}>{d.to.name} &lt;{d.to.email}&gt;</span>
+            <span className="text-[11.5px] text-navy-400">{d.to.why}</span></>
+          : <span className="text-[12px] text-amber-700">{d.to_missing}</span>}
+      </div>
+      {!d.send_as_spoc && !from.missing && (
+        <p className="text-[11.5px] text-navy-400">
+          It leaves from the system mailbox under {from.name}’s name, with {from.name} in copy — replies go to {from.name}.
+        </p>
+      )}
       {d.mail_mode !== 'live' && (
         <p className="text-[12px] text-amber-700">
           Email on this instance is in <b>simulated</b> mode — sending records it on the tracker but does not deliver it.
@@ -321,15 +333,17 @@ function EmailSpoc({ taskId, onSent, onClose }) {
       <input className="inp" value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Subject" />
       <textarea className="inp" rows={9} value={body} onChange={(e) => setBody(e.target.value)} aria-label="Message" />
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="btn-pri" disabled={busy || !d.to.length} onClick={send}>
-          <Send size={12} className="inline mr-1" />{busy ? 'Sending…' : `Send to ${d.to.length || 'nobody'}`}
-        </button>
-        {!!d.to.length && <a className="btn-sec" href={mailto}><Mail size={12} className="inline mr-1" />Open in my mail app</a>}
+        {d.can_send ? (
+          <button type="button" className="btn-pri" disabled={busy || !ready} onClick={send}>
+            <Send size={12} className="inline mr-1" />{busy ? 'Sending…' : `Send to ${d.to ? d.to.name.split(/\s+/)[0] : 'the joiner'}`}
+          </button>
+        ) : <span className="text-[12px] text-navy-500">HR Ops, HR and HRBP send these emails.</span>}
+        {mailto && <a className="btn-sec" href={mailto}><Mail size={12} className="inline mr-1" />Open in my mail app</a>}
         {done && (
           <span className={`text-[12px] ${done.outcome === 'sent' ? 'text-leaf-600' : 'text-amber-700'}`}>
-            {done.outcome === 'sent' ? `Sent to ${done.to.join(', ')}.`
-              : done.outcome === 'simulated' ? `Recorded for ${done.to.join(', ')} — not delivered (simulated mail).`
-                : `Not delivered: ${done.outcome}. Try "Open in my mail app".`}
+            {done.outcome === 'sent' ? `Sent to ${done.to}, from ${done.from}.`
+              : done.outcome === 'simulated' ? `Recorded for ${done.to} — not delivered (simulated mail).`
+                : `Not delivered: ${done.detail || done.outcome}. Try "Open in my mail app".`}
           </span>
         )}
         {err && <span className="text-[12px] text-rose-600">{err}</span>}
@@ -339,7 +353,7 @@ function EmailSpoc({ taskId, onSent, onClose }) {
           <p className="lbl !mb-0">Emailed before</p>
           {d.history.map((h, i) => (
             <p key={i}>{new Date(h.sent_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-              {' '}by {h.sent_by} to {h.to_emails.join(', ')} · {h.outcome}</p>
+              {' '}by {h.sent_by}{h.from_email ? `, from ${h.from_email}` : ''} to {h.to_emails.join(', ')} · {h.outcome}</p>
           ))}
         </div>
       )}
@@ -348,7 +362,7 @@ function EmailSpoc({ taskId, onSent, onClose }) {
 }
 
 // One task row, with its follow-up fields folded underneath.
-function TaskRow({ t, onSaved, asOf }) {
+function TaskRow({ t, onSaved, asOf, canOperate }) {
   const [open, setOpen] = useState(false);
   const [mail, setMail] = useState(false);
   const [f, setF] = useState({
@@ -358,16 +372,21 @@ function TaskRow({ t, onSaved, asOf }) {
   const [err, setErr] = useState(null);
   const save = async (patch) => {
     setErr(null);
-    try { await api(`/people/onboarding/tasks/${t.id}`, { method: 'PATCH', body: JSON.stringify(patch) }); await onSaved(); }
+    // The tick, its date and the acknowledgement are HR Ops' — the server
+    // refuses them from anyone else, so they are not sent.
+    const body = canOperate ? patch
+      : Object.fromEntries(Object.entries(patch).filter(([k]) => k !== 'completed_on' && k !== 'ack_received'));
+    try { await api(`/people/onboarding/tasks/${t.id}`, { method: 'PATCH', body: JSON.stringify(body) }); await onSaved(); }
     catch (e) { setErr(e.message); }
   };
   const done = t.status === 'Completed';
   return (
     <div className={`rounded-xl border ${t.status === 'Overdue' ? 'border-rose-100 bg-rose-50/30' : 'border-[#eef1f6] bg-white'}`}>
       <div className="flex flex-wrap items-center gap-3 px-3 py-2.5">
-        <button type="button" aria-label={done ? 'Mark not done' : 'Mark done'}
+        <button type="button" aria-label={done ? 'Mark not done' : 'Mark done'} disabled={!canOperate}
+          title={canOperate ? undefined : 'HR Ops, HR and HRBP mark tasks done'}
           onClick={() => save({ completed_on: done ? null : localToday() })}
-          className={`w-6 h-6 rounded-md border-2 flex items-center justify-center shrink-0 ${done ? 'bg-[#22a35a] border-[#22a35a] text-white' : 'border-navy-200 hover:border-brand-500'}`}>
+          className={`w-6 h-6 rounded-md border-2 flex items-center justify-center shrink-0 disabled:cursor-not-allowed ${done ? 'bg-[#22a35a] border-[#22a35a] text-white' : `border-navy-200 ${canOperate ? 'hover:border-brand-500' : 'opacity-60'}`}`}>
           {done && <Check size={14} strokeWidth={3} />}
         </button>
         <span className="flex-1 min-w-[200px]">
@@ -376,28 +395,27 @@ function TaskRow({ t, onSaved, asOf }) {
           </span>
           <span className="block text-[11.5px] text-navy-400">{t.process}</span>
         </span>
-        <button type="button" className="pill pill-blue hover:bg-brand-100" onClick={() => setMail((v) => !v)}
-          title={`Email ${(t.spoc_roles || []).join(', ') || 'the SPOC'} about this task`}>
-          <Mail size={11} className="mr-1" />{t.owner}
-        </button>
+        <span className="pill pill-blue" title={t.sender_role ? `The email for this activity is sent from ${t.sender_role}` : undefined}>
+          {t.owner}
+        </span>
         <span className="text-[12px] text-navy-500 w-24">{fmtDay(t.planned_date)}</span>
         <span className={`pill ${STATUS_PILL[t.status]}`}>
           {t.status}{t.status === 'Overdue' && t.days_overdue ? ` · ${t.days_overdue}d` : ''}{done && t.completed_on ? ` · ${fmtDate(t.completed_on)}` : ''}
         </span>
         {t.ack_required && (
-          <button type="button" onClick={() => save({ ack_received: !t.ack_received })}
-            className={`pill ${t.ack_received ? 'pill-green' : 'pill-amber'}`} title="Acknowledgement required for this activity">
+          <button type="button" onClick={() => save({ ack_received: !t.ack_received })} disabled={!canOperate}
+            className={`pill ${t.ack_received ? 'pill-green' : 'pill-amber'} disabled:cursor-not-allowed`} title="Acknowledgement required for this activity">
             Ack {t.ack_received ? 'received' : 'pending'}
           </button>
         )}
         {t.issue && !t.closure_date && <MessageSquareWarning size={16} className="text-rose-500" title={t.issue} />}
         {t.last_emailed_at && (
-          <span className="text-[11px] text-navy-400" title={(t.last_emailed_to || []).join(', ')}>
+          <span className="text-[11px] text-navy-400" title={`to ${(t.last_emailed_to || []).join(', ')}${t.last_emailed_from ? `, from ${t.last_emailed_from}` : ''}`}>
             emailed {new Date(t.last_emailed_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
           </span>
         )}
         <button type="button" className="btn-sec !px-2.5 !py-1.5" onClick={() => setMail((v) => !v)} aria-expanded={mail}>
-          <Mail size={12} className="inline mr-1" />Email SPOC
+          <Mail size={12} className="inline mr-1" />Email joiner{t.sender_role ? ` · from ${t.sender_role}` : ''}
         </button>
         <button type="button" className="topicon !w-8 !h-8" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Details">
           <ChevronDown size={16} className={`transition-transform ${open ? '' : '-rotate-90'}`} />
@@ -406,7 +424,8 @@ function TaskRow({ t, onSaved, asOf }) {
       {open && (
         <div className="px-3 pb-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5 border-t border-[#eef1f6] pt-3">
           <label><span className="lbl">Completion date</span>
-            <input type="date" className="inp" max={asOf > localToday() ? localToday() : undefined} value={f.completed_on} onChange={(e) => setF({ ...f, completed_on: e.target.value })} /></label>
+            <input type="date" className="inp" disabled={!canOperate} title={canOperate ? undefined : 'HR Ops, HR and HRBP mark tasks done'}
+              max={asOf > localToday() ? localToday() : undefined} value={f.completed_on} onChange={(e) => setF({ ...f, completed_on: e.target.value })} /></label>
           <label className="lg:col-span-2"><span className="lbl">Employee feedback / remarks</span>
             <input className="inp" value={f.remarks} onChange={(e) => setF({ ...f, remarks: e.target.value })} /></label>
           <label><span className="lbl">Issue identified</span>
@@ -423,7 +442,7 @@ function TaskRow({ t, onSaved, asOf }) {
           <p className="sm:col-span-2 lg:col-span-3 text-[11.5px] text-navy-400">Expected outcome: {t.outcome}</p>
         </div>
       )}
-      {mail && <EmailSpoc taskId={t.id} onSent={onSaved} onClose={() => setMail(false)} />}
+      {mail && <JoinerEmail taskId={t.id} onSent={onSaved} onClose={() => setMail(false)} />}
       {err && !open && <p className="px-3 pb-2 text-[12px] text-rose-600">{err}</p>}
     </div>
   );
@@ -480,6 +499,34 @@ function Feedback({ joiner, questions, onSaved }) {
   );
 }
 
+// Where the joiner's emails go before day one, when the company mailbox
+// usually does not exist yet. From day one the company address is used.
+function PersonalEmail({ joiner, onSaved }) {
+  const [v, setV] = useState(joiner.personal_email || '');
+  const [err, setErr] = useState(null);
+  const [ok, setOk] = useState(false);
+  const save = async () => {
+    setErr(null); setOk(false);
+    try {
+      await api(`/people/onboarding/joiners/${joiner.id}`, { method: 'PATCH', body: JSON.stringify({ personal_email: v.trim() || null }) });
+      setOk(true); onSaved();
+    } catch (e) { setErr(e.message); }
+  };
+  return (
+    <div>
+      <span className="lbl">Personal email (before joining)</span>
+      <span className="flex gap-2">
+        <input className="inp" type="email" placeholder="name@gmail.com" value={v} onChange={(e) => { setV(e.target.value); setOk(false); }} />
+        <button type="button" className="btn-sec" disabled={v.trim() === (joiner.personal_email || '')} onClick={save}>Save</button>
+      </span>
+      <span className="block text-[11.5px] text-navy-400 mt-1">
+        {err ? <span className="text-rose-600">{err}</span> : ok ? <span className="text-leaf-600">Saved.</span>
+          : <>Pre-Day 1 emails go here. From day one they go to {joiner.email ? <b>{joiner.email}</b> : 'the company address (none on the master yet)'}.</>}
+      </span>
+    </div>
+  );
+}
+
 function JoinerWeek({ id, asOf, days, onBack, onChanged }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
@@ -528,7 +575,7 @@ function JoinerWeek({ id, asOf, days, onBack, onChanged }) {
           </div>
         </div>
         <div className="mt-3"><Bar pct={j.pct} tone={j.overdue ? 'bg-amber-400' : 'bg-[#22a35a]'} /></div>
-        <div className="grid md:grid-cols-2 gap-3 mt-4">
+        <div className="grid md:grid-cols-3 gap-3 mt-4">
           {[['buddy_id', 'Buddy', j.buddy_name], ['hr_poc_id', 'HR POC', j.hr_poc_name]].map(([k, label, cur]) => (
             <div key={k}>
               <span className="lbl">{label}</span>
@@ -540,7 +587,13 @@ function JoinerWeek({ id, asOf, days, onBack, onChanged }) {
               ) : <PersonPick placeholder={`Choose a ${label.toLowerCase()}`} onPick={(p) => setPerson(k, p)} exclude={(p) => p.id === j.employee_id} />}
             </div>
           ))}
+          <PersonalEmail key={j.personal_email || ''} joiner={j} onSaved={refresh} />
         </div>
+        {!d.can_operate && (
+          <p className="text-[12px] text-navy-500 mt-3">
+            Ticking activities done, their dates and acknowledgements are kept by HR Ops, HR and HRBP — you can see them and add remarks.
+          </p>
+        )}
       </div>
 
       {byDay.map((x) => {
@@ -558,14 +611,14 @@ function JoinerWeek({ id, asOf, days, onBack, onChanged }) {
               <span className="ml-auto flex items-center gap-2">
                 {late > 0 && <span className="pill pill-red">{late} overdue</span>}
                 <span className="pill pill-gray">{done}/{x.tasks.length} done</span>
-                {done < x.tasks.length && (
+                {done < x.tasks.length && d.can_operate && (
                   <button type="button" className="btn-sec" onClick={() => completeDay(x.tasks)}
                     title="Marks every activity planned for today or earlier as done today">Mark due ones done</button>
                 )}
               </span>
             </div>
             <div className="space-y-1.5">
-              {x.tasks.map((t) => <TaskRow key={`${t.id}-${t.updated_at || ''}`} t={t} asOf={asOf} onSaved={refresh} />)}
+              {x.tasks.map((t) => <TaskRow key={`${t.id}-${t.updated_at || ''}`} t={t} asOf={asOf} onSaved={refresh} canOperate={!!d.can_operate} />)}
             </div>
           </div>
         );

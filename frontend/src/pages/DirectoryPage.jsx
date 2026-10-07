@@ -3,7 +3,7 @@ import { Settings2, Trash2, Search, ArrowUpDown, ArrowUp, ArrowDown, X, UserPlus
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 
-const ROLES = ['employee', 'manager', 'hod', 'hr', 'admin'];
+const ROLES = ['employee', 'manager', 'hod', 'hr', 'hr_ops', 'admin'];
 
 // Which employee field each sortable column reads. Keys here are also
 // the internal identifiers used in sort state — they're never shown to

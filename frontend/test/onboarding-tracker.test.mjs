@@ -93,3 +93,63 @@ test('the page search finds it, and the sidebar names it', async (t) => {
   assert.deepEqual(errors, []);
   await ctx.close();
 });
+
+// Corrected on 7 Oct: the first-week emails go TO the joiner, FROM the
+// SPOC who owns the activity; the tick belongs to HR Ops, HR and HRBP.
+test('a task\'s email is addressed to the joiner, from the activity\'s SPOC', async (t) => {
+  if (needStack(t)) return;
+  const { ctx, page, errors } = await open('hr@shot.in', '/admin/engagement-insights');
+  const row = page.locator('main tr.cursor-pointer').first();
+  if (!(await row.count())) { t.skip('no joiner on the local tracker'); await ctx.close(); return; }
+  const joiner = (await row.locator('td span.font-semibold').first().innerText()).trim();
+  await row.click();
+  await page.waitForTimeout(1200);
+  assert.match(await page.locator('main').innerText(), /Personal email \(before joining\)/i);
+  const btn = page.getByRole('button', { name: /Email joiner · from / }).first();
+  await btn.click();
+  await page.waitForTimeout(1000);
+  const box = await page.locator('main .bg-\\[\\#f8faff\\]').first().innerText();
+  assert.match(box, /From/i);
+  assert.match(box, /To/i);
+  assert.match(await page.getByLabel('Message').first().inputValue(), /^Dear /, 'the draft is written to the joiner');
+  assert.ok(box.includes(joiner), `the email goes to ${joiner}`);
+  assert.ok(!/Email SPOC/.test(await page.locator('main').innerText()), 'the old "Email SPOC" wording is gone');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('HR Ops has the tracker as its own page, and may tick tasks', async (t) => {
+  if (needStack(t)) return;
+  const who = process.env.HROPS_EMAIL || 'rohit@shot.in';
+  const me = await (await fetch(`${API}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: who, password: PASS }),
+  })).json();
+  if (!me.token || (me.user && me.user.role !== 'hr_ops')) { t.skip(`${who} is not an HR Ops user locally`); return; }
+  const { ctx, page, errors } = await open(who, '/hrops/onboarding');
+  const main = await page.locator('main').innerText();
+  assert.ok(!/not part of your access/i.test(main), 'HR Ops may open /hrops/onboarding');
+  assert.match(main, /First-Week Journey/);
+  assert.equal(await page.locator('aside a[href="/hrops/onboarding"]').count(), 1, 'the sidebar names it');
+  const row = page.locator('main tr.cursor-pointer').first();
+  if (await row.count()) {
+    await row.click();
+    await page.waitForTimeout(1200);
+    assert.equal(await page.getByRole('button', { name: /^Mark (not )?done$/ }).first().isDisabled(), false, 'HR Ops can tick');
+  }
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('HR does not get a second way in — the HR Ops entry is hidden when New Hire Insights is open to you', async (t) => {
+  if (needStack(t)) return;
+  const { ctx, page } = await open('hr@shot.in', '/home');
+  assert.equal(await page.locator('aside a[href="/hrops/onboarding"]').count(), 0);
+  await ctx.close();
+});
+
+test('someone without onboarding_ops cannot open the HR Ops page', async (t) => {
+  if (needStack(t)) return;
+  const { ctx, page } = await open('emp@shot.in', '/hrops/onboarding');
+  assert.ok(!/Personal email|Add joiner/i.test(await page.locator('main').innerText()));
+  await ctx.close();
+});

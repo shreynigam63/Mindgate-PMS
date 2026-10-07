@@ -11,7 +11,7 @@ import CycleAdminPage from './pages/CycleAdminPage';
 import CalibrationPage from './pages/CalibrationPage';
 import MyRatingPage from './pages/MyRatingPage';
 import MySurveysPage, { EngagementAdminPage } from './pages/EngagementPage';
-import EngagementInsightsPage from './pages/EngagementInsightsPage';
+import EngagementInsightsPage, { HrOpsOnboardingPage } from './pages/EngagementInsightsPage';
 import PeopleHubPage from './pages/PeopleHubPage';
 import DirectoryPage from './pages/DirectoryPage';
 import DepartmentHeadsPage from './pages/DepartmentHeadsPage';
@@ -244,6 +244,15 @@ const NAV = [
     // and then left alone, unlike everything above it.
     { to: '/admin/settings', label: 'Settings', icon: SlidersHorizontal },
   ]},
+  // HR OPS — the team that keeps the First-Week Journey's ticks (asked
+  // for on 7 Oct: the checkbox is "managed by HR Ops team and accessible
+  // to HRBP and HRs"). HR and HRBP already reach the same tracker under
+  // New Hire Insights, so the entry is hidden for anyone who can open
+  // either of those — one way in per person.
+  { group: 'HR Ops', hue: 'lagoon', icon: CalendarClock, items: [
+    { to: '/hrops/onboarding', label: 'First-Week Journey', icon: CheckCircle2,
+      hideIf: ['/admin/engagement-insights', '/hrbp/engagement-insights'] },
+  ]},
 
 ];
 
@@ -290,7 +299,8 @@ const gateClosed = (item, gates) => !!item.gate && gates[item.gate] === false;
 // not drawn.
 
 const visibleGroups = (user) => NAV
-  .map(g => ({ ...g, items: g.items.filter(it => mayOpen(user, it.to)) }))
+  .map(g => ({ ...g, items: g.items.filter(it => mayOpen(user, it.to)
+    && !(it.hideIf && user.pages && it.hideIf.some(r => user.pages.includes(r)))) }))
   .filter(g => g.items.length > 0);
 
 const groupOf = (groups, pathname) =>
@@ -603,6 +613,7 @@ function Main({ user }) {
               <Route path="/hrbp/watchlist" element={<WatchlistPage />} />
               <Route path="/hrbp/engagement" element={<EngagementAdminPage />} />
               <Route path="/hrbp/engagement-insights" element={<EngagementInsightsPage />} />
+              <Route path="/hrops/onboarding" element={<HrOpsOnboardingPage />} />
               <Route path="/hrbp/settings" element={<SettingsPage />} />
               <Route path="/team/dashboard" element={<TeamDashboardPage />} />
               <Route path="/team/overview" element={<TeamOverviewPage />} />

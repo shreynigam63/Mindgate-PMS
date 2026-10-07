@@ -353,3 +353,13 @@ export default function EngagementInsightsPage() {
     </div>
   );
 }
+
+// The same tracker on its own, for HR Ops — the team that keeps its ticks.
+export function HrOpsOnboardingPage() {
+  return (
+    <div className="space-y-4">
+      <PageHead title="First-Week Journey" hue="leaf" sub={VIEWS[0][2]} />
+      <OnboardingTracker />
+    </div>
+  );
+}

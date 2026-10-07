@@ -58,7 +58,7 @@ export default function EmailSettings() {
         </span>
       </div>
       <p className="text-xs text-navy-500">
-        Every email the product sends — onboarding Email SPOC, reminders, notifications — goes through this.
+        Every email the product sends — the First-Week Journey emails to joiners, reminders, notifications — goes through this.
         In <b>Simulated</b> mode each one is recorded but nobody receives it; the screens say so.
       </p>
 
@@ -118,6 +118,26 @@ export default function EmailSettings() {
         )}
         <p className="text-[11px] text-navy-400"><ShieldCheck size={11} className="inline mr-1" />
           The password is never shown again or written to the audit log.</p>
+      </div>
+
+      {/* Who a First-Week Journey email says it is from. Off: the From
+          address above, under the SPOC's name, with the SPOC as Reply-To
+          and in copy — every mail server accepts it. On: the SPOC's own
+          address, which the mail server must allow this account to send
+          as (Send-As in Microsoft 365, "send mail as" in Google). */}
+      <div className="border-t border-navy-100 pt-3 space-y-1">
+        <p className="lbl !mb-0">Onboarding emails</p>
+        <label className="flex items-start gap-2 text-[11.5px] text-navy-600">
+          <input type="checkbox" className="mt-0.5" disabled={busy} checked={!!d.send_as_spoc}
+            onChange={(e) => save({ send_as_spoc: e.target.checked })} />
+          <span>
+            Send each one from the SPOC’s own address.
+            <span className="block text-[11px] text-navy-400">
+              Needs Send-As permission for this account on the mail server — without it the server refuses and the tracker shows the failure.
+              Off: it is sent from the address above under the SPOC’s name, with the SPOC in copy and replies going to them.
+            </span>
+          </span>
+        </label>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
-// Who an onboarding task's email goes to, and what it says. Pure.
-// See migrations/082-onboarding-spocs.js for the roles and why.
+// An onboarding email: who it is FROM, who it goes TO, and what it says.
+// Pure. See migrations/083-onboarding-senders.js for why it is this way
+// round — to the joiner, from the SPOC who owns the activity.
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
@@ -7,55 +8,61 @@ const fmt = (d) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB',
   { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—');
 
 /**
- * @param {string[]} roles      the activity's spoc_roles
- * @param {object} joiner       manager_name/email, buddy_name/email, hr_poc_name/email
- * @param {object} directory    role -> {name, email}
- * @returns {{to:{role,name,email}[], missing:{role,why}[]}}
+ * The person the email comes from, for the activity's sender role.
+ * Manager and Buddy are the joiner's own; every other role is the SPOCs
+ * list. Returns { role, name, email } or { role, missing: why }.
  */
-function recipients(roles, joiner, directory = {}) {
-  const to = []; const missing = [];
-  for (const role of roles || []) {
-    let hit = null; let why = null;
-    if (role === 'Manager') {
-      hit = joiner.manager_email ? { name: joiner.manager_name, email: joiner.manager_email } : null;
-      why = 'The joiner has no reporting manager in the employee master.';
-    } else if (role === 'Buddy') {
-      hit = joiner.buddy_email ? { name: joiner.buddy_name, email: joiner.buddy_email } : null;
-      why = 'No buddy is chosen for this joiner yet.';
-    } else if (role === 'HR' && joiner.hr_poc_email) {
-      // The joiner's own HR POC first; the HR desk when none is set.
-      hit = { name: joiner.hr_poc_name, email: joiner.hr_poc_email };
-    } else {
-      const d = directory[role];
-      hit = d && d.email ? { name: d.name || role, email: d.email } : null;
-      why = `No ${role} SPOC email is set — HR sets it under SPOCs on this page.`;
-    }
-    if (hit) {
-      if (!to.some((t) => t.email.toLowerCase() === hit.email.toLowerCase())) to.push({ role, ...hit });
-    } else missing.push({ role, why });
+function sender(role, joiner, directory = {}) {
+  if (!role) return { role: null, missing: 'This activity has no owner to send it from.' };
+  if (role === 'Manager') {
+    return joiner.manager_email ? { role, name: joiner.manager_name, email: joiner.manager_email }
+      : { role, missing: 'The joiner has no reporting manager in the employee master.' };
   }
-  return { to, missing };
+  if (role === 'Buddy') {
+    return joiner.buddy_email ? { role, name: joiner.buddy_name, email: joiner.buddy_email }
+      : { role, missing: 'No buddy is chosen for this joiner yet.' };
+  }
+  // HR: the joiner's own HR POC when one is chosen, the HR desk otherwise.
+  if (role === 'HR' && joiner.hr_poc_email) return { role, name: joiner.hr_poc_name, email: joiner.hr_poc_email };
+  const d = directory[role];
+  return d && d.email ? { role, name: d.name || role, email: d.email }
+    : { role, missing: `No ${role} SPOC email is set — HR sets it under SPOCs on this page.` };
 }
 
-/** The draft. Editable on screen before it is sent. */
-function draft(task, joiner, sender) {
-  const subject = `Onboarding: ${task.activity} for ${joiner.name} — ${task.day}, ${fmt(task.planned_date)}`;
+/**
+ * Where the joiner receives it. Before joining, a personal address when
+ * HR has one — the company mailbox usually does not work yet. After, the
+ * company address from the employee master.
+ */
+function joinerAddress(task, joiner) {
+  const before = task.planned_date && joiner.doj && task.planned_date < joiner.doj;
+  const company = joiner.email || null;
+  const personal = joiner.personal_email || null;
+  if (before && personal) return { email: personal, kind: 'personal', why: 'before joining, so their personal address' };
+  if (company) return { email: company, kind: 'company', why: 'their company address from the employee master' };
+  if (personal) return { email: personal, kind: 'personal', why: 'no company address on the master' };
+  return null;
+}
+
+/** The draft, written to the joiner. Editable on screen before it goes. */
+function draft(task, joiner, from) {
+  const first = String(joiner.name || '').split(/\s+/)[0] || 'there';
+  const subject = `Your onboarding: ${task.activity} — ${fmt(task.planned_date)}`;
   const lines = [
-    `Hello,`,
+    `Dear ${first},`,
     ``,
-    `This is about the onboarding of ${joiner.name}${joiner.designation ? `, ${joiner.designation}` : ''}`
-      + `${joiner.department ? ` (${joiner.department})` : ''}, who ${joiner.doj > new Date().toISOString().slice(0, 10) ? 'joins' : 'joined'} on ${fmt(joiner.doj)}.`,
+    `${joiner.doj > new Date().toISOString().slice(0, 10) ? 'Welcome — we look forward to you joining us' : 'Welcome aboard'}`
+      + `${joiner.doj ? ` on ${fmt(joiner.doj)}` : ''}.`,
     ``,
-    `Activity: ${task.activity} — ${task.day}, planned for ${fmt(task.planned_date)}.`,
-    `What to do: ${task.process || '—'}`,
-    `Expected outcome: ${task.outcome || '—'}`,
-    `Status: ${task.status}${task.days_overdue ? ` (${task.days_overdue} working day${task.days_overdue === 1 ? '' : 's'} overdue)` : ''}.`,
+    `As part of your first week, "${task.activity}" is planned for ${fmt(task.planned_date)} (${task.day}).`,
+    task.process ? `What happens: ${task.process}.` : null,
+    task.outcome ? `What it is for: ${task.outcome}.` : null,
     ``,
-    `Please complete it and reply to confirm, so it can be marked done on the tracker.`,
+    `If you have any questions, simply reply to this email.`,
     ``,
-    `Thank you,`,
-    `${sender.name || sender.email}`,
-  ];
+    `Regards,`,
+    `${from && from.name ? from.name : ''}${from && from.role ? ` (${from.role})` : ''}`,
+  ].filter((l) => l !== null);
   return { subject, body: lines.join('\n') };
 }
 
@@ -63,4 +70,4 @@ function draft(task, joiner, sender) {
 const toHtml = (body) => `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">${
   esc(body).split('\n').map((l) => l || '&nbsp;').join('<br>')}</div>`;
 
-module.exports = { recipients, draft, toHtml, esc };
+module.exports = { sender, joinerAddress, draft, toHtml, esc };

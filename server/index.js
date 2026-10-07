@@ -86,6 +86,8 @@ async function main() {
   await require('./migrations/081-onboarding').seedFor(db, TENANT_ID);
   // Who each onboarding task's email goes to — after 081, which creates the rows.
   await require('./migrations/082-onboarding-spocs').ensureSpocRoles(db, TENANT_ID);
+  // Who each onboarding email is sent from, and the HR Ops tracker page.
+  await require('./migrations/083-onboarding-senders').ensureSenders(db, TENANT_ID);
 
   const app = express();
   app.use(cors());

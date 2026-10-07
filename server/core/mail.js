@@ -43,7 +43,11 @@ async function ensureLogTable() {
 }
 
 // The one entry point modules use. Returns {sent, mode}.
-async function sendMail(tenantId, { to, subject, html, kind }) {
+// `from` / `replyTo` / `cc` are optional. A caller that names a `from`
+// gets it only when it is an address the account may send as — see
+// onboarding.js, which decides that from the "send as the SPOC" setting;
+// otherwise the configured From is kept and the person is Reply-To.
+async function sendMail(tenantId, { to, subject, html, kind, from, replyTo, cc }) {
   await ensureLogTable();
   const mode = await sendMode(tenantId);
   let outcome = 'simulated', detail = null;
@@ -66,7 +70,7 @@ async function sendMail(tenantId, { to, subject, html, kind }) {
           // notification is in-app regardless.
           connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000,
         });
-        await tx.sendMail({ from: cfg.from, to, subject, html });
+        await tx.sendMail({ from: from || cfg.from, to, subject, html, replyTo: replyTo || undefined, cc: cc || undefined });
       } else if (provider === 'graph') {
         throw new Error('graph provider not configured in this build');
       } else throw new Error('MAIL_PROVIDER not set');

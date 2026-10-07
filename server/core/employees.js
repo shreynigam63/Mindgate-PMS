@@ -1626,7 +1626,8 @@ router.put('/:employeeId/role', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
     const { role } = req.body || {};
-    const VALID = ['employee', 'manager', 'hod', 'hr', 'admin'];
+    // hr_ops (7 Oct): runs the onboarding tracker — see migration 083.
+    const VALID = ['employee', 'manager', 'hod', 'hr', 'hr_ops', 'admin'];
     if (!VALID.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID.join(', ')}` });
     const emp = (await db.query(`SELECT email FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, req.user.tenant_id])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });

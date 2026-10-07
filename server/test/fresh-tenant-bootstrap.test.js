@@ -234,6 +234,6 @@ test('a tenant created after migrations still gets the HRBP role bundle', () => 
   // 068 granted it in up() only, to tenants that existed then — the
   // core.tenants trap this file exists for. The boot seed must carry it.
   const { BUNDLES } = require('../migrations/002-default-permission-bundles');
-  assert.deepEqual([...BUNDLES.hrbp].sort(), ['engagement_take', 'people_view', 'pms_hrbp', 'pms_self']);
+  assert.deepEqual([...BUNDLES.hrbp].sort(), ['engagement_take', 'onboarding_ops', 'people_view', 'pms_hrbp', 'pms_self']);
   assert.ok(BUNDLES.hr.includes('pms_hrbp'), 'HR opens the HRBP pages too (068)');
 });

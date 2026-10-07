@@ -91,7 +91,7 @@ after(async () => {
   for (const t of ['people.onboarding_task_emails', 'people.onboarding_spocs', 'core.notif_log', 'people.onboarding_feedback', 'people.onboarding_tasks', 'people.onboarding_joiners',
     'people.onboarding_activities', 'people.onboarding_days', 'people.onboarding_feedback_questions',
     'people.onboarding_holidays', 'core.audit_log', 'core.hrbp_scope', 'core.local_credentials', 'core.user_roles',
-    'core.role_permissions', 'core.employees']) {
+    'core.role_permissions', 'core.user_permissions', 'core.employees']) {
     await db.query(`DELETE FROM ${t} WHERE tenant_id=$1`, [tenantId]).catch(() => {});
   }
   await db.query(`DELETE FROM core.tenants WHERE id=$1`, [tenantId]).catch(() => {});
@@ -111,7 +111,7 @@ test('the seed is the workbook, and running it again changes nothing', { skip },
 test('somebody without New Hire Insights is refused, and told what they lack', { skip }, async () => {
   const r = await req('GET', '/', empTok);
   assert.equal(r.status, 403);
-  assert.equal(r.body.needs, 'engagement_admin');
+  assert.equal(r.body.needs, 'onboarding_ops');
 });
 
 test('HR starts a joiner from the master: one task per activity, dated from the DOJ', { skip }, async () => {
@@ -221,44 +221,89 @@ test('taking a joiner off removes their tasks and feedback, and is audited', { s
   assert.equal(a, 1);
 });
 
-test('A TASK EMAILS ITS SPOC: the joiner\'s own people from their record, desks from the SPOC list', { skip }, async () => {
-  // Asked for on 6 Oct: "clicking on each option should initiate email to
-  // particular spoc working for that task."
+test('A TASK EMAIL GOES TO THE JOINER, FROM THE SPOC WHO OWNS THE ACTIVITY', { skip }, async () => {
+  // Corrected on 7 Oct: "1st week onboarding mails should be shooted to new
+  // joiner from certain spoc persons owning the certain activity".
   await require('../migrations/082-onboarding-spocs').ensureSpocRoles(db, tenantId);
+  await require('../migrations/083-onboarding-senders').ensureSenders(db, tenantId);
   const w = (await req('GET', `/joiners/${ids.puneJoiner}?asOf=2026-10-06`, hrTok)).body.joiner;
   const byCode = (c) => w.tasks.find((t) => t.code === c);
 
-  // Manager Connect (13) goes to the joiner's manager, from the master.
+  // Manager Connect (13): from the joiner's manager, to the joiner.
   const mgr = await req('GET', `/tasks/${byCode(13).id}/email`, hrTok);
   assert.equal(mgr.status, 200, JSON.stringify(mgr.body));
-  assert.deepEqual(mgr.body.to.map((x) => x.email), ['mgr@onb.x']);
-  assert.match(mgr.body.subject, /Manager Connect for Riya Sharma/);
-  assert.match(mgr.body.body, /What to do: Explain role, immediate priorities and expectations/);
+  assert.equal(mgr.body.from.email, 'mgr@onb.x');
+  assert.equal(mgr.body.to.email, 'pune@onb.x', 'the joiner, at their company address after joining');
+  assert.match(mgr.body.body, /^Dear Riya,/);
+  assert.match(mgr.body.body, /Regards,\nAnil Desai \(Manager\)/);
 
-  // IT Readiness (4) needs the IT desk, which nobody has set: it says so.
-  const it = await req('GET', `/tasks/${byCode(4).id}/email`, hrTok);
-  assert.deepEqual(it.body.to, []);
-  assert.match(it.body.missing[0].why, /No IT SPOC email is set/);
-  const refused = await req('POST', `/tasks/${byCode(4).id}/email`, hrTok, { subject: 's', body: 'b' });
-  assert.equal(refused.status, 400, 'nothing is sent to nobody');
+  // Intimation Mail (1): the Recruiter's, before joining.
+  const rec = await req('GET', `/tasks/${byCode(1).id}/email`, hrTok);
+  assert.match(rec.body.from.missing, /No Recruiter SPOC email is set/);
+  assert.equal((await req('POST', `/tasks/${byCode(1).id}/email`, hrTok, { subject: 's', body: 'b' })).status, 400,
+    'nothing is sent with no sender');
+  assert.equal((await req('PUT', '/spocs/Recruiter', hrbpTok, { email: 'r@onb.x' })).status, 403, 'the SPOC list is HR\'s');
+  assert.equal((await req('PUT', '/spocs/Recruiter', hrTok, { email: 'not-an-address' })).status, 400);
+  assert.equal((await req('PUT', '/spocs/Recruiter', hrTok, { name: 'Bhawana M', email: 'recruiter@onb.x' })).status, 200);
 
-  // HR sets the desk; an HRBP may not — it is company-wide.
-  assert.equal((await req('PUT', '/spocs/IT', hrbpTok, { email: 'it@onb.x' })).status, 403);
-  assert.equal((await req('PUT', '/spocs/IT', hrTok, { email: 'not-an-address' })).status, 400);
-  assert.equal((await req('PUT', '/spocs/IT', hrTok, { name: 'IT Desk', email: 'it@onb.x' })).status, 200);
-  assert.equal((await req('PUT', '/spocs/Manager', hrTok, { email: 'x@onb.x' })).status, 400, 'Manager comes from the master');
+  // Before joining, a personal address wins when HR has one.
+  assert.equal((await req('PATCH', `/joiners/${ids.puneJoiner}`, hrTok, { personal_email: 'riya.personal@mail.x' })).status, 200);
+  const pre = await req('GET', `/tasks/${byCode(1).id}/email`, hrTok);
+  assert.equal(pre.body.from.email, 'recruiter@onb.x');
+  assert.equal(pre.body.to.email, 'riya.personal@mail.x', 'Pre-Day 1 goes to the personal address');
+  assert.equal((await req('GET', `/tasks/${byCode(13).id}/email`, hrTok)).body.to.email, 'pune@onb.x',
+    'after joining it is the company address again');
 
-  const ok = await req('POST', `/tasks/${byCode(4).id}/email`, hrTok, { subject: 'Laptop for Riya', body: 'Please <b>issue</b> it.' });
-  assert.equal(ok.status, 200, JSON.stringify(ok.body));
-  assert.deepEqual(ok.body.to, ['it@onb.x']);
-  assert.equal(ok.body.mode, 'simulated', 'the product default until HR turns live mail on — and the screen says so');
-  const log = (await db.query(`SELECT to_email, subject FROM core.notif_log WHERE tenant_id=$1 AND kind='onboarding_task'`, [tenantId])).rows;
-  assert.deepEqual(log.map((x) => x.to_email), ['it@onb.x']);
+  // "HR Ops → IT": HR Ops owns it, so HR Ops writes to the joiner.
+  assert.equal((await req('GET', `/tasks/${byCode(4).id}/email`, hrTok)).body.from.role, 'HR Ops');
 
+  const sent = await req('POST', `/tasks/${byCode(1).id}/email`, hrTok, { subject: 'Welcome', body: 'Dear Riya, <b>see you</b>' });
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  assert.equal(sent.body.to, 'riya.personal@mail.x');
+  assert.equal(sent.body.from, 'recruiter@onb.x');
+  assert.equal(sent.body.mode, 'simulated', 'the product default until HR turns live mail on');
+  const log = (await db.query(`SELECT to_email FROM core.notif_log WHERE tenant_id=$1 AND kind='onboarding_task'`, [tenantId])).rows;
+  assert.deepEqual(log.map((x) => x.to_email), ['riya.personal@mail.x']);
   const again = (await req('GET', `/joiners/${ids.puneJoiner}?asOf=2026-10-06`, hrTok)).body.joiner;
-  assert.ok(again.tasks.find((t) => t.code === 4).last_emailed_at, 'the row shows it was emailed');
+  assert.equal(again.tasks.find((t) => t.code === 1).last_emailed_from, 'recruiter@onb.x');
+});
 
-  // An HRBP can email for a joiner in their remit.
-  const p = await req('POST', `/tasks/${byCode(13).id}/email`, hrbpTok, { subject: 'x', body: 'y' });
-  assert.equal(p.status, 200, JSON.stringify(p.body));
+test('THE TICK IS HR OPS\', HR\'S AND HRBP\'S — not anybody who can open the page', { skip }, async () => {
+  // "Checkbox … should be managed by HR Ops team and accessible to HRBP and HRs."
+  const bcrypt = require('bcryptjs');
+  const ops = (await db.query(
+    `INSERT INTO core.employees (tenant_id,name,email,status,location) VALUES ($1,'Ops Person','ops@onb.x','active','Mumbai') RETURNING id`,
+    [tenantId])).rows[0].id;
+  void ops;
+  await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'ops@onb.x','hr_ops')`, [tenantId]);
+  await db.query(`INSERT INTO core.local_credentials (tenant_id,email,password_hash) VALUES ($1,'ops@onb.x',$2)`, [tenantId, await bcrypt.hash('pw', 4)]);
+  await require('../migrations/002-default-permission-bundles').ensureTenantSeeds(db, tenantId);
+  const opsTok = (await (await fetch(`${base.replace('/api/v1/people/onboarding', '')}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'ops@onb.x', password: 'pw' }),
+  })).json()).token;
+
+  const w = (await req('GET', `/joiners/${ids.puneJoiner}`, opsTok));
+  assert.equal(w.status, 200, `HR Ops opens the tracker — ${JSON.stringify(w.body)} perms=${JSON.stringify((await db.query(`SELECT permission FROM core.role_permissions WHERE tenant_id=$1 AND role='hr_ops'`, [tenantId])).rows)}`);
+  assert.equal(w.body.can_operate, true);
+  const t = w.body.joiner.tasks.find((x) => !x.completed_on);
+  const a1 = await req('PATCH', `/tasks/${t.id}`, opsTok, { completed_on: '2026-10-01' });
+  assert.equal(a1.status, 200, `HR Ops ticks it — ${JSON.stringify(a1.body)}`);
+  const a2 = await req('PATCH', `/tasks/${t.id}`, hrbpTok, { completed_on: null });
+  assert.equal(a2.status, 200, `an HRBP may too, in their remit — ${JSON.stringify(a2.body)}`);
+  assert.equal((await req('PATCH', `/tasks/${t.id}`, hrTok, { completed_on: '2026-10-01' })).status, 200, 'and HR');
+
+  // Somebody holding only New Hire Insights' permission reads the tracker
+  // but cannot tick it.
+  // (A grant to the person, not a role: a login token carries the role it
+  // was issued with, while person grants are read on every request.)
+  await db.query(`INSERT INTO core.user_permissions (tenant_id,email,permission) VALUES ($1,'emp@onb.x','engagement_admin')`, [tenantId]);
+  const v = await req('GET', `/joiners/${ids.puneJoiner}`, empTok);
+  assert.equal(v.status, 200);
+  assert.equal(v.body.can_operate, false);
+  const no = await req('PATCH', `/tasks/${t.id}`, empTok, { completed_on: '2026-10-02' });
+  assert.equal(no.status, 403);
+  assert.equal(no.body.needs, 'onboarding_ops');
+  assert.equal((await req('POST', `/joiners/${ids.puneJoiner}/complete`, empTok, { task_ids: [t.id] })).status, 403);
+  assert.equal((await req('PATCH', `/tasks/${t.id}`, empTok, { remarks: 'noted' })).status, 200, 'remarks are not the tick');
+  await db.query(`DELETE FROM core.user_permissions WHERE tenant_id=$1 AND email='emp@onb.x'`, [tenantId]);
 });

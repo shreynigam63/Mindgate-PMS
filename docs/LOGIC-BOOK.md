@@ -11,10 +11,10 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `b2d3a2b`** (6 October 2026). This
-edition also describes the two settings screens built after it — **HR →
-Settings → Email** and **HR → Timesheet → Settings → KRA rating** — which
-reach the live site with the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `c66a755`** (7 October 2026). This
+edition also describes the corrected First-Week Journey emails and the
+HR Ops role (§3.12) on the dev branch, which reach the live site with the
+next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -551,15 +551,19 @@ There is no feed: Glassdoor retired its public review API in 2021,
 AmbitionBox never had one, and both prohibit scraping. Such surveys are
 `import_only` — they take responses but never invite anybody.
 
-## 3.12 First-Week Journey — onboarding tracker (New Hire Insights, HR and HRBP)
+## 3.12 First-Week Journey — onboarding tracker (New Hire Insights, HR and HRBP; HR Ops)
 
 The client's *7 Days Onboarding Tracker* workbook, as a tab on New Hire
-Insights (opens first; *Survey Insights* is the other tab).
+Insights (opens first; *Survey Insights* is the other tab). The HR Ops
+team has the same tracker as its own menu entry, **HR Ops → First-Week
+Journey** (`/hrops/onboarding`), hidden for anyone who can already open
+New Hire Insights.
 
-Tables: `people.onboarding_activities` (the 48-row matrix, with who each
-task's email goes to), `_days`, `_holidays`, `_joiners`, `_tasks`,
-`_feedback`, `_feedback_questions`, `_spocs`, `_task_emails`
-(migrations 081 and 082). The screen: a **Report date**, buttons for
+Tables: `people.onboarding_activities` (the 48-row matrix, with the
+`sender_role` each task's email is sent from), `_days`, `_holidays`,
+`_joiners` (with `personal_email`), `_tasks`, `_feedback`,
+`_feedback_questions`, `_spocs`, `_task_emails` (with `from_email` and
+`sender_role`) — migrations 081, 082 and 083. The screen: a **Report date**, buttons for
 **Activity matrix**, **SPOCs**, **Holidays** and **Add joiner**, five
 cards, *By owner*, *By day of the journey*, and the joiner list; a joiner
 opens to their week, day by day, then Day-7 feedback.
@@ -583,19 +587,53 @@ opens to their week, day by day, then Day-7 feedback.
 - **Dashboard**: joiners in onboarding, due today, overdue, average
   feedback, completion %, by owner (a shared activity counts for every
   owner group named), by day.
-- **HRBP** sees and edits only joiners in their remit — the counts too.
-  Holidays are company-wide, so only HR changes them.
-- **Email SPOC** on every task (and on its owner chip) drafts an email to
-  whoever does that task: Manager and Buddy from the joiner's record; HR
-  from the joiner's HR POC, else the HR desk; Recruiter, HR Ops, HRBP, IT,
-  Admin, SME and L&D from the **SPOCs** list HR keeps on this page. The
-  text is editable; every send is kept on the task. While the instance's
-  mail is in *simulated* mode the email is recorded, not delivered — the
-  screen says so and offers *Open in my mail app*. Recipients are worked
-  out on the server, never taken from the request; colleagues from the
-  employee master can be copied in. Where the owner is "A to B" (e.g.
-  *HR Ops → IT*) the email goes to B, the one doing the work. A desk with
+- **Who may open it**: `engagement_admin` (HR) or `onboarding_ops`
+  (`people/onboarding.js`, `guard`). **HRBP** sees and edits only joiners
+  in their remit — the counts too. Holidays, the SPOC list and the matrix
+  are company-wide, so an HRBP reads them and HR changes them.
+- **The tick belongs to HR Ops, HR and HRBP** (corrected 7 Oct). Marking a
+  task done or not done, its completion date, *Mark due ones done*, the
+  acknowledgement and sending a joiner email need **`onboarding_ops`**,
+  which the `hr_ops`, `hr` and `hrbp` bundles carry (migrations 002 and
+  083; `opsGuard`). Anyone else who can open the tracker sees the ticks
+  greyed, with "HR Ops, HR and HRBP mark tasks done", and can still add
+  remarks, issues and closure dates. The server refuses the fields
+  regardless of what the screen shows (403, `needs: onboarding_ops`).
+  `hr_ops` is a role HR assigns on **Employees** like any other.
+- **Every task's email goes TO the joiner, FROM the SPOC who owns the
+  activity** (corrected 7 Oct; it used to go to the SPOC). *Email joiner ·
+  from {role}* on each task opens the draft — "Dear {first name}", what
+  happens, when, what it is for, signed by the SPOC — editable before it
+  goes. Every send is kept on the task with who it was from and to.
+- **Which SPOC** — the activity's `sender_role`, the first owner named on
+  the client's matrix (migration 083, `SENDER`): e.g. the intimation mail
+  from the **Recruiter**; HR Welcome, Documentation and the HRMS/policies
+  walkthrough from **HR Ops**; Workplace Tour from **Admin**; IT Setup and
+  Access Validation from **IT**; Team Introduction and the KPI/KRA
+  discussion from the **Manager**; Buddy Introduction from the **Buddy**;
+  Code of Conduct and the 7-day connect from **HR**; Business Overview and
+  PMS Orientation from the **HRBP**; Learning Needs from **L&D**. Where
+  the matrix names two owners (*Manager/SME*, *HR Ops → IT*) the first
+  sends it. The
+  matrix shows it in an *Email from* column. The address: Manager and
+  Buddy from the joiner's record; HR from the joiner's HR POC, else the HR
+  desk; every other role from the **SPOCs** list on this page. A SPOC with
   no address set is named on screen and nothing is sent.
+- **Which address of the joiner's** — before the date of joining, the
+  **personal email** HR records on the joiner's week (the company mailbox
+  usually does not exist yet); from day one, the company address from
+  the employee master; the personal one if the master has none. With
+  neither, the screen says so and nothing is sent. Both addresses are
+  worked out on the server, never taken from the request.
+- **How it leaves** (HR → Settings → Email → *Onboarding emails*). Off
+  (default): from the configured From address under the SPOC's name —
+  `"Priya Nair (Manager)" <pms@…>` — with the SPOC as Reply-To and in
+  copy, so replies reach the SPOC and the SPOC sees what was sent; every
+  mail server accepts this. On: from the SPOC's own address, which needs
+  Send-As permission for the PMS mail account on the client's mail server;
+  without it the server refuses and the tracker shows the failure. While
+  mail is in *simulated* mode the email is recorded, not delivered — the
+  screen says so and offers *Open in my mail app*.
 - **Email mode: HR → Settings → Email.** *Simulated* (the product default
   — every email logged in `core.notif_log`, none delivered) or *Live*.
   Live needs a mail server: server, port, username, password, From
@@ -606,7 +644,9 @@ opens to their week, day by day, then Day-7 feedback.
   never in the audit log, and a blank field on save keeps it; removing it
   is a separate button. *Send a test email to me* goes through the same
   path every email takes and reports delivered, recorded or the server's
-  error. The card is HR's alone — an HRBP does not see it.
+  error. The card is HR's alone — an HRBP does not see it. The same card
+  carries the *send onboarding emails as the SPOC* switch above
+  (`core.admin_settings` `mail_identity`, audited `MAIL_IDENTITY_CHANGED`).
 
 Verified against all 288 real rows of the workbook: planned date, status
 and days overdue match on every one. Three workbook faults were corrected
@@ -649,8 +689,11 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 | Timesheet KRA rating bands, hours per day, indicative threshold | HR → Timesheet → Settings → KRA rating from the timesheet |
 | Which KRA a work item serves; KRAs not measured from timesheets | Manager → Timesheet (mapping), HR mapping backlog |
 | Onboarding activity matrix, day themes, Day-7 statements | `people.onboarding_activities`, `_days`, `_feedback_questions` (seeded from the client's workbook) |
-| Onboarding holidays, SPOC email addresses | New Hire Insights → First-Week Journey → Holidays / SPOCs |
-| Email live or simulated; mail server; test email | HR → Settings → Email |
+| Onboarding holidays, SPOC email addresses (who each email is sent from) | New Hire Insights → First-Week Journey → Holidays / SPOCs |
+| Which SPOC sends each onboarding activity's email | `people.onboarding_activities.sender_role` (seeded from the client's matrix) |
+| A joiner's personal email (used before joining) | The joiner's week → *Personal email (before joining)* |
+| Who ticks onboarding tasks | Permission `onboarding_ops` — in the `hr_ops`, `hr` and `hrbp` bundles; role `hr_ops` set on Employees |
+| Email live or simulated; mail server; test email; onboarding emails as the SPOC's own address | HR → Settings → Email |
 | AI on/off | `ANTHROPIC_API_KEY` in `/etc/agentic-pms/api.env` — instance-owned, never written by a deploy |
 | AI model | `deploy/service/managed-settings.env`, pushed into `api.env` by every deploy (`UNMANAGED=AI_MODEL` pins a box) |
 
@@ -673,6 +716,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 6 October 2026 (live: `b2d3a2b`; plus the
-settings screens on the dev branch). Where this book and the code disagree,
+*Checked against the code on 7 October 2026 (live: `c66a755`; plus the
+First-Week Journey corrections on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*
