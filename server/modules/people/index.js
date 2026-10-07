@@ -1053,8 +1053,29 @@ router.put('/career/my-path', async (req, res) => {
     const keptLongTerm = horizon === 'long_term' && (await db.query(
       `SELECT 1 FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='long_term' AND target_role=$3`,
       [T(req), req.user.id, String(target_role).trim()])).rows.length > 0;
+    // SHORT-TERM IS DERIVED FROM THE MATRIX (8 Oct: "make sure short term
+    // goals is derived from career pathing"). The next move must be a
+    // transition HR configured from this role and level — there is no
+    // free-text short-term goal any more, including when nothing is
+    // configured yet (that used to accept any role, which is how
+    // "Lead - Technical, 72 months" ended up as somebody's next move).
+    // Long-Term may still name a role the matrix does not reach yet when
+    // nothing is configured, or keep one already saved.
+    if (horizon === 'short_term' && !eligibleTargetRoles.length) {
+      const why = await careerPathDiagnostics(T(req), req.user.id);
+      return res.status(422).json({ error: why && why.reason === 'level_mismatch'
+        ? 'Your short-term goal comes from the Career Pathing Matrix, and its paths from your role are set for a different level — ask HR to check the level on those transitions or your role band.'
+        : 'Your short-term goal comes from the Career Pathing Matrix, and no path is configured from your current role yet — ask HR to add one.' });
+    }
     if (eligibleTargetRoles.length && !eligibleTargetRoles.includes(target_role) && !keptLongTerm) {
       return res.status(422).json({ error: `target_role must be one of the transitions configured from your current role in the Career Pathing Matrix: ${eligibleTargetRoles.join(', ')}` });
+    }
+    // The short-term timeline is the matrix's own figure for that move,
+    // whatever was typed; typed only when HR left the figure blank.
+    let timeline = (target_timeline || '').trim() || null;
+    if (horizon === 'short_term') {
+      const t = transitions.find((x) => x.to_role === target_role);
+      if (t && t.typical_time_months != null) timeline = `${t.typical_time_months} months`;
     }
     // A field the request does not send is KEPT, not cleared (8 Oct): the
     // Short-Term tab now asks only for the role and its timeline — the
@@ -1072,7 +1093,7 @@ router.put('/career/my-path', async (req, res) => {
          years_experience=CASE WHEN $10 THEN EXCLUDED.years_experience ELSE people.career_paths.years_experience END,
          skills_interests=CASE WHEN $11 THEN EXCLUDED.skills_interests ELSE people.career_paths.skills_interests END,
          updated_at=now()`,
-      [T(req), req.user.id, target_role.trim(), (target_timeline || '').trim() || null, plan || null,
+      [T(req), req.user.id, target_role.trim(), timeline, plan || null,
        years, (skills_interests || '').trim() || null, horizon, sent('plan'), sent('years_experience'), sent('skills_interests')]);
     res.json({ ok: true, horizon });
   } catch (e) { res.status(500).json({ error: e.message }); }

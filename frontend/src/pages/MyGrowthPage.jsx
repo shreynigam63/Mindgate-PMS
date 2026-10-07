@@ -936,6 +936,13 @@ function CareerPathCard() {
             )}
             {data.eligible_target_roles.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
+        ) : horizon === 'short_term' ? (
+          // SHORT-TERM IS DERIVED FROM THE MATRIX (8 Oct). No free text —
+          // with no path from this role there is nothing to choose yet,
+          // and the box above says why and who can fix it.
+          <p className="text-[12px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            Your short-term goal comes from the Career Pathing Matrix, and there is no move configured from your current role yet — ask HR to add one.
+          </p>
         ) : (
           <input className="inp" value={form.target_role} disabled={!editable} onChange={e => setForm(f => ({ ...f, target_role: e.target.value }))} placeholder="e.g. Staff Engineer" />
         )}
@@ -946,13 +953,19 @@ function CareerPathCard() {
       </div>
       <div>
         <label className="lbl">Expected timeline</label>
-        <input className="inp" value={form.target_timeline} disabled={!editable} onChange={e => setForm(f => ({ ...f, target_timeline: e.target.value }))} placeholder="e.g. 12-18 months" />
+        {/* Short-Term: the matrix's figure, not typed — the server stores
+            that figure whatever is sent. Typed only when HR left it blank. */}
+        <input className="inp" value={form.target_timeline}
+          disabled={!editable || (horizon === 'short_term' && !data.eligible_target_roles.length)}
+          readOnly={horizon === 'short_term' && !!chosen && chosen.typical_time_months != null}
+          onChange={e => setForm(f => ({ ...f, target_timeline: e.target.value }))}
+          placeholder={horizon === 'short_term' ? 'Set by the Career Pathing Matrix when you choose a role' : 'e.g. 12-18 months'} />
         {chosen && chosen.typical_time_months != null && (
           <p className="text-[11px] text-navy-400 mt-1">
             Career Pathing Matrix: typically <b>{months(chosen.typical_time_months)}</b>
             {chosen.steps > 1 ? ` for the ${chosen.steps} steps` : ' for this move'}
             {chosen.min_time_months != null && chosen.steps === 1 ? `, at least ${months(chosen.min_time_months)}` : ''}.
-            {form.target_timeline !== months(chosen.typical_time_months) && editable && (
+            {horizon === 'long_term' && form.target_timeline !== months(chosen.typical_time_months) && editable && (
               <button type="button" className="ml-1 font-semibold text-brand-600"
                 onClick={() => setForm(f => ({ ...f, target_timeline: months(chosen.typical_time_months) }))}>Use it</button>
             )}
@@ -1053,7 +1066,7 @@ function CareerPathCard() {
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {editable ? (
         <>
-          <button className="btn-pri" onClick={save}>Save</button>
+          <button className="btn-pri" onClick={save} disabled={horizon === 'short_term' && !data.eligible_target_roles.length}>Save</button>
           {saved && <span className="text-[11px] text-emerald-600 font-medium ml-2">Saved ✓</span>}
         </>
       ) : (

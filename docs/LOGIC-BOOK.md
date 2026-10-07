@@ -370,8 +370,14 @@ offers one rung; **Long-Term walks up to three rungs** along rows HR wrote
 and competencies combined. The target role is validated against the same
 list. HR's "matches N employees" counter uses the same level rule.
 
-**What each tab asks** (8 Oct). **Short-Term** is the next move only:
-*Target role* (from the matrix) and *Expected timeline*. **Long-Term**
+**What each tab asks** (8 Oct). **Short-Term** is the next move only, and
+it is **derived from the Career Pathing Matrix**: *Target role* must be a
+move configured from the employee's role and level — the server refuses
+anything else, and with no path configured there is nothing to choose
+(the screen says to ask HR; it used to accept any typed role) — and
+*Expected timeline* is the matrix's typical time for that move, stored by
+the server whatever is sent and shown read-only (typed only where HR left
+the figure blank). **Long-Term**
 asks the rest — total years of experience, skills and interests, growth
 plan and milestones. Saving Short-Term sends only its two fields, and a
 field a save does not send is kept, so anything an older version stored

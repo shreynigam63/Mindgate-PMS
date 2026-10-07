@@ -296,3 +296,12 @@ test('SHORT-TERM IS THE ROLE AND ITS TIMELINE: saving it keeps the rest, and its
     assert.equal(seen.input.self_reported.skills_and_interests, 'Leadership, APIs');
   } finally { ai.narrate = real; }
 });
+
+test('SHORT-TERM TIMELINE IS THE MATRIX\'S FIGURE, whatever is typed', { skip }, async () => {
+  await phase('kra_open');
+  assert.equal((await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Senior Software Developer', target_timeline: '99 months' })).status, 200);
+  assert.equal((await api('GET', '/career/my-path?horizon=short_term')).body.path.target_timeline, '24 months');
+  // Long-Term keeps what the employee wrote.
+  assert.equal((await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Tech Lead', target_timeline: 'about 5 years' })).status, 200);
+  assert.equal((await api('GET', '/career/my-path?horizon=long_term')).body.path.target_timeline, 'about 5 years');
+});

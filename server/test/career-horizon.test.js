@@ -50,6 +50,12 @@ before(async () => {
   await db.query(
     `INSERT INTO pms.kra_sheets (tenant_id,cycle_id,employee_id,status)
      VALUES ($1,$2,$3,'approved')`, [tenantId, cycleId, empId]);
+  // Short-Term comes from the Career Pathing Matrix (8 Oct), so the
+  // roles the tests below aim at are moves configured from Executive.
+  await db.query(
+    `INSERT INTO people.career_transitions (tenant_id, from_role, to_role, active)
+     VALUES ($1,'Executive','Senior Executive',true), ($1,'Executive','Principal',true),
+            ($1,'Senior Executive','Delivery Head',true)`, [tenantId]);
   await db.query(`INSERT INTO core.local_credentials (tenant_id,email,password_hash) VALUES ($1,'hz@x.com',$2)`,
     [tenantId, await bcrypt.hash('pw', 4)]);
 
@@ -70,7 +76,7 @@ before(async () => {
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
   if (tenantId) {
-    for (const t of ['people.career_milestones', 'people.career_paths', 'pms.kra_sheets', 'pms.cycles', 'core.local_credentials',
+    for (const t of ['people.career_milestones', 'people.career_paths', 'people.career_transitions', 'pms.kra_sheets', 'pms.cycles', 'core.local_credentials',
       'core.user_roles', 'core.role_permissions', 'core.employees']) {
       await db.query(`DELETE FROM ${t} WHERE tenant_id=$1`, [tenantId]).catch(() => {});
     }

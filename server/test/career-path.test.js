@@ -82,17 +82,24 @@ async function api(path, token, opts = {}) {
   return { status: r.status, body: await r.json() };
 }
 
-test('career path: no transitions configured yet — any target_role is accepted', { skip }, async () => {
+// 8 Oct: "make sure short term goals is derived from career pathing". With
+// nothing configured, Short-Term used to accept any role typed — that is how
+// a three-year goal ended up as somebody's next move. Now it is refused,
+// with who can fix it; Long-Term may still name where they want to end up.
+test('career path: no transitions configured yet — Short-Term is refused, Long-Term may name any role', { skip }, async () => {
   const { token } = await login('cp-emp@x.com');
   const initial = await api('/people/career/my-path', token);
   assert.equal(initial.body.path, null);
   assert.deepEqual(initial.body.eligible_target_roles, []);
 
-  const set = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Staff Engineer', plan: 'Grow into a tech-lead role' }) });
-  assert.equal(set.status, 200);
+  const st = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Staff Engineer', plan: 'Grow into a tech-lead role' }) });
+  assert.equal(st.status, 422);
+  assert.match(st.body.error, /comes from the Career Pathing Matrix.*no path is configured.*ask HR/);
+  assert.equal((await api('/people/career/my-path', token)).body.path, null, 'nothing stored');
 
-  const after1 = await api('/people/career/my-path', token);
-  assert.equal(after1.body.path.target_role, 'Staff Engineer');
+  const lt = await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ horizon: 'long_term', target_role: 'Staff Engineer', plan: 'Grow into a tech-lead role' }) });
+  assert.equal(lt.status, 200);
+  assert.equal((await api('/people/career/my-path?horizon=long_term', token)).body.path.target_role, 'Staff Engineer');
 });
 
 test('the two questions round-trip, and the CURRENT role comes from the master', { skip }, async () => {
@@ -106,11 +113,11 @@ test('the two questions round-trip, and the CURRENT role comes from the master',
     'the designation is read from core.employees, never typed by the employee');
 
   const set = await api('/people/career/my-path', token, { method: 'PUT',
-    body: JSON.stringify({ target_role: 'Staff Engineer', years_experience: '7.5',
+    body: JSON.stringify({ horizon: 'long_term', target_role: 'Staff Engineer', years_experience: '7.5',
       skills_interests: 'Postgres, incident response; want more architecture work' }) });
   assert.equal(set.status, 200);
 
-  const after = await api('/people/career/my-path', token);
+  const after = await api('/people/career/my-path?horizon=long_term', token);
   assert.equal(Number(after.body.path.years_experience), 7.5);
   assert.match(after.body.path.skills_interests, /incident response/);
 });
@@ -121,15 +128,15 @@ test('blank years stays blank — it must not be recorded as zero', { skip }, as
   // assess rather than assume. A 0 here would make it assume.
   const { token } = await login('cp-emp@x.com');
   await api('/people/career/my-path', token, { method: 'PUT',
-    body: JSON.stringify({ target_role: 'Staff Engineer', years_experience: '' }) });
-  const r = await api('/people/career/my-path', token);
+    body: JSON.stringify({ horizon: 'long_term', target_role: 'Staff Engineer', years_experience: '' }) });
+  const r = await api('/people/career/my-path?horizon=long_term', token);
   assert.equal(r.body.path.years_experience, null);
 });
 
 test('a nonsense number of years is refused, with a reason', { skip }, async () => {
   const { token } = await login('cp-emp@x.com');
   const bad = await api('/people/career/my-path', token, { method: 'PUT',
-    body: JSON.stringify({ target_role: 'Staff Engineer', years_experience: '400' }) });
+    body: JSON.stringify({ horizon: 'long_term', target_role: 'Staff Engineer', years_experience: '400' }) });
   assert.equal(bad.status, 422);
   assert.match(bad.body.error, /between 0 and 60/);
 });
@@ -174,7 +181,7 @@ test('career path: manager can see their reports\' paths', { skip }, async () =>
 test('career path: an update replaces (upserts), not duplicates', { skip }, async () => {
   const { token } = await login('cp-emp@x.com');
   await api('/people/career/my-path', token, { method: 'PUT', body: JSON.stringify({ target_role: 'Software Engineer III', plan: 'v2 of the plan' }) });
-  const rows = await db.query(`SELECT COUNT(*)::int AS n FROM people.career_paths WHERE employee_id=$1`, [empId]);
+  const rows = await db.query(`SELECT COUNT(*)::int AS n FROM people.career_paths WHERE employee_id=$1 AND horizon='short_term'`, [empId]);
   assert.equal(rows.rows[0].n, 1, 'upsert, not a second row');
 });
 

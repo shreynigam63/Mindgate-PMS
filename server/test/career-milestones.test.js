@@ -56,6 +56,8 @@ before(async () => {
     await db.query(`INSERT INTO core.local_credentials (tenant_id, email, password_hash) VALUES ($1,$2,$3)`, [t.id, email, hash]);
   }
 
+  // Short-Term comes from the Career Pathing Matrix (8 Oct).
+  await db.query(`INSERT INTO people.career_transitions (tenant_id, from_role, to_role, active) VALUES ($1,'Engineer','Technical Manager',true)`, [t.id]);
   const cycle = (await db.query(
     `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase) VALUES ($1,'CMS Cycle','FYCMS','annual','kra_open') RETURNING id`,
     [t.id])).rows[0];
