@@ -181,7 +181,9 @@ test('THE AI STARTS FROM WHAT IS ON THE FORM — unsaved, and on the tab being l
     assert.equal(input.self_reported.years_experience, 9);
     assert.equal(input.self_reported.skills_and_interests, 'System design, mentoring');
     assert.equal(input.current_aspiration.plan, 'Lead the next release', 'a blank field falls back to what was saved on that tab');
-    assert.deepEqual(input.configured_transitions.map((t) => t.to_role).sort(), ['Senior Software Developer', 'Tech Lead']);
+    // Short-Term's saved goal is Senior Software Developer, so Long-Term
+    // offers only what comes after it (8 Oct).
+    assert.deepEqual(input.configured_transitions.map((t) => t.to_role), ['Tech Lead']);
     assert.match(seen.system, /START FROM WHAT THE EMPLOYEE HAS WRITTEN/);
   } finally { ai.narrate = real; }
 });
@@ -209,7 +211,8 @@ test('LONG-TERM BUILDS ON THE SHORT-TERM GOAL: it is sent, its blanks are filled
     assert.equal(input.self_reported.skills_and_interests, 'Estimation, APIs');
     const lead = input.configured_transitions.find((t) => t.to_role === 'Tech Lead');
     assert.equal(lead.builds_on_short_term_goal, true, 'Tech Lead comes after the short-term Senior Software Developer');
-    assert.equal(input.configured_transitions.find((t) => t.to_role === 'Senior Software Developer').builds_on_short_term_goal, false);
+    assert.equal(input.configured_transitions.find((t) => t.to_role === 'Senior Software Developer'), undefined,
+      'the short-term role itself is never a long-term option');
     assert.match(seen.system, /LONG-TERM BUILDS ON SHORT-TERM/);
   } finally { ai.narrate = real; }
 });
@@ -304,4 +307,43 @@ test('SHORT-TERM TIMELINE IS THE MATRIX\'S FIGURE, whatever is typed', { skip },
   // Long-Term keeps what the employee wrote.
   assert.equal((await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Tech Lead', target_timeline: 'about 5 years' })).status, 200);
   assert.equal((await api('GET', '/career/my-path?horizon=long_term')).body.path.target_timeline, 'about 5 years');
+});
+
+// 8 Oct: "long term should derive next goal pathing of saved short term
+// details and not same as short term details".
+test('LONG-TERM STARTS AFTER THE SAVED SHORT-TERM GOAL — and says so when the matrix stops there', { skip }, async () => {
+  await phase('kra_open');
+  await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Senior Software Developer' });
+  const lt = await api('GET', '/career/my-path?horizon=long_term');
+  assert.deepEqual(lt.body.eligible_target_roles, ['Tech Lead'], 'not the short-term role again');
+  const lead = lt.body.target_options.find((o) => o.role === 'Tech Lead');
+  assert.equal(lead.typical_time_months, 54, 'from now: 24 to Senior, then 30 to Tech Lead');
+  assert.equal(lt.body.short_term_goal.target_timeline, '24 months', 'the short-term goal as the matrix states it');
+
+  // The matrix stops at the short-term role: nothing to offer, and the reason named.
+  await db.query(`UPDATE people.career_transitions SET active=false WHERE tenant_id=$1 AND to_role='Tech Lead'`, [tenantId]);
+  const none = await api('GET', '/career/my-path?horizon=long_term');
+  assert.deepEqual(none.body.eligible_target_roles, []);
+  assert.equal(none.body.path_diagnostics.reason, 'none_beyond_short_term');
+  assert.equal(none.body.path_diagnostics.short_term_role, 'Senior Software Developer');
+
+  const ai = require('../core/ai');
+  const real = ai.narrate;
+  let seen = null;
+  ai.narrate = async (args) => { seen = args; return { draft: { aspirations: [] } }; };
+  try {
+    await fetch(`${base}/api/v1/agentic/career-suggest`, { method: 'POST',
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ horizon: 'long_term' }) });
+    assert.deepEqual(seen.input.configured_transitions, []);
+    assert.equal(seen.input.why_no_transitions.reason, 'none_beyond_short_term');
+    assert.match(seen.system, /none_beyond_short_term/);
+  } finally {
+    ai.narrate = real;
+    await db.query(`UPDATE people.career_transitions SET active=true WHERE tenant_id=$1 AND to_role='Tech Lead'`, [tenantId]);
+  }
+
+  // Short-Term's timeline is shown as the matrix's figure even where an
+  // older version stored a typed one.
+  await db.query(`UPDATE people.career_paths SET target_timeline='18 months' WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
+  assert.equal((await api('GET', '/career/my-path?horizon=short_term')).body.path.target_timeline, '24 months');
 });

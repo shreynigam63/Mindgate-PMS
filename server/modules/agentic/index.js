@@ -933,6 +933,11 @@ router.post('/career-suggest', async (req, res) => {
       }
     }
     const stTarget = shortTerm ? String(shortTerm.target_role).trim().toLowerCase() : null;
+    // Long-Term's list now starts AFTER the short-term goal (people
+    // targetsFor). Empty with a short-term goal saved means the matrix has
+    // no step beyond it yet — a different fix from "nothing from your role".
+    const beyond = horizon === 'long_term' && shortTerm && !transitions.length
+      ? { reason: 'none_beyond_short_term', short_term_role: shortTerm.target_role } : null;
 
     const input = {
       employee: { name: emp.name, designation: emp.designation, department: emp.department, role_band: emp.role_band, joined: emp.date_of_joining },
@@ -960,7 +965,7 @@ router.post('/career-suggest', async (req, res) => {
       })),
       // Present only when configured_transitions is empty. reason is one
       // of: none_configured | level_mismatch | all_inactive | no_designation
-      why_no_transitions: diagnostics,
+      why_no_transitions: beyond || diagnostics,
     };
     const out = await ai.narrate({
       tenantId: T(req), kind: 'career_suggest', ref: { employee_id: req.user.id },
@@ -1017,6 +1022,11 @@ you must report THAT reason rather than assuming nothing exists:
   sends people looking for the wrong thing.
 - all_inactive: the path exists but every transition from this role is
   deactivated; HR can reactivate it.
+- none_beyond_short_term: (long_term) the employee's short-term goal is
+  short_term_role, and the matrix has no step configured AFTER it yet.
+  Say exactly that: there is nothing to suggest beyond <short_term_role>
+  until HR adds the next move from it to the Career Pathing Matrix. Do not
+  propose the short-term role again, and do not invent the next one.
 - department_mismatch: paths from this role exist, but only for other
   departments (excluded_by_department lists them); HR can add one for the
   employee's department or make one company-wide (blank department).

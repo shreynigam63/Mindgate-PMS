@@ -864,13 +864,17 @@ async function transitionsFrom(tenantId, role, level, department) {
 // move's To Role and To Level become the next rung's From. Every step is
 // still a row HR wrote; nothing is invented. Times add up; competencies
 // are the union, in order.
-async function careerLadderFor(tenantId, employeeId, maxSteps = 3) {
+// `start` (optional) begins the walk from a rung other than the employee's
+// own — the saved short-term goal, for Long-Term — carrying that first
+// move's time and competencies; it is never itself offered.
+async function careerLadderFor(tenantId, employeeId, maxSteps = 3, start = null) {
   const emp = (await db.query(`SELECT designation, role_band, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp || !emp.designation) return [];
   const out = new Map();
-  let frontier = [{ role: emp.designation, level: emp.role_band, via: [], months: 0, comps: [] }];
-  const seen = new Set([lc(emp.designation)]);
-  for (let step = 1; step <= maxSteps && frontier.length; step += 1) {
+  let frontier = [start || { role: emp.designation, level: emp.role_band, via: [], months: 0, comps: [] }];
+  const seen = new Set([lc(emp.designation), ...(start ? [lc(start.role)] : [])]);
+  const first = start ? start.via.length + 1 : 1;
+  for (let step = first; step <= maxSteps && frontier.length; step += 1) {
     const next = [];
     for (const f of frontier) {
       for (const t of await transitionsFrom(tenantId, f.role, f.level, emp.department)) {
@@ -890,12 +894,35 @@ async function careerLadderFor(tenantId, employeeId, maxSteps = 3) {
   return [...out.values()];
 }
 
-// The roles a horizon may aim at: Short-Term, one rung; Long-Term, up to
-// three. The form's dropdown, its validation and the AI all read this.
+// The roles a horizon may aim at. The form's dropdown, its validation and
+// the AI all read this.
+//
+// Short-Term: one rung from the employee's role and level.
+// Long-Term: the steps AFTER the saved short-term goal (8 Oct: "long term
+// should derive next goal pathing of saved short term details and not
+// same as short term details"). When the employee has saved a short-term
+// role the matrix offers, the walk starts from that role and its level —
+// its own time counted in, so a long-term timeline runs from now — and
+// that role is never offered again. With no short-term goal (or one the
+// matrix no longer offers) it walks from the employee's own role.
+async function shortTermAnchor(tenantId, employeeId) {
+  const st = (await db.query(
+    `SELECT target_role FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`,
+    [tenantId, employeeId])).rows[0];
+  if (!st || !st.target_role) return null;
+  const move = (await eligibleTransitionsFor(tenantId, employeeId)).find((t) => lc(t.to_role) === lc(st.target_role));
+  return move || null;
+}
+
 async function targetsFor(tenantId, employeeId, horizon) {
-  return horizon === 'long_term'
-    ? careerLadderFor(tenantId, employeeId, 3)
-    : eligibleTransitionsFor(tenantId, employeeId);
+  if (horizon !== 'long_term') return eligibleTransitionsFor(tenantId, employeeId);
+  const anchor = await shortTermAnchor(tenantId, employeeId);
+  if (!anchor) return careerLadderFor(tenantId, employeeId, 3);
+  return (await careerLadderFor(tenantId, employeeId, 3, {
+    role: anchor.to_role, level: anchor.to_level, via: [anchor.to_role],
+    months: anchor.typical_time_months == null ? null : Number(anchor.typical_time_months),
+    comps: anchor.required_competencies || [],
+  })).map((r) => ({ ...r, after_short_term: anchor.to_role }));
 }
 
 // Why an employee has no eligible transitions.
@@ -993,13 +1020,29 @@ router.get('/career/my-path', async (req, res) => {
     // path_diagnostics explains an EMPTY eligible list. Without it the UI
     // could only say "nothing configured", which is wrong whenever a
     // transition exists but was excluded on level.
-    const diagnostics = eligibleTargetRoles.length ? null : await careerPathDiagnostics(T(req), req.user.id);
+    let diagnostics = eligibleTargetRoles.length ? null : await careerPathDiagnostics(T(req), req.user.id);
+    // Long-Term with a saved short-term goal and nothing configured after
+    // it: say exactly that, not "no path from your role" — there is one,
+    // and it is the short-term goal.
+    if (!eligibleTargetRoles.length && horizon === 'long_term') {
+      const anchor = await shortTermAnchor(T(req), req.user.id);
+      if (anchor) diagnostics = { reason: 'none_beyond_short_term', designation: me.designation || null, short_term_role: anchor.to_role, short_term_level: anchor.to_level || null };
+    }
+    // Short-Term's timeline IS the matrix's figure for the chosen move —
+    // shown as such even where an older version stored something typed.
+    if (p && horizon === 'short_term' && p.target_role) {
+      const t = transitions.find((x) => x.to_role === p.target_role);
+      if (t && t.typical_time_months != null) p.target_timeline = `${t.typical_time_months} months`;
+    }
     const gw = await growthWindowFor(T(req), req.user.id, horizon);
     // The Long-Term tab shows the short-term goal it builds on, and fills
     // its blank experience and skills from it (8 Oct).
     const st = rows.find((r) => r.horizon === 'short_term');
+    const anchorMove = horizon === 'long_term' && st && st.target_role ? await shortTermAnchor(T(req), req.user.id) : null;
     const shortTermGoal = horizon === 'long_term' && st && st.target_role
-      ? { target_role: st.target_role, target_timeline: st.target_timeline,
+      ? { target_role: st.target_role,
+          // The matrix's figure for that move, as the Short-Term tab shows it.
+          target_timeline: anchorMove && anchorMove.typical_time_months != null ? `${anchorMove.typical_time_months} months` : st.target_timeline,
           years_experience: st.years_experience, skills_interests: st.skills_interests }
       : null;
     // Each role's time from the matrix, so the form's Expected timeline

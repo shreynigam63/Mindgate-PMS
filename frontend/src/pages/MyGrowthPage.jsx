@@ -693,6 +693,16 @@ function CareerPathGap({ d }) {
       </div>
     );
   }
+  // Long-Term starts after the saved short-term goal (8 Oct); this is the
+  // matrix stopping there, not a missing path from the employee's role.
+  if (d.reason === 'none_beyond_short_term') {
+    return <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs">
+      <p className="font-bold text-amber-800">Nothing configured beyond your short-term goal yet</p>
+      <p className="text-navy-600">Your long-term goal is the step <i>after</i> <b>{d.short_term_role}</b>, and the Career Pathing Matrix
+        has no move from {d.short_term_role}{d.short_term_level ? <> ({d.short_term_level})</> : null} yet.
+        Ask HR to add the next one (for example <i>{d.short_term_role} → Lead - Technical</i>).</p>
+    </div>;
+  }
   if (d.reason === 'department_mismatch') {
     return <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs">
       <p className="font-bold text-amber-800">Career paths from your role exist, but for other departments</p>
@@ -948,7 +958,9 @@ function CareerPathCard() {
         )}
         {data.eligible_target_roles.length > 0 && <p className="text-[11px] text-navy-400 mt-1">
           {horizon === 'long_term'
-            ? 'Roles the Career Pathing Matrix leads to from your current role — up to three steps ahead.'
+            ? (data.short_term_goal
+              ? `Roles the Career Pathing Matrix leads to after your short-term goal (${data.short_term_goal.target_role}) — your short-term role itself is not offered again.`
+              : 'Roles the Career Pathing Matrix leads to from your current role — up to three steps ahead.')
             : 'Limited to transitions HR has configured from your current role in the Career Pathing Matrix.'}</p>}
       </div>
       <div>

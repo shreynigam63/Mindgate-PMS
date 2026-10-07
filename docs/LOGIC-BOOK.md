@@ -12,8 +12,8 @@ book can be checked against the code rather than believed.
 Once those are clear, most of Part 2 is predictable.
 
 **Live at pms.agentichumans.in: build `e0a2d07`** (8 October 2026). This
-edition describes exactly what is deployed — nothing here is waiting on a
-later release. The build a screen is running is
+edition also describes Long-Term starting after the saved short-term goal
+(§3.2), on the dev branch, which reaches the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -420,6 +420,21 @@ configured, other departments only, level, or deactivated. **Use this one**
 sets the target role and fills **only blank fields** (timeline, growth
 plan); it never overwrites what the employee wrote, and adds suggested
 milestones not already listed, undated.
+
+**Long-Term starts after the saved Short-Term goal** (8 Oct: "long term
+should derive next goal pathing of saved short term details and not same
+as short term details"). Once the employee has saved a short-term role the
+matrix offers, Long-Term's list is the steps **after** it — walked from
+that role and its level, up to two more moves — and the short-term role is
+never offered again. Times count from now: the short-term move's figure
+plus the next ones ("typically 60 months for the 2 steps"). With no
+short-term goal saved yet, Long-Term walks from the employee's own role.
+When the matrix stops at the short-term role, Long-Term says *Nothing
+configured beyond your short-term goal yet* and names what HR should add
+(`none_beyond_short_term`); the AI says the same rather than repeating the
+short-term role. Short-Term's timeline is always shown as the matrix's
+figure for the chosen move, even where an older version stored a typed
+one.
 
 **Long-Term builds on Short-Term** (8 Oct). The Long-Term tab shows the
 saved short-term goal it continues from ("Builds on your short-term goal:
@@ -855,5 +870,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 8 October 2026 (live: `e0a2d07`). Where this book and the code disagree,
+*Checked against the code on 8 October 2026 (live: `e0a2d07`; plus
+Long-Term starting after the short-term goal, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*
