@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import Summit from '../Summit';
 import MyOnboardingEmails from './MyOnboardingEmails';
+import { SHOW_FIRST_WEEK_JOURNEY } from '../features';
 
 // The landing screen.
 //
@@ -332,7 +333,7 @@ export default function HomePage({ user }) {
 
       {/* The First-Week Journey emails this person sends from their own
           Gmail, when they are a SPOC for one. Nothing otherwise. */}
-      <MyOnboardingEmails user={user} />
+      {SHOW_FIRST_WEEK_JOURNEY && <MyOnboardingEmails user={user} />}
 
       {/* WHAT THIS PERSON HAS ASKED FOR AND IS WAITING ON — listed, so they
           know exactly who to chase. */}

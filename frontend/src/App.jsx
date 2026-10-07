@@ -12,6 +12,7 @@ import CalibrationPage from './pages/CalibrationPage';
 import MyRatingPage from './pages/MyRatingPage';
 import MySurveysPage, { EngagementAdminPage } from './pages/EngagementPage';
 import EngagementInsightsPage, { HrOpsOnboardingPage } from './pages/EngagementInsightsPage';
+import { SHOW_FIRST_WEEK_JOURNEY } from './features';
 import PeopleHubPage from './pages/PeopleHubPage';
 import DirectoryPage from './pages/DirectoryPage';
 import DepartmentHeadsPage from './pages/DepartmentHeadsPage';
@@ -300,6 +301,9 @@ const gateClosed = (item, gates) => !!item.gate && gates[item.gate] === false;
 
 const visibleGroups = (user) => NAV
   .map(g => ({ ...g, items: g.items.filter(it => mayOpen(user, it.to)
+    // The First-Week Journey is hidden on screen (features.js); its page
+    // and data stay, and the HR Ops entry comes back with the switch.
+    && (SHOW_FIRST_WEEK_JOURNEY || it.to !== '/hrops/onboarding')
     && !(it.hideIf && user.pages && it.hideIf.some(r => user.pages.includes(r)))) }))
   .filter(g => g.items.length > 0);
 

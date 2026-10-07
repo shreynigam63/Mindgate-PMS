@@ -256,7 +256,10 @@ test('THE TIMELINE COMES FROM THE MATRIX, and a long-term goal saved as short-te
   // The moved goal is not on the matrix's path yet — Long-Term can still be
   // saved with it; a NEW off-matrix role still cannot.
   assert.equal((await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Lead - Technical', target_timeline: '72 months', plan: 'Edited' })).status, 200);
-  assert.equal((await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Chief Architect' })).status, 422);
+  // Long-Term is open (8 Oct): any role may be named; Short-Term is not.
+  assert.equal((await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Chief Architect' })).status, 200);
+  assert.equal((await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Chief Architect' })).status, 422);
+  await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Lead - Technical', target_timeline: '72 months', plan: 'Edited' });
 
   // Nothing is overwritten: Long-Term now has a goal, so a second move is refused.
   await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Senior Software Developer', target_timeline: '24 months' });
@@ -376,4 +379,41 @@ test('ONE GRADE UP FROM THE SHEET when the matrix stops at the short-term role',
     await db.query(`UPDATE people.career_transitions SET active=true WHERE tenant_id=$1 AND to_role='Tech Lead'`, [tenantId]);
     for (const t of ['pms.grade_ladder', 'pms.grade_roles', 'pms.designation_grade']) await db.query(`DELETE FROM ${t} WHERE tenant_id=$1`, [tenantId]);
   }
+});
+
+// 8 Oct: "keep target role open for long term" and "check if it is a cross
+// departmental transition" — answered from the organisation's data.
+test('LONG-TERM IS OPEN TEXT, and a cross-department move is detected from where the role is held', { skip }, async () => {
+  await phase('kra_open');
+  await db.query(`INSERT INTO core.employees (tenant_id,name,email,status,designation,department) VALUES
+    ($1,'Pat Product','pat@x.com','active','Product Manager','Product')`, [tenantId]);
+  const typed = await api('GET', '/career/target-departments?role=Product%20Manager');
+  assert.deepEqual(typed.body, { current_department: 'Development', target_departments: ['Product'], cross_department: true });
+  assert.equal((await api('GET', '/career/target-departments?role=Senior%20Software%20Developer')).body.cross_department, false, 'filed in Development');
+  assert.equal((await api('GET', '/career/target-departments?role=Astronaut')).body.cross_department, null, 'held nowhere: cannot be checked');
+
+  assert.equal((await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Product Manager', target_timeline: '4 years' })).status, 200);
+  const lt = await api('GET', '/career/my-path?horizon=long_term');
+  assert.equal(lt.body.path.target_role, 'Product Manager');
+  assert.equal(lt.body.target_departments.cross_department, true);
+
+  const ai = require('../core/ai');
+  const real = ai.narrate;
+  let seen = null;
+  ai.narrate = async (args) => { seen = args; return { draft: { certifications: [], milestones: [] } }; };
+  try {
+    const r = await fetch(`${base}/api/v1/agentic/career-plan`, { method: 'POST',
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_role: 'Product Manager', draft: { skills_interests: 'Estimation, APIs' } }) });
+    const body = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(body));
+    assert.equal(seen.input.target_role, 'Product Manager');
+    assert.equal(seen.input.cross_department.cross_department, true, 'the fact comes from the data, not the model');
+    assert.equal(seen.input.organisation_path, null, 'not on the organisation\'s path from here');
+    assert.equal(seen.input.self_reported.skills_and_interests, 'Estimation, APIs');
+    assert.match(seen.system, /Certifications: only real, widely recognised/);
+    assert.equal(body.facts.cross_department.cross_department, true);
+    assert.equal((await fetch(`${base}/api/v1/agentic/career-plan`, { method: 'POST',
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: '{}' })).status, 400, 'a role is needed');
+  } finally { ai.narrate = real; await db.query(`DELETE FROM core.employees WHERE tenant_id=$1 AND email='pat@x.com'`, [tenantId]); }
 });

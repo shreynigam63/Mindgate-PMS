@@ -7,6 +7,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert';
 import { chromium } from 'playwright-core';
+import { readFileSync } from 'node:fs';
 
 const APP = process.env.APP_URL || 'http://127.0.0.1:5190';
 const API = process.env.API_URL || 'http://127.0.0.1:8080';
@@ -27,8 +28,12 @@ before(async () => {
 });
 after(async () => { if (browser) await browser.close(); });
 
+// The First-Week Journey is hidden on screen while this switch is off
+// (src/features.js, 8 Oct); its tests then only check it stays hidden.
+const SHOWN = /SHOW_FIRST_WEEK_JOURNEY\s*=\s*true/.test(readFileSync(new URL('../src/features.js', import.meta.url), 'utf8'));
 const needStack = (t) => {
   if (!up) { t.skip('dev stack not running (API 8080 + Vite 5190)'); return true; }
+  if (!SHOWN) { t.skip('First-Week Journey is switched off in src/features.js'); return true; }
   return false;
 };
 
@@ -172,6 +177,18 @@ test('a SPOC finds their onboarding emails on Home, each one opening in their ow
   assert.equal(q.get('authuser'), 'mgr@shot.in', 'opens in the SPOC\'s own account');
   assert.equal(await link.getAttribute('target'), '_blank');
   assert.equal(await panel.getByRole('button', { name: /I’ve sent it/ }).count() > 0, true);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('while switched off, New Hire Insights shows no First-Week Journey, and HR Ops has no menu entry', async (t) => {
+  if (!up) { t.skip('dev stack not running'); return; }
+  if (SHOWN) { t.skip('switched on'); return; }
+  const { ctx, page, errors } = await open('hr@shot.in', '/admin/engagement-insights');
+  const main = await page.locator('main').innerText();
+  assert.ok(!/First-Week Journey/.test(main), 'the tab is gone');
+  assert.match(main, /New Hire Insights/);
+  assert.equal(await page.locator('aside a[href="/hrops/onboarding"]').count(), 0);
   assert.deepEqual(errors, []);
   await ctx.close();
 });

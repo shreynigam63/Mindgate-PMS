@@ -11,10 +11,10 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `b81a51e`** (8 October 2026). This
-edition also describes Long-Term taking one grade up from the Grade and
-Level sheet (§3.2), on the dev branch, which reaches the live site with
-the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `b33d548`** (8 October 2026). This
+edition also describes the open Long-Term target with its AI plan and
+cross-department check (§3.2), and the First-Week Journey hidden on screen
+(§3.12), on the dev branch, which reach the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -422,6 +422,30 @@ sets the target role and fills **only blank fields** (timeline, growth
 plan); it never overwrites what the employee wrote, and adds suggested
 milestones not already listed, undated.
 
+**Long-Term's target role is open** (8 Oct: "please keep target role open
+for long term"). The employee types any role; the roles below — the steps
+after the short-term goal, from the matrix or the Grade and Level sheet —
+are offered as suggestions, with the matrix timeline filled in when one is
+picked. Short-Term stays a matrix move.
+
+**Is it a cross-department move?** Answered from the organisation's data,
+not the AI (`GET /people/career/target-departments?role=`): where the role
+is held today on the employee master and where the matrix files it. Only
+in other departments → a *Cross-department move — Delivery → Human
+Resources* badge under the role, as it is typed; in the employee's own
+department → "Within your department"; held nowhere → nothing shown.
+
+**Build my plan for <role> (AI)** — `POST /agentic/career-plan`, Long-Term
+only. For the typed role it drafts certifications (real, widely recognised
+ones only, each with why), the expected timeline (the organisation's
+figure where the matrix or sheet reaches the role, otherwise a marked
+estimate), the skills the move needs and those the employee already has,
+a growth plan running through the short-term goal, and 4–6 next
+milestones; it is given the cross-department fact and states it. *Use this
+plan* fills the timeline if blank, adds the plan (skills and
+certifications included) below anything already written, and adds
+milestones not already listed — undated.
+
 **Long-Term starts after the saved Short-Term goal** (8 Oct: "long term
 should derive next goal pathing of saved short term details and not same
 as short term details"). Once the employee has saved a short-term role the
@@ -707,6 +731,13 @@ opens to their week, day by day, then Day-7 feedback.
 - **Dashboard**: joiners in onboarding, due today, overdue, average
   feedback, completion %, by owner (a shared activity counts for every
   owner group named), by day.
+- **Hidden on screen since 8 Oct** ("please hide first week journey page
+  from new hire insights on front end and keep the same in database").
+  `SHOW_FIRST_WEEK_JOURNEY = false` in `frontend/src/features.js` hides the
+  First-Week Journey tab on New Hire Insights (which opens on Survey
+  Insights), the HR Ops menu entry and the *Onboarding emails for you to
+  send* card on Home. Every table, API route and row described below is
+  unchanged; setting the switch to `true` and deploying brings it all back.
 - **Who may open it**: `engagement_admin` (HR) or `onboarding_ops`
   (`people/onboarding.js`, `guard`). **HRBP** sees and edits only joiners
   in their remit — the counts too. Holidays, the SPOC list and the matrix
@@ -890,6 +921,7 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 8 October 2026 (live: `b81a51e`; plus
-Long-Term one grade up from the sheet, on the dev branch). Where this book and the code disagree,
+*Checked against the code on 8 October 2026 (live: `b33d548`; plus the
+open Long-Term target and the hidden First-Week Journey, on the dev
+branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

@@ -14,7 +14,7 @@ const { requireConsent } = require('../../core/consent');
 // house rule that modules never import each other's internals. This is
 // also what guarantees career suggestions stay inside the set the
 // career-path form accepts — both resolve eligibility through it.
-const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor } = require('../people');
+const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor, targetDepartments } = require('../people');
 // Same house rule, the other direction: the appraisal summary narrates the
 // performance module's own consolidation rather than re-gathering it.
 const { buildAnnualReviewSummary, kraSuggestionCandidates } = require('../performance');
@@ -858,6 +858,96 @@ Respond ONLY with JSON:
 // uses) and handed to the model as a closed list it must choose from.
 // The competencies and typical timelines come from that matrix too, so
 // every number in the output is HR's, not the model's.
+// A PLAN FOR THE ROLE THE EMPLOYEE NAMED (8 Oct: "as per target role added
+// by employee Ai should suggest certifications, expected timeline, skill
+// set required for this transition, growth plan for this transition and
+// next milestones for this transition, also check if it is a cross
+// departmental transition"). Long-Term's target is open text, so this works
+// from whatever role is typed. What the organisation's own data can answer
+// is answered from it, not by the model: whether the role sits in another
+// department (people.targetDepartments), and — where the Career Pathing
+// Matrix or the Grade and Level sheet reaches it — the steps, time and
+// competencies HR set. The model drafts the rest, labelled a draft.
+router.post('/career-plan', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const targetRole = String(b.target_role || '').trim().slice(0, 200);
+    if (!targetRole) return res.status(400).json({ error: 'Type the role you are aiming at first.' });
+    const emp = (await db.query(
+      `SELECT id, name, department, designation, role_band, date_of_joining FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.user.id, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee record not found' });
+
+    const ladder = await targetsFor(T(req), req.user.id, 'long_term');
+    const onPath = ladder.find((t) => String(t.to_role).trim().toLowerCase() === targetRole.toLowerCase()) || null;
+    const where = await targetDepartments(T(req), req.user.id, targetRole);
+    const st = (await db.query(
+      `SELECT target_role, target_timeline FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`,
+      [T(req), req.user.id])).rows[0] || null;
+    const lt = (await db.query(
+      `SELECT years_experience, skills_interests, plan FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='long_term'`,
+      [T(req), req.user.id])).rows[0] || {};
+    const typed = b.draft && typeof b.draft === 'object' ? b.draft : {};
+    const val = (k, max) => { const v = typed[k] != null && String(typed[k]).trim() !== '' ? typed[k] : lt[k]; return v == null || String(v).trim() === '' ? null : String(v).trim().slice(0, max); };
+
+    const input = {
+      employee: { designation: emp.designation, department: emp.department, role_band: emp.role_band, joined: emp.date_of_joining },
+      target_role: targetRole,
+      short_term_goal: st && st.target_role ? st : null,
+      self_reported: { years_experience: val('years_experience', 10), skills_and_interests: val('skills_interests', 2000), current_plan: val('plan', 3000) },
+      // Facts from the organisation's data, not for the model to change.
+      cross_department: where,
+      organisation_path: onPath
+        ? { steps_from_current_role: onPath.steps || 1, via: onPath.via || [], typical_time_months: onPath.typical_time_months,
+            required_competencies: onPath.required_competencies || [], from: onPath.source === 'grade_sheet' ? 'grade_and_level_sheet' : 'career_pathing_matrix' }
+        : null,
+    };
+    const out = await ai.narrate({
+      tenantId: T(req), kind: 'career_plan', ref: { employee_id: req.user.id, target_role: targetRole },
+      requestedBy: req.user.email, input, maxTokens: 1800,
+      system: `You help an employee plan a LONG-TERM move (three years and beyond) to the
+target_role they named, from their current designation and department.
+
+Use the facts as given; do not contradict them:
+- cross_department says where the target role is held or filed today.
+  cross_department true: say plainly it is a cross-departmental move from
+  current_department to target_departments, and include what that adds —
+  domain knowledge of the other function, relationships there, usually an
+  internal move or rotation. false: same department. null: the role is not
+  held or filed anywhere yet — say it could not be checked.
+- organisation_path, when present, is the organisation's own route (its
+  Career Pathing Matrix or Grade and Level sheet): use its
+  typical_time_months for the timeline and its required_competencies in
+  the skills. When absent, the role is not on the organisation's path from
+  here — say so once, and estimate the timeline as a range, marked as an
+  estimate.
+- short_term_goal, when present, is the step already planned; the plan
+  should run through it, not around it.
+- self_reported is the employee's own claim (experience, skills, current
+  plan); build on it, and say what it already covers.
+
+Certifications: only real, widely recognised certifications or courses
+relevant to the target role and the employee's field (e.g. a vendor or
+professional-body certification); never invent one, never name a price or
+a provider you are not sure of; 2 to 5, each with one line on why it helps
+this move. Milestones: 4 to 6, in order, each something the employee can
+put a date against and mark progress on. Never mention a performance
+rating or promise a promotion — this describes what the move requires.
+Respond ONLY with JSON:
+{"cross_department":{"is_cross":true|false|null,"note":"one or two sentences"},
+ "expected_timeline":"e.g. 36-48 months, with whether it is the organisation's figure or an estimate",
+ "skills_required":["skills and competencies this transition needs"],
+ "skills_you_have":["from self_reported, those that already count towards it"],
+ "certifications":[{"name":"...","why":"one line"}],
+ "growth_plan":"a short paragraph, then the plan as 3-6 lines starting with '- '",
+ "milestones":[{"title":"short, datable, checkable","description":"what done looks like"}],
+ "notes":["anything to discuss with the manager or HR"]}`,
+    });
+    res.json({ ok: true, ...out, facts: { cross_department: where, organisation_path: input.organisation_path },
+      note: 'Suggestions only — certifications and timeline are a draft to discuss with your manager.' });
+  } catch (e) { fail(res, e); }
+});
+
 router.post('/career-suggest', async (req, res) => {
   try {
     const emp = (await db.query(

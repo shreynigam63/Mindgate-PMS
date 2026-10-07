@@ -894,6 +894,34 @@ async function gradeRungAbove(tenantId, role, department, cache) {
     required_competencies: competenciesFor(RANK_FOR_GRADE[to.grade] || 8), source: 'grade_sheet' };
 }
 
+// IS A TARGET ROLE IN ANOTHER DEPARTMENT? (8 Oct: "check if it is a cross
+// departmental transition"). Answered from the organisation's own data,
+// never guessed: where that role is held today on the employee master,
+// and where the Career Pathing Matrix files it. If it lives only in other
+// departments, the move crosses departments; if nowhere, it is unknown.
+async function targetDepartments(tenantId, employeeId, role) {
+  const emp = (await db.query(`SELECT department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0] || {};
+  const r = String(role || '').trim();
+  if (!r) return null;
+  const held = (await db.query(
+    `SELECT DISTINCT department FROM core.employees
+      WHERE tenant_id=$1 AND status='active' AND LOWER(BTRIM(designation))=LOWER($2) AND COALESCE(BTRIM(department),'')<>''`,
+    [tenantId, r])).rows.map((x) => x.department);
+  const filed = (await db.query(
+    `SELECT DISTINCT department FROM people.career_transitions
+      WHERE tenant_id=$1 AND active=true AND LOWER(BTRIM(to_role))=LOWER($2) AND COALESCE(BTRIM(department),'')<>''`,
+    [tenantId, r])).rows.map((x) => x.department);
+  const where = [...new Set([...held, ...filed])].sort();
+  const mine = lc(emp.department);
+  const known = where.length > 0;
+  const inMine = where.some((d) => lc(d) === mine);
+  return {
+    current_department: emp.department || null,
+    target_departments: where,
+    cross_department: known && !inMine ? true : known ? false : null,
+  };
+}
+
 // THE LONG-TERM LADDER (8 Oct). The matrix holds one rung per row, which
 // is right for Short-Term — one to two years — and wrong for Long-Term,
 // "three years and beyond", which is usually two or three rungs up. So
@@ -1103,7 +1131,8 @@ router.get('/career/my-path', async (req, res) => {
       }
     }
     const staleTarget = !!(p && p.target_role && eligibleTargetRoles.length && !eligibleTargetRoles.includes(p.target_role));
-    res.json({ path: p || null, horizon, short_term_goal: shortTermGoal,
+    const crossDept = horizon === 'long_term' && p && p.target_role ? await targetDepartments(T(req), req.user.id, p.target_role) : null;
+    res.json({ path: p || null, horizon, short_term_goal: shortTermGoal, target_departments: crossDept,
       target_options: targetOptions, stale_target: staleTarget, horizons_filled: filled, milestones, progress_pct: careerProgress(milestones),
       current: { designation: me.designation || null, department: me.department || null,
                  role_band: me.role_band || null, date_of_joining: me.date_of_joining || null },
@@ -1111,6 +1140,15 @@ router.get('/career/my-path', async (req, res) => {
       editable: gw.window.ok, editable_via: gw.window.via || null,
       shut_because: gw.window.ok ? null : gw.window.reason,
       path_diagnostics: diagnostics });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Where a role sits, for the Long-Term tab's cross-department badge while
+// the employee is still typing it. Read-only, about the caller only.
+router.get('/career/target-departments', async (req, res) => {
+  try {
+    const role = String(req.query.role || '').trim().slice(0, 200);
+    res.json(role ? await targetDepartments(T(req), req.user.id, role) : null);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1155,7 +1193,12 @@ router.put('/career/my-path', async (req, res) => {
         ? 'Your short-term goal comes from the Career Pathing Matrix, and its paths from your role are set for a different level — ask HR to check the level on those transitions or your role band.'
         : 'Your short-term goal comes from the Career Pathing Matrix, and no path is configured from your current role yet — ask HR to add one.' });
     }
-    if (eligibleTargetRoles.length && !eligibleTargetRoles.includes(target_role) && !keptLongTerm) {
+    // LONG-TERM TARGET IS OPEN (8 Oct: "please keep target role open for
+    // long term"). Where someone wants to end up is theirs to name; the
+    // matrix and the Grade and Level sheet only SUGGEST it. Short-Term
+    // stays a move from the matrix.
+    void keptLongTerm;
+    if (horizon === 'short_term' && eligibleTargetRoles.length && !eligibleTargetRoles.includes(target_role)) {
       return res.status(422).json({ error: `target_role must be one of the transitions configured from your current role in the Career Pathing Matrix: ${eligibleTargetRoles.join(', ')}` });
     }
     // The short-term timeline is the matrix's own figure for that move,
@@ -1427,6 +1470,6 @@ const hrbpScope = require('./hrbp-scope');
 router.use('/onboarding', require('./onboarding').router);
 router.use('/', require('./rnr').router);
 
-module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor,
+module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor, targetDepartments,
                    transitionsWorkbook, suggestedTransitionRows,
                    TRANSITION_HEADERS, TRANSITION_BANNER, SUGGESTED_BANNER };

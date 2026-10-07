@@ -18,6 +18,7 @@ import { AlertTriangle, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import OnboardingTracker from './OnboardingTracker';
+import { SHOW_FIRST_WEEK_JOURNEY } from '../features';
 
 const DIM_LABEL = {
   onboarding: 'Onboarding', role_clarity: 'Role clarity', manager_support: 'Manager support',
@@ -325,15 +326,17 @@ function SurveyInsights() {
 // first seven days, the survey insights are what the joiners SAY about
 // it afterwards. The tracker opens first because it is the one with work
 // due today. The choice rides in the URL so a link can open either.
-const VIEWS = [
+const ALL_VIEWS = [
   ['journey', 'First-Week Journey', 'Every activity of a joiner’s first seven working days — owner, due date, done or overdue, and Day-7 feedback.'],
   ['surveys', 'Survey Insights', 'What the lifecycle surveys are saying: who needs attention, which part of onboarding is weakest, and what happened next.'],
 ];
+// The journey tab is hidden while SHOW_FIRST_WEEK_JOURNEY is off (features.js).
+const VIEWS = ALL_VIEWS.filter(([k]) => k !== 'journey' || SHOW_FIRST_WEEK_JOURNEY);
 
 export default function EngagementInsightsPage() {
   const [view, setView] = useState(() => {
     const v = new URLSearchParams(window.location.search).get('view');
-    return VIEWS.some(([k]) => k === v) ? v : 'journey';
+    return VIEWS.some(([k]) => k === v) ? v : VIEWS[0][0];
   });
   const pick = (k) => {
     setView(k);
@@ -344,11 +347,13 @@ export default function EngagementInsightsPage() {
   return (
     <div className="space-y-4">
       <PageHead title="New Hire Insights" hue="leaf" sub={sub} />
-      <div className="tabbar">
-        {VIEWS.map(([k, label]) => (
-          <button key={k} type="button" className={view === k ? 'on' : ''} onClick={() => pick(k)}>{label}</button>
-        ))}
-      </div>
+      {VIEWS.length > 1 && (
+        <div className="tabbar">
+          {VIEWS.map(([k, label]) => (
+            <button key={k} type="button" className={view === k ? 'on' : ''} onClick={() => pick(k)}>{label}</button>
+          ))}
+        </div>
+      )}
       {view === 'journey' ? <OnboardingTracker /> : <SurveyInsights />}
     </div>
   );
@@ -358,7 +363,7 @@ export default function EngagementInsightsPage() {
 export function HrOpsOnboardingPage() {
   return (
     <div className="space-y-4">
-      <PageHead title="First-Week Journey" hue="leaf" sub={VIEWS[0][2]} />
+      <PageHead title="First-Week Journey" hue="leaf" sub={ALL_VIEWS[0][2]} />
       <OnboardingTracker />
     </div>
   );

@@ -740,6 +740,71 @@ const HORIZONS = [
   ['long_term', 'Long-Term', 'Where you want to end up — three years and beyond.'],
 ];
 
+// IS THIS A CROSS-DEPARTMENT MOVE? (8 Oct). Asked of the organisation's
+// own data — where the role is held today and where the matrix files it —
+// as the employee types, not guessed.
+function CrossDeptBadge({ role }) {
+  const [w, setW] = useState(null);
+  useEffect(() => {
+    const r = String(role || '').trim();
+    if (r.length < 3) { setW(null); return undefined; }
+    const t = setTimeout(() => api(`/people/career/target-departments?role=${encodeURIComponent(r)}`).then(setW).catch(() => setW(null)), 350);
+    return () => clearTimeout(t);
+  }, [role]);
+  if (!w || w.cross_department == null) return null;
+  return w.cross_department ? (
+    <p className="mt-1.5 inline-flex flex-wrap items-center gap-1.5 text-[11.5px] bg-violet-50 border border-violet-100 text-violet-800 rounded-lg px-2.5 py-1">
+      <b>Cross-department move</b> — {w.current_department || 'your department'} → {w.target_departments.join(', ')}
+    </p>
+  ) : (
+    <p className="mt-1.5 text-[11.5px] text-navy-500">Within your department ({w.current_department}).</p>
+  );
+}
+
+// A PLAN FOR THE ROLE TYPED ON LONG-TERM (8 Oct: certifications, timeline,
+// skills, growth plan, milestones, and whether it crosses departments).
+function CareerPlanPanel({ role, draft, onUse }) {
+  const [used, setUsed] = useState(false);
+  if (!String(role || '').trim()) {
+    return <p className="text-[11.5px] text-navy-400">Type a target role above and the AI will build a plan for it — certifications, timeline, skills, growth plan and milestones.</p>;
+  }
+  return (
+    <AiDraftPanel
+      accent="indigo"
+      title={`+ Build my plan for ${role}`}
+      description="Certifications, expected timeline, the skills this move needs, a growth plan and next milestones — and whether it crosses departments."
+      idleLabel="Build my plan"
+      againLabel="Build again"
+      modalTitle={`Plan for ${role}`}
+      run={async () => { setUsed(false); const r = await api('/agentic/career-plan', { method: 'POST', body: JSON.stringify({ target_role: role, draft }) }); return { ...(r.draft || {}), facts: r.facts }; }}
+      summary={(d) => `${(d.certifications || []).length} certifications · ${(d.milestones || []).length} milestones${d.cross_department && d.cross_department.is_cross ? ' · cross-department' : ''}`}
+      footer={(d) => (
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="btn-pri" disabled={used} onClick={() => { onUse(d); setUsed(true); }}>Use this plan</button>
+          <span className="text-navy-500">{used ? 'Filled in below — edit it, then save.' : 'Fills the timeline if blank, adds the plan and milestones; nothing you wrote is removed.'}</span>
+        </div>
+      )}
+    >
+      {(d) => (
+        <div className="space-y-2 text-[12.5px]">
+          {d.cross_department && d.cross_department.note && (
+            <p className={d.cross_department.is_cross ? 'text-violet-800 bg-violet-50 rounded-lg px-2.5 py-1.5' : 'text-navy-600'}>
+              {d.cross_department.is_cross ? <b>Cross-department move. </b> : null}{d.cross_department.note}
+            </p>
+          )}
+          {d.expected_timeline && <p><b>Expected timeline:</b> {d.expected_timeline}</p>}
+          {(d.skills_required || []).length > 0 && <div><p className="font-semibold text-navy-700">Skills this move needs</p><ul className="list-disc pl-4">{d.skills_required.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
+          {(d.skills_you_have || []).length > 0 && <div><p className="font-semibold text-emerald-700">Already counts towards it</p><ul className="list-disc pl-4">{d.skills_you_have.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
+          {(d.certifications || []).length > 0 && <div><p className="font-semibold text-navy-700">Certifications</p><ul className="list-disc pl-4">{d.certifications.map((c, i) => <li key={i}><b>{c.name}</b>{c.why ? ` — ${c.why}` : ''}</li>)}</ul></div>}
+          {d.growth_plan && <div><p className="font-semibold text-navy-700">Growth plan</p><p className="whitespace-pre-line">{d.growth_plan}</p></div>}
+          {(d.milestones || []).length > 0 && <div><p className="font-semibold text-navy-700">Next milestones</p><ol className="list-decimal pl-4">{d.milestones.map((m, i) => <li key={i}>{m.title}{m.description ? <span className="text-navy-400"> — {m.description}</span> : null}</li>)}</ol></div>}
+          {(d.notes || []).length > 0 && <p className="text-navy-400">{d.notes.join(' · ')}</p>}
+        </div>
+      )}
+    </AiDraftPanel>
+  );
+}
+
 function CareerPathCard() {
   const [horizon, setHorizon] = useState('short_term');
   const [data, setData] = useState(null);
@@ -812,7 +877,9 @@ function CareerPathCard() {
   const pickRole = (role) => setForm((f) => {
     if (role === f.target_role) return f;
     const o = option(role);
-    return { ...f, target_role: role, target_timeline: o && o.typical_time_months != null ? months(o.typical_time_months) : '' };
+    if (o && o.typical_time_months != null) return { ...f, target_role: role, target_timeline: months(o.typical_time_months) };
+    // Long-Term is typed freely: a role off the list keeps what is there.
+    return { ...f, target_role: role, target_timeline: horizon === 'long_term' ? f.target_timeline : '' };
   });
   const moveToLongTerm = async () => {
     setErr(null);
@@ -860,7 +927,9 @@ function CareerPathCard() {
           {data.current.role_band && <span className="chip bg-white text-navy-500">{data.current.role_band}</span>}
         </div>
       )}
-      <CareerPathGap d={data.path_diagnostics} />
+      {/* Why the matrix offers nothing — a Short-Term matter now that
+          Long-Term is open text (8 Oct). */}
+      {horizon === 'short_term' && <CareerPathGap d={data.path_diagnostics} />}
       {/* What the Long-Term tab builds on. */}
       {horizon === 'long_term' && (data.short_term_goal ? (
         <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 text-xs text-indigo-900">
@@ -893,8 +962,8 @@ function CareerPathCard() {
         </div>
       )}
       {data.stale_target && horizon === 'long_term' && (
-        <p className="text-[11.5px] text-amber-700">
-          <b>{data.path.target_role}</b> is not yet on the Career Pathing Matrix’s path from your role — HR can add the steps that lead to it.
+        <p className="text-[11.5px] text-navy-500">
+          <b>{data.path.target_role}</b> is your own aim — it is not on the Career Pathing Matrix’s path from your role, so the timeline and plan below are yours (or the AI’s estimate), not HR’s figures.
         </p>
       )}
       {editable && <CareerAiPanel horizon={horizon}
@@ -936,7 +1005,18 @@ function CareerPathCard() {
       {editable && <p className="text-[11px] text-navy-400">Unsaved until you press <b>Save</b>.</p>}
       <div>
         <label className="lbl">Target role</label>
-        {data.eligible_target_roles.length ? (
+        {horizon === 'long_term' ? (
+          // LONG-TERM IS OPEN (8 Oct: "please keep target role open for
+          // long term"). Type any role; the matrix and the Grade and Level
+          // sheet only suggest.
+          <>
+            <input className="inp" list="lt-role-options" value={form.target_role} disabled={!editable}
+              onChange={e => pickRole(e.target.value)} placeholder="Type the role you want to grow into, e.g. Lead - Technical" />
+            <datalist id="lt-role-options">
+              {(data.eligible_target_roles || []).map(b => <option key={b} value={b} />)}
+            </datalist>
+          </>
+        ) : data.eligible_target_roles.length ? (
           <select className="inp" value={form.target_role} disabled={!editable} onChange={e => pickRole(e.target.value)}>
             <option value="">—</option>
             {/* A saved role that is no longer on the list is shown, not
@@ -959,10 +1039,35 @@ function CareerPathCard() {
         {data.eligible_target_roles.length > 0 && <p className="text-[11px] text-navy-400 mt-1">
           {horizon === 'long_term'
             ? (data.short_term_goal
-              ? `The next level after your short-term goal (${data.short_term_goal.target_role}) — from the Career Pathing Matrix, or one grade up on the Grade and Level sheet where the matrix has no step yet.`
-              : 'Roles the Career Pathing Matrix leads to from your current role — up to three steps ahead.')
+              ? `Type any role. Suggested: the next level after your short-term goal (${data.short_term_goal.target_role}), from the Career Pathing Matrix or the Grade and Level sheet.`
+              : 'Type any role. Suggested: roles the Career Pathing Matrix leads to from your current role.')
             : 'Limited to transitions HR has configured from your current role in the Career Pathing Matrix.'}</p>}
+        {horizon === 'long_term' && <CrossDeptBadge role={form.target_role} />}
       </div>
+      {horizon === 'long_term' && editable && (
+        <CareerPlanPanel role={form.target_role} draft={form} onUse={(p) => {
+          const blank = (v) => v == null || String(v).trim() === '';
+          const lines = [
+            p.growth_plan || null,
+            (p.skills_required || []).length ? `Skills to build:\n- ${p.skills_required.join('\n- ')}` : null,
+            (p.certifications || []).length ? `Certifications:\n- ${p.certifications.map((c) => (c.why ? `${c.name} — ${c.why}` : c.name)).join('\n- ')}` : null,
+          ].filter(Boolean).join('\n\n');
+          setForm((f) => ({
+            ...f,
+            target_timeline: blank(f.target_timeline) ? (p.expected_timeline || '') : f.target_timeline,
+            // Added to, never replacing, what the employee wrote.
+            plan: blank(f.plan) ? lines : `${f.plan}\n\n— Suggested plan for ${f.target_role} —\n${lines}`,
+          }));
+          setSavedRole(form.target_role);
+          if ((p.milestones || []).length) {
+            setMilestones((ms) => {
+              const have = new Set(ms.map((m) => String(m.title || '').trim().toLowerCase()));
+              return [...ms, ...p.milestones.filter((m) => !have.has(String(m.title || '').trim().toLowerCase()))
+                .map((m) => ({ title: m.title, description: m.description || '', target_date: '', progress_pct: 0 }))];
+            });
+          }
+        }} />
+      )}
       <div>
         <label className="lbl">Expected timeline</label>
         {/* Short-Term: the matrix's figure, not typed — the server stores
