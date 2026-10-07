@@ -117,7 +117,6 @@ test('a rating is never formatted without the scale it belongs to', () => {
     'pages/HomePage.jsx',        // last published rating, cycle not loaded
     'pages/HistoryPage.jsx',     // rating history, several cycles, several scales
     'pages/MyRatingPage.jsx',    // same
-    'pages/AnnualReviewPage.jsx', // the rating-history strip at the foot
     'pages/ClosureLettersPage.jsx', // a letter for a cycle already closed
     'pages/IncrementSimulationPage.jsx', // published ratings across cycles
   ];

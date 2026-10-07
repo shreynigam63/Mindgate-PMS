@@ -34,6 +34,7 @@ import RnrDashboardPage from './pages/RnrDashboardPage';
 import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamOverviewPage from './pages/TeamOverviewPage';
 import PIPPage from './pages/PIPPage';
+import HodCompetenciesPage from './pages/HodCompetenciesPage';
 import WatchlistPage from './pages/WatchlistPage';
 import NotificationBell from './pages/NotificationBell';
 import NineBoxPage from './pages/NineBoxPage';
@@ -150,6 +151,8 @@ const NAV = [
     { to: '/team/midyear', label: 'Team Mid-Year', icon: Clock },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/team/competencies', label: 'Team Competencies', icon: Gauge },
+    // Opened by the manager from here or from Team Evaluation (7 Oct).
+    { to: '/team/pip', label: 'Improvement Plans', icon: ShieldAlert },
     { to: '/team/timesheet', label: 'Timesheet', icon: CalendarClock },
   ]},
   // DELIVERY HEAD IS ITS OWN TAB from 24 Sep, asked for directly:
@@ -169,6 +172,8 @@ const NAV = [
   // whose every item is filtered out is dropped (see visibleGroups).
   { group: 'HOD', hue: 'leaf', icon: Landmark, items: [
     { to: '/hod', label: 'HOD Review', icon: Landmark },
+    // Every employee in the HOD's departments, by department (7 Oct).
+    { to: '/hod/competencies', label: 'Team Competencies', icon: Gauge },
     { to: '/rnr/approvals/delivery-head', label: 'RnR Approvals', icon: Award },
   ]},
   // HRBP — HR for a slice of the company rather than all of it. Between
@@ -482,6 +487,10 @@ function Sidebar({ user, groups, gates, mobileOpen, onClose }) {
                       </span>
                     ) : (
                       <NavLink key={it.to} to={it.to}
+                        // Exact match when another menu entry lives under
+                        // this one's path (/hod and /hod/competencies), so
+                        // both are not lit at once.
+                        end={groups.some((gg) => gg.items.some((o) => o.to.startsWith(`${it.to}/`)))}
                         className={({ isActive }) => `subnav-item side-item side-leaf ${isActive ? 'side-on subnav-on' : ''}`}>
                         <it.icon size={15} /><span className="truncate">{it.label}</span>
                       </NavLink>
@@ -625,7 +634,9 @@ function Main({ user }) {
               <Route path="/team/eval" element={<TeamEvalPage user={user} />} />
               <Route path="/team/connects" element={<ConnectsPage />} />
               <Route path="/hod" element={<HodQueuePage />} />
+              <Route path="/hod/competencies" element={<HodCompetenciesPage />} />
               <Route path="/pip" element={<PIPPage />} />
+              <Route path="/team/pip" element={<PIPPage manager />} />
               <Route path="/admin/cycles" element={<CycleAdminPage />} />
               <Route path="/admin/calibration" element={<CalibrationPage />} />
               <Route path="/admin/directory" element={<RequireRole user={user} roles={['admin', 'hr']}><DirectoryPage /></RequireRole>} />

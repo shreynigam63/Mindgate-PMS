@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Target, ClipboardList, TrendingUp, Star, Award, Clock } from 'lucide-react';
+import { Target, Award, ChevronRight } from 'lucide-react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import Grade from '../grade';
@@ -24,31 +24,30 @@ export default function AnnualReviewPage() {
         <span className="chip bg-purple-100 text-purple-700">{data.cycle.name}</span>
         {data.super50?.flag && <span className="chip bg-amber-100 text-amber-700"><Award size={11} className="inline mr-1" />Super 50</span>}
       </PageHead>
-      <p className="text-xs text-navy-400">Consolidates your KRA outcomes, target achievement progress, and Aspiring Career status for the year — brings together what's already recorded elsewhere into one view.</p>
+      <p className="text-xs text-navy-400">
+        Your final rating is the annual review, taken through each step in turn: your own rating, then your
+        manager's, the HOD's, and HR's calibration. The last one recorded is the rating that is published.
+      </p>
       {/* Said once, at the top, rather than only beside each blank. The
-          reason matters: the manager's number is not final until the
-          HOD review and calibration have been through it, and
-          seeing a draft you later "lose" is worse than waiting. */}
+          manager's number is not final until the HOD review and
+          calibration have been through it, and seeing a draft you later
+          "lose" is worse than waiting. */}
       {data.manager_ratings_withheld && (
         <p className="text-xs bg-navy-50 text-navy-600 rounded-lg p-2">
-          <b>Your manager's ratings are not shown yet.</b> They are still going through the
-          HOD review and calibration, where they can change. Everything appears here,
-          and on <b>My Rating</b>, once HR publishes the cycle.
+          <b>Your manager's, HOD's and HR's ratings are not shown yet.</b> They can still change until HR
+          publishes the cycle; everything appears here, and on <b>My Rating</b>, once it is published.
         </p>
       )}
 
-      <Section icon={Target} title="KRA Outcomes">
+      <RatingChain chain={data.rating_chain} scale={scale} />
+
+      <Section icon={Target} title="Annual review — by KRA">
         {!data.kra.outcomes.length && <Empty text="No KRAs recorded for this cycle." />}
         {data.kra.outcomes.map(k => (
           <div key={k.id} className="border-b border-navy-100 last:border-0 py-2 text-xs">
-            <p className="font-semibold">{k.title} <span className="text-navy-400 font-normal">({k.weight}%)</span></p>
+            <p className="font-semibold">{k.title} <span className="text-navy-400 font-normal">({Number(k.weight)}%)</span></p>
+            {k.measures && <p className="text-navy-400">KPI: {k.measures}</p>}
             <div className="flex flex-wrap gap-4 mt-1">
-              {/* Mid-year first — it is the earlier reading, and "3 at
-                  mid-year, 5 now" is the shape of the year. Shown next to
-                  the others, never blended into them. */}
-              {k.midyear && (k.midyear.self || k.midyear.manager) && (
-                <span className="text-navy-500">Mid-year: self <b><Grade value={k.midyear.self?.rating} scale={scale} /></b> · manager <b><Grade value={k.midyear.manager?.rating} scale={scale} /></b></span>
-              )}
               <span>Self: <b><Grade value={k.self?.self_rating} scale={scale} /></b> {k.self?.narrative && <span className="text-navy-500">— {k.self.narrative}</span>}</span>
               {/* Withheld, not missing. An em-dash with no explanation
                   reads as "your manager has not rated this yet", which is
@@ -61,72 +60,68 @@ export default function AnnualReviewPage() {
         ))}
       </Section>
 
-      {data.midyear && (
-        <Section icon={Clock} title="Mid-Year checkpoint">
-          <p className="text-xs">
-            Self <b><Grade value={data.midyear.self_overall} scale={scale} /></b> ({data.midyear.self_status}) · Manager{' '}
-            {data.manager_ratings_withheld
-              ? <i className="text-navy-400">not shared until published</i>
-              : <b><Grade value={data.midyear.manager_overall} scale={scale} /></b>} ({data.midyear.manager_status})
-          </p>
-          <p className="text-[11px] text-navy-400 mt-1">
-            The halfway reading, per KRA above. It is a reference point for the conversation, not an input to the final rating.
-          </p>
-        </Section>
-      )}
+      {/* REMOVED on 7 Oct — Mid-Year checkpoint, Target achievements and
+          Aspiring Career: "Final rating will consist only of annual review
+          rating followed by Manager, HOD and HR." They are still on their
+          own pages (Mid-Year Review, My Growth); they were never inputs to
+          the rating, and on this page they read as if they were.
+          The 7-Parameter Weighted Rating was removed earlier, for showing
+          the manager's live scoring before publish. Rating History lives
+          on Past Cycles. */}
+    </div>
+  );
+}
 
-      <Section icon={ClipboardList} title="Target achievements for the year — progress">
-        {!data.development_plan.plan ? <Empty text="No target achievements set for this cycle." /> : (
-          <>
-            <p className="text-xs mb-2">Status: <span className="font-semibold">{data.development_plan.plan.status}</span> · Average progress: <span className="font-semibold">{data.development_plan.avg_progress}%</span></p>
-            {data.development_plan.goals.map((g, i) => (
-              <div key={i} className="text-xs py-1">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="font-semibold flex-1">{g.title}</p>
-                  {g.target_date && <span className="text-navy-400 shrink-0">Target: {new Date(g.target_date).toLocaleDateString()}</span>}
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <div className="flex-1 h-1.5 bg-navy-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${g.progress_pct}%` }} /></div>
-                  <span className="text-navy-400 w-8 text-right">{g.progress_pct}%</span>
-                </div>
-              </div>
-            ))}
-          </>
-        )}
-      </Section>
+const STEP_STATUS = { submitted: 'submitted', in_progress: 'in progress', pending: 'pending', not_started: 'not started' };
 
-      <Section icon={TrendingUp} title="Aspiring Career">
-        {!data.career_path ? <Empty text="No aspiring career set." /> : (
-          <p className="text-xs"><b>Target:</b> {data.career_path.target_role}{data.career_path.plan && <> — {data.career_path.plan}</>}</p>
-        )}
-      </Section>
-
-      {/* REMOVED — the 7-Parameter Weighted Rating block.
-          It showed the MANAGER's per-parameter scores, live, to the person
-          being scored: GET /my/annual-review has no publish gate, so from
-          manager_eval onwards an employee could watch their own scoring
-          appear, before calibration had a chance to adjust it. Everywhere
-          else the employee waits for publish — My Rating reads
-          employee_performance_history, which only has rows once HR
-          publishes.
-          It was also never asked for. This page exists for the BRD line
-          quoted in buildAnnualReviewSummary — "consolidates KRA outcomes,
-          development plan progress, and career path status" — and the
-          parameters are not among those three; adding them was a judgement
-          call of mine.
-          The manager, HOD and HR still see the same scoring on Team
-          Evaluation, where it is theirs to set. */}
-
-      {data.rating_history.length > 0 && (
-        <Section icon={Star} title="Rating History">
-          {data.rating_history.map(h => (
-            <div key={h.cycle_id} className="flex justify-between text-xs py-1 border-b border-navy-100 last:border-0">
-              <span>{h.cycle_name} ({h.fiscal_year})</span>
-              <span className="font-mono"><Grade value={h.final_rating} /> · {h.rating_label}</span>
-            </div>
-          ))}
-        </Section>
-      )}
+// The four steps, left to right, then the result. Each shows what that
+// person recorded; nothing is averaged between them.
+function RatingChain({ chain, scale }) {
+  if (!chain) return null;
+  const steps = [
+    { key: 'self', label: 'Annual review (you)', step: chain.self },
+    { key: 'manager', label: 'Manager', step: chain.manager },
+    { key: 'hod', label: 'HOD', step: chain.hod },
+    { key: 'hr', label: 'HR (calibration)', step: chain.hr },
+  ];
+  const cell = ({ key, step }) => {
+    if (!step) return <span className="text-navy-300">—</span>;
+    if (step.withheld) return <i className="text-navy-400">not shared until published</i>;
+    if (key === 'hr') {
+      return step.adjusted
+        ? <><b className="text-base"><Grade value={step.rating} scale={scale} /></b>{step.reason && <span className="block text-[11px] text-navy-500">{step.reason}</span>}</>
+        : <span className="text-navy-500">No change</span>;
+    }
+    return step.rating != null
+      ? <b className="text-base"><Grade value={step.rating} scale={scale} /></b>
+      : <span className="text-navy-400">{STEP_STATUS[step.status] || step.status || 'pending'}</span>;
+  };
+  return (
+    <div className="card p-4">
+      <p className="font-bold text-sm mb-3 flex items-center gap-1.5"><Award size={14} className="text-navy-400" />Final Rating</p>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-stretch">
+        {steps.map((s, i) => (
+          <div key={s.key} className="relative bg-navy-50 rounded-xl p-3 text-xs">
+            <p className="text-[10px] uppercase font-bold text-navy-400">{i + 1}. {s.label}</p>
+            <div className="mt-1">{cell(s)}</div>
+            {s.key === 'hod' && s.step && !s.step.withheld && s.step.comment && (
+              <p className="text-[11px] text-navy-500 mt-1">{s.step.comment}</p>
+            )}
+            {i < steps.length - 1 && <ChevronRight size={14} className="hidden sm:block absolute -right-2.5 top-1/2 -translate-y-1/2 text-navy-300" />}
+          </div>
+        ))}
+        <div className="rounded-xl p-3 text-xs bg-teal-50 border border-teal-100">
+          <p className="text-[10px] uppercase font-bold text-teal-700">Final</p>
+          <div className="mt-1">
+            {chain.final?.withheld
+              ? <i className="text-navy-400">after publish</i>
+              : chain.final?.rating != null
+                ? <><b className="text-lg"><Grade value={chain.final.rating} scale={scale} /></b>
+                    <span className="block text-[11px] text-navy-500">{chain.final.published ? `published${chain.final.label ? ` · ${chain.final.label}` : ''}` : 'not yet published'}</span></>
+                : <span className="text-navy-400">pending</span>}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

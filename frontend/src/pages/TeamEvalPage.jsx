@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, ChevronDown, ChevronRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Sparkles, Send, ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react';
 import { api, phaseLabel, phaseColor, KraBullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
+import ReviewKraEditor from './ReviewKraEditor';
 import PageHead from '../PageHead';
 import { useTimesheetRatings, TimesheetRatingChip, TimesheetRatingNote } from '../TimesheetRating';
 import SearchBox, { matches } from '../SearchBox';
@@ -82,6 +84,7 @@ function EvalEditor({ t, phase, scale, reload }) {
   const [draftOpen, setDraftOpen] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [keptKey, setKeptKey] = useState(0);
+  const [kraKey, setKraKey] = useState(0);
   const timer = useRef(null);
   const editable = phase === 'manager_eval' && t.eval_status !== 'submitted';
 
@@ -127,7 +130,10 @@ function EvalEditor({ t, phase, scale, reload }) {
           weighted average of the KRA ratings here, the same way mid-year
           has always worked, and the server computes it from the approved
           KRA weights rather than trusting this number. */}
-      <PerKraRating employeeId={t.employee_id} scale={scale} editable={editable} overallRating={f.overall_rating}
+      {/* KRA, KPI and weightage stay editable through the review (7 Oct);
+          the ratings below reload so the weights they show are current. */}
+      <ReviewKraEditor employeeId={t.employee_id} onSaved={() => setKraKey((k) => k + 1)} title="Their KRAs, KPIs & weightage" />
+      <PerKraRating key={kraKey} employeeId={t.employee_id} scale={scale} editable={editable} overallRating={f.overall_rating}
         selfSubmitted={t.self_status === 'submitted'}
         selfEntries={t.self_entries || {}} onOverallChange={(v) => setF(s => ({ ...s, overall_rating: v }))} />
       <div className="flex flex-wrap items-center gap-2">
@@ -188,6 +194,17 @@ function EvalEditor({ t, phase, scale, reload }) {
           Your read on how far this person could go. Calibration sees it and settles the final
           9-box placement; this is not overwritten by that.
         </p>
+      </div>
+      {/* Performance Improvement Plan (7 Oct) — opened from here when the
+          year has gone badly, rather than only by publish. */}
+      <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] text-navy-600">
+          Performance falling short? Open an improvement plan: describe the concern, name the areas to improve,
+          and set the gates where the improvement has to be shown.
+        </p>
+        <Link className="btn-sec !py-1" to={`/team/pip?employee=${t.employee_id}`}>
+          <ShieldAlert size={12} className="inline mr-1" />Improvement plan
+        </Link>
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {editable && (

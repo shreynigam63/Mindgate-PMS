@@ -88,6 +88,8 @@ async function main() {
   await require('./migrations/082-onboarding-spocs').ensureSpocRoles(db, TENANT_ID);
   // Who each onboarding email is sent from, and the HR Ops tracker page.
   await require('./migrations/083-onboarding-senders').ensureSenders(db, TENANT_ID);
+  // The HOD's Team Competencies page and the manager's Improvement Plans.
+  await require('./migrations/084-connects-pip-hod-competencies').ensurePages(db, TENANT_ID);
 
   const app = express();
   app.use(cors());

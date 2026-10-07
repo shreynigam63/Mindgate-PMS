@@ -583,6 +583,105 @@ async function dashboardRows(t, cycleId, department) {
       WHERE r.tenant_id=$1 AND a.cycle_id=$2 AND e.status='active' ${where}`, params)).rows;
 }
 
+// ---------------------------------------------------------------------------
+// The HOD's view — asked for on 7 Oct: "HOD tab should have complete team
+// competencies tab for all employees that too department wise dropdown."
+//
+// Every active employee in the departments this person heads (all
+// departments for HR), not only their direct reports, with a department
+// dropdown. READ-ONLY: the rating is the manager's to give; the HOD sees
+// where each person and each department stands.
+async function hodDepartments(req) {
+  const t = T(req);
+  const all = (await db.query(
+    `SELECT DISTINCT department FROM core.employees
+      WHERE tenant_id=$1 AND status='active' AND department IS NOT NULL AND department <> ''
+      ORDER BY department`, [t])).rows.map((r) => r.department);
+  if (await hasPermission(req.user, 'pms_admin')) return { departments: all, all: true };
+  const mine = (await db.query(
+    `SELECT department FROM core.department_heads WHERE tenant_id=$1 AND employee_id=$2 ORDER BY department`,
+    [t, req.user.id])).rows.map((r) => r.department);
+  return { departments: mine, all: false };
+}
+
+router.get('/hod', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_hod'))) return res.status(403).json({ error: "Requires 'pms_hod'", needs: 'pms_hod' });
+    const t = T(req);
+    const c = await activeCycle(t);
+    const scope = await hodDepartments(req);
+    const asked = String(req.query.department || '').trim() || null;
+    if (asked && !scope.departments.includes(asked)) return res.status(403).json({ error: 'Not one of your departments' });
+    const base = { departments: scope.departments, department: asked, scale: await scaleFor(t) };
+    if (!c) return res.json({ ...base, cycle: null, team: [], summary: null, department_summary: [] });
+    if (!scope.departments.length) {
+      return res.json({ ...base, cycle: { id: c.id, name: c.name, phase: c.phase }, team: [], summary: null, department_summary: [],
+        note: 'You are not set up as the head of any department yet — HR sets this on the HOD page.' });
+    }
+    const depts = asked ? [asked] : scope.departments;
+    const team = (await db.query(
+      `SELECT e.id AS employee_id, e.name, e.designation, e.department, m.name AS manager_name,
+              a.id AS assessment_id, a.self_status, a.manager_status,
+              (SELECT count(*)::int FROM pms.competency_ratings cr WHERE cr.assessment_id=a.id) AS competencies,
+              (SELECT count(*)::int FROM pms.competency_ratings cr
+                WHERE cr.assessment_id=a.id AND cr.manager_rating IS NOT NULL) AS manager_rated,
+              (SELECT count(*)::int FROM pms.competency_ratings cr
+                WHERE cr.assessment_id=a.id AND cr.manager_rating IS NOT NULL
+                  AND cr.manager_rating < cr.required_level) AS below_required,
+              (SELECT round(avg(cr.manager_rating - cr.required_level)::numeric, 2) FROM pms.competency_ratings cr
+                WHERE cr.assessment_id=a.id AND cr.manager_rating IS NOT NULL) AS avg_gap
+         FROM core.employees e
+         LEFT JOIN core.employees m ON m.id = e.manager_id
+         LEFT JOIN pms.competency_assessments a ON a.cycle_id=$2 AND a.tenant_id=$1 AND a.employee_id=e.id
+        WHERE e.tenant_id=$1 AND e.status='active' AND e.archived_at IS NULL AND e.department = ANY($3)
+        ORDER BY e.department, e.name`, [t, c.id, depts])).rows;
+    const rows = (await dashboardRows(t, c.id, null)).filter((r) => depts.includes(r.department));
+    const scale = base.scale;
+    const roll = summarise(rows, { scale });
+    const department_summary = depts.map((d) => {
+      const sub = rows.filter((r) => r.department === d);
+      const sr = summarise(sub, { scale });
+      const people = team.filter((x) => x.department === d);
+      return {
+        department: d,
+        people: people.length,
+        manager_submitted: people.filter((x) => x.manager_status === 'submitted').length,
+        avg_manager: sr.overall.avg_manager, avg_required: sr.overall.avg_required,
+        avg_gap: sr.overall.avg_gap, below_required: sr.overall.below_required,
+      };
+    });
+    res.json({ ...base, cycle: { id: c.id, name: c.name, phase: c.phase }, team,
+      summary: { categories: roll.categories, overall: roll.overall }, department_summary });
+  } catch (e) { logger.error('competency hod', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+router.get('/hod/:employeeId', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_hod'))) return res.status(403).json({ error: "Requires 'pms_hod'", needs: 'pms_hod' });
+    const t = T(req);
+    const emp = (await db.query(
+      `SELECT id, name, designation, department, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      [req.params.employeeId, t])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee not found' });
+    const scope = await hodDepartments(req);
+    if (!scope.departments.includes(emp.department)) return res.status(403).json({ error: 'Not in a department you head' });
+    const c = await activeCycle(t);
+    if (!c) return res.json({ cycle: null, rows: [] });
+    const a = (await db.query(
+      `SELECT * FROM pms.competency_assessments WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [t, c.id, emp.id])).rows[0];
+    const rows = a ? await ratingRows(t, a.id) : [];
+    const scale = await scaleFor(t);
+    res.json({
+      cycle: { id: c.id, name: c.name, phase: c.phase },
+      employee: { id: emp.id, name: emp.name, designation: emp.designation, department: emp.department },
+      assessment: a || null, editable: false, rows, scale,
+      summary: rows.length ? summarise(rows, { scale }) : null,
+      divergences: divergences(rows),
+    });
+  } catch (e) { logger.error('competency hod detail', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
 router.get('/dashboard', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });

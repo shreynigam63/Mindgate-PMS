@@ -900,6 +900,114 @@ function diffKras(before, after) {
   return out;
 }
 
+// ---------------- KRAs during the reviews (7 Oct) --------------------------
+// See reviewKraEditable() in phase-machine.js for the rule. One pair of
+// routes for both sides: the employee on their own sheet, the manager (or
+// HR) on a report's. activeCycleForMidyear is not used — the mid-year and
+// annual reviews both run on the cycle activeCycle() returns, the same one
+// the KRA pages read.
+// The cycle under review for THIS employee: a live one in a review phase
+// that holds their sheet, newest first. With half-yearly cycles running
+// beside the annual one, activeCycle() alone can return a cycle still in
+// KRA setting while the employee's mid-year review is open in another.
+async function reviewKraCycle(tenantId, employeeId) {
+  const { LIVE } = require('./active-cycle');
+  const c = (await db.query(
+    `SELECT * FROM pms.cycles WHERE tenant_id=$1 AND ${LIVE} AND phase = ANY($3::text[])
+        AND id IN (SELECT cycle_id FROM pms.kra_sheets WHERE tenant_id=$1 AND employee_id=$2)
+      ORDER BY created_at DESC LIMIT 1`, [tenantId, employeeId, pm.REVIEW_KRA_PHASES])).rows[0];
+  return c || activeCycle(tenantId);
+}
+
+async function reviewKraAccess(req, employeeId) {
+  const emp = (await db.query(`SELECT id, name, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+    [employeeId, T(req)])).rows[0];
+  if (!emp) return { status: 404, error: 'employee not found' };
+  if (emp.id === req.user.id) return { emp, side: 'self' };
+  if (emp.manager_id === req.user.id) return { emp, side: 'manager' };
+  if (await hasPermission(req.user, 'pms_admin')) return { emp, side: 'hr' };
+  return { status: 403, error: 'Not your KRA sheet' };
+}
+
+router.get('/review/kras/:employeeId', async (req, res) => {
+  try {
+    const a = await reviewKraAccess(req, req.params.employeeId);
+    if (a.error) return res.status(a.status).json({ error: a.error });
+    const c = await reviewKraCycle(T(req), a.emp.id);
+    if (!c) return res.json({ cycle: null, kras: [], editable: false });
+    const s = (await db.query(`SELECT id, status FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, a.emp.id])).rows[0];
+    const kras = s ? (await db.query(
+      `SELECT id, title, description, measures, weight, category FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows : [];
+    const rule = pm.reviewKraEditable(c.phase);
+    res.json({
+      cycle: { id: c.id, name: c.name, phase: c.phase },
+      sheet: s || null, kras, side: a.side,
+      editable: rule.ok && !!s && kras.length > 0,
+      reason: !s || !kras.length ? 'No KRA sheet for this cycle yet.' : (rule.ok ? null : rule.error),
+      weights: pm.weightsValid(kras),
+    });
+  } catch (e) { logger.error('review kras', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+router.put('/review/kras/:employeeId', async (req, res) => {
+  try {
+    const a = await reviewKraAccess(req, req.params.employeeId);
+    if (a.error) return res.status(a.status).json({ error: a.error });
+    const c = await reviewKraCycle(T(req), a.emp.id);
+    if (!c) return res.status(409).json({ error: 'No cycle is open' });
+    const rule = pm.reviewKraEditable(c.phase);
+    if (!rule.ok) return res.status(409).json({ error: rule.error, phase: c.phase });
+    const s = (await db.query(`SELECT id FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+      [T(req), c.id, a.emp.id])).rows[0];
+    if (!s) return res.status(404).json({ error: 'No KRA sheet for this cycle' });
+    const before = (await db.query(
+      `SELECT id, title, description, weight, category, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
+    const incoming = Array.isArray(req.body && req.body.kras) ? req.body.kras : [];
+    // Same KRAs, edited — not a different set. Checked in full before any write.
+    const ids = new Set(before.map((k) => k.id));
+    const sent = new Set(incoming.map((k) => k && k.id));
+    if (incoming.length !== before.length || [...ids].some((id) => !sent.has(id))) {
+      return res.status(422).json({ error: 'Send every KRA on the sheet, by id. KRAs cannot be added or removed during a review — their ratings are keyed to them.' });
+    }
+    for (const k of incoming) {
+      if (!String(k.title || '').trim()) return res.status(422).json({ error: 'Every KRA needs a title.' });
+      const w = Number(k.weight);
+      if (!Number.isFinite(w) || w <= 0) return res.status(422).json({ error: `"${k.title}" needs a weight above 0.` });
+    }
+    const w = pm.weightsValid(incoming);
+    if (!w.ok) return res.status(422).json({ error: `KRA weights must total 100 (currently ${w.total})` });
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      for (const k of incoming) {
+        await client.query(
+          `UPDATE pms.kras SET title=$3, measures=$4, weight=$5 WHERE id=$1 AND sheet_id=$2`,
+          [k.id, s.id, String(k.title).trim(), k.measures == null ? null : String(k.measures).trim() || null, Number(k.weight)]);
+      }
+      await client.query(`UPDATE pms.kra_sheets SET updated_at=now() WHERE id=$1`, [s.id]);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+
+    const after = (await db.query(
+      `SELECT id, title, description, weight, category, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
+    const changes = diffKras(before, after);
+    if (changes.length) {
+      await audit(req, 'KRA_EDITED_IN_REVIEW', c.id, a.emp.id, { sheet_id: s.id, phase: c.phase, side: a.side, changed: changes.length, changes });
+      // Tell the other person on the sheet.
+      const other = a.side === 'self' ? a.emp.manager_id : a.emp.id;
+      if (other && other !== req.user.id) {
+        await notify(T(req), other, 'kra_edited_in_review',
+          a.side === 'self' ? `${req.user.name} changed their KRAs during the review` : `${req.user.name} changed your KRAs during the review`,
+          `${changes.length} ${changes.length === 1 ? 'change' : 'changes'} to KRA, KPI or weightage.`,
+          a.side === 'self' ? '/team/eval' : '/my/kras').catch((e) => logger.warn('review kra notify failed', { error: e.message }));
+      }
+    }
+    res.json({ ok: true, kras: after, weights: pm.weightsValid(after), changes });
+  } catch (e) { logger.error('review kra edit', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
 // ---------------- HR: org-wide KRA overview + enter-on-behalf — BR-1.1/1.4 -
 // FOUND MISSING 28-Aug-2026: /team/kra-sheets (above) is manager-scoped
 // (WHERE manager_id=req.user.id) — there was no HR-wide view across every
@@ -5576,7 +5684,7 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId,
   { includeParameterScores = true, includeManagerRatings = true } = {}) {
   const kraSheet = (await db.query(`SELECT * FROM pms.kra_sheets WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
   const kras = kraSheet ? (await db.query(`SELECT id, title, description, weight, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [kraSheet.id])).rows : [];
-  const selfAppraisal = (await db.query(`SELECT status, entries, went_well, could_improve FROM pms.self_appraisals WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
+  const selfAppraisal = (await db.query(`SELECT status, entries, went_well, could_improve, overall_self_rating FROM pms.self_appraisals WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
   const managerEval = (await db.query(`SELECT status, entries, overall_rating, strengths, improvement_areas FROM pms.manager_evaluations WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
   // KRA "outcomes" = each KRA's definition joined with its self-rating and
   // manager-rating, keyed by kra_id in the two entries jsonb blobs above.
@@ -5633,8 +5741,45 @@ async function buildAnnualReviewSummary(tenantId, employeeId, cycleId,
       midyear: my ? { ...my, manager: null } : my,
     }));
 
+  // THE FINAL RATING, AS A CHAIN. Asked for on 7 Oct: "Final rating will
+  // consist only of annual review rating followed by Manager, HOD and HR."
+  // Each step is what that person actually recorded; final is the same
+  // COALESCE publish uses (HR's calibration, else HOD, else manager), so
+  // this page can never show a different number from the one published.
+  const hodEval = (await db.query(
+    `SELECT status, overall_rating, comment FROM pms.hod_evaluations WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [tenantId, cycleId, employeeId])).rows[0];
+  const hrAdj = (await db.query(
+    `SELECT from_rating, to_rating, reason, at FROM pms.rating_adjustments
+      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 ORDER BY at DESC LIMIT 1`,
+    [tenantId, cycleId, employeeId])).rows[0];
+  const published = (await db.query(
+    `SELECT final_rating, rating_label, published_at FROM pms.employee_performance_history
+      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [tenantId, cycleId, employeeId])).rows[0];
+  const num = (v) => (v == null ? null : Number(v));
+  const managerSubmitted = managerEval && managerEval.status === 'submitted';
+  const hodSubmitted = hodEval && hodEval.status === 'submitted';
+  const ratingChain = {
+    self: { rating: num(selfAppraisal && selfAppraisal.overall_self_rating), status: selfAppraisal ? selfAppraisal.status : 'not_started' },
+    manager: includeManagerRatings
+      ? { rating: num(managerEval && managerEval.overall_rating), status: managerEval ? managerEval.status : 'pending' }
+      : { withheld: true, status: managerSubmitted ? 'submitted' : 'pending' },
+    hod: includeManagerRatings
+      ? { rating: num(hodEval && hodEval.overall_rating), status: hodEval ? hodEval.status : 'pending', comment: hodEval ? hodEval.comment : null }
+      : { withheld: true, status: hodSubmitted ? 'submitted' : 'pending' },
+    hr: includeManagerRatings
+      ? { rating: num(hrAdj && hrAdj.to_rating), adjusted: !!hrAdj, from: num(hrAdj && hrAdj.from_rating), reason: hrAdj ? hrAdj.reason : null }
+      : { withheld: true },
+    final: includeManagerRatings
+      ? (published
+        ? { rating: num(published.final_rating), label: published.rating_label, published: true, published_at: published.published_at }
+        : { rating: num(hrAdj ? hrAdj.to_rating : (hodSubmitted ? hodEval.overall_rating : (managerSubmitted ? managerEval.overall_rating : null))), published: false })
+      : { withheld: true, published: false },
+  };
+
   return {
     kra: { sheet: kraSheet || null, outcomes },
+    rating_chain: ratingChain,
     manager_ratings_withheld: !includeManagerRatings,
     midyear: midyear ? {
       self_overall: midyear.self_overall,
@@ -5737,7 +5882,8 @@ router.post('/connects', async (req, res) => {
     // itself so a partial save (connect with no items, or items with no
     // connect) can't happen. logged_by_id (migration 019) records who
     // actually submitted this — see the self-logging note below.
-    const { employee_id, held_at, duration_min, topic, discussion_notes, notes, achievements, blockers, feedback, kra_ids, meeting_based, action_items } = req.body || {};
+    const { employee_id, held_at, duration_min, topic, discussion_notes, notes, achievements, blockers, feedback, kra_ids, meeting_based, action_items,
+      with_id, include_hr, hr_id } = req.body || {};
     if (!employee_id || !held_at) return res.status(400).json({ error: 'employee_id and held_at required' });
 
     // Previously this route required pms_team_eval unconditionally — an
@@ -5748,15 +5894,42 @@ router.post('/connects', async (req, res) => {
     // no way to satisfy it. Fixed: logging about YOURSELF needs no special
     // permission; logging on someone ELSE's behalf still requires
     // pms_team_eval, same as before.
+    //
+    // CONNECT WITH ANYONE, asked for on 7 Oct: "connects can be with anyone
+    // so allow all employees to select option to connect with anyone".
+    // A self-logged connect now names who it was with (`with_id`) — any
+    // active colleague, not only the manager. manager_id keeps its meaning:
+    // the OTHER person in the conversation, who signs it off. Left out,
+    // it is still the employee's own manager, as before.
     const isSelf = employee_id === req.user.id;
     let managerId;
     if (isSelf) {
-      const emp = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
-      managerId = emp ? emp.manager_id : null;
-      if (!managerId) return res.status(422).json({ error: 'You have no manager on record — ask HR to set one before logging a connect.' });
+      if (with_id) {
+        if (with_id === req.user.id) return res.status(422).json({ error: 'A connect is with somebody else — pick who it was with.' });
+        const w = (await db.query(
+          `SELECT id FROM core.employees WHERE id=$1 AND tenant_id=$2 AND status='active' AND archived_at IS NULL`,
+          [with_id, T(req)])).rows[0];
+        if (!w) return res.status(422).json({ error: 'The person picked is not an active employee.' });
+        managerId = w.id;
+      } else {
+        const emp = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
+        managerId = emp ? emp.manager_id : null;
+        if (!managerId) return res.status(422).json({ error: 'Pick who the connect was with — you have no manager on record to default to.' });
+      }
     } else {
       if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
       managerId = req.user.id;
+    }
+
+    // "Do you need HR as part of this connect" — yes names one person from
+    // HR, who is told and can read the connect. Left blank, the HRBP whose
+    // remit covers the employee is used, else the first HR person.
+    let hrId = null;
+    if (include_hr) {
+      const hr = await connectHrOptions(T(req), employee_id);
+      if (!hr.people.length) return res.status(422).json({ error: 'Nobody in HR is set up yet — ask HR to assign the HR or HRBP role.' });
+      hrId = hr_id || hr.suggested_hr_id || hr.people[0].id;
+      if (!hr.people.some((p) => p.id === hrId)) return res.status(422).json({ error: 'The HR person picked does not hold an HR role.' });
     }
 
     if (meeting_based) await requireConsent(T(req), employee_id);
@@ -5767,11 +5940,11 @@ router.post('/connects', async (req, res) => {
     try {
       await client.query('BEGIN');
       const cn = (await client.query(
-        `INSERT INTO pms.connects (tenant_id, manager_id, employee_id, held_at, duration_min, topic, discussion_notes, notes, achievements, blockers, feedback, kra_ids, meeting_based, logged_by_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12::uuid[],'{}'::uuid[]),$13,$14) RETURNING id`,
+        `INSERT INTO pms.connects (tenant_id, manager_id, employee_id, held_at, duration_min, topic, discussion_notes, notes, achievements, blockers, feedback, kra_ids, meeting_based, logged_by_id, include_hr, hr_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12::uuid[],'{}'::uuid[]),$13,$14,$15,$16) RETURNING id`,
         [T(req), managerId, employee_id, held_at, duration_min != null ? Number(duration_min) : null, topic || null, discussion_notes || null,
           notes || null, achievements || null, blockers || null, feedback || null,
-          Array.isArray(kra_ids) ? kra_ids : null, !!meeting_based, req.user.id])).rows[0];
+          Array.isArray(kra_ids) ? kra_ids : null, !!meeting_based, req.user.id, !!hrId, hrId])).rows[0];
       connectId = cn.id;
       // The index IS the order. created_at cannot carry it: every item
       // here is inserted in one transaction and now() is the
@@ -5787,9 +5960,13 @@ router.post('/connects', async (req, res) => {
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
 
-    await audit(req, 'CONNECT_LOGGED', null, employee_id, { held_at, action_items: items.length, self_logged: isSelf });
-    if (isSelf) await notify(T(req), managerId, 'connect_logged_by_report', `${req.user.name} logged a 1-on-1 discussion for your sign-off`, null, '/pms/team/connects');
-    res.json({ ok: true, id: connectId });
+    await audit(req, 'CONNECT_LOGGED', null, employee_id, { held_at, action_items: items.length, self_logged: isSelf, with_id: managerId, hr_id: hrId });
+    if (isSelf) await notify(T(req), managerId, 'connect_logged_by_report', `${req.user.name} logged a connect with you for your sign-off`, null, '/team/connects');
+    if (hrId && hrId !== req.user.id && hrId !== managerId) {
+      await notify(T(req), hrId, 'connect_hr_included', `${req.user.name} asked for HR to be part of a connect`,
+        topic ? `Topic: ${topic}` : null, '/team/connects');
+    }
+    res.json({ ok: true, id: connectId, with_id: managerId, hr_id: hrId });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
@@ -5797,13 +5974,14 @@ router.get('/connects', async (req, res) => {
   try {
     const mine = req.query.employee_id;
     const r = await db.query(
-      `SELECT cn.*, e.name AS employee_name, m.name AS manager_name,
+      `SELECT cn.*, e.name AS employee_name, m.name AS manager_name, hr.name AS hr_name,
               COALESCE((SELECT json_agg(json_build_object('id', ai.id, 'description', ai.description, 'due_date', ai.due_date, 'done', ai.done) ORDER BY ai.sort_order, ai.created_at, ai.id)
                         FROM pms.connect_action_items ai WHERE ai.connect_id=cn.id), '[]') AS action_items,
               COALESCE((SELECT json_agg(json_build_object('id', k.id, 'title', k.title))
                         FROM pms.kras k WHERE k.id = ANY(cn.kra_ids)), '[]') AS linked_kras
          FROM pms.connects cn JOIN core.employees e ON e.id=cn.employee_id JOIN core.employees m ON m.id=cn.manager_id
-        WHERE cn.tenant_id=$1 AND (cn.employee_id=$2 OR cn.manager_id=$2) ${mine ? 'AND cn.employee_id=$3' : ''}
+         LEFT JOIN core.employees hr ON hr.id=cn.hr_id
+        WHERE cn.tenant_id=$1 AND (cn.employee_id=$2 OR cn.manager_id=$2 OR cn.hr_id=$2) ${mine ? 'AND cn.employee_id=$3' : ''}
         ORDER BY cn.held_at DESC LIMIT 100`,
       mine ? [T(req), req.user.id, mine] : [T(req), req.user.id]);
     res.json({ connects: r.rows });
@@ -5924,6 +6102,46 @@ router.put('/connects/questions', async (req, res) => {
   } catch (e) { logger.error('connect questions save', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
+// Who a connect can be with, and who from HR can be asked to join it.
+// Everyone may read this — the point of 7 Oct's change is that anyone can
+// connect with anyone. Name, designation and department only: the picker
+// needs nothing more, and people_admin still guards the full directory.
+const CONNECT_HR_ROLES = ['hr', 'hrbp'];
+async function connectHrOptions(tenantId, employeeId) {
+  const people = (await db.query(
+    `SELECT e.id, e.name, e.email, e.designation, e.department, ur.role
+       FROM core.employees e
+       JOIN core.user_roles ur ON ur.tenant_id=e.tenant_id AND lower(ur.email)=lower(e.email)
+      WHERE e.tenant_id=$1 AND e.status='active' AND e.archived_at IS NULL AND ur.role = ANY($2)
+      ORDER BY (ur.role='hrbp') DESC, e.name`, [tenantId, CONNECT_HR_ROLES])).rows;
+  let suggested = null;
+  const emp = employeeId ? (await db.query(
+    `SELECT location, hod_name FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0] : null;
+  if (emp) {
+    const { hrbpScope } = require('../people');
+    for (const p of people.filter((x) => x.role === 'hrbp')) {
+      const remit = await hrbpScope.remitFor(tenantId, p.email);
+      if (!remit.empty && hrbpScope.matches(remit, emp)) { suggested = p.id; break; }
+    }
+  }
+  if (!suggested) { const hr = people.find((x) => x.role === 'hr'); suggested = hr ? hr.id : (people[0] ? people[0].id : null); }
+  return { people, suggested_hr_id: suggested };
+}
+
+router.get('/connects/people', async (req, res) => {
+  try {
+    const me = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0];
+    const people = (await db.query(
+      `SELECT id, name, designation, department FROM core.employees
+        WHERE tenant_id=$1 AND status='active' AND archived_at IS NULL AND id <> $2
+        ORDER BY name`, [T(req), req.user.id])).rows;
+    const hr = await connectHrOptions(T(req), req.query.employee_id || req.user.id);
+    res.json({ people, my_manager_id: me ? me.manager_id : null,
+      hr: hr.people.map(({ id, name, designation, department, role }) => ({ id, name, designation, department, role })),
+      suggested_hr_id: hr.suggested_hr_id });
+  } catch (e) { logger.error('connect people', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
 router.get('/connects/kra-options/:employeeId', async (req, res) => {
   try {
     const isSelf = req.params.employeeId === req.user.id;
@@ -5976,7 +6194,7 @@ router.post('/connects/:id/sign-off', async (req, res) => {
     if (cn.signed_off) return res.status(409).json({ error: 'already signed off' });
     await db.query(`UPDATE pms.connects SET signed_off=true, signed_off_at=now() WHERE id=$1`, [cn.id]);
     await audit(req, 'CONNECT_SIGNED_OFF', null, cn.employee_id, { connect_id: cn.id });
-    await notify(T(req), cn.employee_id, 'connect_signed_off', 'Your manager signed off your quarterly connect', null, '/pms');
+    await notify(T(req), cn.employee_id, 'connect_signed_off', `${req.user.name} signed off your connect`, null, '/team/connects');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -6183,7 +6401,9 @@ router.get('/pip', async (req, res) => {
     if (employee_id) { params.push(employee_id); clauses.push(`p.employee_id=$${params.length}`); }
     if (status) { params.push(status); clauses.push(`p.status=$${params.length}`); }
     const r = await db.query(
-      `SELECT p.*, e.name AS employee_name, e.department, c.name AS cycle_name
+      `SELECT p.*, e.name AS employee_name, e.department, c.name AS cycle_name,
+              (SELECT count(*)::int FROM pms.pip_gates g WHERE g.pip_id=p.id) AS gates_total,
+              (SELECT count(*)::int FROM pms.pip_gates g WHERE g.pip_id=p.id AND g.status='met') AS gates_met
          FROM pms.pip_records p JOIN core.employees e ON e.id=p.employee_id
          LEFT JOIN pms.cycles c ON c.id=p.cycle_id
         WHERE ${clauses.join(' AND ')} ORDER BY p.opened_at DESC`, params);
@@ -6191,41 +6411,223 @@ router.get('/pip', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// THE PLAN ITSELF, asked for on 7 Oct with a screenshot of Team
+// Evaluation: "manager will provide description as per low performance of
+// employee", "will mention targeted areas", "gates where the improvement
+// will be shown". A PIP used to be opened only by publish, with a free-text
+// `plan`; the manager can now open one from the evaluation, and either way
+// the plan is these three parts. `plan` stays for the PIPs written before.
+const PIP_GATE_STATUS = ['pending', 'met', 'not_met'];
+
+function cleanAreas(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((a) => ({ area: String((a && a.area) || '').trim(), expected: String((a && a.expected) || '').trim() || null }))
+    .filter((a) => a.area);
+}
+function cleanGates(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((g) => ({
+      id: g && g.id ? String(g.id) : null,
+      title: String((g && g.title) || '').trim(),
+      due_date: (g && g.due_date) || null,
+      success_measure: String((g && g.success_measure) || '').trim() || null,
+    }))
+    .filter((g) => g.title);
+}
+// Every check before any write, so a refused save changes nothing.
+function pipProblems({ description, areas, gates, start_date, end_date }) {
+  if (!String(description || '').trim()) return 'Describe the performance concern — what is falling short, and how it shows.';
+  if (!areas.length) return 'Name at least one targeted area for improvement.';
+  if (!gates.length) return 'Add at least one gate — a dated checkpoint where the improvement has to be shown.';
+  if (start_date && end_date && String(end_date) < String(start_date)) return 'The plan ends before it starts.';
+  for (const g of gates) {
+    if (!g.due_date) return `Gate "${g.title}" needs a date — a gate is when the improvement is checked.`;
+    if (start_date && String(g.due_date) < String(start_date)) return `Gate "${g.title}" is before the plan starts.`;
+    if (end_date && String(g.due_date) > String(end_date)) return `Gate "${g.title}" is after the plan ends.`;
+  }
+  return null;
+}
+
+async function pipWithGates(tenantId, id) {
+  const p = (await db.query(
+    `SELECT p.*, e.name AS employee_name, e.designation, e.department, c.name AS cycle_name
+       FROM pms.pip_records p JOIN core.employees e ON e.id=p.employee_id
+       LEFT JOIN pms.cycles c ON c.id=p.cycle_id
+      WHERE p.id=$1 AND p.tenant_id=$2`, [id, tenantId])).rows[0];
+  if (!p) return null;
+  const gates = (await db.query(
+    `SELECT id, sort_order, title, due_date, success_measure, status, review_note, reviewed_by, reviewed_at
+       FROM pms.pip_gates WHERE pip_id=$1 ORDER BY sort_order, due_date NULLS LAST`, [p.id])).rows;
+  return { ...p, gates };
+}
+
+router.post('/pip', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.employee_id) return res.status(400).json({ error: 'employee_id required' });
+    if (b.employee_id === req.user.id) return res.status(403).json({ error: 'You cannot open an improvement plan for yourself.' });
+    if (!(await isManagerOfOrAdmin(req, b.employee_id))) {
+      return res.status(403).json({ error: "Requires being this employee's manager, or pms_admin", needs: 'pms_team_eval' });
+    }
+    const areas = cleanAreas(b.target_areas);
+    const gates = cleanGates(b.gates);
+    const problem = pipProblems({ description: b.performance_description, areas, gates, start_date: b.start_date, end_date: b.end_date });
+    if (problem) return res.status(422).json({ error: problem });
+    const c = await activeCycle(T(req));
+    const cycleId = c ? c.id : null;
+    if (cycleId) {
+      const dup = (await db.query(
+        `SELECT id, status FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id=$3`,
+        [T(req), b.employee_id, cycleId])).rows[0];
+      if (dup) return res.status(409).json({ error: 'This employee already has an improvement plan for this cycle — open it to edit.', pip_id: dup.id });
+    }
+    const client = await db.getClient();
+    let id;
+    try {
+      await client.query('BEGIN');
+      id = (await client.query(
+        `INSERT INTO pms.pip_records (tenant_id, employee_id, cycle_id, status, opened_by, opened_by_id,
+                                      performance_description, target_areas, start_date, end_date, updated_at)
+         VALUES ($1,$2,$3,'open',$4,$5,$6,$7::jsonb,$8,$9,now()) RETURNING id`,
+        [T(req), b.employee_id, cycleId, req.user.email, req.user.id, String(b.performance_description).trim(),
+          JSON.stringify(areas), b.start_date || null, b.end_date || null])).rows[0].id;
+      for (let i = 0; i < gates.length; i++) {
+        const g = gates[i];
+        await client.query(
+          `INSERT INTO pms.pip_gates (tenant_id, pip_id, sort_order, title, due_date, success_measure)
+           VALUES ($1,$2,$3,$4,$5,$6)`, [T(req), id, i + 1, g.title, g.due_date, g.success_measure]);
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+    await audit(req, 'PIP_OPENED_BY_MANAGER', cycleId, b.employee_id, { pip_id: id, areas: areas.length, gates: gates.length });
+    await notify(T(req), b.employee_id, 'pip_opened', `${req.user.name} opened a Performance Improvement Plan with you`,
+      'It names the areas to improve and the gates where the improvement will be checked.', '/pip');
+    res.json({ ok: true, id, pip: await pipWithGates(T(req), id) });
+  } catch (e) { logger.error('pip create', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
 router.get('/pip/:id', async (req, res) => {
   try {
-    const p = (await db.query(`SELECT p.*, e.name AS employee_name FROM pms.pip_records p JOIN core.employees e ON e.id=p.employee_id
-                                 WHERE p.id=$1 AND p.tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    const p = await pipWithGates(T(req), req.params.id);
     if (!p) return res.status(404).json({ error: 'PIP not found' });
     const isSelf = p.employee_id === req.user.id;
-    if (!isSelf && !(await isManagerOfOrAdmin(req, p.employee_id))) return res.status(403).json({ error: 'Not visible to you' });
+    const canEdit = !isSelf && await isManagerOfOrAdmin(req, p.employee_id);
+    if (!isSelf && !canEdit) return res.status(403).json({ error: 'Not visible to you' });
     const entries = (await db.query(
       `SELECT id, week_ending, notes, submitted_by, created_at FROM pms.pip_weekly_entries
         WHERE pip_id=$1 ORDER BY week_ending DESC`, [p.id])).rows;
-    res.json({ pip: p, weekly_entries: entries });
+    res.json({ pip: p, weekly_entries: entries, can_edit: canEdit && !p.status.startsWith('closed') });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Manager/HR only — plan text, and status transitions through to a
-// documented closure (BR-7.2 "through to a documented closure": closing
-// requires closed_reason, not just a status flip).
+// Manager/HR only — the plan (description, areas, window, gates), and
+// status transitions through to a documented closure (BR-7.2 "through to
+// a documented closure": closing requires closed_reason, not just a
+// status flip).
 router.put('/pip/:id', async (req, res) => {
   try {
     const p = (await db.query(`SELECT * FROM pms.pip_records WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!p) return res.status(404).json({ error: 'PIP not found' });
-    if (!(await isManagerOfOrAdmin(req, p.employee_id))) return res.status(403).json({ error: 'Requires being this employee\'s manager, or pms_admin' });
-    const { plan, status, closed_reason } = req.body || {};
+    if (p.employee_id === req.user.id || !(await isManagerOfOrAdmin(req, p.employee_id))) return res.status(403).json({ error: 'Requires being this employee\'s manager, or pms_admin' });
+    const b = req.body || {};
+    const { plan, status, closed_reason } = b;
     const VALID = ['open', 'in_progress', 'closed_successful', 'closed_unsuccessful'];
     if (status && !VALID.includes(status)) return res.status(400).json({ error: `status must be one of: ${VALID.join(', ')}` });
     if (status && status.startsWith('closed') && !closed_reason) return res.status(400).json({ error: 'closed_reason required to close a PIP' });
     const closing = status && status.startsWith('closed');
-    await db.query(
-      `UPDATE pms.pip_records SET plan=COALESCE($1,plan), status=COALESCE($2,status),
-              closed_reason=COALESCE($3,closed_reason), closed_at=CASE WHEN $4 THEN now() ELSE closed_at END
-        WHERE id=$5`, [plan || null, status || null, closed_reason || null, closing, p.id]);
-    await audit(req, closing ? 'PIP_CLOSED' : 'PIP_UPDATED', p.cycle_id, p.employee_id, { status, closed_reason });
-    if (closing) await notify(T(req), p.employee_id, 'pip_closed', `Your Performance Improvement Plan has been closed (${status})`, null, '/pms/my-rating');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const editingPlan = ['performance_description', 'target_areas', 'gates', 'start_date', 'end_date'].some((k) => k in b);
+    if (editingPlan && p.status.startsWith('closed')) return res.status(409).json({ error: 'This plan is closed — it can no longer be changed.' });
+
+    let areas = null; let gates = null;
+    if (editingPlan) {
+      const current = await pipWithGates(T(req), p.id);
+      areas = 'target_areas' in b ? cleanAreas(b.target_areas) : current.target_areas || [];
+      gates = 'gates' in b ? cleanGates(b.gates) : current.gates.map((g) => ({ ...g, due_date: g.due_date && new Date(g.due_date).toISOString().slice(0, 10) }));
+      const problem = pipProblems({
+        description: 'performance_description' in b ? b.performance_description : current.performance_description,
+        areas, gates,
+        start_date: 'start_date' in b ? b.start_date : current.start_date && new Date(current.start_date).toISOString().slice(0, 10),
+        end_date: 'end_date' in b ? b.end_date : current.end_date && new Date(current.end_date).toISOString().slice(0, 10),
+      });
+      if (problem) return res.status(422).json({ error: problem });
+      // A gate already reviewed is a record of what happened at it; it
+      // cannot be quietly dropped from the plan.
+      if ('gates' in b) {
+        const keep = new Set(gates.filter((g) => g.id).map((g) => g.id));
+        const reviewedGone = current.gates.filter((g) => !keep.has(g.id) && g.status !== 'pending');
+        if (reviewedGone.length) return res.status(409).json({ error: `Gate "${reviewedGone[0].title}" has been reviewed — it stays on the plan.` });
+      }
+    }
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `UPDATE pms.pip_records SET plan=COALESCE($1,plan), status=COALESCE($2,status),
+                closed_reason=COALESCE($3,closed_reason), closed_at=CASE WHEN $4 THEN now() ELSE closed_at END,
+                updated_at=now()
+          WHERE id=$5`, [plan || null, status || null, closed_reason || null, closing, p.id]);
+      if (editingPlan) {
+        await client.query(
+          `UPDATE pms.pip_records SET
+              performance_description=CASE WHEN $2 THEN $3 ELSE performance_description END,
+              target_areas=$4::jsonb,
+              start_date=CASE WHEN $5 THEN $6::date ELSE start_date END,
+              end_date=CASE WHEN $7 THEN $8::date ELSE end_date END
+            WHERE id=$1`,
+          [p.id, 'performance_description' in b, String(b.performance_description || '').trim() || null, JSON.stringify(areas),
+            'start_date' in b, b.start_date || null, 'end_date' in b, b.end_date || null]);
+        if ('gates' in b) {
+          const ids = gates.filter((g) => g.id).map((g) => g.id);
+          await client.query(`DELETE FROM pms.pip_gates WHERE pip_id=$1 AND status='pending' AND NOT (id = ANY($2::uuid[]))`, [p.id, ids]);
+          for (let i = 0; i < gates.length; i++) {
+            const g = gates[i];
+            const upd = g.id ? (await client.query(
+              `UPDATE pms.pip_gates SET sort_order=$3, title=$4, due_date=$5, success_measure=$6
+                WHERE id=$1 AND pip_id=$2 RETURNING id`, [g.id, p.id, i + 1, g.title, g.due_date, g.success_measure])).rows[0] : null;
+            if (!upd) {
+              await client.query(
+                `INSERT INTO pms.pip_gates (tenant_id, pip_id, sort_order, title, due_date, success_measure)
+                 VALUES ($1,$2,$3,$4,$5,$6)`, [T(req), p.id, i + 1, g.title, g.due_date, g.success_measure]);
+            }
+          }
+        }
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+    await audit(req, closing ? 'PIP_CLOSED' : 'PIP_UPDATED', p.cycle_id, p.employee_id,
+      { status, closed_reason, plan_edited: editingPlan, gates: gates ? gates.length : undefined });
+    if (closing) await notify(T(req), p.employee_id, 'pip_closed', `Your Performance Improvement Plan has been closed (${status})`, null, '/pip');
+    else if (editingPlan) await notify(T(req), p.employee_id, 'pip_updated', `${req.user.name} updated your Performance Improvement Plan`, null, '/pip');
+    res.json({ ok: true, pip: await pipWithGates(T(req), p.id) });
+  } catch (e) { logger.error('pip update', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// Review one gate: was the improvement shown by its date?
+router.post('/pip/:id/gates/:gateId/review', async (req, res) => {
+  try {
+    const p = (await db.query(`SELECT * FROM pms.pip_records WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!p) return res.status(404).json({ error: 'PIP not found' });
+    if (p.employee_id === req.user.id || !(await isManagerOfOrAdmin(req, p.employee_id))) return res.status(403).json({ error: 'Requires being this employee\'s manager, or pms_admin' });
+    if (p.status.startsWith('closed')) return res.status(409).json({ error: 'This plan is closed.' });
+    const { status, review_note } = req.body || {};
+    if (!PIP_GATE_STATUS.includes(status)) return res.status(400).json({ error: `status must be one of: ${PIP_GATE_STATUS.join(', ')}` });
+    if (status !== 'pending' && !String(review_note || '').trim()) return res.status(422).json({ error: 'Say what was seen at this gate — the note is the record.' });
+    const g = (await db.query(
+      `UPDATE pms.pip_gates SET status=$3, review_note=$4,
+              reviewed_by=CASE WHEN $3='pending' THEN NULL ELSE $5 END,
+              reviewed_at=CASE WHEN $3='pending' THEN NULL ELSE now() END
+        WHERE id=$1 AND pip_id=$2 RETURNING id, title`,
+      [req.params.gateId, p.id, status, String(review_note || '').trim() || null, req.user.email])).rows[0];
+    if (!g) return res.status(404).json({ error: 'gate not found on this plan' });
+    if (p.status === 'open') await db.query(`UPDATE pms.pip_records SET status='in_progress', updated_at=now() WHERE id=$1`, [p.id]);
+    await audit(req, 'PIP_GATE_REVIEWED', p.cycle_id, p.employee_id, { pip_id: p.id, gate: g.title, status });
+    if (status !== 'pending') {
+      await notify(T(req), p.employee_id, 'pip_gate_reviewed',
+        `Improvement plan gate "${g.title}" was reviewed: ${status === 'met' ? 'met' : 'not met'}`, null, '/pip');
+    }
+    res.json({ ok: true, pip: await pipWithGates(T(req), p.id) });
+  } catch (e) { logger.error('pip gate review', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
 router.post('/pip/:id/entries', async (req, res) => {
@@ -6240,7 +6642,7 @@ router.post('/pip/:id/entries', async (req, res) => {
       `INSERT INTO pms.pip_weekly_entries (tenant_id, pip_id, week_ending, notes, submitted_by) VALUES ($1,$2,$3,$4,$5)`,
       [T(req), p.id, week_ending, notes, req.user.email]);
     if (p.status === 'open') await db.query(`UPDATE pms.pip_records SET status='in_progress' WHERE id=$1`, [p.id]);
-    await notify(T(req), p.employee_id, 'pip_entry_added', 'A new weekly note was added to your Performance Improvement Plan', null, '/pms/my-rating');
+    await notify(T(req), p.employee_id, 'pip_entry_added', 'A new weekly note was added to your Performance Improvement Plan', null, '/pip');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

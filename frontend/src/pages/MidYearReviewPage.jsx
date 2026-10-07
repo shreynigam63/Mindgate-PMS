@@ -4,6 +4,7 @@ import { api, phaseLabel, phaseColor, KraBullets, Bullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
+import ReviewKraEditor from './ReviewKraEditor';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import Grade, { grade } from '../grade';
@@ -537,6 +538,9 @@ function MyMidYearCard() {
         </AiModal>
       )}
 
+      {/* KRA, KPI and weightage stay editable through the review (7 Oct). */}
+      {data.checkin && data.checkin.employee_id && <ReviewKraEditor employeeId={data.checkin.employee_id} onSaved={load} />}
+
       {/* ONE COLUMN, NOT TWO, since 23 Sep. The right-hand column was
           "From the manager" — their mid-year rating and narrative,
           withheld until HR published and shown after. Removed at the
@@ -743,6 +747,7 @@ function TeamMidYearDetail({ employeeId }) {
           {(draft.gaps || []).length > 0 && <p className="text-amber-700">Input gaps: {draft.gaps.join(' · ')}</p>}
         </AiModal>
       )}
+      <ReviewKraEditor employeeId={employeeId} onSaved={load} title="Their KRAs, KPIs & weightage" />
       {hasKras ? (
         <>
           <p className="text-[10px] uppercase font-bold text-navy-400">Rate each KRA</p>

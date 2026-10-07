@@ -3,6 +3,7 @@ import { Send, Paperclip, Trash2, Download } from 'lucide-react';
 import { api, phaseLabel, phaseColor, API_BASE } from '../utils/api';
 import ReviewAssist from './ReviewAssist';
 import MeetingPanel from './MeetingPanel';
+import ReviewKraEditor from './ReviewKraEditor';
 import PageHead from '../PageHead';
 import Grade, { grade } from '../grade';
 
@@ -104,6 +105,14 @@ export default function SelfAppraisalPage() {
         {isAnnual && <p className="text-[10px] text-navy-400">Your own assessment. Your manager sets the official annual rating.</p>}
       </div>
 
+      {/* KRA, KPI and weightage stay editable through the review (7 Oct).
+          Reloads only the KRA list, so ratings typed above are kept. */}
+      {a.employee_id && (
+        <div className="card p-3">
+          <ReviewKraEditor employeeId={a.employee_id}
+            onSaved={() => api('/pms/my/self-appraisal').then((r) => setData(r)).catch(() => {})} />
+        </div>
+      )}
       {!data.kras.length && <div className="card p-4 text-sm text-amber-700 bg-amber-50 border-amber-200">No approved KRAs found — complete KRA setting first.</div>}
       {data.kras.map(k => (
         <div key={k.id} className="card p-3 space-y-2">

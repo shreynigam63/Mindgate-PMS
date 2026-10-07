@@ -11,11 +11,20 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `b33d548`** (8 October 2026). This
-edition also describes the open Long-Term target with its AI plan and
-cross-department check (§3.2), and the First-Week Journey hidden on screen
-(§3.12), on the dev branch, which reach the live site with the next deploy. The build a screen is running is
-shown in its **?** menu, and `/api/v1/health` reports the same commit.
+**Live at pms.agentichumans.in: build `7d8c79c`** (7 October 2026), which
+carries the open Long-Term target with its AI plan and cross-department
+check (§3.2) and hides the First-Week Journey on screen (§3.12). This
+edition also describes five changes on the dev branch, which reach the
+live site with the next deploy:
+
+- connects with anyone, and the HR question (§2.1);
+- KRA, KPI and weightage editable in the reviews (§3.1);
+- the Final Rating as a chain (§3.3);
+- the manager's Performance Improvement Plan (§3.14);
+- the HOD's Team Competencies (§2.3).
+
+The build a screen is running is shown in its **?** menu, and
+`/api/v1/health` reports the same commit.
 
 ---
 
@@ -199,10 +208,10 @@ deploy shows a *Reload now* bar (`BuildWatch`).
 | Dashboard | `/home` | Top of the sidebar, §2.6 |
 | My KRAs | `/my/kras` | Sheet status machine, §3.1. Weights must total exactly 100 to submit. Each KRA shows its timesheet hours and rating, §3.7 |
 | My Growth | `/my/growth` | Opens on **your** KRA submission, §3.2. Short-term and long-term aspiration are separate records; long-term stays editable through Manager Evaluation |
-| Connects | `/team/connects` | 1-on-1 log. Action items carry `sort_order` — `created_at` ties inside one transaction |
-| Mid-Year Review | `/my/midyear` | Opens at `mid_year_review`, stays open to end of Annual Review. Per-KRA ratings with a computed overall |
-| Annual Review | `/my/self-appraisal` | Opens at `self_appraisal`. Locks permanently on sign-off |
-| Final Rating | `/my/annual-review` | Consolidated read-only view |
+| Connects | `/team/connects` | Connect log. **With anyone**: your own connect names who it was with (default your manager), and that person signs it off. Every connect asks *"Do you need HR as part of this connect?"* — yes names one person holding the `hr` or `hrbp` role (suggested: the HRBP whose remit covers you), who is told and can read it. Action items carry `sort_order` — `created_at` ties inside one transaction |
+| Mid-Year Review | `/my/midyear` | Opens at `mid_year_review`, stays open to end of Annual Review. Per-KRA ratings with a computed overall. KRA, KPI and weightage editable here, §3.1 |
+| Annual Review | `/my/self-appraisal` | Opens at `self_appraisal`. Locks permanently on sign-off. KRA, KPI and weightage editable here, §3.1 |
+| Final Rating | `/my/annual-review` | The annual review only, as a chain: your rating → manager → HOD → HR → final, §3.3 |
 | My Rating | `/my/rating` | **Gated**: opens only once something is published for you. Not a permission — an emptiness |
 | Past Cycles | `/my/history` | Published history plus imported prior-year ratings |
 | My Competencies | `/my/competencies` | §3.8 |
@@ -216,7 +225,7 @@ is public, so typing the URL must *not* answer with the access-denied
 screen — that would tell somebody they had lost a right they never lost. It
 says "No published ratings yet" and what will change that.
 
-## 2.2 Manager — 9 pages, `pms_team_eval`
+## 2.2 Manager — 10 pages, `pms_team_eval`
 
 | Page | Route | What governs it |
 |---|---|---|
@@ -226,19 +235,21 @@ says "No published ratings yet" and what will change that.
 | Team KRA Sheets | `/team/kra-sheets` | Each KRA shows the report's timesheet hours and rating, §3.7. Approve or return. A return **must** carry a comment — refused 422, *"the employee must know why"* (`approvals.js`) |
 | Team Target Achievements | `/team/growth` | Growth-plan decisions |
 | Team Mid-Year | `/team/midyear` | Manager half of the checkpoint |
-| Team Evaluation | `/team/eval` | Opens at `manager_eval`. Each KRA shows its timesheet rating beside the manager's buttons, §3.7 |
+| Team Evaluation | `/team/eval` | Opens at `manager_eval`. Each KRA shows its timesheet rating beside the manager's buttons, §3.7. KRA, KPI and weightage editable here, §3.1 |
 | Team Competencies | `/team/competencies` | Manager assessment per report |
+| Improvement Plans | `/team/pip` | Open and run a report's Performance Improvement Plan, §3.14. Team Evaluation links here for the person open |
 | Timesheet | `/team/timesheet` | Where the mapping is done, §3.7 |
 
 Scope is the reporting line. When a reporting manager changes, open records
 move with the employee (`manager-handover.js`) — otherwise a submitted sheet
 sits in the queue of somebody who no longer manages them.
 
-## 2.3 HOD — 2 pages, `pms_hod`
+## 2.3 HOD — 3 pages, `pms_hod`
 
 | Page | Route | What governs it |
 |---|---|---|
 | HOD Review | `/hod` | Opens at `hod_eval`. Shows employee, manager and timesheet ratings per KRA |
+| Team Competencies | `/hod/competencies` | **Every** active employee in the departments this person heads — not only direct reports — with a department dropdown, a by-department table (people, assessed, average level, required, gap, below required), the by-area summary, and each person's ratings read-only. HR sees every department. Rating stays the manager's |
 | RnR Approvals | `/rnr/approvals/delivery-head` | Stage 2 of §3.10 |
 
 The `hod` role grants access to the *screen*; `core.department_heads` decides
@@ -340,6 +351,21 @@ The sheet is open for the whole cycle — every phase but `draft` and
 `closed`. The client's words: *"KRA should be open for all in entire cycle,
 but once KRA is submitted by employee it should be locked for him unless
 manager returns the KRA with any feedback."*
+
+**Editable in the reviews (7 Oct):** *"KRA, KPIs and weightage should be
+editable in mid year, annual review."* In `mid_year_review`,
+`self_appraisal` and `manager_eval` (`reviewKraEditable`), the employee and
+their manager (or HR) may change an existing KRA's title, KPI (`measures`)
+and weight from the review screens — Mid-Year Review, Team Mid-Year, Annual
+Review, Team Evaluation — through `GET`/`PUT /pms/review/kras/:employeeId`.
+The rules:
+
+- the same KRAs, by id: none added or removed, because ratings are keyed to them;
+- weights still total exactly 100;
+- the sheet stays `approved`;
+- every change is audited field by field (`KRA_EDITED_IN_REVIEW`) and the
+  other person is notified;
+- from `hod_eval` on, refused 409.
 
 ## 3.2 Growth planning opens per person
 
@@ -495,6 +521,22 @@ The scale is a table on the cycle (`rating_scale`), not a constant.
 
 A rating can move three times — manager, then HOD, then calibration — so
 every change is audited with its reason.
+
+**The Final Rating page is that chain (7 Oct):** *"Final rating will consist
+only of annual review rating followed by Manager, HOD and HR."*
+`rating_chain` on `/pms/my/annual-review` holds five steps:
+
+1. Your overall self-rating.
+2. The manager's overall.
+3. The HOD's overall, with comment.
+4. HR's latest calibration adjustment, with its reason, or "No change".
+5. Final: `COALESCE(HR, HOD, manager)`, the same order publish uses, or the
+   published figure once it exists.
+
+Steps 2 to 5 are withheld from the employee until their rating is
+published. The page lists the annual review by KRA: self and manager, with
+the KPI. Mid-Year, Target achievements, Aspiring Career and rating history
+are no longer on it; they stay on their own pages.
 
 ## 3.4 Calibration and the kitty
 
@@ -876,6 +918,26 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
+## 3.14 Performance Improvement Plan
+
+Publish still opens one automatically below the cycle's `pip_threshold`.
+Since 7 Oct the **manager** (or HR) can also open one, from
+**Improvement Plans** (`/team/pip`) or the link on Team Evaluation. One plan
+per person per cycle (409 otherwise). The plan has three parts, all
+required:
+
+1. **Description** of the performance concern (`performance_description`).
+2. **Targeted areas**: each an area and what good looks like
+   (`target_areas`, jsonb).
+3. **Gates**: dated checkpoints where the improvement has to be shown,
+   inside the plan's start and end dates (`pms.pip_gates`).
+
+Each gate is reviewed separately, as **met** or **not met**, and a note is
+required. A reviewed gate cannot be dropped from the plan. Weekly notes and
+a closure with a reason continue as before. A closed plan is a record and
+cannot be edited. The employee reads their plan on `/pip` and cannot edit
+it. Opening, editing, gate reviews and closing are audited and notified.
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |
@@ -921,7 +983,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 8 October 2026 (live: `b33d548`; plus the
-open Long-Term target and the hidden First-Week Journey, on the dev
-branch). Where this book and the code disagree,
+*Checked against the code on 7 October 2026 (live: `7d8c79c`; plus the
+five dev-branch changes listed at the top). Where this book and the code disagree,
 the code is right and this book is a bug.*

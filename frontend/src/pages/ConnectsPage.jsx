@@ -98,6 +98,22 @@ function NewConnectForm({ me, team, onSaved }) {
   // computeCadenceProgress.
   const [cadence, setCadence] = useState(null);
   const [err, setErr] = useState(null);
+  // CONNECT WITH ANYONE (7 Oct): "connects can be with anyone so allow all
+  // employees to select option to connect with anyone with option as 'do
+  // you need HR as part of this connect'". Your own connect names who it
+  // was with — your manager by default, anyone in the company if not.
+  // They sign it off. The HR question is asked on every connect.
+  const [people, setPeople] = useState(null);
+  const [withId, setWithId] = useState('');
+  const [needHr, setNeedHr] = useState(null);
+  const [hrId, setHrId] = useState('');
+  useEffect(() => {
+    api('/pms/connects/people').then((r) => {
+      setPeople(r);
+      setWithId((v) => v || r.my_manager_id || '');
+      setHrId((v) => v || r.suggested_hr_id || '');
+    }).catch(() => setPeople({ people: [], hr: [] }));
+  }, []);
 
   // Previously "Select report" only ever listed direct reports (from
   // GET /team/evaluations, itself pms_team_eval-gated) — an employee with
@@ -124,12 +140,18 @@ function NewConnectForm({ me, team, onSaved }) {
   const save = async () => {
     setErr(null);
     if (!employeeId || !heldAt) { setErr('Employee and date are required.'); return; }
+    const isSelf = me && employeeId === me.id;
+    if (isSelf && !withId) { setErr('Pick who the connect was with.'); return; }
+    if (needHr === null) { setErr('Answer "Do you need HR as part of this connect?"'); return; }
+    if (needHr && !hrId) { setErr('Pick who from HR should be part of it.'); return; }
     try {
       await api('/pms/connects', {
         method: 'POST',
         body: JSON.stringify({
           employee_id: employeeId, held_at: heldAt, duration_min: durationMin || null, topic, discussion_notes: discussionNotes,
           achievements, blockers, feedback, kra_ids: kraIds,
+          ...(isSelf ? { with_id: withId } : {}),
+          include_hr: !!needHr, ...(needHr ? { hr_id: hrId } : {}),
         }),
       });
       onSaved();
@@ -139,11 +161,14 @@ function NewConnectForm({ me, team, onSaved }) {
   return (
     <div className="card p-4 space-y-3">
       <div className="grid sm:grid-cols-3 gap-2">
-        <select className="inp sm:col-span-1" value={employeeId} onChange={e => setEmployeeId(e.target.value)}>
-          <option value="">Select report…</option>
-          {me && <option value={me.id}>Myself ({me.name})</option>}
-          {(team || []).map(t => <option key={t.employee_id} value={t.employee_id}>{t.name}</option>)}
-        </select>
+        <div>
+          <label className="lbl">Whose connect</label>
+          <select className="inp" value={employeeId} onChange={e => setEmployeeId(e.target.value)}>
+            <option value="">Select…</option>
+            {me && <option value={me.id}>Myself ({me.name})</option>}
+            {(team || []).map(t => <option key={t.employee_id} value={t.employee_id}>{t.name}</option>)}
+          </select>
+        </div>
         <div>
           <label className="lbl">Date</label>
           <input className="inp" type="date" value={heldAt} onChange={e => setHeldAt(e.target.value)} />
@@ -151,6 +176,38 @@ function NewConnectForm({ me, team, onSaved }) {
         <div>
           <label className="lbl">Duration (min)</label>
           <input className="inp" type="number" min="0" step="5" value={durationMin} onChange={e => setDurationMin(e.target.value)} />
+        </div>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-2">
+        <div>
+          <label className="lbl">Connect with</label>
+          {me && employeeId === me.id ? (
+            <PersonPicker people={(people && people.people) || []} value={withId} onChange={setWithId}
+              hint={people && withId && withId === people.my_manager_id ? 'your manager' : null} />
+          ) : (
+            <p className="inp bg-navy-50 text-navy-500">{employeeId ? `You (${me ? me.name : ''})` : '—'}</p>
+          )}
+          <p className="text-[11px] text-navy-400 mt-0.5">Anyone in the company. They sign the connect off.</p>
+        </div>
+        <div>
+          <label className="lbl">Do you need HR as part of this connect?</label>
+          <div className="flex gap-1.5">
+            {[[true, 'Yes'], [false, 'No']].map(([v, label]) => (
+              <button key={label} type="button" onClick={() => setNeedHr(v)}
+                className={`chip px-3 py-1.5 ${needHr === v ? 'bg-navy-700 text-white' : 'bg-white text-navy-600 border border-navy-100'}`}>{label}</button>
+            ))}
+          </div>
+          {needHr && (
+            <select className="inp mt-1.5" value={hrId} onChange={(e) => setHrId(e.target.value)}>
+              <option value="">Select HR…</option>
+              {((people && people.hr) || []).map((h) => (
+                <option key={h.id} value={h.id}>{h.name}{h.role === 'hrbp' ? ' (HRBP)' : ' (HR)'}{h.id === people.suggested_hr_id ? ' — suggested' : ''}</option>
+              ))}
+            </select>
+          )}
+          {needHr && people && !(people.hr || []).length && (
+            <p className="text-[11px] text-amber-700 mt-1">Nobody holds an HR role yet — ask HR to set one up.</p>
+          )}
         </div>
       </div>
       {ask('topic', 'Topic', 'e.g. Mid-quarter check-in') && (
@@ -298,6 +355,7 @@ function ConnectRow({ cn, me, reload }) {
             {new Date(cn.held_at).toLocaleDateString()}
             {cn.duration_min != null && ` · ${cn.duration_min} min`}
             {cn.topic && ` · ${cn.topic}`}
+            {cn.hr_name && ` · HR: ${cn.hr_name}`}
             {me && cn.logged_by_id && ` · logged by ${cn.logged_by_id === me.id ? 'you' : (cn.logged_by_id === cn.employee_id ? cn.employee_name : cn.manager_name)}`}
           </p>
         </div>
@@ -438,6 +496,36 @@ function AiInsightsPanel({ insight }) {
           {!(insight.suggested_followups || []).length && <p className="text-navy-400">Nothing specific suggested yet.</p>}
         </div>
       </div>
+    </div>
+  );
+}
+
+// A name search over everyone, since "anyone" at Mindgate is over a
+// thousand people and a plain dropdown of them is unusable.
+function PersonPicker({ people, value, onChange, hint }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const picked = people.find((p) => p.id === value);
+  const list = people.filter((p) => matches(q, p.name, p.designation, p.department)).slice(0, 8);
+  return (
+    <div className="relative">
+      <input className="inp" value={open ? q : (picked ? `${picked.name}${hint ? ` (${hint})` : ''}` : '')}
+        placeholder="Search by name, designation or department…"
+        onFocus={() => { setOpen(true); setQ(''); }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onChange={(e) => setQ(e.target.value)} />
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-navy-100 rounded-lg shadow-lg max-h-60 overflow-auto">
+          {!list.length && <p className="text-xs text-navy-400 p-2">Nobody matches.</p>}
+          {list.map((p) => (
+            <button key={p.id} type="button" className="w-full text-left px-2 py-1.5 text-xs hover:bg-navy-50"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange(p.id); setOpen(false); }}>
+              <b>{p.name}</b> <span className="text-navy-400">· {p.designation || '—'} · {p.department || '—'}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

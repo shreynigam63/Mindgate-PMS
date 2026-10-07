@@ -263,6 +263,26 @@ function aspirationEditable(phase, { sheetStatus = null, planStatus = null, hori
   return { ok: false, reason: 'phase', error: `Growth planning is not open (phase: ${phase || 'none'})` };
 }
 
+// KRA, KPI AND WEIGHTAGE STAY EDITABLE THROUGH THE REVIEWS.
+//
+// Asked for on 7 Oct: "KRA, KPIs and weightage should be editable in mid
+// year, annual review." By then the sheet is approved and locked (see
+// KRA_ACTIONS above), and the honest place to correct a KRA that the year
+// has overtaken is the review itself. So in these phases the employee and
+// their manager may change an existing KRA's title, its KPI (measures) and
+// its weight — not add or remove KRAs, because the ratings already given
+// are keyed to them. The sheet keeps its approved status; every change is
+// audited field by field and the other party is told.
+const REVIEW_KRA_PHASES = ['mid_year_review', 'self_appraisal', 'manager_eval'];
+function reviewKraEditable(phase) {
+  if (REVIEW_KRA_PHASES.includes(phase)) return { ok: true };
+  return {
+    ok: false,
+    reason: 'phase',
+    error: 'KRAs, KPIs and weightage can be changed here during the Mid-Year Review and the Annual Review (self appraisal and manager evaluation).',
+  };
+}
+
 // KRA weight rule: total must be exactly 100 to submit (tolerance for
 // numeric drift: 0.01).
 function weightsValid(kras) {
@@ -270,4 +290,5 @@ function weightsValid(kras) {
   return { ok: Math.abs(total - 100) < 0.01, total: +total.toFixed(2) };
 }
 
-module.exports = { ORDER, canAdvance, canRollback, canCancel, phaseAllows, weightsValid, growthEditable, aspirationEditable, LONG_TERM_LAST_PHASE };
+module.exports = { ORDER, canAdvance, canRollback, canCancel, phaseAllows, weightsValid, growthEditable, aspirationEditable, LONG_TERM_LAST_PHASE,
+  reviewKraEditable, REVIEW_KRA_PHASES };
