@@ -33,7 +33,7 @@ async function smtpConfig(tenantId) {
   // secure=true means implicit TLS, which is port 465. Everything else
   // starts plain and upgrades with STARTTLS, which is what 587 does.
   const secure = v.secure != null ? !!v.secure : port === 465;
-  return { host, port, user, pass, from, secure };
+  return { host, port, user, pass, from, secure, provider: v.provider || null };
 }
 
 // HOW mail leaves: 'google' (Gmail API, sending as each person — see
@@ -93,6 +93,10 @@ async function deliverSmtp(cfg, msg, limitMs) {
   const nodemailer = require('nodemailer');
   const tx = nodemailer.createTransport({
     host: cfg.host, port: cfg.port, secure: cfg.secure,
+    // The name this server greets the mail server with. Google's SMTP
+    // relay turns away an unqualified one ("localhost", a bare EC2 host
+    // name), so it is the sending domain there — what Google expects.
+    ...(cfg.provider === 'google_relay' && addrOf(cfg.from).includes('@') ? { name: addrOf(cfg.from).split('@')[1] } : {}),
     auth: cfg.user ? { user: cfg.user, pass: cfg.pass } : undefined,
     // A mail server that will not answer must not hold an HTTP
     // request open: the submission has already been saved and the
@@ -118,6 +122,13 @@ async function deliverSmtp(cfg, msg, limitMs) {
 // Matched on the codes and phrases the common servers actually send.
 function explain(detail) {
   const d = String(detail || '');
+  // Google Workspace SMTP relay (Admin console → Gmail → Routing).
+  if (/Mail relay denied|relay.*(denied|not permitted)|5\.7\.0.*(relay|IP)|not.*authori[sz]ed.*relay/i.test(d)) {
+    return 'Google’s SMTP relay did not accept this server. In the Google Admin console → Apps → Google Workspace → Gmail → Routing → SMTP relay service, check that this server’s IP address (shown on this card) is listed and “Only addresses in my domains” is chosen. A change can take a few minutes to apply.';
+  }
+  if (/5\.7\.1.*(sender|not.*domain)|Sender address.*not.*domain/i.test(d)) {
+    return 'Google’s relay only sends from Mindgate’s own addresses. Use an address in the company domain.';
+  }
   // Google Workspace (core/gmail.js).
   if (/unauthorized_client/i.test(d)) {
     return 'Google has not authorised the PMS yet. In the Google Admin console → Security → Access and data control → API controls → Domain-wide delegation, add the PMS’s client ID (shown on this card) with the scope https://www.googleapis.com/auth/gmail.send. It can take a few minutes to start working.';

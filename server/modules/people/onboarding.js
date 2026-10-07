@@ -324,7 +324,7 @@ router.post('/joiners', async (req, res) => {
        SELECT $1, $2, id FROM people.onboarding_activities WHERE tenant_id=$1 AND active`,
       [T(req), j.id])).rowCount;
     await client.query('COMMIT');
-    audit(req, 'onboarding_start', { joiner_id: j.id, employee_id: employeeId, doj: date, tasks: n });
+    await audit(req, 'onboarding_start', { joiner_id: j.id, employee_id: employeeId, doj: date, tasks: n });
     res.status(201).json({ id: j.id, tasks: n });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -355,7 +355,7 @@ router.patch('/joiners/:id', async (req, res) => {
   try {
     const r = await db.query(`UPDATE people.onboarding_joiners SET ${sets.join(', ')} WHERE tenant_id=$1 AND id=$2`, vals);
     if (!r.rowCount) return res.status(404).json({ error: 'No such joiner.' });
-    audit(req, 'onboarding_joiner_update', { joiner_id: req.params.id, ...b });
+    await audit(req, 'onboarding_joiner_update', { joiner_id: req.params.id, ...b });
     res.json({ ok: true });
   } catch (e) { logger.error('onboarding joiner update', { error: e.message }); res.status(500).json({ error: 'Could not save.' }); }
 });
@@ -366,7 +366,7 @@ router.delete('/joiners/:id', async (req, res) => {
     const r = await db.query(`DELETE FROM people.onboarding_joiners WHERE tenant_id=$1 AND id=$2 RETURNING employee_id`,
       [T(req), req.params.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'No such joiner.' });
-    audit(req, 'onboarding_remove', { joiner_id: req.params.id, employee_id: r.rows[0].employee_id });
+    await audit(req, 'onboarding_remove', { joiner_id: req.params.id, employee_id: r.rows[0].employee_id });
     res.json({ ok: true });
   } catch (e) { logger.error('onboarding remove', { error: e.message }); res.status(500).json({ error: 'Could not remove.' }); }
 });
@@ -396,7 +396,7 @@ router.patch('/tasks/:id', async (req, res) => {
       `UPDATE people.onboarding_tasks SET ${sets.join(', ')}, updated_by=$${vals.length}, updated_at=now()
         WHERE tenant_id=$1 AND id=$2 RETURNING joiner_id`, vals);
     if (!r.rowCount) return res.status(404).json({ error: 'No such task.' });
-    audit(req, 'onboarding_task', { task_id: req.params.id, ...b });
+    await audit(req, 'onboarding_task', { task_id: req.params.id, ...b });
     res.json({ ok: true });
   } catch (e) { logger.error('onboarding task', { error: e.message }); res.status(500).json({ error: 'Could not save.' }); }
 });
@@ -413,7 +413,7 @@ router.post('/joiners/:id/complete', async (req, res) => {
       `UPDATE people.onboarding_tasks SET completed_on=$4, updated_by=$5, updated_at=now()
         WHERE tenant_id=$1 AND joiner_id=$2 AND id = ANY($3::uuid[]) AND completed_on IS NULL`,
       [T(req), req.params.id, taskIds, date, req.user.email]);
-    audit(req, 'onboarding_complete', { joiner_id: req.params.id, tasks: r.rowCount, completed_on: date });
+    await audit(req, 'onboarding_complete', { joiner_id: req.params.id, tasks: r.rowCount, completed_on: date });
     res.json({ updated: r.rowCount });
   } catch (e) { logger.error('onboarding bulk complete', { error: e.message }); res.status(500).json({ error: 'Could not save.' }); }
 });
@@ -444,7 +444,7 @@ router.put('/joiners/:id/feedback', async (req, res) => {
          worked_best=EXCLUDED.worked_best, improve=EXCLUDED.improve, open_issue=EXCLUDED.open_issue,
          recorded_by=EXCLUDED.recorded_by, recorded_at=now()`,
       [T(req), req.params.id, date, JSON.stringify(ratings), b.worked_best || null, b.improve || null, b.open_issue || null, req.user.email]);
-    audit(req, 'onboarding_feedback', { joiner_id: req.params.id, ratings });
+    await audit(req, 'onboarding_feedback', { joiner_id: req.params.id, ratings });
     res.json({ ok: true });
   } catch (e) { logger.error('onboarding feedback', { error: e.message }); res.status(500).json({ error: 'Could not save feedback.' }); }
 });
@@ -525,7 +525,7 @@ router.put('/spocs/:role', async (req, res) => {
          ON CONFLICT (tenant_id, role) DO UPDATE SET name=EXCLUDED.name, email=EXCLUDED.email,
            updated_by=EXCLUDED.updated_by, updated_at=now()`, [T(req), role, name, email, req.user.email]);
     }
-    audit(req, 'onboarding_spoc', { role, email: email || null, name });
+    await audit(req, 'onboarding_spoc', { role, email: email || null, name });
     res.json({ ok: true });
   } catch (e) { logger.error('onboarding spoc save', { error: e.message }); res.status(500).json({ error: 'Could not save.' }); }
 });
@@ -593,7 +593,7 @@ router.post('/tasks/:id/email', async (req, res) => {
       `INSERT INTO people.onboarding_task_emails (tenant_id, task_id, to_emails, from_email, sender_role, subject, mode, outcome, sent_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [T(req), req.params.id, [p.to.email], p.from.email, p.from.role, subject, r.mode, r.outcome, req.user.email]);
-    audit(req, 'onboarding_task_email', { task_id: req.params.id, to: p.to.email, from: p.from.email, outcome: r.outcome });
+    await audit(req, 'onboarding_task_email', { task_id: req.params.id, to: p.to.email, from: p.from.email, outcome: r.outcome });
     res.json({ to: p.to.email, from: p.from.email, mode: r.mode, outcome: r.outcome, detail: r.detail || null,
       hint: r.outcome === 'failed' ? explain(r.detail) : null });
   } catch (e) { logger.error('onboarding email send', { error: e.message }); res.status(500).json({ error: 'Could not send the email.' }); }
@@ -607,7 +607,7 @@ router.post('/holidays', async (req, res) => {
     await db.query(
       `INSERT INTO people.onboarding_holidays (tenant_id, holiday_date, name) VALUES ($1,$2,$3)
        ON CONFLICT (tenant_id, holiday_date) DO UPDATE SET name=EXCLUDED.name`, [T(req), date, String(name).trim()]);
-    audit(req, 'onboarding_holiday_add', { date, name });
+    await audit(req, 'onboarding_holiday_add', { date, name });
     res.json({ ok: true });
   } catch (e) { logger.error('onboarding holiday', { error: e.message }); res.status(500).json({ error: 'Could not save the holiday.' }); }
 });
@@ -616,7 +616,7 @@ router.delete('/holidays/:date', async (req, res) => {
   if (!(await guard(req, res))) return;
   if (!ISO.test(req.params.date)) return res.status(400).json({ error: 'Not a date.' });
   const r = await db.query(`DELETE FROM people.onboarding_holidays WHERE tenant_id=$1 AND holiday_date=$2`, [T(req), req.params.date]);
-  audit(req, 'onboarding_holiday_remove', { date: req.params.date });
+  await audit(req, 'onboarding_holiday_remove', { date: req.params.date });
   res.json({ removed: r.rowCount });
 });
 

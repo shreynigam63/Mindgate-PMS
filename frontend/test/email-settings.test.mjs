@@ -49,10 +49,15 @@ test('HR sets email up in three steps; Google Workspace sends from each person\'
   const tok = await page.evaluate(() => localStorage.getItem('apms_token'));
   const view = await (await fetch(`${API}/api/v1/pms/hr/mail`, { headers: { Authorization: `Bearer ${tok}` } })).json();
   if (view.transport === 'google' || !view.smtp.host) {
-    assert.match(text, /no PMS mailbox and no passwords/i, 'Google is the way in when nothing else is set');
-    assert.ok(/Upload the key file|Key uploaded/.test(text));
+    assert.match(text, /No key and no passwords/i, 'Google\'s SMTP relay is the way in when nothing else is set');
+    assert.match(text, /SMTP relay service/);
+    assert.match(text, /Only addresses in my domains/);
     assert.match(text, /Reminders and notifications are sent from/);
     assert.ok(!/Password/.test(text), 'no password for Google');
+    // The key route is still there for anyone who wants it.
+    await card.getByRole('button', { name: /service-account key instead/ }).click();
+    assert.match(await card.innerText(), /Upload the key file|Key uploaded/);
+    await card.getByRole('button', { name: /simpler SMTP relay/ }).click();
   }
   if (view.stage !== 'ready' && view.stage !== 'live') {
     assert.equal(await card.getByRole('button', { name: 'Go live' }).isDisabled(), true, 'Go live waits for a delivered test');

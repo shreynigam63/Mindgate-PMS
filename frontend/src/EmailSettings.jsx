@@ -1,13 +1,16 @@
 // HR → Settings → Email. Built on 6 Oct; simplified for HR on 7 Oct, then
 // the same day given its main route for Mindgate, which is on Google
-// Workspace ("why can't it be directly emails from spocs").
+// Workspace ("why can't it be directly emails from spocs"), and made
+// simpler for IT ("instead of upload key option").
 //
-//   1. Connect — GOOGLE WORKSPACE (recommended): IT uploads a service
-//      account's key once and authorises it in the Google Admin console;
-//      every email is then sent from the person's own Gmail — the SPOC,
-//      the manager, the reminders sender — with no PMS mailbox and no
-//      passwords (core/gmail.js). Or MICROSOFT 365 / OTHER: one mailbox
-//      and its password, sending as the SPOC with Send-As.
+//   1. Connect — GOOGLE WORKSPACE (recommended): IT turns on Google's SMTP
+//      relay for this server's IP address in the Admin console — one
+//      screen, no key, no password — and every email goes from the
+//      person's own address: the SPOC, the manager, the reminders sender.
+//      The service-account key (core/gmail.js) stays as an alternative for
+//      anyone who wants copies in each SPOC's Sent folder. Or MICROSOFT 365
+//      / OTHER: one mailbox and its password, sending as the SPOC with
+//      Send-As.
 //   2. Send a test email — delivered for real, to you, even while email is
 //      still recorded-only; a failure comes back as a sentence to act on.
 //      With Google, each SPOC address is checked too, without sending.
@@ -21,7 +24,7 @@ import { Mail, Send, Save, ShieldCheck, CheckCircle2, AlertTriangle, ChevronDown
 import { api } from './utils/api';
 
 const PROVIDERS = {
-  google: { label: 'Google Workspace', sub: 'Gmail — sends from each person’s own Gmail' },
+  google: { label: 'Google Workspace', sub: 'Gmail — sends from each person’s own address' },
   microsoft365: {
     label: 'Microsoft 365', sub: 'One mailbox and its password', host: 'smtp.office365.com', port: 587, secure: false,
     note: 'Use a shared mailbox such as pms@yourcompany.com. IT must turn on “Authenticated SMTP” for that mailbox in the Microsoft 365 admin centre.',
@@ -44,9 +47,12 @@ const splitFrom = (s) => {
   const m = String(s || '').match(/^\s*"?([^"<]*)"?\s*<([^>]+)>\s*$/);
   return m ? { name: m[1].trim(), addr: m[2].trim() } : { name: '', addr: String(s || '').trim() };
 };
-const providerOf = (d) => (d.transport === 'google' ? 'google'
+const RELAY = { host: 'smtp-relay.gmail.com', port: 587, secure: false };
+const providerOf = (d) => (d.transport === 'google' || d.smtp.provider === 'google_relay' ? 'google'
   : d.smtp.provider === 'microsoft365' || /office365|outlook/i.test(d.smtp.host || '') ? 'microsoft365'
     : d.smtp.host ? 'other' : 'google');
+// Within Google: the relay (simple, the default) or a service-account key.
+const googleModeOf = (d) => (d.transport === 'google' ? 'key' : 'relay');
 
 function Step({ n, title, done, children }) {
   return (
@@ -76,8 +82,62 @@ function CopyValue({ label, value }) {
   );
 }
 
-// STEP 1 FOR GOOGLE WORKSPACE. IT's part, once, then one address from HR.
-function GoogleConnect({ d, busy, save }) {
+// STEP 1 FOR GOOGLE WORKSPACE, THE SIMPLE WAY: Google's SMTP relay. IT
+// allows this server's IP address on one Admin console screen; there is
+// no key and no password, and any address in the company's domain can
+// send — SPOC desks that are Google Groups included.
+function GoogleRelay({ d, busy, save, onUseKey }) {
+  const isRelay = d.smtp.provider === 'google_relay';
+  const [sender, setSender] = useState(isRelay ? splitFrom(d.smtp.from).addr : '');
+  const [howOpen, setHowOpen] = useState(!(isRelay && d.ready));
+  const saveRelay = () => save({ transport: 'smtp', smtp: {
+    provider: 'google_relay', ...RELAY, user: '', clear_pass: true,
+    from: `${DEFAULT_NAME} <${sender.trim().toLowerCase()}>`,
+  } }, 'Saved. Once IT has finished, send a test email.');
+  return (
+    <>
+      <p className="text-[11.5px] text-navy-500">
+        Google sends every email from the person’s own address — First-Week Journey emails from the SPOC who owns the activity,
+        and replies go back to them. No key and no passwords: Google trusts this server by its address.
+      </p>
+      <button type="button" className="flex items-center gap-1 text-[11.5px] font-semibold text-navy-500" onClick={() => setHowOpen((v) => !v)} aria-expanded={howOpen}>
+        <ChevronDown size={13} className={`transition-transform ${howOpen ? '' : '-rotate-90'}`} /> What IT does, once (about 3 minutes)
+      </button>
+      {howOpen && (
+        <ol className="list-decimal pl-5 text-[11.5px] text-navy-600 space-y-1 rounded-xl bg-[#f7f9fd] p-3">
+          <li><b>Google Admin console</b> (admin.google.com) → Apps → Google Workspace → Gmail → Routing → <b>SMTP relay service</b> → Configure.</li>
+          <li>Allowed senders: <b>Only addresses in my domains</b>.</li>
+          <li>Authentication: tick <b>Only accept mail from the specified IP addresses</b> → Add IP range →{' '}
+            {d.server_ip ? <CopyValue label="" value={d.server_ip} /> : <span>this server’s public IP address (ask whoever runs the PMS server)</span>}.
+            Leave “Require SMTP Authentication” unticked.</li>
+          <li>Encryption: tick <b>Require TLS encryption</b> → Save. It can take a few minutes to start working.</li>
+          <li className="list-none -ml-5 pt-1 text-navy-500">
+            <ShieldCheck size={11} className="inline mr-1" />Only this server can use the relay, and only with company addresses.
+            The address must stay fixed — on AWS, an Elastic IP — or the relay stops accepting it.
+          </li>
+        </ol>
+      )}
+      <div className="grid sm:grid-cols-[1fr_auto] gap-2 items-end">
+        <label className="text-[11px] text-navy-500">Reminders and notifications are sent from
+          <input className="inp !py-1.5 mt-0.5" type="email" placeholder="hr@yourcompany.com" value={sender}
+            onChange={(e) => setSender(e.target.value)} /></label>
+        <button className="btn-pri" disabled={busy || !EMAIL.test(sender.trim()) || (isRelay && sender.trim().toLowerCase() === splitFrom(d.smtp.from).addr.toLowerCase())}
+          onClick={saveRelay}>
+          <Save size={12} className="inline mr-1" />Save
+        </button>
+      </div>
+      <p className="text-[11px] text-navy-400">
+        Any address in the company’s domain.{' '}
+        <button type="button" className="font-semibold text-brand-600" onClick={onUseKey}>
+          Want copies in each SPOC’s Sent folder? Use a Google service-account key instead
+        </button>{' '}(more steps for IT).
+      </p>
+    </>
+  );
+}
+
+// STEP 1 FOR GOOGLE WORKSPACE, WITH A KEY. IT's part, once, then one address from HR.
+function GoogleConnect({ d, busy, save, onUseRelay }) {
   const g = d.google;
   const [sender, setSender] = useState(g.sender || '');
   const [howOpen, setHowOpen] = useState(!g.connected);
@@ -148,7 +208,10 @@ function GoogleConnect({ d, busy, save }) {
           <Save size={12} className="inline mr-1" />Save
         </button>
       </div>
-      <p className="text-[11px] text-navy-400">A real person’s or shared user’s Google account — a Google Group address cannot send.</p>
+      <p className="text-[11px] text-navy-400">
+        A real person’s or shared user’s Google account — a Google Group address cannot send.{' '}
+        <button type="button" className="font-semibold text-brand-600" onClick={onUseRelay}>Use the simpler SMTP relay instead</button>
+      </p>
     </>
   );
 }
@@ -236,6 +299,7 @@ function MailboxConnect({ d, provider, busy, save }) {
 export default function EmailSettings() {
   const [d, setD] = useState(null);
   const [provider, setProvider] = useState(null);
+  const [gmode, setGmode] = useState('relay');
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -244,7 +308,7 @@ export default function EmailSettings() {
   const [check, setCheck] = useState(null);
 
   const loadCheck = () => api('/people/onboarding/spocs/check').then(setCheck).catch(() => setCheck(null));
-  const take = (r, keepProvider) => { setD(r); if (!keepProvider) setProvider(providerOf(r)); };
+  const take = (r, keepProvider) => { setD(r); if (!keepProvider) { setProvider(providerOf(r)); setGmode(googleModeOf(r)); } };
   useEffect(() => {
     api('/pms/hr/mail').then((r) => take(r)).catch((e) => (e.status === 403 ? setDenied(true) : setErr(e.message)));
     loadCheck();
@@ -271,7 +335,9 @@ export default function EmailSettings() {
   const google = provider === 'google';
   // The screen's provider can differ from the saved one until it is saved;
   // the steps below describe what is SAVED, and say so when they differ.
-  const pending = (google ? 'google' : 'smtp') !== d.transport;
+  const pending = google
+    ? (gmode === 'key' ? d.transport !== 'google' : d.transport !== 'smtp' || d.smtp.provider !== 'google_relay')
+    : d.transport !== 'smtp' || d.smtp.provider === 'google_relay';
   const stage = pending ? 'not_set_up' : (d.stage || 'not_set_up');
   const [badgeTone, badgeText] = STAGE[stage];
   const t = pending ? null : d.last_test;
@@ -290,7 +356,7 @@ export default function EmailSettings() {
         recorded but nobody receives it. Three steps to switch it on:
       </p>
 
-      <Step n={1} title={google ? 'Connect Google Workspace' : 'Connect the PMS mailbox that sends the emails'} done={!pending && d.ready}>
+      <Step n={1} title={google ? (gmode === 'key' ? 'Connect Google Workspace with a key' : 'Let this server send through Google Workspace') : 'Connect the PMS mailbox that sends the emails'} done={!pending && d.ready}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           {Object.entries(PROVIDERS).map(([k, v]) => (
             <button key={k} type="button" onClick={() => setProvider(k)}
@@ -305,11 +371,12 @@ export default function EmailSettings() {
         </div>
         {pending && d.ready && (
           <p className="text-[11.5px] text-amber-700">
-            Email is currently set up through {d.transport === 'google' ? 'Google Workspace' : 'a mailbox'}. Saving here switches it, and it must be tested again.
+            Email is currently set up through {d.transport === 'google' ? 'a Google service-account key' : d.smtp.provider === 'google_relay' ? 'Google’s SMTP relay' : 'a mailbox'}. Saving here switches it, and it must be tested again.
           </p>
         )}
-        {google
-          ? <GoogleConnect key={`${d.google.client_id}-${d.google.sender}`} d={d} busy={busy} save={save} />
+        {google && gmode === 'relay' && <GoogleRelay key={`relay-${d.smtp.from}`} d={d} busy={busy} save={save} onUseKey={() => setGmode('key')} />}
+        {google && gmode === 'key' && <GoogleConnect key={`${d.google.client_id}-${d.google.sender}`} d={d} busy={busy} save={save} onUseRelay={() => setGmode('relay')} />}
+        {google ? null
           : <MailboxConnect key={`${provider}-${d.smtp.from}-${d.smtp.host}`} d={d} provider={provider} busy={busy} save={save} />}
         {(msg || err) && (
           <p className={`text-xs ${err ? 'text-rose-600' : 'text-emerald-700'}`}>{err || msg}</p>
@@ -361,7 +428,9 @@ export default function EmailSettings() {
       <div className="border-t border-navy-100 pt-3 space-y-1.5">
         <p className="font-semibold text-[13px] text-navy-900">First-Week Journey emails go from each SPOC’s own address</p>
         <p className="text-[11.5px] text-navy-500">
-          {google
+          {google && gmode === 'relay'
+            ? 'Sent from each SPOC’s own address through Google. Any address in the company’s domain works — including a group address such as it-desk@.'
+            : google
             ? 'Sent from each SPOC’s own Gmail. Each address must be a person’s or shared user’s Google account — not a Google Group.'
             : <>The mailbox above sends them as the SPOC. Ask IT to give it <b>“Send As”</b> permission for each SPOC address below — once.</>}
         </p>

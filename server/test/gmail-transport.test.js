@@ -94,6 +94,7 @@ test('Google\'s refusals come back in words HR and IT can act on', async () => {
 
 // The settings and the onboarding check, end to end over HTTP.
 let db, server, apiBase, tenantId, hrTok;
+process.env.SERVER_PUBLIC_IP = process.env.SERVER_PUBLIC_IP || '203.0.113.7';
 const SLUG = `gmail-test-${Date.now()}`;
 const req = async (method, path, body) => {
   const r = await fetch(`${apiBase}${path}`, { method, headers: { Authorization: `Bearer ${hrTok}`, 'Content-Type': 'application/json' },

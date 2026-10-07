@@ -31,6 +31,7 @@ before(async () => {
   process.env.AUTH_DEV = 'true';
   // The server's own environment must not leak into what this test sees.
   for (const k of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'MAIL_FROM', 'SMTP_PORT', 'MAIL_PROVIDER']) delete process.env[k];
+  process.env.SERVER_PUBLIC_IP = '203.0.113.7'; // not asked of AWS from a test
   db = require('../core/db');
   const bcrypt = require('bcryptjs');
   const express = require('express');
@@ -148,6 +149,52 @@ test('LIVE WAITS FOR A DELIVERED TEST, and the test reaches the real server even
   assert.equal((await req('PUT', '/hr/mail', hrTok, { smtp: { provider: 'yahoo' } })).status, 422);
 });
 
+// 7 Oct, simpler for IT than a key: Google Workspace's SMTP relay, which
+// trusts this server by its IP address — no username, no password — and
+// sends from any address in the company's domain. A minimal SMTP server
+// stands in for Google here and records what it was told.
+test('GOOGLE\'S SMTP RELAY: no password, greeted with the company domain, From is the SPOC', { skip }, async () => {
+  const net = require('net');
+  const got = { ehlo: null, auth: false, from: null, data: '' };
+  const relay = net.createServer((sock) => {
+    let inData = false; let buf = '';
+    sock.write('220 relay ready\r\n');
+    sock.on('data', (chunk) => {
+      buf += chunk.toString();
+      let i;
+      while ((i = buf.indexOf('\r\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (inData) { if (line === '.') { inData = false; sock.write('250 queued\r\n'); } else got.data += `${line}\n`; continue; }
+        const cmd = line.slice(0, 4).toUpperCase();
+        if (cmd === 'EHLO' || cmd === 'HELO') { got.ehlo = line.slice(5).trim(); sock.write('250 hello\r\n'); }
+        else if (cmd === 'AUTH') { got.auth = true; sock.write('535 no\r\n'); }
+        else if (cmd === 'MAIL') { got.from = line; sock.write('250 ok\r\n'); }
+        else if (cmd === 'RCPT') sock.write('250 ok\r\n');
+        else if (cmd === 'DATA') { inData = true; sock.write('354 go\r\n'); }
+        else if (cmd === 'QUIT') { sock.write('221 bye\r\n'); sock.end(); }
+        else sock.write('250 ok\r\n');
+      }
+    });
+  });
+  await new Promise((r) => relay.listen(0, '127.0.0.1', r));
+  try {
+    const set = await req('PUT', '/hr/mail', hrTok, { transport: 'smtp', smtp: {
+      provider: 'google_relay', host: '127.0.0.1', port: relay.address().port, secure: false,
+      user: '', from: 'Performance Management System <hr@mindgate.example>', clear_pass: true } });
+    assert.equal(set.status, 200, JSON.stringify(set.body));
+    assert.equal(set.body.smtp.provider, 'google_relay');
+    assert.equal(set.body.server_ip, '203.0.113.7', 'the address IT allows in the relay');
+    assert.equal(set.body.ready, true, 'a relay needs no username or password');
+
+    const { deliver, transportConfig } = require('../core/mail');
+    await deliver(await transportConfig(tenantId), { from: '"IT Desk" <it.desk@mindgate.example>', to: 'joiner@mindgate.example', subject: 'Your laptop', html: '<p>Hi</p>' });
+    assert.equal(got.ehlo, 'mindgate.example', 'greets with the company domain, as Google requires');
+    assert.equal(got.auth, false, 'never signs in');
+    assert.match(got.from, /it\.desk@mindgate\.example/);
+    assert.match(got.data, /^From: IT Desk <it\.desk@mindgate\.example>/m);
+  } finally { await new Promise((r) => relay.close(r)); }
+});
+
 test('mail server errors are put in words HR can act on', () => {
   const { explain } = require('../core/mail');
   assert.match(explain('535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Tenant'), /Authenticated SMTP/);
@@ -156,6 +203,7 @@ test('mail server errors are put in words HR can act on', () => {
   assert.match(explain('getaddrinfo ENOTFOUND smtp.nowhere'), /could not be found/);
   assert.match(explain('connect ECONNREFUSED 127.0.0.1:2'), /Could not reach/);
   assert.match(explain('554 5.2.252 SendAsDenied; pms@x not allowed to send as hr@x'), /Send As/);
+  assert.match(explain('550 5.7.0 Mail relay denied [203.0.113.9]. Invalid credentials for relay for one of the domains in: mindgate.com'), /SMTP relay service/);
   assert.equal(explain(null), null);
 });
 

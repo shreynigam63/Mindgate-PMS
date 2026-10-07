@@ -11,9 +11,9 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `174922b`** (7 October 2026). This
-edition also describes sending through Google Workspace from each SPOC's
-own Gmail (§3.12) on the dev branch, which reach the live site with the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `6e4f19e`** (7 October 2026). This
+edition also describes Google's SMTP relay as the simple way to send from
+each SPOC's own address (§3.12) on the dev branch, which reach the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -639,22 +639,32 @@ opens to their week, day by day, then Day-7 feedback.
   and none is delivered.
   1. **Connect.** Three choices:
      - **Google Workspace** (Mindgate; the default when nothing else is
-       set). IT, once: enable the Gmail API in a Google Cloud project,
-       create a service account and download its JSON key, upload the key
-       here, then in the Google Admin console → Security → API controls →
-       *Domain-wide delegation* add the service account's **Client ID**
-       (shown on the card after upload) with the one scope
-       `https://www.googleapis.com/auth/gmail.send`. HR sets the address
-       **reminders and notifications** are sent from (a real or shared
-       Workspace user — a Google Group cannot send). Every email is then
-       sent from the person's own Gmail: the PMS signs an RS256 token
-       request for that person (`sub`) and posts the message to the Gmail
-       API. That authorisation lets the PMS *send* (never read) as any user
-       in the domain, so it only ever sends as an address it worked out
-       itself — the activity's SPOC, the joiner's manager, buddy or HR
-       POC, or the reminders sender — never one from a request; every send
-       is logged with who it was from. The key is write-only and never
-       audited.
+       set). **The simple way — Google's SMTP relay** (7 Oct, "make this
+       more simple for IT"): IT, once, in the Google Admin console → Apps
+       → Google Workspace → Gmail → Routing → *SMTP relay service*:
+       allowed senders *Only addresses in my domains*; authentication
+       *Only accept mail from the specified IP addresses* with this
+       server's public IP (shown on the card, with a copy button — found
+       from AWS's `checkip` service, or `SERVER_PUBLIC_IP`); *Require TLS*.
+       No key, no password: the PMS connects to `smtp-relay.gmail.com:587`
+       without signing in, greets with the company domain (Google turns
+       away an unqualified name), and sends from the person's own address —
+       any address in the domain, group addresses included. HR sets the
+       address reminders are sent from. The IP must stay fixed (an Elastic
+       IP on AWS). Copies do not land in the SPOC's Sent folder.
+       **Alternative — a service-account key** (a link on the card), for
+       copies in each SPOC's Sent folder: IT enables the Gmail API in a
+       Google Cloud project, creates a service account and downloads its
+       JSON key, uploads it here, then in the Admin console → Security →
+       API controls → *Domain-wide delegation* adds the **Client ID**
+       (shown after upload) with the one scope
+       `https://www.googleapis.com/auth/gmail.send`. The PMS signs an
+       RS256 token request for each person (`sub`) and posts to the Gmail
+       API (`core/gmail.js`). That lets it *send* (never read) as any user
+       in the domain — not groups — so it only ever sends as an address it
+       worked out itself (the activity's SPOC, the joiner's manager, buddy
+       or HR POC, or the reminders sender), never one from a request, and
+       logs every send. The key is write-only and never audited.
      - **Microsoft 365** / **Other**: one mailbox and its password; the
        provider fills in server, port and STARTTLS (*Advanced (for IT)*
        holds the rest). It sends onboarding emails *as* the SPOC, needing
@@ -723,7 +733,7 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 | Which SPOC sends each onboarding activity's email | `people.onboarding_activities.sender_role` (seeded from the client's matrix) |
 | A joiner's personal email (used before joining) | The joiner's week → *Personal email (before joining)* |
 | Who ticks onboarding tasks | Permission `onboarding_ops` — in the `hr_ops`, `hr` and `hrbp` bundles; role `hr_ops` set on Employees |
-| Email: Google Workspace key and reminders sender, or a mailbox and password; test email (and SPOC address check); Go live | HR → Settings → Email (three steps) |
+| Email: Google Workspace (SMTP relay by server IP, or a service-account key) and reminders sender, or a mailbox and password; test email; Go live | HR → Settings → Email (three steps) |
 | AI on/off | `ANTHROPIC_API_KEY` in `/etc/agentic-pms/api.env` — instance-owned, never written by a deploy |
 | AI model | `deploy/service/managed-settings.env`, pushed into `api.env` by every deploy (`UNMANAGED=AI_MODEL` pins a box) |
 
@@ -746,6 +756,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 7 October 2026 (live: `174922b`; plus the
-sending from each SPOC's own Gmail, on the dev branch). Where this book and the code disagree,
+*Checked against the code on 7 October 2026 (live: `6e4f19e`; plus the
+Google's SMTP relay, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

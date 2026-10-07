@@ -2134,7 +2134,25 @@ router.put('/hr/settings/:key', async (req, res) => {
 // actually been delivered with the settings as they now stand. Saving the
 // mailbox again clears the test, so a changed password is tested again.
 const SMTP_FIELDS = ['host', 'port', 'user', 'from', 'secure', 'provider'];
-const PROVIDERS = ['microsoft365', 'google', 'other'];
+const PROVIDERS = ['microsoft365', 'google', 'google_relay', 'other'];
+
+// This server's address as the internet sees it, for IT to allow in
+// Google's SMTP relay. Asked of AWS's own checkip service (the server runs
+// on AWS; nothing is sent but the request), once an hour; null when it
+// cannot be found, and the card then says to ask whoever runs the server.
+let ipCache = { at: 0, ip: null };
+async function serverIp() {
+  if (process.env.SERVER_PUBLIC_IP) return process.env.SERVER_PUBLIC_IP;
+  if (Date.now() - ipCache.at < 3600000) return ipCache.ip;
+  let ip = null;
+  try {
+    const r = await fetch('https://checkip.amazonaws.com', { signal: AbortSignal.timeout(3000) });
+    const t = (await r.text()).trim();
+    if (r.ok && /^\d{1,3}(\.\d{1,3}){3}$/.test(t)) ip = t;
+  } catch { /* offline, or not on AWS — the card says so */ }
+  ipCache = { at: Date.now(), ip };
+  return ip;
+}
 
 const setting = async (tenantId, key) =>
   ((await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key=$2`, [tenantId, key])).rows[0] || {}).value || null;
@@ -2178,6 +2196,7 @@ async function mailView(tenantId) {
       source: { host: from('host', 'SMTP_HOST'), user: from('user', 'SMTP_USER'), pass: from('pass', 'SMTP_PASS'), from: from('from', 'MAIL_FROM') },
     },
     ready,
+    server_ip: await serverIp(),
   };
 }
 
