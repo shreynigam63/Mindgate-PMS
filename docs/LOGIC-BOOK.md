@@ -11,9 +11,9 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `4e9d532`** (7 October 2026). This
-edition also describes Short-Term asking only the role and timeline (§3.2)
-on the dev branch, which reach the live site with the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `e0a2d07`** (8 October 2026). This
+edition describes exactly what is deployed — nothing here is waiting on a
+later release. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -181,7 +181,10 @@ the **HR section itself** in their menu.
 Since 6 Oct the screen is a white top bar (product name, page search,
 notifications, help, account) over a navy sidebar. The sidebar starts with
 **Dashboard** and then five role sections — **Self, Manager, HOD, HRBP,
-HR** — each opening into its pages. They are groups in
+HR** — each opening into its pages. A sixth, **HR Ops**, holds one page —
+the First-Week Journey (`/hrops/onboarding`, §3.12) — for the `hr_ops`
+role, and is hidden for anyone who already reaches that tracker through
+New Hire Insights (HR and HRBP). They are groups in
 `frontend/src/App.jsx`; an item appears only if the viewer holds its page
 permission, and a section whose every item is filtered out disappears
 entirely. The search box finds only pages the viewer may open. The help
@@ -297,8 +300,13 @@ The Dashboard (`/home`, `HomePage.jsx`) answers *what now?*:
    (KRAs and weight, connects, growth goals, rating) — never zeroes.
 3. **Quick Actions** — four shortcuts on one line, chosen from pages the
    viewer may open, so none leads to an access-denied screen.
-4. **Requested to manager** — what you are waiting on someone else for.
-5. **My Team** (managers, and HR over everyone) — reports, KRA sheets
+4. **Onboarding emails for you to send** — only for someone who is a SPOC
+   on the First-Week Journey: the joiner emails that are theirs, due within
+   a week or overdue, five at a time. *Open in Gmail* opens the draft in
+   their own Gmail; *I've sent it* records it (§3.12). Nothing for anyone
+   else.
+5. **Requested to manager** — what you are waiting on someone else for.
+6. **My Team** (managers, and HR over everyone) — reports, KRA sheets
    approved, connects pending, evaluation completion; tabs for KRA
    approvals, evaluation status and connects; a department filter and
    name search; one row per person.
@@ -847,6 +855,5 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 8 October 2026 (live: `4e9d532`; plus the
-Short-Term asking only the role and timeline, on the dev branch). Where this book and the code disagree,
+*Checked against the code on 8 October 2026 (live: `e0a2d07`). Where this book and the code disagree,
 the code is right and this book is a bug.*
