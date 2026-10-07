@@ -474,5 +474,5 @@ function suggestFromGrades(rows, ladder) {
 }
 
 module.exports = { suggestTransitions, suggestFromGrades, ladder, rankOf, familyOf, tenure,
-                   competenciesFor, timeInRung, roleAt, levelLabel, trimPrefix,
+                   competenciesFor, timeInRung, roleAt, levelLabel, trimPrefix, RANK_FOR_GRADE,
                    GENERIC, SPINE, nextRung, WHY, CHECK, NO_GRADE };

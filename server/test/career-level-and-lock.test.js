@@ -347,3 +347,33 @@ test('LONG-TERM STARTS AFTER THE SAVED SHORT-TERM GOAL — and says so when the 
   await db.query(`UPDATE people.career_paths SET target_timeline='18 months' WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
   assert.equal((await api('GET', '/career/my-path?horizon=short_term')).body.path.target_timeline, '24 months');
 });
+
+// 8 Oct: Long-Term "should take data saved from short term goal and update
+// 1 level upper designation and role". Where the matrix has no step after
+// the short-term role, the Grade and Level sheet supplies the next grade
+// and the role it names for the job family.
+test('ONE GRADE UP FROM THE SHEET when the matrix stops at the short-term role', { skip }, async () => {
+  await phase('kra_open');
+  await db.query(`INSERT INTO pms.grade_ladder (tenant_id, grade, grade_label, band, sort_order, exp_range, generic_role) VALUES
+    ($1,'E3','E3','Band 6',30,'3-5 yrs','Software Developer'),($1,'E4','E4','Band 7',40,'5-8 yrs','Senior Software Developer'),
+    ($1,'E5','E5','Band 8',50,'8-11 yrs','Lead')`, [tenantId]);
+  await db.query(`INSERT INTO pms.grade_roles (tenant_id, grade, family, role_name) VALUES ($1,'E5','Technology','Lead - Technical')`, [tenantId]);
+  await db.query(`INSERT INTO pms.designation_grade (tenant_id, designation, grade, family) VALUES
+    ($1,'Senior Software Developer','E4','Technology')`, [tenantId]);
+  await db.query(`UPDATE people.career_transitions SET active=false WHERE tenant_id=$1 AND to_role='Tech Lead'`, [tenantId]);
+  try {
+    await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Senior Software Developer' });
+    const lt = await api('GET', '/career/my-path?horizon=long_term');
+    assert.deepEqual(lt.body.eligible_target_roles, ['Lead - Technical'], 'one grade above the short-term role, named by the sheet');
+    const o = lt.body.target_options[0];
+    assert.equal(o.source, 'grade_sheet');
+    assert.equal(o.typical_time_months, 24 + 54, 'the matrix move to Senior, then the sheet\'s 3-year band (36 min, 54 typical)');
+    assert.equal(lt.body.path_diagnostics, null);
+    assert.equal((await api('PUT', '/career/my-path', { horizon: 'long_term', target_role: 'Lead - Technical' })).status, 200);
+    // Short-Term stays matrix-only.
+    assert.deepEqual((await api('GET', '/career/my-path?horizon=short_term')).body.eligible_target_roles, ['Senior Software Developer']);
+  } finally {
+    await db.query(`UPDATE people.career_transitions SET active=true WHERE tenant_id=$1 AND to_role='Tech Lead'`, [tenantId]);
+    for (const t of ['pms.grade_ladder', 'pms.grade_roles', 'pms.designation_grade']) await db.query(`DELETE FROM ${t} WHERE tenant_id=$1`, [tenantId]);
+  }
+});

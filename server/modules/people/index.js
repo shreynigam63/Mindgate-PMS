@@ -22,7 +22,7 @@ const { parseExcelSheets, parseCsv, detectFormat } = require('../../core/employe
 const {
   validateCareerTransitionRows, COLUMNS: CT_COLUMNS, rowKey: ctRowKey,
 } = require('./career-transitions-import');
-const { suggestTransitions, suggestFromGrades } = require('./career-ladder');
+const { suggestTransitions, suggestFromGrades, roleAt, levelLabel, timeInRung, competenciesFor, trimPrefix, RANK_FOR_GRADE } = require('./career-ladder');
 
 // One line per configuration change that a person would later ask
 // about. The upload route has written to this table since 17 Sep; the
@@ -857,6 +857,43 @@ async function transitionsFrom(tenantId, role, level, department) {
   return [...best.values()].sort((a, b) => lc(a.to_role).localeCompare(lc(b.to_role)));
 }
 
+// ONE GRADE UP, FROM THE GRADE AND LEVEL SHEET (8 Oct: long term "should
+// take data saved from short term goal and update 1 level upper
+// designation and role"). Used by the Long-Term walk only, and only where
+// the Career Pathing Matrix has no step from a role: the sheet names the
+// role at the next grade in the job family — the same rule the suggested
+// matrix download is built on — so the next level is offered even before
+// HR has written that row. Returns null at the top of the ladder, or when
+// the role is not on the sheet.
+async function gradeRungAbove(tenantId, role, department, cache) {
+  const ladder = cache.ladder || (cache.ladder = await gradeLadder(tenantId));
+  if (!ladder.rungs.length) return null;
+  const key = lc(role);
+  let mapped = ladder.gradeOf.get(key) || null;
+  if (!mapped) {
+    // A role nobody holds yet (a To Role) is on the sheet as a role name.
+    for (const [k, name] of ladder.roles) {
+      if (lc(trimPrefix(name)) === key) { const [grade, family] = k.split('|'); mapped = { grade, family }; break; }
+    }
+  }
+  if (!mapped) {
+    const g = ladder.rungs.find((r) => lc(r.generic_role) === key);
+    if (g) mapped = { grade: g.grade, family: null };
+  }
+  if (!mapped) return null;
+  const order = [...ladder.rungs].sort((a, b) => a.sort_order - b.sort_order);
+  const i = order.findIndex((g) => g.grade === mapped.grade);
+  const from = order[i];
+  const to = i >= 0 ? order[i + 1] : null;
+  if (!from || !to) return null;
+  const family = mapped.family || ladder.familyOf.get(lc(department)) || null;
+  const toRole = roleAt(ladder, to, family);
+  if (!toRole || lc(toRole) === key) return null;
+  const [min, typical] = timeInRung(from, to);
+  return { to_role: toRole, to_level: levelLabel(to), min_time_months: min, typical_time_months: typical,
+    required_competencies: competenciesFor(RANK_FOR_GRADE[to.grade] || 8), source: 'grade_sheet' };
+}
+
 // THE LONG-TERM LADDER (8 Oct). The matrix holds one rung per row, which
 // is right for Short-Term — one to two years — and wrong for Long-Term,
 // "three years and beyond", which is usually two or three rungs up. So
@@ -874,17 +911,25 @@ async function careerLadderFor(tenantId, employeeId, maxSteps = 3, start = null)
   let frontier = [start || { role: emp.designation, level: emp.role_band, via: [], months: 0, comps: [] }];
   const seen = new Set([lc(emp.designation), ...(start ? [lc(start.role)] : [])]);
   const first = start ? start.via.length + 1 : 1;
+  const cache = {};
   for (let step = first; step <= maxSteps && frontier.length; step += 1) {
     const next = [];
     for (const f of frontier) {
-      for (const t of await transitionsFrom(tenantId, f.role, f.level, emp.department)) {
+      let moves = await transitionsFrom(tenantId, f.role, f.level, emp.department);
+      // No row in the matrix from here: one grade up on the Grade and
+      // Level sheet instead (gradeRungAbove).
+      if (!moves.length) {
+        const g = await gradeRungAbove(tenantId, f.role, emp.department, cache);
+        if (g) moves = [g];
+      }
+      for (const t of moves) {
         const k = lc(t.to_role);
         if (seen.has(k)) continue;
         seen.add(k);
         const months = t.typical_time_months == null || f.months == null ? null : f.months + Number(t.typical_time_months);
         const comps = [...new Set([...f.comps, ...(t.required_competencies || [])])];
         const rung = { to_role: t.to_role, to_level: t.to_level, steps: step, via: f.via,
-          typical_time_months: months, required_competencies: comps };
+          typical_time_months: months, required_competencies: comps, source: t.source || 'matrix' };
         out.set(k, rung);
         next.push({ role: t.to_role, level: t.to_level, via: [...f.via, t.to_role], months, comps });
       }
@@ -1054,7 +1099,7 @@ router.get('/career/my-path', async (req, res) => {
     for (const t of transitions) {
       if (!targetOptions.some((o) => o.role === t.to_role)) {
         targetOptions.push({ role: t.to_role, typical_time_months: t.typical_time_months ?? null,
-          min_time_months: t.min_time_months ?? null, steps: t.steps || 1 });
+          min_time_months: t.min_time_months ?? null, steps: t.steps || 1, source: t.source || 'matrix' });
       }
     }
     const staleTarget = !!(p && p.target_role && eligibleTargetRoles.length && !eligibleTargetRoles.includes(p.target_role));

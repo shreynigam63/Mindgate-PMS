@@ -11,9 +11,10 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `820a661`** (8 October 2026). This
-edition also describes readiness moving under Day 1 (§3.12), on the dev
-branch, which reaches the live site with the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `b81a51e`** (8 October 2026). This
+edition also describes Long-Term taking one grade up from the Grade and
+Level sheet (§3.2), on the dev branch, which reaches the live site with
+the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -429,7 +430,15 @@ that role and its level, up to two more moves — and the short-term role is
 never offered again. Times count from now: the short-term move's figure
 plus the next ones ("typically 60 months for the 2 steps"). With no
 short-term goal saved yet, Long-Term walks from the employee's own role.
-When the matrix stops at the short-term role, Long-Term says *Nothing
+Where the matrix has **no row from a role**, the walk takes **one grade up
+on the Grade and Level sheet** instead (`gradeRungAbove`): the next grade
+after that role's grade, and the role the sheet names at it for the job
+family — the same rule the suggested-matrix download uses — with the
+sheet's experience band for its time. So a Software Developer whose
+short-term goal is Senior Software Developer is offered *Lead - Technical*
+on Long-Term even before HR writes that row; the screen says the step
+came from the sheet. Short-Term stays matrix-only. When neither the
+matrix nor the sheet has a level above the short-term role, Long-Term says *Nothing
 configured beyond your short-term goal yet* and names what HR should add
 (`none_beyond_short_term`); the AI says the same rather than repeating the
 short-term role. Short-Term's timeline is always shown as the matrix's
@@ -881,6 +890,6 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 8 October 2026 (live: `820a661`; plus
-readiness under Day 1, on the dev branch). Where this book and the code disagree,
+*Checked against the code on 8 October 2026 (live: `b81a51e`; plus
+Long-Term one grade up from the sheet, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

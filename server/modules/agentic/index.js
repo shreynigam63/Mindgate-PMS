@@ -959,6 +959,7 @@ router.post('/career-suggest', async (req, res) => {
       configured_transitions: transitions.map((t) => ({
         to_role: t.to_role, to_level: t.to_level,
         ...(t.steps ? { steps_up: t.steps, via: t.via } : {}),
+        ...(t.source === 'grade_sheet' ? { from_grade_sheet: true } : {}),
         ...(stTarget ? { builds_on_short_term_goal: (t.via || []).some((v) => String(v).trim().toLowerCase() === stTarget) } : {}),
         typical_time_months: t.typical_time_months,
         required_competencies: t.required_competencies || [],
@@ -976,6 +977,10 @@ long_term: three years and beyond, where a configured_transition may be
 two or three rungs up — steps_up and via say how), given their current
 designation and department, and you give them a straight read on whether
 they are ready for it.
+
+A configured_transition with from_grade_sheet true is one grade up on the
+organisation's Grade and Level sheet, used because the Career Pathing
+Matrix has no row for that step yet — say so in a note, as a real option.
 
 LONG-TERM BUILDS ON SHORT-TERM. When short_term_goal is present (long_term
 only), the employee has already planned their next move. Propose the

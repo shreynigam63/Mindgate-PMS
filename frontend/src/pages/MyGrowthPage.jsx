@@ -698,8 +698,8 @@ function CareerPathGap({ d }) {
   if (d.reason === 'none_beyond_short_term') {
     return <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs">
       <p className="font-bold text-amber-800">Nothing configured beyond your short-term goal yet</p>
-      <p className="text-navy-600">Your long-term goal is the step <i>after</i> <b>{d.short_term_role}</b>, and the Career Pathing Matrix
-        has no move from {d.short_term_role}{d.short_term_level ? <> ({d.short_term_level})</> : null} yet.
+      <p className="text-navy-600">Your long-term goal is the step <i>after</i> <b>{d.short_term_role}</b>, and neither the Career Pathing Matrix
+        nor the Grade and Level sheet has a level above {d.short_term_role}{d.short_term_level ? <> ({d.short_term_level})</> : null} yet.
         Ask HR to add the next one (for example <i>{d.short_term_role} → Lead - Technical</i>).</p>
     </div>;
   }
@@ -959,7 +959,7 @@ function CareerPathCard() {
         {data.eligible_target_roles.length > 0 && <p className="text-[11px] text-navy-400 mt-1">
           {horizon === 'long_term'
             ? (data.short_term_goal
-              ? `Roles the Career Pathing Matrix leads to after your short-term goal (${data.short_term_goal.target_role}) — your short-term role itself is not offered again.`
+              ? `The next level after your short-term goal (${data.short_term_goal.target_role}) — from the Career Pathing Matrix, or one grade up on the Grade and Level sheet where the matrix has no step yet.`
               : 'Roles the Career Pathing Matrix leads to from your current role — up to three steps ahead.')
             : 'Limited to transitions HR has configured from your current role in the Career Pathing Matrix.'}</p>}
       </div>
@@ -972,6 +972,11 @@ function CareerPathCard() {
           readOnly={horizon === 'short_term' && !!chosen && chosen.typical_time_months != null}
           onChange={e => setForm(f => ({ ...f, target_timeline: e.target.value }))}
           placeholder={horizon === 'short_term' ? 'Set by the Career Pathing Matrix when you choose a role' : 'e.g. 12-18 months'} />
+        {horizon === 'long_term' && chosen && chosen.source === 'grade_sheet' && (
+          <p className="text-[11px] text-indigo-700 mt-1">
+            {chosen.role} is one grade up on the Grade and Level sheet — HR has not added this step to the Career Pathing Matrix yet.
+          </p>
+        )}
         {chosen && chosen.typical_time_months != null && (
           <p className="text-[11px] text-navy-400 mt-1">
             Career Pathing Matrix: typically <b>{months(chosen.typical_time_months)}</b>
