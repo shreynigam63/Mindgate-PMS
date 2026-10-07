@@ -17,10 +17,7 @@
 const PAGES = [
   // page key,              route,                        replaces (HR page)
   ['hrbp_approvals', '/hrbp/approvals'],                // All Approvals
-  ['hrbp_cycles', '/hrbp/cycles'],                   // Cycles — read-only
   ['hrbp_directory', '/hrbp/directory'],                // Employees
-  ['hrbp_dept_heads', '/hrbp/department-heads'],         // Department Heads — read-only
-  ['hrbp_career', '/hrbp/career-transitions'],      // Career Pathing Matrix
   ['hrbp_kra_overview', '/hrbp/kra-overview'],             // KRA Overview
   ['hrbp_kra_library', '/hrbp/kra-library'],              // KRA Library — read-only
   ['hrbp_competencies', '/hrbp/competencies'],             // Competency Framework — read-only
@@ -28,19 +25,16 @@ const PAGES = [
   ['hrbp_timesheet', '/hrbp/timesheet'],                // Timesheet
   ['hrbp_completion', '/hrbp/completion-report'],        // PMS Completion Report
   ['hrbp_calibration', '/hrbp/calibration'],              // Calibration
-  ['hrbp_nine_box', '/hrbp/nine-box'],                 // 9-Box Grid
-  ['hrbp_closure', '/hrbp/closure-letters'],          // Closure Letters
-  ['hrbp_increments', '/hrbp/increments'],                // Increment Simulation
-  ['hrbp_watchlist', '/hrbp/watchlist'],                // Super 50
-  ['hrbp_engagement', '/hrbp/engagement'],               // Engagement Surveys
   ['hrbp_new_hire', '/hrbp/engagement-insights'],      // New Hire Insights
-  ['hrbp_settings', '/hrbp/settings'],                 // Settings — read-only
 ];
 
 // The seven bespoke views from 068 that no longer exist as pages. Their
 // rows are removed rather than left pointing at nothing: a page_permission
 // row for a route the router does not serve is a menu entry that opens a
 // blank screen.
+// Nine pages taken off the HRBP tab on 7 Oct (see 085, which deletes
+// their rows). Dropped from PAGES so the boot-time ensure does not put
+// them back.
 const RETIRED = ['/hrbp/employees'];
 
 // Increment Simulation is salary, and salary sits behind its own

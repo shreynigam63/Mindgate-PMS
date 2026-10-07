@@ -925,6 +925,27 @@ router.post('/surveys/:id/close', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// DELETE A SURVEY — asked for on 7 Oct: "each survey after adding to que
+// should have delete option as well." Any status: a draft made from the
+// wrong template, a test, a duplicate. Deleting removes its questions,
+// invitations and every response with it (the foreign keys cascade), so
+// the page asks first and says how many answers go; the audit row keeps
+// what was deleted and how many people had answered.
+router.delete('/surveys/:id', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'", needs: 'engagement_admin' });
+    const s = (await db.query(
+      `SELECT s.id, s.title, s.status,
+              (SELECT count(*)::int FROM engagement.invitations i WHERE i.survey_id=s.id) AS invited,
+              (SELECT count(*)::int FROM engagement.responses r WHERE r.survey_id=s.id) AS responses
+         FROM engagement.surveys s WHERE s.id=$1 AND s.tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!s) return res.status(404).json({ error: 'survey not found' });
+    await db.query(`DELETE FROM engagement.surveys WHERE id=$1 AND tenant_id=$2`, [s.id, T(req)]);
+    await audit(req, 'SURVEY_DELETED', { survey: s.id, title: s.title, status: s.status, invited: s.invited, responses: s.responses });
+    res.json({ ok: true, deleted: { id: s.id, title: s.title, invited: s.invited, responses: s.responses } });
+  } catch (e) { logger.error('survey delete', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
 // ---- Employee: my invitations + take ---------------------------------------
 router.get('/my/invitations', async (req, res) => {
   try {

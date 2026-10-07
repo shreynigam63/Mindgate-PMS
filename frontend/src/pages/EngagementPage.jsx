@@ -240,6 +240,16 @@ export function EngagementAdminPage() {
     try { setPreview(await api(`/engagement/surveys/${s.id}/preview`)); }
     catch (e) { alert(e.message); }
   };
+  const deleteSurvey = async (s) => {
+    const n = Number(s.completed) || 0;
+    const msg = `Delete "${s.title}"?\n\n`
+      + (n ? `${n} ${n === 1 ? 'person has' : 'people have'} answered it — their answers are deleted with it. ` : '')
+      + (s.status === 'open' ? 'It is open now, so it disappears from everyone it was sent to. ' : '')
+      + 'This cannot be undone.';
+    if (!window.confirm(msg)) return;
+    try { await api(`/engagement/surveys/${s.id}`, { method: 'DELETE' }); load(); }
+    catch (e) { alert(e.message); }
+  };
   const viewResults = async (s) => {
     setThemes(null);
     try { setResults(await api(`/engagement/surveys/${s.id}/results`)); }
@@ -319,6 +329,12 @@ export function EngagementAdminPage() {
             {data.admin && s.status === 'draft' && <button className="btn-sec" onClick={() => openSurvey(s)}><Play size={12} className="inline mr-1" />Open</button>}
             {data.admin && s.status === 'open' && <button className="btn-sec" onClick={async () => { await api(`/engagement/surveys/${s.id}/close`, { method: 'POST' }); load(); }}><Square size={12} className="inline mr-1" />Close</button>}
             {data.admin && <button className="btn-sec" onClick={() => viewResults(s)}>Results</button>}
+            {/* Delete, on every survey (7 Oct). Asked first, with what it
+                takes with it — a live survey's answers go too. */}
+            {data.admin && (
+              <button className="btn-sec !text-rose-600" title="Delete this survey"
+                onClick={() => deleteSurvey(s)}><Trash2 size={12} className="inline mr-1" />Delete</button>
+            )}
             {/* The same results as a file. An HRBP gets their own remit and
                 the front sheet of the workbook says so, rather than leaving
                 a number that differs from HR's looking like a disagreement. */}

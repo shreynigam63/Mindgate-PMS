@@ -58,7 +58,7 @@ import { SHOW_FIRST_WEEK_JOURNEY } from '../features';
 const KPI_HUE = { red: 'red', amber: 'amber', leaf: 'green', violet: 'violet', navy: 'blue', azure: 'blue', lagoon: 'blue' };
 const fmt = (n) => (typeof n === 'number' ? (n < 10 && n >= 0 ? String(n).padStart(2, '0') : n.toLocaleString('en-IN')) : n);
 
-function Kpi({ icon: Icon, hue, n, label, to, hint }) {
+export function Kpi({ icon: Icon, hue, n, label, to, hint }) {
   const body = (
     <>
       <span className="kpi-i"><Icon size={20} /></span>
@@ -74,7 +74,7 @@ function Kpi({ icon: Icon, hue, n, label, to, hint }) {
             : <div className={`${cls} opacity-80`} title={hint}>{body}</div>;
 }
 
-const greeting = () => {
+export const greeting = () => {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning,' : h < 17 ? 'Good afternoon,' : 'Good evening,';
 };
@@ -94,9 +94,11 @@ const QA_ALL = [
   { to: '/my/self-appraisal', label: 'Annual Review', icon: ClipboardList, bg: '#e7f7ee', fg: '#1f9d5c' },
   { to: '/engagement', label: 'My Surveys', icon: HeartHandshake, bg: '#f1ecfd', fg: '#7c4dde' },
 ];
-function QuickActions({ user }) {
+// `items` lets the Manager Dashboard offer its own four from the same
+// component, so the two dashboards cannot drift apart in look.
+export function QuickActions({ user, items }) {
   const may = (to) => !user || !user.pages || user.pages.includes(to);
-  const list = QA_ALL.filter((q) => may(q.to)).slice(0, 4);
+  const list = (items || QA_ALL).filter((q) => may(q.to)).slice(0, 4);
   return (
     <div className="panel">
       <div className="panel-h"><span className="panel-t">Quick Actions</span></div>
@@ -127,7 +129,7 @@ const initials = (n) => String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2
 const evalPill = (s) => (s === 'submitted' || s === 'completed' ? ['Complete', 'pill-green']
   : s === 'draft' ? ['In progress', 'pill-amber'] : ['Pending', 'pill-red']);
 
-function TeamPanel({ team }) {
+export function TeamPanel() {
   const [ov, setOv] = useState(null);
   const [tab, setTab] = useState('all');
   const [dept, setDept] = useState('');
@@ -235,7 +237,7 @@ function TeamPanel({ team }) {
 
 // How long a request has been sitting. Days, because an approval four
 // hours old is not late and one nine days old is.
-const waited = (iso) => {
+export const waited = (iso) => {
   if (!iso) return 'just now';
   const d = Math.floor((Date.now() - new Date(iso)) / 86400000);
   return d <= 0 ? 'today' : d === 1 ? 'waiting 1 day' : `waiting ${d} days`;

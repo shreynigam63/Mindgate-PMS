@@ -191,13 +191,16 @@ const NAV = [
   // rather than two that drift. The six marked read-only below apply to
   // the whole company and cannot be scoped, so an HRBP reads them and
   // the server refuses the write.
+  // TRIMMED ON 7 OCT, asked for directly: Cycles, HOD, Career Pathing
+  // Matrix, Settings, Super 50, Engagement Surveys, 9-Box Grid, Closure
+  // Letters and Increment Simulation "needs to be removed" from the HRBP
+  // tab. They stay with HR. The routes went with the menu entries and the
+  // page rows with both (migration 085), so a typed URL cannot reach what
+  // the menu no longer offers.
   { group: 'HRBP', hue: 'amber', icon: MapPin, items: [
     { to: '/hrbp/approvals', label: 'All Approvals', icon: CheckCircle2 },
     { to: '/hrbp/rnr-approvals', label: 'RnR Approvals', icon: Award },
-    { to: '/hrbp/cycles', label: 'Cycles', icon: BarChart3 },
     { to: '/hrbp/directory', label: 'Employees', icon: Upload },
-    { to: '/hrbp/department-heads', label: 'HOD', icon: UserCog },
-    { to: '/hrbp/career-transitions', label: 'Career Pathing Matrix', icon: GitBranch },
     { to: '/hrbp/kra-overview', label: 'KRA Overview', icon: ClipboardList },
     { to: '/hrbp/kra-library', label: 'KRA Library', icon: Library },
     { to: '/hrbp/competencies', label: 'Competency Framework', icon: Layers },
@@ -205,13 +208,7 @@ const NAV = [
     { to: '/hrbp/timesheet', label: 'Timesheet', icon: CalendarClock },
     { to: '/hrbp/completion-report', label: 'PMS Completion Report', icon: FileText },
     { to: '/hrbp/calibration', label: 'Calibration', icon: Sparkles },
-    { to: '/hrbp/nine-box', label: '9-Box Grid', icon: Grid3x3 },
-    { to: '/hrbp/closure-letters', label: 'Closure Letters', icon: FileText },
-    { to: '/hrbp/increments', label: 'Increment Simulation', icon: Calculator },
-    { to: '/hrbp/watchlist', label: 'Super 50', icon: Award },
-    { to: '/hrbp/engagement', label: 'Engagement Surveys', icon: HeartHandshake },
     { to: '/hrbp/engagement-insights', label: 'New Hire Insights', icon: HeartHandshake },
-    { to: '/hrbp/settings', label: 'Settings', icon: SlidersHorizontal },
   ]},
   { group: 'HR', hue: 'violet', icon: ShieldCheck, items: [
     { to: '/admin/approvals', label: 'All Approvals', icon: CheckCircle2 },
@@ -609,10 +606,7 @@ function Main({ user }) {
               {/* HR's own pages, opened by an HRBP. The server narrows
                   what comes back; these routes only decide what opens. */}
               <Route path="/hrbp/approvals" element={<ApprovalsPage />} />
-              <Route path="/hrbp/cycles" element={<CycleAdminPage />} />
               <Route path="/hrbp/directory" element={<DirectoryPage />} />
-              <Route path="/hrbp/department-heads" element={<DepartmentHeadsPage />} />
-              <Route path="/hrbp/career-transitions" element={<CareerTransitionsPage />} />
               <Route path="/hrbp/kra-overview" element={<KraOrgOverviewPage />} />
               <Route path="/hrbp/kra-library" element={<KraLibraryPage />} />
               <Route path="/hrbp/competencies" element={<CompetencyFrameworkPage />} />
@@ -620,15 +614,9 @@ function Main({ user }) {
               <Route path="/hrbp/timesheet" element={<HrTimesheetPage />} />
               <Route path="/hrbp/completion-report" element={<CompletionReportPage />} />
               <Route path="/hrbp/calibration" element={<CalibrationPage />} />
-              <Route path="/hrbp/nine-box" element={<NineBoxPage />} />
-              <Route path="/hrbp/closure-letters" element={<ClosureLettersPage />} />
-              <Route path="/hrbp/increments" element={<IncrementSimulationPage />} />
-              <Route path="/hrbp/watchlist" element={<WatchlistPage />} />
-              <Route path="/hrbp/engagement" element={<EngagementAdminPage />} />
               <Route path="/hrbp/engagement-insights" element={<EngagementInsightsPage />} />
               <Route path="/hrops/onboarding" element={<HrOpsOnboardingPage />} />
-              <Route path="/hrbp/settings" element={<SettingsPage />} />
-              <Route path="/team/dashboard" element={<TeamDashboardPage />} />
+              <Route path="/team/dashboard" element={<TeamDashboardPage user={user} />} />
               <Route path="/team/overview" element={<TeamOverviewPage />} />
               <Route path="/team/kra-sheets" element={<TeamKraSheetsPage />} />
               <Route path="/team/eval" element={<TeamEvalPage user={user} />} />

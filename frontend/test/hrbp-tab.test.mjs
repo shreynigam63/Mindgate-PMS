@@ -58,10 +58,12 @@ async function open(email, route) {
 // container — every assertion here reads textContent.
 const text = (page) => page.evaluate(() => document.body.textContent);
 
-const VIEWS = ['approvals', 'cycles', 'directory', 'department-heads', 'career-transitions',
-  'kra-overview', 'kra-library', 'competencies', 'competency-dashboard', 'timesheet',
-  'completion-report', 'calibration', 'nine-box', 'closure-letters', 'increments',
-  'watchlist', 'engagement', 'engagement-insights', 'settings'];
+// Ten since 7 Oct, when nine were taken off the tab at the client's
+// request — REMOVED below, which must now be refused.
+const VIEWS = ['approvals', 'directory', 'kra-overview', 'kra-library', 'competencies',
+  'competency-dashboard', 'timesheet', 'completion-report', 'calibration', 'engagement-insights'];
+const REMOVED = ['cycles', 'department-heads', 'career-transitions', 'settings', 'watchlist',
+  'engagement', 'nine-box', 'closure-letters', 'increments'];
 
 test('THE HRBP TAB SITS BETWEEN DELIVERY HEAD AND HR, and carries HR’s own tabs', async (t) => {
   if (needStack(t)) return;
@@ -83,9 +85,11 @@ test('THE HRBP TAB SITS BETWEEN DELIVERY HEAD AND HR, and carries HR’s own tab
   await page.goto(APP + '/hrbp/approvals', { waitUntil: 'networkidle' });
   await page.waitForTimeout(1500);
   const hrbpLabels = await page.$$eval('a', (as) => as.map((a) => a.getAttribute('href') || ''));
-  for (const want of ['/hrbp/calibration', '/hrbp/settings', '/hrbp/closure-letters',
-    '/hrbp/increments', '/hrbp/watchlist']) {
+  for (const want of ['/hrbp/calibration', '/hrbp/kra-overview', '/hrbp/completion-report']) {
     assert.ok(hrbpLabels.includes(want), `${want} is missing from the HRBP tab`);
+  }
+  for (const gone of REMOVED) {
+    assert.ok(!hrbpLabels.includes(`/hrbp/${gone}`), `/hrbp/${gone} should no longer be on the HRBP tab`);
   }
   void iR;
   assert.deepEqual(errors, []);
@@ -103,7 +107,7 @@ test('AN EMPLOYEE WITHOUT THE PERMISSION DOES NOT SEE THE TAB AT ALL', async (t)
   await ctx.close();
 });
 
-test('EVERY ONE OF THE NINETEEN VIEWS RENDERS FOR AN HRBP, with no page error', async (t) => {
+test('EVERY ONE OF THE TEN VIEWS RENDERS FOR AN HRBP, with no page error', async (t) => {
   if (needStack(t)) return;
   const broken = [];
   for (const p of VIEWS) {

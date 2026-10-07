@@ -297,3 +297,33 @@ test('the thresholds are readable, and are rows rather than code', { skip }, asy
   assert.ok(!off.body.people.some((p) => p.flags.some((f) => f.key === 'intent_to_leave')));
   await db.query(`UPDATE engagement.flag_rules SET active=true WHERE tenant_id=$1 AND key='intent_to_leave'`, [tenantId]);
 });
+
+// DELETE, asked for on 7 Oct: "each survey ... should have delete option".
+// An answered, open survey goes with its questions, invitations and
+// answers; the audit row keeps what it was and how many had answered.
+test('a survey can be deleted, with everything hanging off it, by engagement_admin only', { skip }, async () => {
+  const tok = await login('ins-admin@x.com');
+  const s = await runMilestone(tok, 'day_30', { 'sam@x.com': rater(4, null, 8) });
+  const before0 = (await db.query(`SELECT
+      (SELECT count(*)::int FROM engagement.questions WHERE survey_id=$1) q,
+      (SELECT count(*)::int FROM engagement.invitations WHERE survey_id=$1) i,
+      (SELECT count(*)::int FROM engagement.responses WHERE survey_id=$1) r`, [s.id])).rows[0];
+  assert.ok(before0.q > 0 && before0.i > 0 && before0.r === 1, JSON.stringify(before0));
+
+  const st = await login('stranger@x.com');
+  assert.equal((await api(`/engagement/surveys/${s.id}`, st, { method: 'DELETE' })).status, 403, 'not without engagement_admin');
+
+  const r = await api(`/engagement/surveys/${s.id}`, tok, { method: 'DELETE' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.deleted.responses, 1);
+  const after0 = (await db.query(`SELECT
+      (SELECT count(*)::int FROM engagement.surveys WHERE id=$1) s,
+      (SELECT count(*)::int FROM engagement.questions WHERE survey_id=$1) q,
+      (SELECT count(*)::int FROM engagement.invitations WHERE survey_id=$1) i,
+      (SELECT count(*)::int FROM engagement.responses WHERE survey_id=$1) r`, [s.id])).rows[0];
+  assert.deepEqual(after0, { s: 0, q: 0, i: 0, r: 0 });
+  const a = (await db.query(`SELECT details FROM core.audit_log WHERE tenant_id=$1 AND action='SURVEY_DELETED' ORDER BY at DESC LIMIT 1`, [tenantId])).rows[0];
+  assert.equal(a.details.survey, s.id);
+  assert.equal(a.details.responses, 1);
+  assert.equal((await api(`/engagement/surveys/${s.id}`, tok, { method: 'DELETE' })).status, 404, 'gone');
+});

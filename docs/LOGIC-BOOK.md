@@ -11,18 +11,22 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `7d8c79c`** (7 October 2026), which
-carries the open Long-Term target with its AI plan and cross-department
-check (§3.2) and hides the First-Week Journey on screen (§3.12). This
-edition also describes the changes on the dev branch, which reach the
-live site with the next deploy:
+**Live at pms.agentichumans.in: build `f22c54f`** (7 October 2026). It
+carries:
 
 - connects with anyone, and the HR question (§2.1);
 - KRA, KPI and weightage editable in the reviews (§3.1);
 - the Final Rating as a chain (§3.3);
 - the manager's Performance Improvement Plan (§3.14);
 - the HOD's Team Competencies (§2.3);
-- the bell-curve chart back on Calibration (§3.4).
+- the bell-curve chart on Calibration (§3.4).
+
+This edition also describes three changes on the dev branch, which reach
+the live site with the next deploy:
+
+- the Manager Dashboard rebuilt on the main Dashboard's design (§2.2);
+- the HRBP tab trimmed to eleven pages (§2.4);
+- deleting a survey (§3.11).
 
 The build a screen is running is shown in its **?** menu, and
 `/api/v1/health` reports the same commit.
@@ -230,7 +234,7 @@ says "No published ratings yet" and what will change that.
 
 | Page | Route | What governs it |
 |---|---|---|
-| Manager Dashboard | `/team/dashboard` | The Dashboard one scope out. First in the section, so opening Manager lands here |
+| Manager Dashboard | `/team/dashboard` | The Dashboard one scope out, built from the main Dashboard's own components (7 Oct): greeting band with the one action, pastel attention cards for what is outstanding across the team, Quick Actions, the named *Waiting on you* list, and the tabbed My Team table. Your reports only, never the company. First in the section, so opening Manager lands here |
 | Nominate for RnR | `/rnr/nominate` | §3.10 |
 | Team Overview | `/team/overview` | Every report, all phases at a glance |
 | Team KRA Sheets | `/team/kra-sheets` | Each KRA shows the report's timesheet hours and rating, §3.7. Approve or return. A return **must** carry a comment — refused 422, *"the employee must know why"* (`approvals.js`) |
@@ -259,24 +263,25 @@ mapping has a permanently empty queue — which is why the HOD
 screen exists and why a department can be given a head before anyone is in
 it.
 
-## 2.4 HRBP — 20 pages, `pms_hrbp`
+## 2.4 HRBP — 11 pages, `pms_hrbp`
 
-Every HR screen, on `/hrbp/*` routes, narrowed to the partner's own people
-by the gateway in §1.3. All Approvals, RnR Approvals, Cycles, Employees,
-HOD, Career Pathing Matrix, KRA Overview, KRA Library,
-Competency Framework, Competency Dashboard, Timesheet, PMS Completion
-Report, Calibration, 9-Box Grid, Closure Letters, Increment Simulation,
-Super 50, Engagement Surveys, New Hire Insights, Settings.
+HR's own screens, on `/hrbp/*` routes, narrowed to the partner's own people
+by the gateway in §1.3:
+
+- All Approvals, RnR Approvals, Employees;
+- KRA Overview, KRA Library;
+- Competency Framework, Competency Dashboard;
+- Timesheet, PMS Completion Report;
+- Calibration, New Hire Insights.
+
+**Nine taken off on 7 Oct** at the client's request, and left with HR:
+Cycles, HOD, Career Pathing Matrix, Settings, Super 50, Engagement Surveys,
+9-Box Grid, Closure Letters and Increment Simulation. The menu entries, the
+routes and the page rows went together (migration 085), so a typed URL
+cannot reach what the menu no longer offers.
 
 Read-only for the HRBP where the thing is the tenant's rather than a
-person's: Cycles, HOD, KRA Library, Competency Framework,
-Settings.
-
-Increment Simulation is reachable because salary sits behind its own
-permission, `pms_compensation`, which the hrbp role is granted explicitly.
-That was a decision, not a tidy-up: "HR access" and "may see what people are
-paid" are different questions at most clients. Revoking it is one DELETE
-from `core.role_permissions`.
+person's: KRA Library, Competency Framework.
 
 ## 2.5 HR — 22 pages
 
@@ -721,6 +726,14 @@ would mean declining to recognise someone for having worked there.
 
 ## 3.11 Engagement and anonymity
 
+**Deleting a survey (7 Oct).** Every survey on the Engagement page has a
+Delete button, whatever its status. The page asks first, and says how
+many answers go with it. The survey's questions, invitations and responses
+are deleted with it, because the foreign keys cascade. The audit row
+`SURVEY_DELETED` keeps the title, the status, how many were invited and
+how many had answered. Only `engagement_admin` can delete. An HRBP cannot:
+a survey names no employee, so the gateway cannot check it against a remit.
+
 **Anonymity is structural.** Invitations and responses are separate tables
 and nothing may join them for an anonymous survey; the agentic themes
 feature reads a view with no identity columns.
@@ -992,6 +1005,6 @@ it. Opening, editing, gate reviews and closing are audited and notified.
 
 ---
 
-*Checked against the code on 7 October 2026 (live: `7d8c79c`; plus the
+*Checked against the code on 7 October 2026 (live: `f22c54f`; plus the
 dev-branch changes listed at the top). Where this book and the code disagree,
 the code is right and this book is a bug.*

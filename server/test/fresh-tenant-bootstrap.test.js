@@ -67,7 +67,7 @@ test('a tenant created after the migrations gets the HRBP and RnR pages', { skip
     const routes = new Set((await db.query(
       `SELECT route FROM core.page_permission WHERE tenant_id=$1`, [t])).rows.map((r) => r.route));
 
-    // The 19 HRBP pages: the whole tab, which was missing outright.
+    // The HRBP pages: the whole tab, which was missing outright.
     const hrbp = require('../migrations/069-hrbp-all-hr-pages').PAGES;
     for (const [, route] of hrbp) {
       assert.ok(routes.has(route), `HRBP page ${route} missing — the HRBP tab would not appear`);
@@ -84,6 +84,10 @@ test('a tenant created after the migrations gets the HRBP and RnR pages', { skip
     // The retired bespoke view must NOT come back: a row for a route the
     // router does not serve is a menu entry that opens a blank screen.
     assert.ok(!routes.has('/hrbp/employees'), '/hrbp/employees was retired by 069');
+    // Nor the nine taken off the HRBP tab on 7 Oct (085).
+    for (const route of require('../migrations/085-hrbp-tab-trim').REMOVED) {
+      assert.ok(!routes.has(route), `${route} was taken off the HRBP tab by 085 and must not be re-seeded`);
+    }
 
     // The hrbp role needs the salary permission the HRBP tab's two
     // compensation pages sit behind, or those pages 403 from a menu that
