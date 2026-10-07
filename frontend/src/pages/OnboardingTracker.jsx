@@ -21,6 +21,7 @@ import {
   ChevronDown, Trash2, Search, MessageSquareWarning, ArrowLeft, Mail, Send, Contact,
 } from 'lucide-react';
 import { api } from '../utils/api';
+import { gmailCompose } from '../utils/gmail';
 
 const STATUS_PILL = {
   Completed: 'pill-green', Overdue: 'pill-red', 'Due Today': 'pill-amber', Upcoming: 'pill-gray',
@@ -302,7 +303,14 @@ function JoinerEmail({ taskId, onSent, onClose }) {
   };
   const from = d.from || {};
   const ready = !from.missing && !!d.to;
-  const mailto = d.to ? `mailto:${d.to.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
+  const live = d.mail_mode === 'live';
+  const markSent = async () => {
+    setErr(null); setBusy(true);
+    try { await api(`/people/onboarding/tasks/${taskId}/mark-sent`, { method: 'POST', body: JSON.stringify({ subject }) }); setDone({ outcome: 'marked' }); onSent(); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const sentBefore = (d.history || []).find((h) => h.outcome === 'sent' || h.outcome === 'sent_by_spoc');
   return (
     <div className="px-3 pb-3 pt-3 border-t border-[#eef1f6] space-y-2 bg-[#f8faff]">
       <div className="flex flex-wrap items-center gap-2">
@@ -319,29 +327,47 @@ function JoinerEmail({ taskId, onSent, onClose }) {
             <span className="text-[11.5px] text-navy-400">{d.to.why}</span></>
           : <span className="text-[12px] text-amber-700">{d.to_missing}</span>}
       </div>
-      {!from.missing && (
-        <p className="text-[11.5px] text-navy-400">
-          Sent from {from.name}’s own address; replies go to {from.name}.
+      {/* SENT BY THE SPOC FROM THEIR OWN GMAIL (7 Oct): the email is on the
+          SPOC's Home page; they open it in Gmail, send, and tick it. */}
+      {sentBefore ? (
+        <p className="text-[12px] text-leaf-600 font-semibold">
+          ✓ Sent {sentBefore.outcome === 'sent_by_spoc' ? 'from the SPOC’s Gmail' : 'through the PMS'} on{' '}
+          {new Date(sentBefore.sent_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+          {sentBefore.sent_by && sentBefore.sent_by !== sentBefore.from_email ? ` — marked by ${sentBefore.sent_by}` : ''}.
         </p>
-      )}
-      {d.mail_mode !== 'live' && (
-        <p className="text-[12px] text-amber-700">
-          Email on this instance is in <b>simulated</b> mode — sending records it on the tracker but does not deliver it.
-          Use <b>Open in my mail app</b> to send it yourself, or ask HR to turn email to Live under Settings → Email.
+      ) : !from.missing && (
+        <p className="text-[12px] text-navy-600">
+          {d.sender_is_me
+            ? <>This one is yours to send: <b>Open in Gmail</b>, press Send there, then tick <b>I’ve sent it</b>.</>
+            : <><b>{from.name}</b> sends this from their own Gmail — it is waiting on their PMS Home page. Replies go to {from.name}.</>}
         </p>
       )}
       <input className="inp" value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Subject" />
       <textarea className="inp" rows={9} value={body} onChange={(e) => setBody(e.target.value)} aria-label="Message" />
       <div className="flex flex-wrap items-center gap-2">
-        {d.can_send ? (
-          <button type="button" className="btn-pri" disabled={busy || !ready} onClick={send}>
-            <Send size={12} className="inline mr-1" />{busy ? 'Sending…' : `Send to ${d.to ? d.to.name.split(/\s+/)[0] : 'the joiner'}`}
+        {d.sender_is_me && d.to && (
+          <a className="btn-pri" target="_blank" rel="noopener noreferrer"
+            href={gmailCompose({ to: d.to.email, subject, body, account: from.email })}>
+            <Mail size={12} className="inline mr-1" />Open in Gmail
+          </a>
+        )}
+        {(d.sender_is_me || d.can_send) && !sentBefore && (
+          <button type="button" className="btn-sec" disabled={busy || from.missing}
+            onClick={markSent} title={d.sender_is_me ? 'Tick once you have pressed Send in Gmail' : `Tick if ${from.name || 'the SPOC'} has told you it is sent`}>
+            <Check size={12} className="inline mr-1" />{d.sender_is_me ? 'I’ve sent it' : 'Mark as sent'}
           </button>
-        ) : <span className="text-[12px] text-navy-500">HR Ops, HR and HRBP send these emails.</span>}
-        {mailto && <a className="btn-sec" href={mailto}><Mail size={12} className="inline mr-1" />Open in my mail app</a>}
+        )}
+        {/* Sending through the PMS itself — only once HR has set up email
+            under Settings → Email and switched it to Live. */}
+        {live && d.can_send && (
+          <button type="button" className="btn-sec" disabled={busy || !ready} onClick={send}>
+            <Send size={12} className="inline mr-1" />{busy ? 'Sending…' : 'Send through the PMS now'}
+          </button>
+        )}
         {done && (
-          <span className={`text-[12px] ${done.outcome === 'sent' ? 'text-leaf-600' : 'text-amber-700'}`}>
-            {done.outcome === 'sent' ? `Sent to ${done.to}, from ${done.from}.`
+          <span className={`text-[12px] ${done.outcome === 'sent' || done.outcome === 'marked' ? 'text-leaf-600' : 'text-amber-700'}`}>
+            {done.outcome === 'marked' ? 'Recorded as sent.'
+              : done.outcome === 'sent' ? `Sent to ${done.to}, from ${done.from}.`
               : done.outcome === 'simulated' ? `Recorded for ${done.to} — not delivered (simulated mail).`
                 : `Not delivered: ${done.hint || done.detail || done.outcome}`}
           </span>
@@ -353,7 +379,8 @@ function JoinerEmail({ taskId, onSent, onClose }) {
           <p className="lbl !mb-0">Emailed before</p>
           {d.history.map((h, i) => (
             <p key={i}>{new Date(h.sent_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-              {' '}by {h.sent_by}{h.from_email ? `, from ${h.from_email}` : ''} to {h.to_emails.join(', ')} · {h.outcome}</p>
+              {' '}{h.outcome === 'sent_by_spoc' ? `marked sent by ${h.sent_by} — from ${h.from_email || 'the SPOC'}’s Gmail` : <>by {h.sent_by}{h.from_email ? `, from ${h.from_email}` : ''} · {h.outcome}</>}
+              {' '}to {h.to_emails.join(', ')}</p>
           ))}
         </div>
       )}

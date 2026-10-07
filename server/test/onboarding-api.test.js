@@ -307,3 +307,55 @@ test('THE TICK IS HR OPS\', HR\'S AND HRBP\'S — not anybody who can open the p
   assert.equal((await req('PATCH', `/tasks/${t.id}`, empTok, { remarks: 'noted' })).status, 200, 'remarks are not the tick');
   await db.query(`DELETE FROM core.user_permissions WHERE tenant_id=$1 AND email='emp@onb.x'`, [tenantId]);
 });
+
+// 7 Oct: "avoid all these setup and share mails directly from spocs mail".
+// No mail server: each SPOC sees the emails that are theirs on Home, opens
+// them in their own Gmail, sends, and ticks them sent.
+test('A SPOC SEES ONLY THEIR OWN ONBOARDING EMAILS, AND MARKS THEM SENT', { skip }, async () => {
+  const bcrypt = require('bcryptjs');
+  await db.query(`INSERT INTO core.local_credentials (tenant_id,email,password_hash) VALUES ($1,'mgr@onb.x',$2) ON CONFLICT DO NOTHING`,
+    [tenantId, await bcrypt.hash('pw', 4)]);
+  const mgrTok = (await (await fetch(`${base.replace('/api/v1/people/onboarding', '')}/api/v1/auth/dev-login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'mgr@onb.x', password: 'pw' }),
+  })).json()).token;
+
+  const mine = await req('GET', '/my-emails', mgrTok);
+  assert.equal(mine.status, 200, JSON.stringify(mine.body));
+  assert.ok(mine.body.emails.length > 0, 'the manager has emails to send to their joiner');
+  for (const e of mine.body.emails) {
+    assert.equal(e.role, 'Manager', 'only activities whose email is the manager\'s');
+    assert.equal(e.joiner, 'Riya Sharma');
+    assert.match(e.body, /^Dear Riya,/);
+    assert.match(e.body, /Anil Desai \(Manager\)/);
+  }
+  assert.ok(mine.body.emails.every((e) => e.to && e.to.email === 'pune@onb.x' || e.to_missing));
+
+  // Another person sees their own and none of the manager's — here the
+  // plain employee, whom an earlier test made Riya's buddy.
+  const other = await req('GET', '/my-emails', empTok);
+  assert.equal(other.status, 200);
+  assert.ok(other.body.emails.every((e) => e.role === 'Buddy'), 'the buddy\'s emails only');
+  const mgrIds = new Set(mine.body.emails.map((e) => e.task_id));
+  assert.ok(!other.body.emails.some((e) => mgrIds.has(e.task_id)));
+  // Somebody who is nobody's SPOC sees an empty list, not an error.
+  assert.deepEqual((await req('GET', '/my-emails', hrbpTok)).body.emails, []);
+
+  // Marking sent: the SPOC may; a stranger may not; HR may, on their word.
+  const first = mine.body.emails[0];
+  assert.equal((await req('POST', `/tasks/${first.task_id}/mark-sent`, empTok)).status, 403);
+  const ok = await req('POST', `/tasks/${first.task_id}/mark-sent`, mgrTok, { subject: first.subject });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(ok.body.by_spoc, true);
+  const after = await req('GET', '/my-emails', mgrTok);
+  assert.ok(!after.body.emails.some((e) => e.task_id === first.task_id), 'gone from the list once sent');
+  const log = (await db.query(`SELECT from_email, outcome, mode, sent_by FROM people.onboarding_task_emails WHERE task_id=$1`, [first.task_id])).rows;
+  assert.deepEqual(log, [{ from_email: 'mgr@onb.x', outcome: 'sent_by_spoc', mode: 'own_gmail', sent_by: 'mgr@onb.x' }]);
+  const view = await req('GET', `/tasks/${first.task_id}/email`, hrTok);
+  assert.equal(view.body.already_sent, true, 'the tracker shows it as sent');
+  assert.equal(view.body.sender_is_me, false);
+
+  const second = after.body.emails[0];
+  const byHr = await req('POST', `/tasks/${second.task_id}/mark-sent`, hrTok);
+  assert.equal(byHr.status, 200);
+  assert.equal(byHr.body.by_spoc, false);
+});

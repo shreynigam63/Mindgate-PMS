@@ -43,7 +43,7 @@ test('HR sets email up in three steps; Google Workspace sends from each person\'
   const { ctx, page, errors } = await open('hr@shot.in', '/admin/settings');
   const card = page.locator('.card', { hasText: 'Send a test email to yourself' });
   let text = await card.innerText();
-  for (const s of ['Google Workspace', 'Microsoft 365', 'Other', 'Send a test email to yourself', 'Go live', 'from each SPOC’s own address']) {
+  for (const s of ['Google Workspace', 'Microsoft 365', 'Other', 'Send a test email to yourself', 'Go live', 'still from each SPOC’s own address', 'need none of this']) {
     assert.ok(text.includes(s), `shows "${s}"`);
   }
   const tok = await page.evaluate(() => localStorage.getItem('apms_token'));

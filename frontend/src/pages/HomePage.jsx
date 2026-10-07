@@ -9,6 +9,7 @@ import {
   CalendarDays, Minus, AlertCircle, Search,
 } from 'lucide-react';
 import Summit from '../Summit';
+import MyOnboardingEmails from './MyOnboardingEmails';
 
 // The landing screen.
 //
@@ -328,6 +329,10 @@ export default function HomePage({ user }) {
           Surveys and its notification; the cycle's phase is on Cycles and
           on every page that it opens or shuts. */}
       <QuickActions user={user} />
+
+      {/* The First-Week Journey emails this person sends from their own
+          Gmail, when they are a SPOC for one. Nothing otherwise. */}
+      <MyOnboardingEmails user={user} />
 
       {/* WHAT THIS PERSON HAS ASKED FOR AND IS WAITING ON — listed, so they
           know exactly who to chase. */}

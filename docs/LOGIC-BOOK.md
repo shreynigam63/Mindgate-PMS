@@ -12,8 +12,8 @@ book can be checked against the code rather than believed.
 Once those are clear, most of Part 2 is predictable.
 
 **Live at pms.agentichumans.in: build `6e4f19e`** (7 October 2026). This
-edition also describes Google's SMTP relay as the simple way to send from
-each SPOC's own address (§3.12) on the dev branch, which reach the live site with the next deploy. The build a screen is running is
+edition also describes onboarding emails sent by each SPOC from their own
+Gmail, with no setup (§3.12), on the dev branch, which reach the live site with the next deploy. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -624,16 +624,27 @@ opens to their week, day by day, then Day-7 feedback.
   the employee master; the personal one if the master has none. With
   neither, the screen says so and nothing is sent. Both addresses are
   worked out on the server, never taken from the request.
-- **How it leaves: from the SPOC's own address, always** (decided
-  7 Oct). With **Google Workspace** connected — Mindgate's case — it is
-  sent from the SPOC's own Gmail (`core/gmail.js`): no PMS mailbox, no
-  passwords; it sits in the SPOC's Sent folder and replies reach them.
-  With a single **SMTP mailbox** instead (Microsoft 365 / Other), that
-  mailbox sends *as* the SPOC, which needs IT to grant it **Send As** for
-  each SPOC address. Either way a refusal is shown in words; nothing is
-  quietly sent under another name. While mail is in *simulated* mode the
-  email is recorded, not delivered — the screen says so and offers *Open
-  in my mail app*.
+- **How it leaves: the SPOC sends it from their own Gmail — no setup**
+  (decided 7 Oct: "avoid all these setup and share mails directly from
+  spocs mail"). Every employee's **Home** page carries *Onboarding emails
+  for you to send* when they are the SPOC for any (`GET
+  /people/onboarding/my-emails`): the activities whose sender works out
+  to *their* address — the activity's SPOC role from the SPOC list, or the
+  joiner's own manager, buddy or HR POC — not yet done, not yet sent, due
+  within seven days or overdue; five shown, most urgent first, with *Show
+  all*. **Open in Gmail** opens Gmail's compose window in their own
+  browser and Google account (`authuser`), addressed to the joiner with
+  the draft filled in; they send it there and press **I've sent it**
+  (`POST /tasks/:id/mark-sent`). The PMS cannot see anyone's Gmail, so
+  "sent" is the SPOC's word, logged as `own_gmail` / `sent_by_spoc` with
+  who said so and when, and audited. HR Ops, HR and HRBP (in remit) can
+  **Mark as sent** on the SPOC's word from the tracker, where each task's
+  email box says whether it is waiting on the SPOC or was sent and when.
+  Nobody else can mark another person's email sent.
+- **Optionally, the PMS sends them itself** once HR has set email up under
+  Settings → Email and switched it to Live (below): *Send through the PMS
+  now* appears for HR Ops, HR and HRBP, still from the SPOC's own address
+  (Google's SMTP relay, a Google key, or a mailbox with Send As).
 - **Email: HR → Settings → Email — three steps.** Until email is *Live*
   (the default is *Simulated*), every email is logged in `core.notif_log`
   and none is delivered.
@@ -733,7 +744,7 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 | Which SPOC sends each onboarding activity's email | `people.onboarding_activities.sender_role` (seeded from the client's matrix) |
 | A joiner's personal email (used before joining) | The joiner's week → *Personal email (before joining)* |
 | Who ticks onboarding tasks | Permission `onboarding_ops` — in the `hr_ops`, `hr` and `hrbp` bundles; role `hr_ops` set on Employees |
-| Email: Google Workspace (SMTP relay by server IP, or a service-account key) and reminders sender, or a mailbox and password; test email; Go live | HR → Settings → Email (three steps) |
+| Email for reminders and notifications (and, optionally, onboarding emails sent by the PMS itself): Google SMTP relay, Google key, or a mailbox; test; Go live. Onboarding emails need none of it — SPOCs send them from Home | HR → Settings → Email (three steps) |
 | AI on/off | `ANTHROPIC_API_KEY` in `/etc/agentic-pms/api.env` — instance-owned, never written by a deploy |
 | AI model | `deploy/service/managed-settings.env`, pushed into `api.env` by every deploy (`UNMANAGED=AI_MODEL` pins a box) |
 
@@ -757,5 +768,5 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 ---
 
 *Checked against the code on 7 October 2026 (live: `6e4f19e`; plus the
-Google's SMTP relay, on the dev branch). Where this book and the code disagree,
+SPOCs sending from their own Gmail, on the dev branch). Where this book and the code disagree,
 the code is right and this book is a bug.*

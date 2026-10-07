@@ -153,3 +153,23 @@ test('someone without onboarding_ops cannot open the HR Ops page', async (t) => 
   assert.ok(!/Personal email|Add joiner/i.test(await page.locator('main').innerText()));
   await ctx.close();
 });
+
+// 7 Oct: no mail setup — each SPOC sends their onboarding emails from their
+// own Gmail, from a list on their Home page.
+test('a SPOC finds their onboarding emails on Home, each one opening in their own Gmail', async (t) => {
+  if (needStack(t)) return;
+  const { ctx, page, errors } = await open('mgr@shot.in', '/home');
+  const panel = page.locator('.panel', { hasText: 'Onboarding emails for you to send' });
+  if (!(await panel.count())) { t.skip('no onboarding email is due for this manager locally'); await ctx.close(); return; }
+  const link = panel.getByRole('link', { name: /Open in Gmail/ }).first();
+  const href = await link.getAttribute('href');
+  assert.match(href, /^https:\/\/mail\.google\.com\/mail\/\?view=cm/);
+  const q = new URL(href).searchParams;
+  assert.ok(q.get('to'), 'addressed to the joiner');
+  assert.match(q.get('body'), /^Dear /);
+  assert.equal(q.get('authuser'), 'mgr@shot.in', 'opens in the SPOC\'s own account');
+  assert.equal(await link.getAttribute('target'), '_blank');
+  assert.equal(await panel.getByRole('button', { name: /I’ve sent it/ }).count() > 0, true);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});

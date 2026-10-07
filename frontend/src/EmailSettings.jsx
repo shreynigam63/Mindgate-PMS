@@ -351,9 +351,13 @@ export default function EmailSettings() {
         <p className="font-bold text-sm flex-1">Email</p>
         <span className={`chip ${badgeTone}`}>{badgeText}</span>
       </div>
+      <p className="text-[12px] rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-800 px-3 py-2">
+        <b>First-Week Journey emails need none of this.</b> Each SPOC sends them from their own Gmail: the emails that are
+        theirs wait on their PMS Home page — <i>Open in Gmail</i>, Send, tick. Nothing for IT to set up.
+      </p>
       <p className="text-xs text-navy-500">
-        Until email is Live, every email the product sends — First-Week Journey emails, reminders, notifications — is
-        recorded but nobody receives it. Three steps to switch it on:
+        Set up email below only if the PMS should send emails by itself — reminders and notifications, or onboarding
+        emails without the SPOC pressing Send. Until it is Live, those are recorded but nobody receives them.
       </p>
 
       <Step n={1} title={google ? (gmode === 'key' ? 'Connect Google Workspace with a key' : 'Let this server send through Google Workspace') : 'Connect the PMS mailbox that sends the emails'} done={!pending && d.ready}>
@@ -426,7 +430,7 @@ export default function EmailSettings() {
           With Google, each SPOC address is checked here without sending:
           Google refuses a token for a group, a typo or an outsider. */}
       <div className="border-t border-navy-100 pt-3 space-y-1.5">
-        <p className="font-semibold text-[13px] text-navy-900">First-Week Journey emails go from each SPOC’s own address</p>
+        <p className="font-semibold text-[13px] text-navy-900">Once this is Live, the PMS can also send First-Week Journey emails itself — still from each SPOC’s own address</p>
         <p className="text-[11.5px] text-navy-500">
           {google && gmode === 'relay'
             ? 'Sent from each SPOC’s own address through Google. Any address in the company’s domain works — including a group address such as it-desk@.'

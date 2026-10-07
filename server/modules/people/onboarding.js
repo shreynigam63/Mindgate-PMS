@@ -549,6 +549,78 @@ async function emailPlan(req, taskId) {
   return { ...tj, from, to };
 }
 
+// SENT FROM THE SPOC'S OWN GMAIL, BY THE SPOC (decided 7 Oct: "avoid all
+// these setup and share mails directly from spocs mail"). No mail server
+// is configured for this: each SPOC sees the onboarding emails they own on
+// their Home page, opens each one in Gmail with the draft filled in, sends
+// it themselves, and ticks it sent. Nothing here can see their Gmail, so
+// "sent" is their word for it, recorded with who said so and when.
+const SENT = ['sent', 'sent_by_spoc'];
+const isSent = (t) => SENT.includes(t.last_email_outcome);
+
+// MY ONBOARDING EMAILS: open to every employee, and only ever the tasks
+// whose email is theirs to send — worked out here from the activity's
+// SPOC role, the joiner's manager / buddy / HR POC and the SPOC list,
+// never from the request. Not yet sent, not yet done, due within a week
+// (Pre-Day 1 emails want to go before the joiner arrives) or overdue.
+router.get('/my-emails', async (req, res) => {
+  try {
+    const me = String(req.user.email || '').toLowerCase();
+    const now = today();
+    const horizon = new Date(Date.parse(`${now}T00:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10);
+    const dir = await directoryFor(T(req));
+    const { joiners } = await load(T(req), now, null);
+    const emails = [];
+    for (const j of joiners) {
+      for (const t of j.tasks) {
+        if (t.completed_on || isSent(t) || t.planned_date > horizon) continue;
+        const from = spoc.sender(t.sender_role, j, dir);
+        if (from.missing || String(from.email).toLowerCase() !== me) continue;
+        const to = spoc.joinerAddress(t, j);
+        emails.push({
+          task_id: t.id, joiner: j.name, activity: t.activity, day: t.day, planned_date: t.planned_date,
+          status: t.status, role: from.role,
+          to: to ? { name: j.name, ...to } : null,
+          to_missing: to ? null : `${j.name} has no email address yet — ask HR to add a personal email on the tracker.`,
+          ...spoc.draft(t, j, from),
+        });
+      }
+    }
+    emails.sort((a, b) => a.planned_date.localeCompare(b.planned_date));
+    res.json({ emails });
+  } catch (e) { logger.error('onboarding my emails', { error: e.message }); res.status(500).json({ error: 'Could not load your onboarding emails.' }); }
+});
+
+// "I have sent it." By the SPOC whose email it is, or by HR Ops / HR /
+// HRBP on the SPOC's word. Kept in the same log as a sent email, so the
+// tracker shows it the same way.
+router.post('/tasks/:id/mark-sent', async (req, res) => {
+  try {
+    const me = String(req.user.email || '').toLowerCase();
+    const row = (await db.query(`SELECT joiner_id FROM people.onboarding_tasks WHERE tenant_id=$1 AND id=$2`, [T(req), req.params.id])).rows[0];
+    if (!row) return res.status(404).json({ error: 'No such task.' });
+    const { joiners } = await load(T(req), today(), null, row.joiner_id);
+    const j = joiners[0];
+    const t = j && j.tasks.find((x) => x.id === req.params.id);
+    if (!t) return res.status(404).json({ error: 'No such task.' });
+    const from = spoc.sender(t.sender_role, j, await directoryFor(T(req)));
+    const mine = !from.missing && String(from.email).toLowerCase() === me;
+    if (!mine) {
+      // Not the SPOC: HR Ops, HR or HRBP — and an HRBP only in their remit.
+      if (!(await guard(req, res)) || !(await opsGuard(req, res))) return;
+      if (!(await taskWithJoiner(req, req.params.id))) return res.status(404).json({ error: 'No such task on your tracker.' });
+    }
+    const to = spoc.joinerAddress(t, j);
+    const subject = String((req.body || {}).subject || spoc.draft(t, j, from).subject).slice(0, 300);
+    await db.query(
+      `INSERT INTO people.onboarding_task_emails (tenant_id, task_id, to_emails, from_email, sender_role, subject, mode, outcome, sent_by)
+       VALUES ($1,$2,$3,$4,$5,$6,'own_gmail','sent_by_spoc',$7)`,
+      [T(req), req.params.id, to ? [to.email] : [], from.missing ? null : from.email, from.role, subject, req.user.email]);
+    await audit(req, 'onboarding_email_marked_sent', { task_id: req.params.id, from: from.email || null, by: req.user.email, by_spoc: mine });
+    res.json({ ok: true, by_spoc: mine });
+  } catch (e) { logger.error('onboarding mark sent', { error: e.message }); res.status(500).json({ error: 'Could not record it.' }); }
+});
+
 router.get('/tasks/:id/email', async (req, res) => {
   if (!(await guard(req, res))) return;
   try {
@@ -565,6 +637,10 @@ router.get('/tasks/:id/email', async (req, res) => {
       to_missing: p.to ? null : `${p.joiner.name} has no email address — add a personal email on this joiner.`,
       ...spoc.draft(p.task, p.joiner, p.from.missing ? null : p.from),
       history, mail_mode: await sendMode(T(req)),
+      // Sent by the SPOC from their own Gmail (see /my-emails): is the
+      // person looking the SPOC, and has it been sent already?
+      sender_is_me: !p.from.missing && String(p.from.email).toLowerCase() === String(req.user.email || '').toLowerCase(),
+      already_sent: history.some((h) => SENT.includes(h.outcome)),
       can_send: await canOperate(req),
     });
   } catch (e) { logger.error('onboarding email draft', { error: e.message }); res.status(500).json({ error: 'Could not prepare the email.' }); }
