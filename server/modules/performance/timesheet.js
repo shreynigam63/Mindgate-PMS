@@ -115,7 +115,7 @@ router.put('/settings', async (req, res) => {
       `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'timesheet',$2)
        ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
       [T(req), JSON.stringify(merged)]);
-    audit(req, 'TIMESHEET_SETTINGS_CHANGED', null, value);
+    await audit(req, 'TIMESHEET_SETTINGS_CHANGED', null, value);
     res.json({ ok: true, settings: value });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -420,7 +420,7 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
     }
 
     for (const emp of touched.values()) {
-      audit(req, 'TIMESHEET_UPLOADED', emp.id, {
+      await audit(req, 'TIMESHEET_UPLOADED', emp.id, {
         batch: batchId,
         file: req.file.originalname,
         rows: keep.filter((e) => e.employee.id === emp.id).length,

@@ -504,7 +504,7 @@ router.delete('/career/transitions', async (req, res) => {
       const r = await db.query(
         `DELETE FROM people.career_transitions WHERE tenant_id=$1 AND id = ANY($2::uuid[]) RETURNING id`,
         [T(req), body.ids]);
-      audit(req, 'CAREER_TRANSITIONS_DELETED', { removed: r.rowCount, asked: body.ids.length });
+      await audit(req, 'CAREER_TRANSITIONS_DELETED', { removed: r.rowCount, asked: body.ids.length });
       logger.warn('career transitions deleted', { tenant: T(req), removed: r.rowCount, by: req.user.email });
       return res.json({ ok: true, removed: r.rowCount, asked: body.ids.length });
     }
@@ -522,7 +522,7 @@ router.delete('/career/transitions', async (req, res) => {
       });
     }
     const r = await db.query(`DELETE FROM people.career_transitions WHERE tenant_id=$1`, [T(req)]);
-    audit(req, 'CAREER_MATRIX_EMPTIED', { removed: r.rowCount });
+    await audit(req, 'CAREER_MATRIX_EMPTIED', { removed: r.rowCount });
     logger.warn('career matrix emptied', { tenant: T(req), removed: r.rowCount, by: req.user.email });
     res.json({ ok: true, removed: r.rowCount, cleared: true });
   } catch (e) { res.status(500).json({ error: e.message }); }

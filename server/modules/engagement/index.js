@@ -183,7 +183,7 @@ router.post('/surveys', async (req, res) => {
         [T(req), s.id, q.qtype || null, q.prompt, opts.length ? JSON.stringify(opts) : null,
          q.required, (i += 10), q.dimension || null]);
     }
-    audit(req, 'SURVEY_CREATED', { survey: s.id, title: s.title, trigger: s.trigger_type,
+    await audit(req, 'SURVEY_CREATED', { survey: s.id, title: s.title, trigger: s.trigger_type,
       audience: describeRule(rule), questions: qs.length });
     res.json({ ok: true, survey: s });
   } catch (e) { logger.error('survey create', { error: e.message }); res.status(500).json({ error: e.message }); }
@@ -267,7 +267,7 @@ router.put('/surveys/:id', async (req, res) => {
       questionsWritten = rows.length;
     }
 
-    audit(req, 'SURVEY_UPDATED', { survey: s.id, audience: describeRule(rule), trigger: s.trigger_type,
+    await audit(req, 'SURVEY_UPDATED', { survey: s.id, audience: describeRule(rule), trigger: s.trigger_type,
       ...(questionsWritten == null ? {} : { questions: questionsWritten }) });
     res.json({ ok: true, survey: s, ...(questionsWritten == null ? {} : { questions: questionsWritten }) });
   } catch (e) { logger.error('survey update', { error: e.message }); res.status(500).json({ error: e.message }); }
@@ -596,7 +596,7 @@ router.post('/templates/:key/use', async (req, res) => {
         [T(req), s.id, q.qtype || null, q.prompt, opts.length ? JSON.stringify(opts) : null,
          q.required, (i += 10), q.dimension || null]);
     }
-    audit(req, 'SURVEY_CREATED_FROM_TEMPLATE', { survey: s.id, template: tpl.key,
+    await audit(req, 'SURVEY_CREATED_FROM_TEMPLATE', { survey: s.id, template: tpl.key,
       title: s.title, questions: qs.length, audience: describeRule(rule), trigger: s.trigger_type });
     res.json({ ok: true, survey: s, questions: qs.length, template: tpl.key });
   } catch (e) { logger.error('use template', { error: e.message }); res.status(500).json({ error: e.message }); }
@@ -852,7 +852,7 @@ router.post('/surveys/:id/open', async (req, res) => {
     // it simply has no audience, and says so instead of reporting a
     // number that would be wrong.
     if (s.import_only) {
-      audit(req, 'SURVEY_OPENED', { survey: s.id, title: s.title, import_only: true, invited: 0 });
+      await audit(req, 'SURVEY_OPENED', { survey: s.id, title: s.title, import_only: true, invited: 0 });
       logger.info('import-only survey opened', { survey: s.id });
       return res.json({ ok: true, invited: 0, audience_size: 0, import_only: true,
         audience: 'nobody — this survey is filled by importing reviews, not by answering it',
@@ -860,7 +860,7 @@ router.post('/surveys/:id/open', async (req, res) => {
     }
     const r = await inviteAudience(T(req), { ...s, status: 'open' });
     await db.query(`UPDATE engagement.surveys SET last_swept_at=now(), swept_count=swept_count+1 WHERE id=$1`, [s.id]);
-    audit(req, 'SURVEY_OPENED', { survey: s.id, title: s.title, trigger: s.trigger_type,
+    await audit(req, 'SURVEY_OPENED', { survey: s.id, title: s.title, trigger: s.trigger_type,
       audience: r.description, invited: r.invited, matched: r.matched });
     logger.info('survey opened', { survey: s.id, invited: r.invited, trigger: s.trigger_type });
     res.json({ ok: true, invited: r.invited, audience_size: r.matched,

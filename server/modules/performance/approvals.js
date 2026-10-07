@@ -82,7 +82,7 @@ async function decide({ kind, id, tenantId, decision, comment, actor, canDecide,
     `UPDATE ${spec.table} SET status=$1, manager_comment=$2, reopened_reason=NULL,
             decided_at=now(), updated_at=now() WHERE id=$3`,
     [decision, comment || null, row.id]);
-  audit(spec.action(decision), row.cycle_id, row.employee_id, { comment: comment || null });
+  await audit(spec.action(decision), row.cycle_id, row.employee_id, { comment: comment || null });
   // Emailed as well as belled: an approve or a return is the answer to a
   // request the employee made, and a RETURN in particular is work landing
   // back on them. Waiting for them to notice a bell is how a returned

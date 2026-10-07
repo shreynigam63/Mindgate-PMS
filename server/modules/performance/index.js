@@ -206,7 +206,7 @@ router.post('/cycles', async (req, res) => {
         .replace('COALESCE($10,DEFAULT)', `COALESCE($10, 3.0)`),
       [T(req), name, fiscal_year, cycle_type || null, description || null, rating_scale ? JSON.stringify(rating_scale) : null,
        bell_curve ? JSON.stringify(bell_curve) : null, opens_at || null, closes_at || null, pip_threshold ?? null, req.user.email]);
-    audit(req, 'CYCLE_CREATED', r.rows[0].id, null, { name, fiscal_year });
+    await audit(req, 'CYCLE_CREATED', r.rows[0].id, null, { name, fiscal_year });
     res.json({ ok: true, cycle: r.rows[0] });
   } catch (e) { logger.error('cycle create', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
@@ -228,7 +228,7 @@ router.put('/cycles/:id/rating-scale', async (req, res) => {
        WHERE id=$3 AND tenant_id=$4 RETURNING *`,
       [rating_scale ? JSON.stringify(rating_scale) : null, bell_curve ? JSON.stringify(bell_curve) : null, req.params.id, T(req)]);
     if (!r.rows.length) return res.status(404).json({ error: 'cycle not found' });
-    audit(req, 'CYCLE_RATING_SCALE_UPDATED', req.params.id, null, { rating_scale, bell_curve });
+    await audit(req, 'CYCLE_RATING_SCALE_UPDATED', req.params.id, null, { rating_scale, bell_curve });
     res.json({ ok: true, cycle: r.rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -245,7 +245,7 @@ router.put('/cycles/:id/pip-threshold', async (req, res) => {
     const r = await db.query(`UPDATE pms.cycles SET pip_threshold=$1, updated_at=now() WHERE id=$2 AND tenant_id=$3 RETURNING id, pip_threshold`,
       [threshold, req.params.id, T(req)]);
     if (!r.rows[0]) return res.status(404).json({ error: 'cycle not found' });
-    audit(req, 'PIP_THRESHOLD_SET', req.params.id, null, { threshold });
+    await audit(req, 'PIP_THRESHOLD_SET', req.params.id, null, { threshold });
     res.json({ ok: true, cycle_id: r.rows[0].id, pip_threshold: r.rows[0].pip_threshold });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -323,7 +323,7 @@ router.post('/cycles/:id/phase', async (req, res) => {
     else check = pm.canAdvance(c.phase, to);
     if (!check.ok) return res.status(409).json({ error: check.reason });
     await db.query(`UPDATE pms.cycles SET phase=$1, updated_at=now() WHERE id=$2`, [target, c.id]);
-    audit(req, cancel ? 'CYCLE_CANCELLED' : rollback ? 'PHASE_ROLLBACK' : 'PHASE_ADVANCE', c.id, null, { from: c.phase, to: target });
+    await audit(req, cancel ? 'CYCLE_CANCELLED' : rollback ? 'PHASE_ROLLBACK' : 'PHASE_ADVANCE', c.id, null, { from: c.phase, to: target });
     if (cancel) {
       await notifyAudience(T(req), 'all', 'phase_change', `${c.name} has been cancelled`, 'This performance cycle has been cancelled by HR.', '/pms/my/kras');
     } else if (rollback) {
@@ -582,7 +582,7 @@ router.post('/my/kra-sheet/submit', async (req, res) => {
     await db.query(
       `UPDATE pms.kra_sheets SET status='submitted', reopened_reason=NULL,
               submitted_at=now(), updated_at=now() WHERE id=$1`, [s.id]);
-    audit(req, 'KRA_SUBMITTED', c.id, req.user.id, { kras: kras.length });
+    await audit(req, 'KRA_SUBMITTED', c.id, req.user.id, { kras: kras.length });
     const n = await notifySheetSubmitted(req, T(req), req.user.id, req.user.name, false);
     // THIS is the moment the employee's KRAs actually become different ones
     // — not the profile change that sent them back to refill. Goals aimed at
@@ -854,7 +854,7 @@ router.put('/team/kra-sheets/:sheetId/kras', async (req, res) => {
       `SELECT id, title, description, weight, category, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`,
       [s.id])).rows;
     const changes = diffKras(before, after);
-    audit(req, 'KRA_EDITED_BY_MANAGER', c.id, emp.id, {
+    await audit(req, 'KRA_EDITED_BY_MANAGER', c.id, emp.id, {
       sheet_id: s.id, changed: changes.length, changes,
     });
     if (changes.length && emp.id !== req.user.id) {
@@ -1064,7 +1064,7 @@ router.put('/hr/kra-sheet/:employeeId/kras', async (req, res) => {
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
     const saved = (await db.query(`SELECT * FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
-    audit(req, 'KRA_ENTERED_ON_BEHALF', c.id, req.params.employeeId, { kras: saved.length });
+    await audit(req, 'KRA_ENTERED_ON_BEHALF', c.id, req.params.employeeId, { kras: saved.length });
     res.json({ ok: true, kras: saved, weights: pm.weightsValid(saved) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1087,7 +1087,7 @@ router.post('/hr/kra-sheet/:employeeId/submit', async (req, res) => {
     await db.query(
       `UPDATE pms.kra_sheets SET status='submitted', reopened_reason=NULL,
               submitted_at=now(), updated_at=now() WHERE id=$1`, [s.id]);
-    audit(req, 'KRA_SUBMITTED_ON_BEHALF', c.id, req.params.employeeId, { kras: kras.length });
+    await audit(req, 'KRA_SUBMITTED_ON_BEHALF', c.id, req.params.employeeId, { kras: kras.length });
     // HR's on-behalf path is a deliberate backstop for employees who do not
     // self-serve, so it has to feed the SAME approval flow. It previously
     // did not notify anyone, so a sheet HR submitted sat in the manager's
@@ -1148,7 +1148,7 @@ router.post('/hr/kra-sheet/:employeeId/reopen', async (req, res) => {
       `UPDATE pms.kra_sheets SET status='returned', manager_comment=$1, reopened_reason='hr_reopen',
               decided_at=now(), updated_at=now() WHERE id=$2`,
       [String(comment).trim(), s.id]);
-    audit(req, 'KRA_REOPENED', c.id, s.employee_id, { comment: String(comment).trim(), from: 'approved' });
+    await audit(req, 'KRA_REOPENED', c.id, s.employee_id, { comment: String(comment).trim(), from: 'approved' });
     await notify(T(req), s.employee_id, 'kra_reopened', 'Your approved KRA sheet was reopened for edits',
       String(comment).trim(), '/my/kras', { email: true });
     res.json({ ok: true, status: 'returned' });
@@ -1190,7 +1190,7 @@ router.post('/hr/development-plan/:employeeId/reopen', async (req, res) => {
           SET status='returned', manager_comment=$1, reopened_reason='hr_reopen',
               decided_at=now(), updated_at=now() WHERE id=$2`,
       [comment, p.id]);
-    audit(req, 'DEVPLAN_REOPENED', c.id, p.employee_id, { comment, from: p.status });
+    await audit(req, 'DEVPLAN_REOPENED', c.id, p.employee_id, { comment, from: p.status });
     await notify(T(req), p.employee_id, 'devplan_reopened',
       'Your growth plan was reopened for edits', comment, '/my/growth');
     if (p.manager_id) {
@@ -1838,7 +1838,7 @@ router.post('/hr/kra-sheet/bulk-upload', (req, res, next) => kraUpload.single('f
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
 
-    audit(req, 'KRA_BULK_UPLOAD', c.id, null, report.summary);
+    await audit(req, 'KRA_BULK_UPLOAD', c.id, null, report.summary);
     res.json({ ok: true, committed: true, employees_loaded: byEmployee.size - skipped.length, skipped, warnings: report.warnings, summary: report.summary });
   } catch (e) { logger.error('kra bulk upload', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
@@ -2109,7 +2109,7 @@ router.put('/hr/settings/:key', async (req, res) => {
       `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,$2,$3)
        ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
       [T(req), req.params.key, JSON.stringify({ mode: value })]);
-    audit(req, 'SETTING_CHANGED', null, null, { key: req.params.key, value });
+    await audit(req, 'SETTING_CHANGED', null, null, { key: req.params.key, value });
     res.json({ ok: true, key: req.params.key, value });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2249,7 +2249,7 @@ router.put('/hr/mail', async (req, res) => {
       // nothing about the new one.
       await db.query(`DELETE FROM core.admin_settings WHERE tenant_id=$1 AND key='mail_last_test'`, [T(req)]);
       const { pass, ...shown } = next;
-      audit(req, 'MAIL_SMTP_CHANGED', null, null, { ...shown, pass_changed: typeof sm.pass === 'string' && sm.pass !== '' || sm.clear_pass === true });
+      await audit(req, 'MAIL_SMTP_CHANGED', null, null, { ...shown, pass_changed: typeof sm.pass === 'string' && sm.pass !== '' || sm.clear_pass === true });
     }
     // GOOGLE WORKSPACE: the service-account key (write-only, like the SMTP
     // password) and the address reminders are sent as.
@@ -2272,7 +2272,7 @@ router.put('/hr/mail', async (req, res) => {
         `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'google_workspace',$2::jsonb)
          ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`, [T(req), JSON.stringify(next)]);
       await db.query(`DELETE FROM core.admin_settings WHERE tenant_id=$1 AND key='mail_last_test'`, [T(req)]);
-      audit(req, 'MAIL_GOOGLE_CHANGED', null, null, { client_email: next.client_email || null, sender: next.sender || null, key_changed: keyChanged });
+      await audit(req, 'MAIL_GOOGLE_CHANGED', null, null, { client_email: next.client_email || null, sender: next.sender || null, key_changed: keyChanged });
     }
     if (b.transport !== undefined) {
       if (!['google', 'smtp'].includes(b.transport)) return res.status(422).json({ error: 'Transport must be "google" or "smtp".' });
@@ -2288,7 +2288,7 @@ router.put('/hr/mail', async (req, res) => {
         if ((await mailView(T(req))).mode === 'live' && b.mode !== 'live') {
           await db.query(`UPDATE core.admin_settings SET value='{"mode":"simulated"}'::jsonb, updated_at=now() WHERE tenant_id=$1 AND key='mail_send_mode'`, [T(req)]);
         }
-        audit(req, 'MAIL_TRANSPORT_CHANGED', null, null, { transport: b.transport });
+        await audit(req, 'MAIL_TRANSPORT_CHANGED', null, null, { transport: b.transport });
       }
     }
     if (b.mode !== undefined) {
@@ -2307,7 +2307,7 @@ router.put('/hr/mail', async (req, res) => {
         `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'mail_send_mode',$2::jsonb)
          ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
         [T(req), JSON.stringify({ mode: b.mode })]);
-      audit(req, b.mode === 'live' ? 'MAIL_LIVE_ENABLED' : 'MAIL_SET_SIMULATED', null, null, { mode: b.mode });
+      await audit(req, b.mode === 'live' ? 'MAIL_LIVE_ENABLED' : 'MAIL_SET_SIMULATED', null, null, { mode: b.mode });
     }
     res.json(await mailView(T(req)));
   } catch (e) { logger.error('mail settings put', { error: e.message }); res.status(500).json({ error: 'Could not save the email settings' }); }
@@ -2340,7 +2340,7 @@ router.post('/hr/mail/test', async (req, res) => {
       `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'mail_last_test',$2::jsonb)
        ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
       [T(req), JSON.stringify({ ok, at, to, detail })]);
-    audit(req, 'MAIL_TEST_SENT', null, null, { to, outcome: ok ? 'sent' : 'failed' });
+    await audit(req, 'MAIL_TEST_SENT', null, null, { to, outcome: ok ? 'sent' : 'failed' });
     res.json({ to, outcome: ok ? 'sent' : 'failed', detail, hint: ok ? null : explain(detail),
       mode: await sendMode(T(req)), view: await mailView(T(req)) });
   } catch (e) { logger.error('mail test', { error: e.message }); res.status(500).json({ error: 'Could not send the test email' }); }
@@ -2416,7 +2416,7 @@ router.put('/hr/kra-library/entry/:id', async (req, res) => {
 
     // A published shelf is configuration that shapes everybody's
     // objectives, so an edit to one is audited with what it was before.
-    audit(req, 'KRA_LIBRARY_ENTRY_EDITED', null, null, {
+    await audit(req, 'KRA_LIBRARY_ENTRY_EDITED', null, null, {
       id: row.id, designation: row.designation, department: row.department,
       before: { title: before.title, measures: before.measures, description: before.description,
                 category: before.category, suggested_weight: before.suggested_weight,
@@ -2495,7 +2495,7 @@ router.post('/hr/kra-library/keywords/bulk', async (req, res) => {
     // to it is audited like a single edit — with the filter that was
     // used, because "which rows did this touch" is the question asked
     // afterwards.
-    audit(req, 'KRA_LIBRARY_KEYWORDS_BULK', null, null, {
+    await audit(req, 'KRA_LIBRARY_KEYWORDS_BULK', null, null, {
       mode: b.mode, keywords: kw.parseKeywords(b.keywords),
       filter: { designation: b.designation || null, department: b.department || null,
         category: b.category || null, title_contains: b.title_contains || null,
@@ -2563,7 +2563,7 @@ router.put('/hr/kra-library/value-add-keywords', async (req, res) => {
       `INSERT INTO core.admin_settings (tenant_id, key, value) VALUES ($1,'timesheet',$2::jsonb)
        ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value`,
       [T(req), JSON.stringify(next)]);
-    audit(req, 'TIMESHEET_VALUE_ADD_KEYWORDS_SET', null, null, { count: list.length, keywords: list });
+    await audit(req, 'TIMESHEET_VALUE_ADD_KEYWORDS_SET', null, null, { count: list.length, keywords: list });
     res.json({ ok: true, value_add_keywords: list });
   } catch (e) {
     logger.error('value-add keywords', { error: e.message });
@@ -2584,7 +2584,7 @@ router.delete('/hr/kra-library/entry/:id', async (req, res) => {
       `DELETE FROM pms.kra_library WHERE id=$1 AND tenant_id=$2 RETURNING *`,
       [req.params.id, T(req)])).rows[0];
     if (!row) return res.status(404).json({ error: 'KRA not found' });
-    audit(req, 'KRA_LIBRARY_ENTRY_REMOVED', null, null, {
+    await audit(req, 'KRA_LIBRARY_ENTRY_REMOVED', null, null, {
       id: row.id, designation: row.designation, department: row.department, title: row.title });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2643,7 +2643,7 @@ router.post('/hr/kra-library/entry', async (req, res) => {
       [T(req), department, designation, txt(b.category), title,
        txt(b.measures), txt(b.description), weight, next, kw.parseKeywords(b.keywords)])).rows[0];
 
-    audit(req, 'KRA_LIBRARY_ENTRY_ADDED', null, null, {
+    await audit(req, 'KRA_LIBRARY_ENTRY_ADDED', null, null, {
       id: row.id, designation: row.designation, department: row.department, title: row.title });
     res.status(201).json({ ok: true, entry: row });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2691,7 +2691,7 @@ router.delete('/hr/kra-library', async (req, res) => {
     }
 
     const r = await db.query(`DELETE FROM pms.kra_library WHERE tenant_id=$1`, [T(req)]);
-    audit(req, 'KRA_LIBRARY_EMPTIED', null, null, { removed: r.rowCount });
+    await audit(req, 'KRA_LIBRARY_EMPTIED', null, null, { removed: r.rowCount });
     logger.warn('KRA library emptied', { tenant: T(req), removed: r.rowCount, by: req.user.email });
     res.json({ ok: true, removed: r.rowCount });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2713,7 +2713,7 @@ router.delete('/hr/kra-library/:designation', async (req, res) => {
           AND lower(btrim(coalesce(department,'')))=lower(btrim($3))`,
       [T(req), req.params.designation, dept || '']);
     if (!r.rowCount) return res.status(404).json({ error: `no library entries for designation "${req.params.designation}"${dept ? ` in ${dept}` : ''}` });
-    audit(req, 'KRA_LIBRARY_CLEARED', null, null, { designation: req.params.designation, department: dept || null, removed: r.rowCount });
+    await audit(req, 'KRA_LIBRARY_CLEARED', null, null, { designation: req.params.designation, department: dept || null, removed: r.rowCount });
     res.json({ ok: true, removed: r.rowCount });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2800,7 +2800,7 @@ router.post('/hr/kra-library/upload', (req, res, next) => kraUpload.single('file
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
 
-    audit(req, 'KRA_LIBRARY_PUBLISHED', null, null, {
+    await audit(req, 'KRA_LIBRARY_PUBLISHED', null, null, {
       designations: [...byDesignation.values()].map((v) => v.label), ...report.summary,
     });
     res.json({
@@ -3339,7 +3339,7 @@ router.post('/my/development-plan/submit', async (req, res) => {
       `UPDATE pms.development_plans
           SET status='submitted', reopened_reason=NULL, submitted_at=now(), updated_at=now()
         WHERE id=$1`, [p.id]);
-    audit(req, 'DEVPLAN_SUBMITTED', c.id, req.user.id, { goals: goals.length });
+    await audit(req, 'DEVPLAN_SUBMITTED', c.id, req.user.id, { goals: goals.length });
     // Live manager, not development_plans.manager_id — that column is the
     // same creation-time snapshot the KRA sheet had, and it drifts the same
     // way when an HRMS import resolves a manager late or someone changes
@@ -3599,7 +3599,7 @@ router.post('/my/self-appraisal/submit', async (req, res) => {
     // point: a gate whose only key has been taken away is a lockout, not
     // a safeguard.
     await db.query(`UPDATE pms.self_appraisals SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [a.id]);
-    audit(req, 'SELF_APPRAISAL_SUBMITTED', c.id, req.user.id, null);
+    await audit(req, 'SELF_APPRAISAL_SUBMITTED', c.id, req.user.id, null);
     // Requested: the manager hears about a submission the moment it
     // happens, not on the next reminder sweep. Mid-year already did this;
     // the annual appraisal did not, so the manager only found out by
@@ -3952,7 +3952,7 @@ router.post('/my/midyear-review/submit', async (req, res) => {
           SET self_status='submitted', self_submitted_at=now(),
               reopened_reason=NULL, reopened_note=NULL, updated_at=now()
         WHERE id=$1`, [row.id]);
-    audit(req, 'MIDYEAR_SELF_SUBMITTED', c.id, req.user.id, null);
+    await audit(req, 'MIDYEAR_SELF_SUBMITTED', c.id, req.user.id, null);
     // The LIVE manager, not the manager_id snapshotted on the check-in row
     // when it was created. Same bug the KRA flow had: an employee whose
     // manager changed mid-cycle had their submission announced to the
@@ -4051,7 +4051,7 @@ router.post('/team/midyear-review/:employeeId/submit', async (req, res) => {
           SET manager_status='submitted', manager_submitted_at=now(),
               reopened_reason=NULL, reopened_note=NULL, updated_at=now()
         WHERE id=$1`, [row.id]);
-    audit(req, 'MIDYEAR_MANAGER_SUBMITTED', c.id, emp.id, null);
+    await audit(req, 'MIDYEAR_MANAGER_SUBMITTED', c.id, emp.id, null);
     await notify(T(req), emp.id, 'midyear_manager_signed', `${req.user.name} signed off your Mid-Year Review`,
       null, '/my/midyear', { email: true });
     res.json({ ok: true });
@@ -4176,7 +4176,7 @@ router.post('/team/evaluations/:employeeId/submit', async (req, res) => {
     if (!ev) return res.status(404).json({ error: 'no evaluation drafted' });
     if (ev.overall_rating == null) return res.status(422).json({ error: 'overall_rating required to submit' });
     await db.query(`UPDATE pms.manager_evaluations SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [ev.id]);
-    audit(req, 'MANAGER_EVAL_SUBMITTED', c.id, req.params.employeeId, { rating: ev.overall_rating });
+    await audit(req, 'MANAGER_EVAL_SUBMITTED', c.id, req.params.employeeId, { rating: ev.overall_rating });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4234,7 +4234,7 @@ router.put('/review-parameters', async (req, res) => {
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; }
     finally { client.release(); }
-    audit(req, 'REVIEW_PARAMETERS_UPDATED', null, null, { count: parameters.length });
+    await audit(req, 'REVIEW_PARAMETERS_UPDATED', null, null, { count: parameters.length });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4309,7 +4309,7 @@ router.put('/team/parameter-scores/:employeeId', async (req, res) => {
          ON CONFLICT (cycle_id, employee_id) DO UPDATE SET overall_rating=$5, updated_at=now()`,
         [T(req), c.id, emp.id, req.user.id, weighted.rating]);
     }
-    audit(req, 'PARAMETER_SCORES_UPDATED', c.id, emp.id, { scores, complete: weighted.complete, weighted_rating: weighted.rating });
+    await audit(req, 'PARAMETER_SCORES_UPDATED', c.id, emp.id, { scores, complete: weighted.complete, weighted_rating: weighted.rating });
     res.json({ ok: true, weighted_rating: weighted.rating, complete: weighted.complete, missing: weighted.missing });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4597,7 +4597,7 @@ router.put('/calibration/kitty', async (req, res) => {
       [T(req), c.id, pick('kitty_pct', cur.kitty_pct), pick('bracket_threshold', cur.bracket_threshold),
        pick('retention_pool', cur.retention_pool), pick('market_pool', cur.market_pool),
        pick('promotion_pool', cur.promotion_pool), req.user.email])).rows[0];
-    audit(req, 'CALIBRATION_BUDGET_SET', c.id, null, {
+    await audit(req, 'CALIBRATION_BUDGET_SET', c.id, null, {
       kitty_pct: Number(row.kitty_pct), retention: Number(row.retention_pool),
       market: Number(row.market_pool), promotion: Number(row.promotion_pool),
       threshold: Number(row.bracket_threshold) });
@@ -4693,7 +4693,7 @@ router.put('/calibration/bands', async (req, res) => {
     // Audited with what it was. These numbers decide what every grade is
     // worth in money, so "why did A+ change to 22%" has to have the same
     // queryable answer a rating adjustment does.
-    audit(req, 'CALIBRATION_BANDS_SET', c.id, null, {
+    await audit(req, 'CALIBRATION_BANDS_SET', c.id, null, {
       before: before.map((b) => ({ label: b.label, increment_pct: b.increment_pct,
         min: b.increment_pct_min, max: b.increment_pct_max })),
       after: bands.map((b) => ({ label: b.label, increment_pct: b.increment_pct,
@@ -4749,7 +4749,7 @@ router.put('/calibration/allocation/:employeeId', async (req, res) => {
        merged.retention_approved, merged.retention_pct, merged.retention_lumpsum,
        merged.retention_reason, req.user.email])).rows[0];
 
-    audit(req, 'CALIBRATION_ALLOCATION_SET', c.id, emp.id, {
+    await audit(req, 'CALIBRATION_ALLOCATION_SET', c.id, emp.id, {
       standard: merged.standard_pct, market: merged.market_pct,
       promotion: merged.promotion_pct, retention: merged.retention_pct,
       promoted: merged.promoted, retention_approved: merged.retention_approved });
@@ -4843,7 +4843,7 @@ router.get('/calibration/export', async (req, res) => {
     bs.addRow({ p: 'Frozen (leaving, not retained)', a: view.counts.frozen });
 
     const buf = await wb.xlsx.writeBuffer();
-    audit(req, 'CALIBRATION_EXPORTED', c.id, null, { bracket, rows: view.lines.length });
+    await audit(req, 'CALIBRATION_EXPORTED', c.id, null, { bracket, rows: view.lines.length });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="calibration_${bracket}.xlsx"`);
     res.send(Buffer.from(buf));
@@ -4865,7 +4865,7 @@ router.post('/calibration/adjust', async (req, res) => {
       `INSERT INTO pms.rating_adjustments (tenant_id, cycle_id, employee_id, session_id, from_rating, to_rating, reason, adjusted_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [T(req), c.id, employee_id, session_id || null, from_rating ?? null, to_rating, reason.trim(), req.user.email]);
-    audit(req, 'RATING_ADJUSTED', c.id, employee_id, { from: from_rating, to: to_rating, reason });
+    await audit(req, 'RATING_ADJUSTED', c.id, employee_id, { from: from_rating, to: to_rating, reason });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -5076,15 +5076,15 @@ router.post('/publish', async (req, res) => {
           if (eligible && !wasFlagged) {
             await db.query(`UPDATE core.employees SET super50_flag=true, super50_since=now() WHERE id=$1`, [r.employee_id]);
             super50Flagged++;
-            audit(req, 'SUPER50_FLAGGED', c.id, r.employee_id, { ratings: hist.map((x) => x.rating) });
+            await audit(req, 'SUPER50_FLAGGED', c.id, r.employee_id, { ratings: hist.map((x) => x.rating) });
             await notify(T(req), r.employee_id, 'super50_flagged', 'You have been recognised as a consistent top performer', null, '/pms/my-rating');
             // BR-6.6: proactively alert HR/Management to consider retention
             // actions for this newly-flagged employee.
             const alerted = await alertHrOfRetentionRisk(T(req), { id: r.employee_id, name: r.employee_name });
-            audit(req, 'RETENTION_ALERT_SENT', c.id, r.employee_id, { alerted_recipients: alerted });
+            await audit(req, 'RETENTION_ALERT_SENT', c.id, r.employee_id, { alerted_recipients: alerted });
           } else if (!eligible && wasFlagged) {
             await db.query(`UPDATE core.employees SET super50_flag=false, super50_since=NULL WHERE id=$1`, [r.employee_id]);
-            audit(req, 'SUPER50_UNFLAGGED', c.id, r.employee_id, { ratings: hist.map((x) => x.rating) });
+            await audit(req, 'SUPER50_UNFLAGGED', c.id, r.employee_id, { ratings: hist.map((x) => x.rating) });
           }
         }
         // BR-7.1: automatic PIP trigger below the cycle's configured threshold.
@@ -5099,14 +5099,14 @@ router.post('/publish', async (req, res) => {
           if (pipR.rows[0]) {
             pipsOpened++;
             await notify(T(req), r.employee_id, 'pip_opened', `A Performance Improvement Plan has been opened for ${c.name}`, null, '/pms/my-rating');
-            audit(req, 'PIP_AUTO_OPENED', c.id, r.employee_id, { final_rating: r.final_rating, threshold: c.pip_threshold });
+            await audit(req, 'PIP_AUTO_OPENED', c.id, r.employee_id, { final_rating: r.final_rating, threshold: c.pip_threshold });
           }
         }
         await notify(T(req), r.employee_id, 'rating_published', `Your ${c.name} rating is published`, null, '/pms/my-rating');
         published++;
       } catch (e) { failures.push({ employee_id: r.employee_id, reason: e.message }); }
     }
-    audit(req, 'CYCLE_PUBLISHED', c.id, null, { published, failed: failures.length, pips_opened: pipsOpened, super50_flagged: super50Flagged });
+    await audit(req, 'CYCLE_PUBLISHED', c.id, null, { published, failed: failures.length, pips_opened: pipsOpened, super50_flagged: super50Flagged });
     res.json({ ok: true, published, pips_opened: pipsOpened, super50_flagged: super50Flagged, failures });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -5317,7 +5317,7 @@ router.post('/compensation/upload', (req, res, next) => compUpload.single('file'
     // Audited without the figures. That someone loaded salaries, and how
     // many, is what an audit trail needs; copying every salary into a
     // second table that is read far more widely is not.
-    audit(req, 'COMPENSATION_UPLOADED', null, null, { rows: report.rows.length });
+    await audit(req, 'COMPENSATION_UPLOADED', null, null, { rows: report.rows.length });
     res.json({ ok: true, committed: true, loaded: report.rows.length, warnings: report.warnings });
   } catch (e) { logger.error('compensation upload', { error: e.message }); res.status(500).json({ error: 'Could not load the file' }); }
 });
@@ -5376,7 +5376,7 @@ router.put('/increment-matrix', async (req, res) => {
       }
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
-    audit(req, 'INCREMENT_MATRIX_SET', c ? c.id : null, null, { bands: bands.length, scope: cycle_scoped ? 'cycle' : 'standing' });
+    await audit(req, 'INCREMENT_MATRIX_SET', c ? c.id : null, null, { bands: bands.length, scope: cycle_scoped ? 'cycle' : 'standing' });
     res.json({ ok: true, bands: bands.length });
   } catch (e) { logger.error('increment matrix write', { error: e.message }); res.status(500).json({ error: 'Could not save the matrix' }); }
 });
@@ -5456,7 +5456,7 @@ router.post('/increment-simulations', async (req, res) => {
       `INSERT INTO pms.increment_simulations (tenant_id, cycle_id, name, budget_amount, scale_to_fit, notes, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [T(req), c.id, String(name).trim(), budget_amount ?? null, !!scale_to_fit, (notes || '').trim() || null, req.user.email])).rows[0];
-    audit(req, 'INCREMENT_SIMULATION_CREATED', c.id, null, { name: sim.name, budget: sim.budget_amount });
+    await audit(req, 'INCREMENT_SIMULATION_CREATED', c.id, null, { name: sim.name, budget: sim.budget_amount });
     res.status(201).json({ ok: true, simulation: sim, ...(await runSimulation(T(req), sim)) });
   } catch (e) { logger.error('simulation create', { error: e.message }); res.status(500).json({ error: 'Could not create the scenario' }); }
 });
@@ -5494,7 +5494,7 @@ router.delete('/increment-simulations/:id', async (req, res) => {
     if (!(await requireComp(req, res))) return;
     const r = await db.query(`DELETE FROM pms.increment_simulations WHERE id=$1 AND tenant_id=$2 RETURNING name, cycle_id`, [req.params.id, T(req)]);
     if (!r.rows[0]) return res.status(404).json({ error: 'scenario not found' });
-    audit(req, 'INCREMENT_SIMULATION_DELETED', r.rows[0].cycle_id, null, { name: r.rows[0].name });
+    await audit(req, 'INCREMENT_SIMULATION_DELETED', r.rows[0].cycle_id, null, { name: r.rows[0].name });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Could not delete the scenario' }); }
 });
@@ -5787,7 +5787,7 @@ router.post('/connects', async (req, res) => {
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
 
-    audit(req, 'CONNECT_LOGGED', null, employee_id, { held_at, action_items: items.length, self_logged: isSelf });
+    await audit(req, 'CONNECT_LOGGED', null, employee_id, { held_at, action_items: items.length, self_logged: isSelf });
     if (isSelf) await notify(T(req), managerId, 'connect_logged_by_report', `${req.user.name} logged a 1-on-1 discussion for your sign-off`, null, '/pms/team/connects');
     res.json({ ok: true, id: connectId });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
@@ -5916,7 +5916,7 @@ router.put('/connects/questions', async (req, res) => {
         `UPDATE pms.connect_questions SET label=$3, hint=$4, sort_order=$5, active=$6, updated_at=now()
           WHERE tenant_id=$1 AND key=$2`, [T(req), q.key, q.label, q.hint, q.sort_order, q.active]);
     }
-    audit(req, 'CONNECT_QUESTIONS_SET', null, null, { keys: clean.map((q) => q.key) });
+    await audit(req, 'CONNECT_QUESTIONS_SET', null, null, { keys: clean.map((q) => q.key) });
     const r = await db.query(
       `SELECT id, key, field, label, hint, sort_order, active FROM pms.connect_questions
         WHERE tenant_id=$1 ORDER BY sort_order, label`, [T(req)]);
@@ -5975,7 +5975,7 @@ router.post('/connects/:id/sign-off', async (req, res) => {
     if (cn.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: 'Not your connect to sign off' });
     if (cn.signed_off) return res.status(409).json({ error: 'already signed off' });
     await db.query(`UPDATE pms.connects SET signed_off=true, signed_off_at=now() WHERE id=$1`, [cn.id]);
-    audit(req, 'CONNECT_SIGNED_OFF', null, cn.employee_id, { connect_id: cn.id });
+    await audit(req, 'CONNECT_SIGNED_OFF', null, cn.employee_id, { connect_id: cn.id });
     await notify(T(req), cn.employee_id, 'connect_signed_off', 'Your manager signed off your quarterly connect', null, '/pms');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6021,7 +6021,7 @@ router.post('/reminders/run', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
     const counts = await runReminders(T(req));
-    audit(req, 'REMINDERS_RUN', null, null, counts);
+    await audit(req, 'REMINDERS_RUN', null, null, counts);
     res.json({ ok: true, ...counts });
   } catch (e) { logger.error('reminders run', { error: e.message }); res.status(500).json({ error: 'Could not run the reminder sweep' }); }
 });
@@ -6030,7 +6030,7 @@ router.post('/connects/check-reminders', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
     const reminded = await checkAndSendConnectReminders(T(req));
-    audit(req, 'CONNECT_REMINDERS_CHECKED', null, null, { reminded });
+    await audit(req, 'CONNECT_REMINDERS_CHECKED', null, null, { reminded });
     res.json({ ok: true, reminded });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -6099,7 +6099,7 @@ router.post('/meetings', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [T(req), (await activeCycle(T(req)))?.id || null, employeeId, context, ref_id || null,
        provider, String(meeting_url).trim(), scheduled_at || null, req.user.id])).rows[0];
-    audit(req, 'MEETING_SCHEDULED', row.cycle_id, employeeId, { context, provider });
+    await audit(req, 'MEETING_SCHEDULED', row.cycle_id, employeeId, { context, provider });
     res.status(201).json({ ok: true, meeting: row });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
@@ -6110,7 +6110,7 @@ router.delete('/meetings/:id', async (req, res) => {
     if (!m) return res.status(404).json({ error: 'meeting not found' });
     if (!(await meetingParty(req, m.employee_id))) return res.status(403).json({ error: 'Not your meeting' });
     await db.query(`DELETE FROM pms.review_meetings WHERE id=$1`, [m.id]);
-    audit(req, 'MEETING_DELETED', m.cycle_id, m.employee_id, { context: m.context });
+    await audit(req, 'MEETING_DELETED', m.cycle_id, m.employee_id, { context: m.context });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -6143,7 +6143,7 @@ router.put('/meetings/:id/transcript', async (req, res) => {
                                               captured_at=now(), consent_checked_at=now()
        RETURNING id, captured_at`,
       [T(req), m.id, m.provider, String(content).trim(), m.employee_id, req.user.id])).rows[0];
-    audit(req, 'MEETING_TRANSCRIPT_STORED', m.cycle_id, m.employee_id, { context: m.context, chars: String(content).trim().length });
+    await audit(req, 'MEETING_TRANSCRIPT_STORED', m.cycle_id, m.employee_id, { context: m.context, chars: String(content).trim().length });
     res.json({ ok: true, transcript_id: row.id, captured_at: row.captured_at });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
@@ -6222,7 +6222,7 @@ router.put('/pip/:id', async (req, res) => {
       `UPDATE pms.pip_records SET plan=COALESCE($1,plan), status=COALESCE($2,status),
               closed_reason=COALESCE($3,closed_reason), closed_at=CASE WHEN $4 THEN now() ELSE closed_at END
         WHERE id=$5`, [plan || null, status || null, closed_reason || null, closing, p.id]);
-    audit(req, closing ? 'PIP_CLOSED' : 'PIP_UPDATED', p.cycle_id, p.employee_id, { status, closed_reason });
+    await audit(req, closing ? 'PIP_CLOSED' : 'PIP_UPDATED', p.cycle_id, p.employee_id, { status, closed_reason });
     if (closing) await notify(T(req), p.employee_id, 'pip_closed', `Your Performance Improvement Plan has been closed (${status})`, null, '/pms/my-rating');
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6309,16 +6309,16 @@ router.post('/watchlist/recompute', async (req, res) => {
       if (r.eligible) {
         await db.query(`UPDATE core.employees SET super50_flag=true, super50_since=now() WHERE id=$1`, [r.id]);
         added += 1;
-        audit(req, 'SUPER50_FLAGGED', c ? c.id : null, r.id,
+        await audit(req, 'SUPER50_FLAGGED', c ? c.id : null, r.id,
           { ratings: r.history.map((h) => h.rating), via: 'recompute' });
       } else {
         await db.query(`UPDATE core.employees SET super50_flag=false, super50_since=NULL WHERE id=$1`, [r.id]);
         removed += 1;
-        audit(req, 'SUPER50_UNFLAGGED', c ? c.id : null, r.id,
+        await audit(req, 'SUPER50_UNFLAGGED', c ? c.id : null, r.id,
           { reason: r.reason, via: 'recompute' });
       }
     }
-    audit(req, 'SUPER50_RECOMPUTED', c ? c.id : null, null, { added, removed, rule });
+    await audit(req, 'SUPER50_RECOMPUTED', c ? c.id : null, null, { added, removed, rule });
     res.json({ ok: true, added, removed, on_list: rows.filter((r) => r.eligible).length });
   } catch (e) { logger.error('watchlist recompute', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
@@ -6409,7 +6409,7 @@ router.post('/watchlist/prior-ratings/upload', (req, res, next) => kraUpload.sin
                          sort_year=EXCLUDED.sort_year, imported_by=EXCLUDED.imported_by`,
         [t, r.employee_id, r.fiscal_year, r.grade, r.rating, r.sort_year, req.user.email]);
     }
-    audit(req, 'PRIOR_RATINGS_IMPORTED', null, null,
+    await audit(req, 'PRIOR_RATINGS_IMPORTED', null, null,
       { rows: resolved.length, employees: new Set(resolved.map((x) => x.employee_id)).size });
     res.json({ ok: true, committed: true, rows: resolved.length,
       employees: new Set(resolved.map((r) => r.employee_id)).size });
@@ -6495,7 +6495,7 @@ router.post('/closure-letters/:employeeId/:cycleId/generate', async (req, res) =
       `UPDATE pms.closure_letters SET file_data=$1, content_type='application/pdf', generated_by=$2, generated_at=now()
         WHERE tenant_id=$3 AND employee_id=$4 AND cycle_id=$5`,
       [pdfBuffer, req.user.email, T(req), req.params.employeeId, req.params.cycleId]);
-    audit(req, 'CLOSURE_LETTER_GENERATED', req.params.cycleId, req.params.employeeId, { bytes: pdfBuffer.length });
+    await audit(req, 'CLOSURE_LETTER_GENERATED', req.params.cycleId, req.params.employeeId, { bytes: pdfBuffer.length });
     await notify(T(req), req.params.employeeId, 'closure_letter_ready', `Your ${h.cycle_name} closure letter is ready`, null, '/pms/my-rating');
     res.json({ ok: true, bytes: pdfBuffer.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6753,7 +6753,7 @@ router.post('/hod/re-seed', async (req, res) => {
         [T(req), c.id, row.employee_id, head.employee_id]);
       if (result.rows.length) created++;
     }
-    audit(req, 'HOD_QUEUE_RESEEDED', c.id, null, { checked: submitted.length, created, skippedNoHead });
+    await audit(req, 'HOD_QUEUE_RESEEDED', c.id, null, { checked: submitted.length, created, skippedNoHead });
     res.json({ ok: true, checked: submitted.length, created, skipped_no_head: skippedNoHead });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -6797,7 +6797,7 @@ router.post('/hr/kra-sheet/clean-titles', async (req, res) => {
         cleaned++;
       }
     }
-    audit(req, 'KRA_TITLES_CLEANED', null, null, { checked: rows.length, cleaned });
+    await audit(req, 'KRA_TITLES_CLEANED', null, null, { checked: rows.length, cleaned });
     res.json({ ok: true, checked: rows.length, cleaned, examples });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -570,7 +570,7 @@ router.put('/employee/:id/map', async (req, res) => {
     if (bad) return res.status(422).json({ error: bad });
     const { error, row } = await writeMapping(req, target, cycle.id, b);
     if (error) return res.status(422).json({ error });
-    audit(req, 'TIMESHEET_KRA_MAPPED', target.id, {
+    await audit(req, 'TIMESHEET_KRA_MAPPED', target.id, {
       item_key: row.item_key, item_label: row.item_label,
       decision: row.decision, kra_id: row.kra_id, note: row.note, cycle_id: cycle.id,
     });
@@ -621,7 +621,7 @@ router.post('/employee/:id/map/bulk', async (req, res) => {
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
 
-    audit(req, 'TIMESHEET_KRA_MAPPED_BULK', target.id, {
+    await audit(req, 'TIMESHEET_KRA_MAPPED_BULK', target.id, {
       count: done.length, cycle_id: cycle.id,
       items: done.map((r) => ({ item_key: r.item_key, decision: r.decision, kra_id: r.kra_id })),
     });
@@ -646,7 +646,7 @@ router.delete('/employee/:id/map/:itemKey', async (req, res) => {
         WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id=$3 AND item_key=$4 RETURNING *`,
       [T(req), target.id, cycle.id, String(req.params.itemKey).toLowerCase()])).rows[0];
     if (!gone) return res.status(404).json({ error: 'No mapping for that item' });
-    audit(req, 'TIMESHEET_KRA_UNMAPPED', target.id, {
+    await audit(req, 'TIMESHEET_KRA_UNMAPPED', target.id, {
       item_key: gone.item_key, was: { decision: gone.decision, kra_id: gone.kra_id, note: gone.note },
     });
     res.json({ ok: true });
@@ -683,7 +683,7 @@ router.put('/kra/:kraId/tracked', async (req, res) => {
       `UPDATE pms.kras SET timesheet_tracked=$2, timesheet_untracked_reason=$3
         WHERE id=$1 RETURNING id, title, timesheet_tracked, timesheet_untracked_reason`,
       [k.id, tracked, tracked ? null : reason])).rows[0];
-    audit(req, 'TIMESHEET_KRA_TRACKED_SET', target.id, {
+    await audit(req, 'TIMESHEET_KRA_TRACKED_SET', target.id, {
       kra_id: k.id, title: k.title, was: k.timesheet_tracked, now: tracked, reason: tracked ? null : reason,
     });
     res.json({ ok: true, kra: row });
@@ -742,7 +742,7 @@ router.put('/scoring', async (req, res) => {
     // Turning automatic scoring on is the single most consequential
     // switch in this feature, so it is called out in the audit rather
     // than buried in a settings diff.
-    audit(req, next.auto_score !== cur.scoring.auto_score
+    await audit(req, next.auto_score !== cur.scoring.auto_score
       ? (next.auto_score ? 'TIMESHEET_AUTO_SCORE_ENABLED' : 'TIMESHEET_AUTO_SCORE_DISABLED')
       : 'TIMESHEET_SCORING_CHANGED', null, { was: cur.scoring, now: next });
     res.json({ ok: true, scoring: next });
@@ -910,7 +910,7 @@ router.post('/close', async (req, res) => {
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
 
-    audit(req, force ? 'TIMESHEET_MONTH_RECLOSED' : 'TIMESHEET_MONTH_CLOSED', null, {
+    await audit(req, force ? 'TIMESHEET_MONTH_RECLOSED' : 'TIMESHEET_MONTH_CLOSED', null, {
       cycle_id: cycle.id, period_start: win.from, period_end: win.to,
       closed: would.length, skipped: skipped.length,
     });
@@ -998,7 +998,7 @@ router.put('/month/:id/override', async (req, res) => {
             SET override_score=NULL, override_grade=NULL, override_reason=NULL,
                 overridden_by=NULL, overridden_at=NULL
           WHERE id=$1 RETURNING *`, [row.id])).rows[0];
-      audit(req, 'TIMESHEET_MONTH_OVERRIDE_CLEARED', target.id, {
+      await audit(req, 'TIMESHEET_MONTH_OVERRIDE_CLEARED', target.id, {
         month_id: row.id, period_start: row.period_start,
         was: { score: row.override_score, grade: row.override_grade, reason: row.override_reason },
       });
@@ -1017,7 +1017,7 @@ router.put('/month/:id/override', async (req, res) => {
 
     // Audited with what it was, because this is the record that answers
     // "why did my rating change" once it reaches calibration.
-    audit(req, 'TIMESHEET_MONTH_OVERRIDDEN', target.id, {
+    await audit(req, 'TIMESHEET_MONTH_OVERRIDDEN', target.id, {
       month_id: row.id, period_start: row.period_start,
       from: { score: row.score, grade: row.grade },
       to: { score: saved.override_score, grade: saved.override_grade },
