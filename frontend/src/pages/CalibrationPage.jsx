@@ -5,6 +5,7 @@ import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
 import Grade from '../grade';
 import SearchBox, { matches } from '../SearchBox';
+import BellCurveChart from './BellCurveChart';
 import { KittyPanel, BracketFilter, AllocationRow, Section, short } from './CalibrationKitty';
 
 const NINE_BOX = ['low-low', 'low-mid', 'low-high', 'mid-low', 'mid-mid', 'mid-high', 'high-low', 'high-mid', 'high-high'];
@@ -51,7 +52,6 @@ export default function CalibrationPage() {
 
   const dist = data.distribution || {};
   const targets = data.cycle.bell_curve || {};
-  const total = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
 
   // Filtered here rather than on the server: calibration is one
 
@@ -98,24 +98,18 @@ export default function CalibrationPage() {
           {brief.outstanding && <p className="text-amber-700">{brief.outstanding}</p>}
         </AiModal>
       )}
-      {/* THE DISTRIBUTION, still here when there is no kitty to show.
-          Once the kitty loads, its grade table says the same thing with
-          the letters, the ranges and the money beside it — two tables
-          of the same counts would just disagree eventually. */}
-      {(!kitty || noComp) && (
-        <div className="card p-4">
-          <p className="lbl">Distribution vs bell-curve targets</p>
-          <div className="flex gap-3 flex-wrap">
-            {['5', '4', '3', '2', '1', 'unrated'].map(k => (
-              <div key={k} className="text-center">
-                <p className="text-lg font-bold">{dist[k] || 0}</p>
-                <p className="text-[10px] text-navy-400">rating {k}</p>
-                <p className="text-[10px] text-navy-500">{Math.round(((dist[k] || 0) / total) * 100)}% {targets[k] != null && <span className="text-navy-400">/ tgt {targets[k]}%</span>}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* THE BELL CURVE, always on the page (7 Oct): "bell curve is
+          missing on this page, please bring back the bell curve
+          distribution and should be displayed in graph as per percentage
+          range." It had been shown only while the kitty was absent, on the
+          reasoning that the kitty's grade table carried the same counts —
+          but the kitty is set on almost every cycle, so in practice the
+          distribution vanished. It is the picture a calibration session
+          is run against, so it is not optional. */}
+      <div className="card p-4">
+        <p className="lbl">Distribution vs bell-curve targets</p>
+        <BellCurveChart distribution={dist} targets={targets} scale={data.cycle.rating_scale || []} />
+      </div>
 
       {noComp && (
         <p className="text-[11.5px] text-navy-500 bg-navy-50 rounded-lg px-3 py-2">

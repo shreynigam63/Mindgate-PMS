@@ -14,14 +14,15 @@ Once those are clear, most of Part 2 is predictable.
 **Live at pms.agentichumans.in: build `7d8c79c`** (7 October 2026), which
 carries the open Long-Term target with its AI plan and cross-department
 check (§3.2) and hides the First-Week Journey on screen (§3.12). This
-edition also describes five changes on the dev branch, which reach the
+edition also describes the changes on the dev branch, which reach the
 live site with the next deploy:
 
 - connects with anyone, and the HR question (§2.1);
 - KRA, KPI and weightage editable in the reviews (§3.1);
 - the Final Rating as a chain (§3.3);
 - the manager's Performance Improvement Plan (§3.14);
-- the HOD's Team Competencies (§2.3).
+- the HOD's Team Competencies (§2.3);
+- the bell-curve chart back on Calibration (§3.4).
 
 The build a screen is running is shown in its **?** menu, and
 `/api/v1/health` reports the same commit.
@@ -552,6 +553,14 @@ treated as typos.
 
 Grade bands are editable on the page — thresholds in tables, not code.
 
+**The bell curve is always on the page (7 Oct).** It is a chart of the
+percentage of rated people at each rating (bars), against the cycle's
+`bell_curve` targets (a dashed curve). Below it, a table gives actual,
+target and the gap in points for each rating. Unrated people are counted
+beside the chart, not in the percentages, because the targets add up to
+100% of the people being rated. Before this it was shown only when the
+kitty panel was absent, so on a cycle with a kitty it had disappeared.
+
 ## 3.5 Increment simulation models pay, it does not set it
 
 `increment-rules.js`. Nothing in it or its routes writes to
@@ -984,5 +993,5 @@ it. Opening, editing, gate reviews and closing are audited and notified.
 ---
 
 *Checked against the code on 7 October 2026 (live: `7d8c79c`; plus the
-five dev-branch changes listed at the top). Where this book and the code disagree,
+dev-branch changes listed at the top). Where this book and the code disagree,
 the code is right and this book is a bug.*
