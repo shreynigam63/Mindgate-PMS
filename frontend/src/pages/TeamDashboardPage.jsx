@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { api } from '../utils/api';
-import PageHead from '../PageHead';
 import Summit from '../Summit';
 import { Kpi, QuickActions, TeamPanel, greeting, waited } from './HomePage';
 import {
@@ -72,17 +71,49 @@ export default function TeamDashboardPage({ user }) {
   const { cycle, stats, pending = [], action } = d;
   const phase = cycle ? cycle.phase : null;
 
-  // Two different empty states, because they need two different answers.
+  const first = String(user && user.name ? user.name : '').split(/\s+/)[0] || 'there';
+  const today = new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+
+  // Two different empty states, because they need two different answers —
+  // drawn in the same greeting band and panels as the full page, so a
+  // manager with nobody under them yet does not land on the old design
+  // (seen on 7 Oct: a super admin with no direct reports got the old
+  // band and a bare card).
   if (!cycle || !d.reports) {
     return (
-      <div className="space-y-4 max-w-5xl mx-auto">
-        <PageHead title="Manager Dashboard" hue="lagoon"
-          sub="Everything your reports owe, and everything they are waiting on you for." />
-        <div className="card p-8 text-center text-sm text-navy-400">
-          {!cycle
-            ? 'No cycle is open. HR opens a cycle before your team can set KRAs.'
-            : 'No direct reports found, so there is nothing to track here yet. Employees are linked to their manager in the employee master.'}
+      <div className="space-y-3">
+        <div className="greet">
+          <Summit className="greet-art" />
+          <div className="relative z-[1] min-w-0">
+            <p className="flex items-center gap-2 text-[14px] font-medium text-navy-800">
+              <Briefcase size={18} className="text-brand-600" /> Manager Dashboard · {greeting()}
+            </p>
+            <h1 className="text-[24px] font-extrabold leading-tight" style={{ color: '#13235a' }}>{first} <span aria-hidden="true">👋</span></h1>
+            <p className="text-[13px] text-navy-600">
+              {cycle ? <>{cycle.name} · <b>{PHASE_LABEL[phase] || phase}</b></> : 'No cycle is open'}
+            </p>
+            <p className="mt-1.5 text-[12.5px] flex flex-wrap items-center gap-2">
+              <span className="pill pill-blue">{!cycle ? 'No cycle' : 'No direct reports'}</span>
+              <span className="text-navy-700">{!cycle ? 'Nothing to track until HR opens a cycle.' : 'Nobody reports to you yet.'}</span>
+            </p>
+          </div>
+          <p className="greet-quote">“Great managers<br />create great journeys”</p>
+          <span className="greet-date"><CalendarDays size={14} />{today}</span>
         </div>
+
+        <div className="panel">
+          <div className="panel-h">
+            <Users size={17} className="text-brand-600" />
+            <span className="panel-t">{!cycle ? 'No cycle is open' : 'No direct reports found'}</span>
+          </div>
+          <p className="text-[13px] text-navy-600">
+            {!cycle
+              ? 'HR opens a cycle before your team can set KRAs. This dashboard fills in as soon as it does.'
+              : 'This dashboard tracks the people who report to you. Employees are linked to their manager in the employee master (HR → Employees, the Manager column); once someone reports to you, their KRAs, reviews and connects appear here.'}
+          </p>
+        </div>
+
+        <QuickActions user={user} items={QA_MANAGER} />
       </div>
     );
   }
@@ -115,8 +146,6 @@ export default function TeamDashboardPage({ user }) {
     { key: 'pc', icon: MessageCircle, hue: 'leaf', n: stats.connects, label: 'Connects logged', to: '/team/connects' },
   ];
   const cards = [...desk, ...progress.slice(0, Math.max(0, 4 - desk.length))];
-  const first = String(user && user.name ? user.name : '').split(/\s+/)[0] || 'there';
-
   return (
     <div className="space-y-3">
       <div className="greet">
@@ -144,7 +173,7 @@ export default function TeamDashboardPage({ user }) {
         </div>
         <p className="greet-quote">“Great managers<br />create great journeys”</p>
         <span className="greet-date"><CalendarDays size={14} />
-          {new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</span>
+          {today}</span>
       </div>
 
       <div className="kpirow">
