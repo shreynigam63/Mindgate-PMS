@@ -11,9 +11,9 @@ book can be checked against the code rather than believed.
 **Read Part 1 first.** Four mechanisms govern every screen in the product.
 Once those are clear, most of Part 2 is predictable.
 
-**Live at pms.agentichumans.in: build `e0a2d07`** (8 October 2026). This
-edition also describes Long-Term starting after the saved short-term goal
-(§3.2), on the dev branch, which reaches the live site with the next deploy. The build a screen is running is
+**Live at pms.agentichumans.in: build `4c9a76a`** (8 October 2026). This
+edition describes exactly what is deployed — nothing here is waiting on a
+later release. The build a screen is running is
 shown in its **?** menu, and `/api/v1/health` reports the same commit.
 
 ---
@@ -870,6 +870,5 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ---
 
-*Checked against the code on 8 October 2026 (live: `e0a2d07`; plus
-Long-Term starting after the short-term goal, on the dev branch). Where this book and the code disagree,
+*Checked against the code on 8 October 2026 (live: `4c9a76a`). Where this book and the code disagree,
 the code is right and this book is a bug.*
