@@ -230,7 +230,7 @@ deploy shows a *Reload now* bar (`BuildWatch`).
 | My Rating | `/my/rating` | **Gated**: opens only once something is published for you. Not a permission — an emptiness |
 | Past Cycles | `/my/history` | Published history plus imported prior-year ratings |
 | My Competencies | `/my/competencies` | §3.8 |
-| Timesheet | `/my/timesheet` | Read-only to the employee. Your manager decides which KRA each item serves |
+| Timesheet | `/my/timesheet` | Upload your own timesheet (a Zoho Sprints export, or the **Download template** filled in by hand, §3.7) and see your own report. Your manager decides which KRA each item serves |
 | Improvement Plan | `/pip` | Public page, row-scoped in the handler: your own plan, or your reports' |
 | My Surveys | `/engagement` | §3.11 |
 | People Hub | `/people` | Company noticeboard |
@@ -624,6 +624,22 @@ breadth over value: on the real client month, every hour in one KRA scored
 14%, while an hour in each of seven would have scored 100%.
 
 The monthly rollup feeds Calibration as a **suggestion only**.
+
+**The upload template (8 Oct).** *Self → Timesheet → Download template*
+gives an `.xlsx` laid out exactly like the Zoho Sprints export people
+already upload: sheet *Main*, the five metadata rows, the Timesheet / Item
+/ Meeting bands, and the same 52 headings in the same order — repeated
+names included, because the parser takes the first *Created On* (the
+Timesheet band's). So a filled template and a real export go through the
+same parser with nothing special-cased (`timesheet-template.js`; the
+round trip is in `timesheet-template.test.js`). The columns the PMS reads
+are shaded — required (Log owner, Log Date, Log Hours for calculation),
+recommended (Owner Mail Id, Item Id, Item Name, Description) and optional
+— with a note on each heading. Log Date is a real date cell; Log Hours
+(hh:mm) and the Created On columns are text, so Excel cannot turn "08:00"
+into a time of day. Main carries no example row, so nothing sample can be
+loaded by mistake; the example and the downloader's own name and email are
+on a second sheet, *How to fill this in*, which the upload never reads.
 
 **How an hour reaches a KRA**, in order (`timesheet-kra-match.js`):
 
