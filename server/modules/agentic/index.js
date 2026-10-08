@@ -1729,6 +1729,10 @@ async function requireHrAdmin(req, res) {
   return false;
 }
 
+// Awaited by every caller, so the record exists by the time the response
+// does. It used to be fire-and-forget, and the suite's "it is audited"
+// check read the log before the insert landed on a busy run (8 Oct). It
+// still never throws: a failed audit is logged, not turned into a 500.
 const auditAgentic = (req, action, details) =>
   db.query(`INSERT INTO pms.audit_log (tenant_id, actor_email, action, cycle_id, employee_id, details)
             VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -1854,7 +1858,7 @@ Respond ONLY with JSON:
        RETURNING *`,
       [T(req), c.id, m.employee_id, m.id, out.id, JSON.stringify(entries), JSON.stringify(overall), req.user.email])).rows[0];
 
-    auditAgentic(req, 'PARAMETER_ANALYSIS_RUN', { cycle_id: c.id, employee_id: m.employee_id, meeting_id: m.id });
+    await auditAgentic(req, 'PARAMETER_ANALYSIS_RUN', { cycle_id: c.id, employee_id: m.employee_id, meeting_id: m.id });
     res.json({ ok: true, ...(await shapeAnalysis(T(req), saved)) });
   } catch (e) { fail(res, e); }
 });
@@ -1917,7 +1921,7 @@ router.get('/parameter-analysis', async (req, res) => {
     // Audited on READ. See the block comment above: a confidential
     // assessment anyone can open without trace cannot be answered for
     // later.
-    auditAgentic(req, 'PARAMETER_ANALYSIS_VIEWED', { cycle_id: row.cycle_id, employee_id: row.employee_id });
+    await auditAgentic(req, 'PARAMETER_ANALYSIS_VIEWED', { cycle_id: row.cycle_id, employee_id: row.employee_id });
     res.json({ ok: true, ...(await shapeAnalysis(T(req), row)) });
   } catch (e) { fail(res, e); }
 });
@@ -1948,7 +1952,7 @@ router.delete('/parameter-analysis/:id', async (req, res) => {
       `DELETE FROM pms.parameter_ai_analyses WHERE id=$1 AND tenant_id=$2 RETURNING cycle_id, employee_id`,
       [req.params.id, T(req)]);
     if (!r.rows[0]) return res.status(404).json({ error: 'analysis not found' });
-    auditAgentic(req, 'PARAMETER_ANALYSIS_DELETED', { cycle_id: r.rows[0].cycle_id, employee_id: r.rows[0].employee_id });
+    await auditAgentic(req, 'PARAMETER_ANALYSIS_DELETED', { cycle_id: r.rows[0].cycle_id, employee_id: r.rows[0].employee_id });
     res.json({ ok: true });
   } catch (e) { fail(res, e); }
 });
