@@ -123,16 +123,15 @@ environment, so protection rules apply with no further change.
 
 ## 4. The branch the box is on
 
-The instance checkout currently sits on `claude/push-code-github-2rhnnq`.
-The workflow passes `main` by default, so **the first run moves the box
-onto `main`** and every deploy after it is "what is on main is what is on
-the box".
+A push to `main` deploys `main`. A manual run deploys the branch typed into
+its `ref` input — blank means `main` — and only a branch: a tag or a commit
+is refused by the `resolve` job, and again by `update.sh`, because it would
+leave the box on a detached HEAD that later runs cannot move.
 
-Today both refs are the same commit, so that first run changes the branch
-and not one line of code — which is the cheapest moment to do it. If you
-would rather leave the box on its branch, run the workflow manually with
-the `ref` input blank; `update.sh` then just pulls whatever branch it is
-already on.
+Deploying another branch switches the box to it, and switches only once the
+screens for that branch's commit are in hand. Deploying `main` again
+switches it back. (The production environment admits runs started from
+`main` only; the branch being *deployed* is the input.)
 
 ## Where the screens are built (since 8 Oct)
 
@@ -145,29 +144,46 @@ the likeliest cause. So the build moved:
 
 | Job | What it does |
 |---|---|
-| `test` | the server suite, as before — the gate |
-| `web` | `npm ci` + `npm run build` on GitHub's runner, checks the bundle carries its commit, and publishes it to this repository as the tag `web-build/<full commit sha>` (an orphan commit whose files ARE `frontend/dist`) |
-| `deploy` | after both: one SSM command. The instance fetches that tag, unpacks it, and copies it into place. It never builds |
+| `resolve` | turns the push, or the branch typed into a manual run, into **one commit**. Every later job uses it, and "Re-run failed jobs" reuses it — nothing looks the branch up a second time, so a push landing mid-run cannot slip an untested commit through |
+| `test` | the server suite on that commit — the gate |
+| `web-build` | `npm ci` + `npm run build` on GitHub's runner, with a **read-only** token and no credentials left in the checkout; checks the bundle is complete and carries its commit |
+| `web-publish` | publishes that build as the tag `web-build/<full commit sha>` (an orphan commit whose files ARE `frontend/dist`). The only job that can write, and it runs no npm — third-party build code never sees a write token. Then removes old bundles; a failure there is a warning, never a reason to hold the deploy |
+| `deploy` | after all of them: one SSM command. The instance downloads that tag, checks it, and copies it into place. It never builds |
 
-What this changes on the box, in order (`deploy/service/update.sh`):
+What this changes on the box (`deploy/service/update.sh`). **Everything is
+decided before anything moves**:
 
-1. Backup, fetch — as before.
-2. **Download the screens for the exact commit being deployed — before
-   anything moves.** No bundle, or a bundle stamped with another commit,
-   stops the deploy right there, with the checkout, the packages, the site
-   and the running API all exactly as they were.
-3. Move the checkout (forward only, along the branch).
-4. Server packages: `npm ci` only when `server/package.json` or its lock
-   changed. Most deploys change neither, so most deploys run no npm at all.
-5. Copy the screens into place, reconcile settings, restart, health check —
-   as before.
+1. Backup, fetch.
+2. Which branch — a branch on origin only, never a tag or a bare commit —
+   and which commit. It must be on that branch, and forward of what the
+   box runs. A box whose own branch has commits origin does not is refused
+   here, not halfway.
+3. **The screens for that exact commit**: downloaded and checked — every
+   file `index.html` names is present and not empty, and the bundle
+   carries the commit it was built from.
+
+Any "no" up to here leaves the checkout, the packages, the site and the
+running API exactly as they were. Only then:
+
+4. Move the checkout (switching branch if asked).
+5. Server packages: `npm ci` only when the installed set is not the one
+   `server/package.json` and its lock describe. That is judged by a stamp
+   written after a *successful* install — so an install that failed is
+   retried by the next run, and most deploys run no npm at all. (The first
+   deploy after this change installs once, to write the stamp.)
+6. Copy the screens into place (readable by nginx, whatever the download
+   directory's mode), reconcile settings, restart, health check — and the
+   page nginx actually serves must name the build just installed.
 
 Three details that matter:
 
 - **The commit is pinned.** The workflow sends the commit it tested and
   built, and `update.sh` deploys that one — not whatever `main` is by the
   time the command arrives. A commit the box is already past is not
-  deployed backwards.
+  deployed backwards: re-running an old run says "Already past", touches
+  nothing — no screens, no settings, no restart — and finishes green.
+  Re-running the *current* commit is a repair: screens re-copied,
+  packages checked, API restarted, reported as "NOTHING NEW".
 - **The deploy scripts run from the commit being deployed.** The SSM
   command copies `deploy/service` out of that commit and runs the copy, so
   a change to `update.sh` takes effect in the deploy that ships it. (That
@@ -177,13 +193,16 @@ Three details that matter:
   fetches from it; the tags need only the workflow's own token. The deploy
   role is unchanged.
 
-The tags show up in the repository's tag list. The `web` job keeps the
+The tags show up in the repository's tag list. The `web-publish` job keeps the
 bundles for the last 30 commits on `main` (plus the one it just built) and
 deletes the rest. A bundle is about 2 MB.
 
 **Building on the box is still possible, deliberately** — for when GitHub
-is unavailable: `sudo BUILD_ON_BOX=1 /opt/agentic-pms/deploy/service/update.sh`.
-It is the old behaviour, with the old risk on a small instance.
+is unavailable: `sudo BUILD_ON_BOX=1 /opt/agentic-pms/deploy/service/update.sh`
+(`sudo` first: `BUILD_ON_BOX=1 sudo …` loses the setting). It builds in a
+separate worktree of the target commit before anything moves, so a failed
+or killed build leaves the box as it was — but it is still the heavy step
+on a small instance.
 
 Tested in `server/test/deploy-web-bundle.test.js`: publish and fetch
 against real temporary git repositories, the refusal of a missing or

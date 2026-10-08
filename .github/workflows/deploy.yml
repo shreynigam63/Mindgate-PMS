@@ -10,16 +10,21 @@
 # anywhere. There is no access key to leak, rotate, or lose with a
 # container.
 #
-# WHAT IT ACTUALLY DOES. Three jobs run, then one deploys:
-#   test   the server suite against a real Postgres — the gate
-#   web    builds the screens HERE, on GitHub's machine, and publishes the
-#          finished bundle to this repository as refs/tags/web-build/<sha>
-#          (since 8 Oct: building on the small instance is the likeliest
-#          reason a deploy took the PoC down for ~7 hours)
-#   deploy one SSM command: the instance fetches the commit, downloads that
-#          bundle instead of building it, and restarts. update.sh and its
-#          helpers run from the commit being deployed, and it deploys that
-#          exact commit — the one the tests passed on.
+# WHAT IT ACTUALLY DOES. One commit, pinned once, carried through every job:
+#   resolve      turns the push (or the branch a person typed) into ONE
+#                commit sha. Every later job uses that sha, and a re-run of
+#                failed jobs reuses it — no job looks the branch up again.
+#   test         the server suite on that commit, against a real Postgres —
+#                the gate
+#   web-build    builds the screens HERE, on GitHub's machine (since 8 Oct:
+#                building on the small instance is the likeliest reason a
+#                deploy took the PoC down for ~7 hours). Read-only token.
+#   web-publish  publishes that build to this repository as the tag
+#                web-build/<sha>. The only job that can write, and it runs
+#                no npm — third-party build code never sees a write token.
+#   deploy       after all of them: one SSM command. The instance downloads
+#                the bundle instead of building it and restarts. update.sh
+#                and its helpers run from the commit being deployed.
 #
 # SETUP IS NOT OPTIONAL AND IS NOT DONE HERE: see
 # docs/DEPLOY-GITHUB-ACTIONS.md for the IAM role, its trust policy and the
@@ -34,7 +39,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Git ref to deploy (blank = whatever branch the box is on)'
+        description: 'Branch to deploy (blank = main). A branch only — not a tag or a commit'
         required: false
         default: 'main'
 
@@ -58,6 +63,45 @@ permissions:
 #     configure-aws-credentials v6 are their first Node 24 releases (each
 #     needs runner >= 2.327.1, which GitHub-hosted runners have).
 jobs:
+  # -------------------------------------------------------------- resolve
+  # The one place the branch is turned into a commit. Before this, the test
+  # job and the build each looked up the branch on their own, so a push
+  # landing between them — or a "Re-run failed jobs" after one — could
+  # build and deploy a commit the tests never ran on.
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.r.outputs.sha }}
+      branch: ${{ steps.r.outputs.branch }}
+    steps:
+      - id: r
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_REF: ${{ github.event.inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = push ]; then
+            BRANCH="$GITHUB_REF_NAME"; SHA="$GITHUB_SHA"
+          else
+            BRANCH="${INPUT_REF:-main}"
+            # It reaches a root shell on the instance; a branch name
+            # cannot contain anything outside this set.
+            case "$BRANCH" in
+              ''|*[!A-Za-z0-9._/-]*) echo "::error::Refusing ref '${BRANCH}' — expected only [A-Za-z0-9._/-]"; exit 1 ;;
+            esac
+            # A branch, exactly: the Git refs API answers 404 for a tag, a
+            # commit or a partial name. A deploy follows a branch (see
+            # update.sh) — a tag or a sha would leave the box detached.
+            SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" --jq .object.sha) \
+              || { echo "::error::'${BRANCH}' is not a branch of this repository."; exit 1; }
+          fi
+          case "$SHA" in *[!0-9a-f]*|'') echo "::error::no commit for '${BRANCH}'"; exit 1 ;; esac
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "### Deploying \`${SHA:0:7}\` from \`${BRANCH}\`" >> "$GITHUB_STEP_SUMMARY"
+
   # ---------------------------------------------------------------- tests
   # The gate. An automatic deploy with no gate is worse than a manual one,
   # because the human who used to run the suite by hand is now out of the
@@ -68,6 +112,7 @@ jobs:
   # real gap — it is the suite that catches layout and nav regressions —
   # and it stays a pre-merge step run locally until somebody builds it.
   test:
+    needs: resolve
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
@@ -85,10 +130,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          # The same commit the web job builds and the deploy ships. On a
-          # push that is github.sha anyway; on a manual run it is the ref
-          # being deployed, not the branch the run was started from.
-          ref: ${{ github.event.inputs.ref || github.sha }}
+          # The commit resolve pinned — the one that is built and deployed.
+          ref: ${{ needs.resolve.outputs.sha }}
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
@@ -152,61 +195,95 @@ jobs:
             exit 1
           fi
 
-  # ------------------------------------------------------------------ web
-  # The screens, built on GitHub's runner and published for the instance to
-  # download — see deploy/service/web-bundle.sh. Runs alongside the tests:
-  # publishing a bundle is harmless on its own, because nothing deploys it
-  # until the tests have passed.
-  web:
+  # ------------------------------------------------------------ web-build
+  # The screens, built on GitHub's runner — see deploy/service/web-bundle.sh.
+  # Runs alongside the tests: building is harmless on its own, because
+  # nothing deploys it until the tests have passed. READ-ONLY: npm ci runs
+  # every install script in the dependency tree and vite runs its plugins,
+  # so this job gets no write token and keeps no credentials in .git.
+  web-build:
+    needs: resolve
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    # Only this job writes, and only tags under refs/tags/web-build/.
-    permissions:
-      contents: write
-    outputs:
-      sha: ${{ steps.build.outputs.sha }}
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.ref || github.sha }}
-          # Enough history to know which bundles are still worth keeping.
-          fetch-depth: 50
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build the screens
-        id: build
         working-directory: frontend
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "::error::checked out $(git rev-parse HEAD), expected ${SHA}"; exit 1; }
           # VITE_API_URL stays UNSET on purpose — see install.sh and
           # frontend/src/utils/api.jsx: the bundle calls the relative
           # /api/v1 that nginx proxies.
           unset VITE_API_URL
           npm ci --no-audit --no-fund
           npm run build
-          SHA=$(git rev-parse HEAD)
-          # vite.config.js stamps the commit into the bundle; the instance
-          # refuses a bundle that does not carry it, so check it here too.
-          grep -rqsF "\"${SHA:0:7}" dist/assets || { echo "::error::the bundle does not carry its commit ${SHA:0:7}"; exit 1; }
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "### Screens built for \`${SHA:0:7}\`" >> "$GITHUB_STEP_SUMMARY"
+          # The same completeness and commit-stamp check the instance makes.
+          . ../deploy/service/web-bundle.sh
+          check_web_bundle dist "$SHA"
+          echo "### Screens built for \`${SHA:0:7}\` ($(du -sh dist | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: web-dist
+          path: frontend/dist
+          if-no-files-found: error
+          retention-days: 3
+
+  # ---------------------------------------------------------- web-publish
+  # The only job that writes, and it runs nothing from npm: git, and the
+  # repository's own deploy/service/web-bundle.sh at the pinned commit.
+  # contents: write cannot be narrowed to a ref prefix; keeping the token
+  # away from the build is what limits it.
+  web-publish:
+    needs: [resolve, web-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          # Enough of main to know which bundles are still worth keeping.
+          fetch-depth: 50
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-dist
+          path: ${{ runner.temp }}/web-dist
       - name: Publish the bundle
         env:
-          SHA: ${{ steps.build.outputs.sha }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          DIST: ${{ runner.temp }}/web-dist
         run: |
           set -euo pipefail
           . deploy/service/web-bundle.sh
-          publish_web_bundle . frontend/dist "$SHA"
+          check_web_bundle "$DIST" "$SHA"
+          publish_web_bundle . "$DIST" "$SHA"
+      - name: Remove old bundles
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -uo pipefail
+          . deploy/service/web-bundle.sh
           # main's recent history decides which bundles are kept — always
           # main, also on a manual run of another branch, so that run can
           # never delete the bundles main's re-runs need. The one just
           # published is kept by name. If main cannot be read, the prune
-          # keeps everything rather than guess.
+          # keeps everything rather than guess. Housekeeping only: a failure
+          # here is a warning, never a reason to hold back the deploy.
           git fetch -q --depth=50 origin '+refs/heads/main:refs/remotes/origin/main' || true
-          prune_remote_web_bundles . 30 main "$SHA"
+          prune_remote_web_bundles . 30 main "$SHA" \
+            || echo "::warning::Could not remove old web bundles; they will be tried again next run."
 
   # ------------------------------------------------------------ preflight
   # `secrets` is not available in a job-level `if`, so the check happens in
@@ -237,7 +314,7 @@ jobs:
 
   # --------------------------------------------------------------- deploy
   deploy:
-    needs: [preflight, web]
+    needs: [resolve, preflight, web-publish]
     if: needs.preflight.outputs.configured == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -256,8 +333,8 @@ jobs:
         id: ssm
         env:
           INSTANCE: ${{ secrets.EC2_INSTANCE_ID }}
-          REF: ${{ github.event.inputs.ref || 'main' }}
-          SHA: ${{ needs.web.outputs.sha }}
+          REF: ${{ needs.resolve.outputs.branch }}
+          SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           set -euo pipefail
           # REF reaches a root shell on the instance. It comes from a
@@ -269,9 +346,9 @@ jobs:
             ''|*[!A-Za-z0-9._/-]*)
               echo "::error::Refusing ref '${REF}' — expected only [A-Za-z0-9._/-]"; exit 1 ;;
           esac
-          # The commit the web job built — and the one the tests ran on.
+          # The commit resolve pinned: the one tested, built and published.
           case "$SHA" in
-            *[!0-9a-f]*|'') echo "::error::no commit from the web job ('${SHA}')"; exit 1 ;;
+            *[!0-9a-f]*|'') echo "::error::no commit from the resolve job ('${SHA}')"; exit 1 ;;
           esac
           [ "${#SHA}" -eq 40 ] || { echo "::error::expected a full commit sha, got '${SHA}'"; exit 1; }
           echo "Deploying ${SHA:0:7} on '${REF}'"
@@ -281,7 +358,7 @@ jobs:
           # PREVIOUS version until this run moves the checkout. Built with
           # jq so the JSON quoting is jq's problem, not a hand-escaped one;
           # SHA and REF are already validated to [0-9a-f] and [A-Za-z0-9._/-].
-          REMOTE='set -euo pipefail; D=$(mktemp -d); trap "rm -rf \"$D\"" EXIT; git -C /opt/agentic-pms fetch -q origin; git -C /opt/agentic-pms archive "$1" deploy/service | tar -x -C "$D"; "$D/deploy/service/update.sh" "$2" "$1"'
+          REMOTE='set -euo pipefail; D=$(mktemp -d); trap "rm -rf \"$D\"" EXIT; git -C /opt/agentic-pms fetch -q --no-tags origin; git -C /opt/agentic-pms archive "$1" deploy/service | tar -x -C "$D"; "$D/deploy/service/update.sh" "$2" "$1"'
           PARAMS=$(jq -nc --arg remote "$REMOTE" --arg sha "$SHA" --arg ref "$REF" \
             '{commands: [("sudo bash -c " + ($remote | @sh) + " deploy " + $sha + " " + $ref)]}')
           CMD=$(aws ssm send-command \
@@ -329,6 +406,10 @@ jobs:
           # the automation reintroduces the bug the script was written to
           # prevent.
           case "$OUT" in
+            *"==> Already past "*)
+              # A re-run of an older deploy: update.sh refuses to roll back
+              # and touches nothing. Correct, and not a failure.
+              echo "::notice::The box is already past ${SHA:0:7} — nothing deployed, nothing restarted." ;;
             *"NOTHING NEW was deployed"*)
               # No change is only a failure when the box is NOT already on
               # this commit. On 6 Oct the first working run found the box
@@ -341,7 +422,14 @@ jobs:
                 echo "::error::update.sh reported no change — the box is on ${AT:-an unknown commit}, not ${SHA:0:7}."
                 exit 1
               fi ;;
-            *"Healthy."*) echo "Deploy moved the checkout and the API came back healthy." ;;
+            *"Healthy. Deployed "*)
+              # And it moved to THIS commit, not merely somewhere.
+              TO=$(printf '%s' "$OUT" | sed -n 's/.*Healthy\. Deployed [0-9a-f?]* -> \([0-9a-f]\{7,\}\).*/\1/p' | tail -1)
+              if [ -n "$TO" ] && [ "${SHA#"$TO"}" != "$SHA" ]; then
+                echo "Deploy moved the checkout to ${TO} and the API came back healthy."
+              else
+                echo "::error::update.sh deployed ${TO:-an unknown commit}, not ${SHA:0:7}."; exit 1
+              fi ;;
             *) echo "::error::update.sh did not report a healthy finish."; exit 1 ;;
           esac
 

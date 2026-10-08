@@ -133,7 +133,7 @@ test('update.sh actually uses it, and reports on the success line', () => {
   // update.sh from a copy taken out of the commit being deployed.
   assert.match(src, /\.\s+"\$\{HERE\}\/git-report\.sh"/, 'it sources the helper');
   assert.match(src, /BEFORE_SHA=/, 'it captures the before sha BEFORE fetching');
-  assert.ok(src.indexOf('BEFORE_SHA=') < src.indexOf('git -C "$APP_DIR" fetch'),
+  assert.ok(src.indexOf('BEFORE_SHA=') < src.indexOf('g fetch'),
     'capturing the before sha after the fetch would record the wrong thing');
   assert.match(src, /report_git_change "\$APP_DIR"/, 'it calls the reporter after the pull');
   // And the summary reaches the END of the output, because "==> Healthy."

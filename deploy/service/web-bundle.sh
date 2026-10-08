@@ -16,9 +16,15 @@
 # The repository is public and the box already fetches from it, so this
 # needs no new key, no bucket and no AWS permission. Git's own hashing is
 # the integrity check, and the bundle carries the commit it was built from
-# (vite.config.js stamps it), which fetch_web_bundle checks as well. The
+# (vite.config.js stamps it), which check_web_bundle checks as well. The
 # workflow keeps the bundles for the last 30 commits on main and deletes
 # the rest, so the tag list does not grow without bound.
+#
+# The box never lets these tags into its own tag list: every fetch it
+# makes is --no-tags. Git auto-follows a tag that points at an object the
+# repository already has, so after one deploy a plain fetch would turn
+# that bundle into a local tag, and every bundle ever deployed would stay
+# on the box's disk for good.
 #
 # Sourced by update.sh (fetch) and by the deploy workflow (publish, prune).
 # Kept separate so both halves can be tested against real temporary git
@@ -46,7 +52,8 @@ publish_web_bundle() {
   [ -n "$tree" ] || { echo "!! could not write the bundle tree" >&2; return 1; }
   commit=$(git -C "$repo" -c user.name='PMS build' -c user.email='build@invalid' \
     commit-tree --no-gpg-sign "$tree" -m "Web bundle for ${sha}")
-  git -C "$repo" push -q origin "+${commit}:${WEB_BUILD_PREFIX}/${sha}"
+  git -C "$repo" push -q origin "+${commit}:${WEB_BUILD_PREFIX}/${sha}" \
+    || { echo "!! could not push ${WEB_BUILD_PREFIX}/${sha}" >&2; return 1; }
   echo "==> Published the web bundle for ${sha:0:7} as ${WEB_BUILD_PREFIX}/${sha}"
 }
 
@@ -68,42 +75,67 @@ prune_remote_web_bundles() {
   if [ -z "$stale" ]; then echo "==> No old web bundles to remove."; return 0; fi
   # One push, many deletions.
   # shellcheck disable=SC2046
-  git -C "$repo" push -q origin $(printf ":${WEB_BUILD_PREFIX}/%s " $stale)
+  git -C "$repo" push -q origin $(printf ":${WEB_BUILD_PREFIX}/%s " $stale) \
+    || { echo "!! could not remove the old web bundles" >&2; return 1; }
   echo "==> Removed $(printf '%s\n' "$stale" | wc -l | tr -d ' ') old web bundle(s)."
+}
+
+# check_web_bundle <dir> <sha> — is <dir> a complete build of <sha>?
+# Every check returns 1 with the reason; nothing here is left to errexit,
+# because callers run it inside `if`, where bash switches errexit off for
+# the whole function body.
+#   * index.html is there and not empty;
+#   * every /assets/ file index.html names is there and not empty — a
+#     truncated download or extract would otherwise go live as a blank site;
+#   * the bundle carries the commit it was built from (vite.config.js), so
+#     a tag pointing at another commit's screens is refused, not served.
+#     No closing quote: `rev-parse --short=7` gives MORE than 7 characters
+#     when 7 would be ambiguous, so the stamp is "<sha's first 7>…".
+check_web_bundle() {
+  local dir="$1" sha="$2" ref missing=""
+  if [ ! -s "${dir}/index.html" ]; then
+    echo "!! The web bundle for ${sha:0:7} has no index.html, or an empty one." >&2
+    return 1
+  fi
+  for ref in $(grep -o '/assets/[^"'"'"' >]*' "${dir}/index.html" | sort -u); do
+    [ -s "${dir}${ref}" ] || missing="${missing} ${ref#/}"
+  done
+  if [ -n "$missing" ]; then
+    echo "!! The web bundle for ${sha:0:7} is incomplete — missing or empty:${missing}" >&2
+    return 1
+  fi
+  if ! grep -rqsF "\"${sha:0:7}" "${dir}/assets"; then
+    echo "!! The web bundle tagged ${sha:0:7} was not built from ${sha:0:7}." >&2
+    return 1
+  fi
 }
 
 # fetch_web_bundle <app_dir> <sha> <out_dir> — downloads the bundle for
 # <sha> and extracts it into <out_dir>. Returns 1, with the reason, when
-# there is no bundle for that commit or it was not built from it. Changes
-# nothing outside <out_dir> and the local ref it fetches into.
+# there is no bundle for that commit or it is not a complete build of it.
+# Changes nothing outside <out_dir> and the local ref it fetches into.
 fetch_web_bundle() {
   local app="$1" sha="$2" out="$3"
   if ! git -C "$app" fetch -q --no-tags origin "+${WEB_BUILD_PREFIX}/${sha}:${LOCAL_WEB_PREFIX}/${sha}" 2>/dev/null; then
     echo "!! No prebuilt web bundle for ${sha:0:7} on GitHub (${WEB_BUILD_PREFIX}/${sha})." >&2
     return 1
   fi
-  mkdir -p "$out"
-  git -C "$app" archive "${LOCAL_WEB_PREFIX}/${sha}" | tar -x -C "$out"
-  if [ ! -f "${out}/index.html" ]; then
-    echo "!! The web bundle for ${sha:0:7} has no index.html." >&2
+  mkdir -p "$out" || return 1
+  if ! git -C "$app" archive "${LOCAL_WEB_PREFIX}/${sha}" | tar -x -C "$out"; then
+    echo "!! Could not unpack the web bundle for ${sha:0:7} (disk full?)." >&2
     return 1
   fi
-  # The bundle names the commit it was built from (vite.config.js). A tag
-  # pointing at another commit's screens is refused rather than served.
-  # No closing quote: `rev-parse --short=7` gives MORE than 7 characters
-  # when 7 would be ambiguous, so the stamp is "<sha's first 7>…".
-  if ! grep -rqsF "\"${sha:0:7}" "${out}/assets"; then
-    echo "!! The web bundle tagged ${sha:0:7} was not built from ${sha:0:7}." >&2
-    return 1
-  fi
+  check_web_bundle "$out" "$sha" || return 1
   echo "==> Downloaded the web bundle for ${sha:0:7} (built in GitHub Actions)."
 }
 
 # prune_local_web_bundles <app_dir> <keep_sha> — drops the local copies of
-# every bundle but the one just deployed. They are only needed once.
+# every bundle but the one just deployed. They are only needed once. Also
+# drops any web-build TAG on the box — one auto-followed by a fetch from
+# before the fetches here were --no-tags.
 prune_local_web_bundles() {
   local app="$1" keep="$2" ref
-  git -C "$app" for-each-ref --format='%(refname)' "${LOCAL_WEB_PREFIX}/" | while read -r ref; do
+  git -C "$app" for-each-ref --format='%(refname)' "${LOCAL_WEB_PREFIX}/" "${WEB_BUILD_PREFIX}/" | while read -r ref; do
     [ "$ref" = "${LOCAL_WEB_PREFIX}/${keep}" ] || git -C "$app" update-ref -d "$ref"
   done
 }

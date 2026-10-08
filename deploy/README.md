@@ -155,10 +155,11 @@ sudo /opt/agentic-pms/deploy/service/restore.sh /var/backups/agentic-pms/apms-..
 
 `update.sh` takes a backup *before* it pulls, because a new version may
 bring migrations and a migration is the one change on this box that a
-restart cannot undo. It then downloads the screens GitHub built for that
-commit **before** it moves anything; with no bundle it stops and the box
-stays exactly as it was. It reinstalls the server's packages only when
-`server/package.json` or its lock changed.
+restart cannot undo. It then decides everything — branch, commit, and
+the screens GitHub built for that commit — **before** it moves anything;
+any "no" leaves the box exactly as it was. It reinstalls the server's
+packages only when the installed set is not the one the lock file
+describes (a failed install is retried by the next run).
 
 ---
 
@@ -359,7 +360,7 @@ thing that says no. If you replaced the config, put it back.
 Deploys no longer build here unless run with `BUILD_ON_BOX=1`.
 
 **"No prebuilt web bundle for <sha>"** — GitHub has not built the screens
-for that commit (the deploy workflow did not run for it, or its `web` job
+for that commit (the deploy workflow did not run for it, or its `web-build` or `web-publish` job
 failed). Let the workflow run, or deploy with `BUILD_ON_BOX=1`. Nothing
 on the box was changed.
 
