@@ -165,6 +165,14 @@ whole module rather than edits in 104 handlers:
 - **`HR_ONLY`** — `/hrbp/admin`. Reading is not automatically safe: lending
   `pms_admin` would otherwise open the screen that *sets* remits, letting
   an HRBP widen their own.
+- **Roles and passwords are never lent (8 Oct).** Changing someone's role,
+  setting their password, bulk logins and the employee import check the
+  permission the person *holds* (`holdsPermission`), not one the gateway
+  lent. Until then an HRBP could make anyone in their remit — themselves
+  included — HR or Super Admin, or set an HR person's password and sign in
+  as them. The client's rule: *"Only HR and Super Admins should have this
+  access."* An HRBP still edits profiles in their remit; the Employees page
+  shows them "Logins and roles are managed by HR" instead of the controls.
 
 The remit itself lives in `core.hrbp_scope` (`kind` = location or HOD,
 `value`). Routes are separate from `/admin/*` on purpose: one page row
@@ -769,6 +777,17 @@ Experience windows are **half-open `[min, max)`**. The client spotted the
 overlap themselves: Rising Star is 1–3 years, Buddy Star 3+, so exactly 3.0
 would qualify for both and the winner would be whoever nominated first.
 Half-open makes 3.0 Buddy Star, always.
+
+**Who can read nominations (8 Oct).** Each approval stage reads its own
+queue (HOD, HRBP in remit, HR), a nominator reads the nominations they
+raised, and one nomination opens for its nominator, its current stage and
+HR. The company-wide list — every nominee with department and nominator —
+is open to nobody: *"it should not be visible currently, in future if we
+want we will allow this display access."* Until then any signed-in person
+could read it by typing the RnR Dashboard's address. The RnR Dashboard and
+My Nominations pages are switched off (`SHOW_RNR_DASHBOARD`); opening them
+later means granting `rnr_view_all`, restoring their two page rows
+(migration 086 says how) and turning the switch on.
 
 **Quota** — 3% per cycle, one consolidated pool HR allocates across levels,
 consumed only at the final HR gate. Loyalty awards sit **outside** it: a
