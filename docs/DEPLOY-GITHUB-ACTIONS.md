@@ -134,6 +134,64 @@ would rather leave the box on its branch, run the workflow manually with
 the `ref` input blank; `update.sh` then just pulls whatever branch it is
 already on.
 
+## Where the screens are built (since 8 Oct)
+
+**On GitHub, not on the instance.** The deploy of `15ba4fe` took the PoC
+down for about seven hours: the instance stopped answering part-way
+through the deploy, never picked up the command, and needed a stop/start.
+The heaviest thing `update.sh` used to do was build the frontend (`npm ci`
+plus a Vite build) on the same small box that serves the site, and that is
+the likeliest cause. So the build moved:
+
+| Job | What it does |
+|---|---|
+| `test` | the server suite, as before — the gate |
+| `web` | `npm ci` + `npm run build` on GitHub's runner, checks the bundle carries its commit, and publishes it to this repository as the tag `web-build/<full commit sha>` (an orphan commit whose files ARE `frontend/dist`) |
+| `deploy` | after both: one SSM command. The instance fetches that tag, unpacks it, and copies it into place. It never builds |
+
+What this changes on the box, in order (`deploy/service/update.sh`):
+
+1. Backup, fetch — as before.
+2. **Download the screens for the exact commit being deployed — before
+   anything moves.** No bundle, or a bundle stamped with another commit,
+   stops the deploy right there, with the checkout, the packages, the site
+   and the running API all exactly as they were.
+3. Move the checkout (forward only, along the branch).
+4. Server packages: `npm ci` only when `server/package.json` or its lock
+   changed. Most deploys change neither, so most deploys run no npm at all.
+5. Copy the screens into place, reconcile settings, restart, health check —
+   as before.
+
+Three details that matter:
+
+- **The commit is pinned.** The workflow sends the commit it tested and
+  built, and `update.sh` deploys that one — not whatever `main` is by the
+  time the command arrives. A commit the box is already past is not
+  deployed backwards.
+- **The deploy scripts run from the commit being deployed.** The SSM
+  command copies `deploy/service` out of that commit and runs the copy, so
+  a change to `update.sh` takes effect in the deploy that ships it. (That
+  is also how the very first deploy of this change already uses the new
+  `update.sh`.)
+- **Nothing new in AWS.** The repository is public and the box already
+  fetches from it; the tags need only the workflow's own token. The deploy
+  role is unchanged.
+
+The tags show up in the repository's tag list. The `web` job keeps the
+bundles for the last 30 commits on `main` (plus the one it just built) and
+deletes the rest. A bundle is about 2 MB.
+
+**Building on the box is still possible, deliberately** — for when GitHub
+is unavailable: `sudo BUILD_ON_BOX=1 /opt/agentic-pms/deploy/service/update.sh`.
+It is the old behaviour, with the old risk on a small instance.
+
+Tested in `server/test/deploy-web-bundle.test.js`: publish and fetch
+against real temporary git repositories, the refusal of a missing or
+mismatched bundle, pruning, and the real `update.sh` run end to end with
+stand-ins for systemd, npm and nginx — including that with no bundle the
+box does not change at all, and that the exact command the workflow sends
+runs the right script with the right arguments.
+
 ## What building this gate found
 
 The point of a gate is that it runs the suite somewhere clean, and the
@@ -183,6 +241,8 @@ Session Manager, on the instance:
 
 ```bash
 sudo /opt/agentic-pms/deploy/service/update.sh
+# or, if GitHub has not built the screens for that commit:
+#   sudo BUILD_ON_BOX=1 /opt/agentic-pms/deploy/service/update.sh
 sudo -u postgres psql -d apms -tc "SELECT count(*) FROM core.page_permission;"
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/api/v1/health
 ```

@@ -129,7 +129,9 @@ test('update.sh actually uses it, and reports on the success line', () => {
   // it. Read the script rather than trusting that it was wired up.
   const src = require('fs').readFileSync(
     path.resolve(__dirname, '../../deploy/service/update.sh'), 'utf8');
-  assert.match(src, /\.\s+"\$\{APP_DIR\}\/deploy\/service\/git-report\.sh"/, 'it sources the helper');
+  // From its own directory (HERE), not APP_DIR: the GitHub deploy runs
+  // update.sh from a copy taken out of the commit being deployed.
+  assert.match(src, /\.\s+"\$\{HERE\}\/git-report\.sh"/, 'it sources the helper');
   assert.match(src, /BEFORE_SHA=/, 'it captures the before sha BEFORE fetching');
   assert.ok(src.indexOf('BEFORE_SHA=') < src.indexOf('git -C "$APP_DIR" fetch'),
     'capturing the before sha after the fetch would record the wrong thing');
