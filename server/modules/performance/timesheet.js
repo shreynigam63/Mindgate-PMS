@@ -384,6 +384,9 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
       employees: [...touched.values()].map((e) => ({ id: e.id, name: e.name, email: e.email })),
       first_log_date: dates[0] || null,
       last_log_date: dates[dates.length - 1] || null,
+      // The hours that will load, so "Check the file" shows the number a
+      // misread cell would get wrong — not only how many rows there are.
+      hours: Math.round(keep.reduce((s, e) => s + (Number(e.hours) || 0), 0) * 100) / 100,
       errors,
       skipped: skipped.slice(0, 200),
       skipped_total: skipped.length,

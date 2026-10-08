@@ -32,6 +32,16 @@ const pad = (n) => String(n).padStart(2, '0');
 // the wrong day and a filled day reads as missing.
 const key = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
+// A calendar date, or null. A day that does not exist (31/Sep, 29/Feb in
+// a common year, 2026-09-31) is null, NOT rolled over into the next month:
+// JavaScript's Date would quietly turn 31/Sep into 1 Oct, and the log would
+// land on a day nobody wrote. (8 Oct, review of the upload template — a
+// sheet typed by hand is where such dates come from.)
+const ymd = (y, m, d) => {
+  const t = new Date(y, m, d);
+  return t.getFullYear() === y && t.getMonth() === m && t.getDate() === d ? t : null;
+};
+
 // The export writes "18/Sep/2026", the xlsx parser may hand back
 // "2026-09-18" for a real date cell, and a raw Excel serial turns up
 // when a column is formatted as a number. All three, one function.
@@ -40,9 +50,9 @@ function parseDate(v) {
   const s = String(v == null ? '' : v).trim();
   if (!s) return null;
   const dmy = s.match(/^(\d{1,2})[/\- ]([A-Za-z]{3})[A-Za-z]*[/\- ](\d{4})/);
-  if (dmy && MON[dmy[2].toLowerCase()] != null) return new Date(+dmy[3], MON[dmy[2].toLowerCase()], +dmy[1]);
+  if (dmy && MON[dmy[2].toLowerCase()] != null) return ymd(+dmy[3], MON[dmy[2].toLowerCase()], +dmy[1]);
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return new Date(+iso[1], +iso[2] - 1, +iso[3]);
+  if (iso) return ymd(+iso[1], +iso[2] - 1, +iso[3]);
   const num = Number(s);
   // Excel serials. 25569 is 1970-01-01; anything below 20000 (1954) in a
   // date column is a typo, not a date, and is better reported as
@@ -55,17 +65,27 @@ function parseDate(v) {
 }
 
 // "08:00" -> 8, "07:30" -> 7.5. The export carries BOTH a display column
-// and a decimal one; the decimal wins when it is a number, because
-// "Log Hours(for calculation)" is what the source itself calls
-// authoritative.
-function parseHours(display, decimal) {
-  const n = parseFloat(decimal);
-  if (Number.isFinite(n)) return n;
-  const m = String(display == null ? '' : display).trim().match(/^(\d+):(\d{1,2})/);
-  if (m) return +m[1] + (+m[2]) / 60;
-  const plain = parseFloat(display);
-  return Number.isFinite(plain) ? plain : 0;
+// and a decimal one; "Log Hours(for calculation)" (G) wins whenever it has
+// anything, because it is what the source itself calls authoritative, and
+// "Log Hours" (F) is read only when G is blank. Either may be a number of
+// hours (8, 7.5) or h:mm (7:30). Anything else is null and the row is
+// reported — never read as its leading digits: that is how a time-formatted
+// cell once loaded as 1899 hours and a typed "7:30" in G as 7. (8 Oct,
+// review of the upload template.)
+const HOURS_NUMBER = /^\d+(\.\d+)?$/;
+const HOURS_HM = /^(\d+):([0-5]?\d)(?::[0-5]\d)?$/;
+function hoursIn(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (HOURS_NUMBER.test(s)) return parseFloat(s);
+  const m = s.match(HOURS_HM);
+  return m ? +m[1] + (+m[2]) / 60 : null;
 }
+function parseHours(display, decimal) {
+  if (String(decimal == null ? '' : decimal).trim()) return hoursIn(decimal);
+  if (String(display == null ? '' : display).trim()) return hoursIn(display);
+  return null;
+}
+const MAX_HOURS_PER_LOG = 24;
 
 const norm = (h) => String(h == null ? '' : h).toLowerCase().replace(/[^a-z0-9]+/g, '');
 
@@ -130,20 +150,35 @@ function parseTimesheetSheet(rows, opts = {}) {
     const get = (f) => (at[f] >= 0 ? String(r[at[f]] == null ? '' : r[at[f]]).trim() : '');
     const ownerEmail = get('owner_email').toLowerCase();
     const ownerName = get('owner_name');
-    // A wholly blank row is spacing, not an error. A row with an owner
-    // but no date, or a date but no owner, IS an error: it is a log line
-    // the file failed to describe, and dropping it quietly would make
-    // the compliance figure wrong in the flattering direction.
-    if (!ownerEmail && !ownerName && !get('log_date') && !get('item_id')) continue;
+    // Spacing, and Zoho's own summary rows at the foot of an export (a Log
+    // Type and a total in Log Hours, nothing else), are skipped. Anything a
+    // log is made of — an owner, a date, an item, a description, hours for
+    // calculation — makes it a log line, and a log line the file failed to
+    // describe IS an error: dropping it quietly would make the compliance
+    // figure wrong in the flattering direction. Until 8 Oct a row with an
+    // item, a description and hours but no owner or date — the natural way
+    // to write a second log on the same day by hand — was skipped as blank.
+    if (!ownerEmail && !ownerName && !get('log_date') && !get('item_id')
+        && !get('item_name') && !get('description') && !get('hours_decimal')) continue;
+    if (!get('log_date')) { errors.push({ line, error: 'the row has no Log Date — every row needs one, a second log on the same day too' }); continue; }
     const d = parseDate(get('log_date'));
     if (!d) { errors.push({ line, error: `log date "${get('log_date')}" is not a date` }); continue; }
     if (!ownerEmail && !ownerName) { errors.push({ line, error: 'the row names no log owner' }); continue; }
+    const hours = parseHours(get('hours_display'), get('hours_decimal'));
+    if (hours == null) {
+      const raw = get('hours_decimal') || get('hours_display');
+      errors.push({ line, error: raw
+        ? `hours "${raw}" are not a number of hours — write 8, 7.5 or 7:30`
+        : 'the row has no Log Hours — fill Log Hours(for calculation)' });
+      continue;
+    }
+    if (hours > MAX_HOURS_PER_LOG) { errors.push({ line, error: `${Math.round(hours * 100) / 100} hours is more than a day in one log` }); continue; }
     out.push({
       line,
       owner_email: ownerEmail,
       owner_name: ownerName,
       log_date: key(d),
-      hours: Math.round(parseHours(get('hours_display'), get('hours_decimal')) * 100) / 100,
+      hours: Math.round(hours * 100) / 100,
       item_id: get('item_id'),
       item_name: get('item_name'),
       item_type: get('item_type'),

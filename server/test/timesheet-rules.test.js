@@ -97,7 +97,60 @@ test('hours come from the decimal column, then the clock one', () => {
   assert.equal(parseHours('08:00', '8.0'), 8);
   assert.equal(parseHours('07:30', ''), 7.5);
   assert.equal(parseHours('', '4.25'), 4.25);
-  assert.equal(parseHours('', ''), 0);
+  assert.equal(parseHours('', ''), null, 'no hours is not zero hours');
+});
+
+test('hours are a number or h:mm — anything else is refused, never read as its leading digits (8 Oct)', () => {
+  assert.equal(parseHours('', '7:30'), 7.5, 'h:mm typed into the decimal column means what it says');
+  assert.equal(parseHours('', '8'), 8);
+  assert.equal(parseHours('', '7:30:00'), 7.5);
+  // A time-formatted cell reached the parser as a date and loaded 1899 h.
+  assert.equal(parseHours('', '1899-12-30'), null);
+  assert.equal(parseHours('', '7h'), null);
+  assert.equal(parseHours('', '-2'), null);
+  assert.equal(parseHours('1899-12-30', ''), null);
+  // G wins whenever it has anything — a bad G is reported, not papered
+  // over by F.
+  assert.equal(parseHours('07:30', 'seven'), null);
+});
+
+test('a row with no hours, unreadable hours, or more than a day is reported — not loaded as 0 or 1899', () => {
+  const p = parseTimesheetSheet(sheet(
+    row(),
+    row({ 'Log Hours': '', 'Log Hours(for calculation)': '' }),
+    row({ 'Log Hours(for calculation)': '1899-12-30' }),
+    row({ 'Log Hours(for calculation)': '25' }),
+    row({ 'Log Hours(for calculation)': '0' }),
+  ));
+  assert.deepEqual(p.entries.map((e) => [e.line, e.hours]), [[8, 8], [12, 0]], 'an explicit 0 still loads, as an export can carry one');
+  assert.deepEqual(p.errors.map((e) => e.line), [9, 10, 11]);
+  assert.match(p.errors[0].error, /no Log Hours/);
+  assert.match(p.errors[1].error, /not a number of hours/);
+  assert.match(p.errors[2].error, /more than a day/);
+});
+
+test('a second log on the same day, written without owner or date, is reported — not skipped as blank (8 Oct)', () => {
+  const p = parseTimesheetSheet(sheet(
+    row(),
+    row({ 'Log owner': '', 'Owner Mail Id': '', 'Log Date': '', 'Item Id': '', 'Log Hours(for calculation)': '3.5' }),
+  ));
+  assert.equal(p.entries.length, 1);
+  assert.equal(p.errors.length, 1);
+  assert.match(p.errors[0].error, /no Log Date — every row needs one/);
+});
+
+test('the summary rows at the foot of a real export are still skipped', () => {
+  // What the client's export carries below its last log: a Log Type and a
+  // total in Log Hours, and nothing else.
+  const foot = (type, total) => {
+    const r = new Array(HEADER.length).fill('');
+    r[HEADER.indexOf('Log Type')] = type;
+    r[HEADER.indexOf('Log Hours')] = total;
+    return r;
+  };
+  const p = parseTimesheetSheet(sheet(row(), foot('Billable', '8:0'), foot('Non-billable', '584:0')));
+  assert.equal(p.ok, true, JSON.stringify(p.errors));
+  assert.equal(p.entries.length, 1);
 });
 
 test('dates parse in all three shapes the export produces', () => {
@@ -106,6 +159,14 @@ test('dates parse in all three shapes the export produces', () => {
   assert.equal(key(parseDate(new Date(2026, 8, 18))), '2026-09-18');
   assert.equal(key(parseDate(46283)), '2026-09-18');   // an Excel serial
   assert.equal(parseDate('rubbish'), null);
+});
+
+test('a day that does not exist is refused, not rolled into the next month (8 Oct)', () => {
+  assert.equal(parseDate('31/Sep/2026'), null, 'not 1 Oct');
+  assert.equal(parseDate('29/Feb/2026'), null);
+  assert.equal(parseDate('2026-09-31'), null);
+  assert.equal(key(parseDate('29/Feb/2028')), '2028-02-29', 'a real leap day still parses');
+  assert.equal(key(parseDate('30/Sep/2026')), '2026-09-30');
 });
 
 test('the cycle runs from the start day to the day before the next', () => {

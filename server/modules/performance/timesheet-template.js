@@ -21,10 +21,15 @@
 // same parser (timesheet-rules.js) with nothing special-cased. The test
 // round-trips a filled template through it to keep that true.
 //
-// Two cell formats are deliberate, because Excel converts what people type:
-//   * Log Hours (F) and the two "Created On" columns are TEXT. Typed into
-//     a General cell, "08:00" becomes a time-of-day fraction and is read
-//     back as a date, which the hours parser cannot use.
+// The cell formats are deliberate, because spreadsheets convert what people
+// type. They are set on the WHOLE column, so row 2,000 behaves like row 8:
+//   * Log Hours (F), Log Hours(for calculation) (G) and the two "Created
+//     On" columns are TEXT. In a number or General cell a typed "7:30"
+//     becomes a fraction of a day (0.3125, shown as 0.31) — the review on
+//     8 Oct loaded exactly that from LibreOffice. As text, "7:30" stays
+//     "7:30" and the parser reads it as 7.5 hours. The parser itself also
+//     refuses anything that is not a number of hours or h:mm, so a pasted
+//     time-formatted cell cannot load a wrong number either.
 //   * Log Date (O) is a real DATE (dd/mmm/yyyy). Whatever someone types
 //     that Excel recognises as a date arrives as one, and a typed
 //     "18/Sep/2026" that it does not recognise stays text the parser reads.
@@ -65,8 +70,8 @@ const BANDS = [
 const READ = [
   { col: 'N', what: 'Log owner', need: 'required', how: 'Your name exactly as it is in the PMS.', example: 'Your Name' },
   { col: 'O', what: 'Log Date', need: 'required', how: 'The day the work was done. 18/Sep/2026, or any date Excel recognises.', example: '18/Sep/2026' },
-  { col: 'G', what: 'Log Hours(for calculation)', need: 'required', how: 'Hours as a number: 8, or 7.5 for seven and a half hours. If this is blank, Log Hours (F) is used.', example: '8' },
-  { col: 'F', what: 'Log Hours', need: 'optional', how: 'The same hours as hh:mm. Used only when G is blank.', example: '08:00' },
+  { col: 'G', what: 'Log Hours(for calculation)', need: 'required', how: 'Hours: 8, 7.5 or 7:30 (all mean what they say — 7:30 is seven and a half hours). At most 24 in one log. If this is blank, Log Hours (F) is used.', example: '7.5' },
+  { col: 'F', what: 'Log Hours', need: 'optional', how: 'The same hours as hh:mm. Used only when G is blank.', example: '07:30' },
   { col: 'AX', what: 'Owner Mail Id', need: 'recommended', how: 'Your work email. Matches you exactly; without it the name in N has to be unique in the PMS.', example: 'your.name@company.com' },
   { col: 'A', what: 'Item Id', need: 'recommended', how: 'The work item\'s id. Lets your manager map the item to a KRA once for every day you logged it.', example: 'PRJ-101' },
   { col: 'B', what: 'Item Name', need: 'recommended', how: 'What the work item is. Read when matching hours to your KRAs.', example: 'Payment gateway integration' },
@@ -81,11 +86,21 @@ const READ = [
   { col: 'M', what: 'Created On', need: 'optional', how: 'When the log was entered (the Timesheet band\'s Created On).', example: '18/Sep/2026 16:19' },
 ];
 
+// The template's "Date" stamp is written the way the export writes it —
+// local wall-clock time, as text — in the zone the rest of the app uses.
+const TZ = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+const stamp = (d) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+};
+
 const NAVY = 'FF1B3B6F';
 const BAND = 'FFDBE3EF';
 const NEED = { required: 'FFFDE2C4', recommended: 'FFFFF4D6', optional: 'FFEEF2F8' };
 const FIRST_DATA_ROW = 8;
-const FORMATTED_ROWS = 1000;
 
 const colNum = (letters) => letters.split('').reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0);
 
@@ -105,7 +120,7 @@ function buildTimesheetTemplate(who = {}) {
     ['Team Name', ''],
     ['Project Name', ''],
     ['Exported By', who.name || ''],
-    ['Date', who.today || new Date()],
+    ['Date', stamp(who.today || new Date())],
     ['Filter', 'PMS timesheet template — one row per log, from row 8 down'],
   ];
   meta.forEach(([k, v], i) => {
@@ -114,7 +129,6 @@ function buildTimesheetTemplate(who = {}) {
     r.getCell(2).value = v;
     r.getCell(1).font = { bold: true, color: { argb: NAVY } };
   });
-  ws.getCell('B4').numFmt = 'dd/mmm/yyyy hh:mm';
 
   // Row 6: the group bands, merged like the export.
   for (const b of BANDS) {
@@ -140,23 +154,16 @@ function buildTimesheetTemplate(who = {}) {
   }
 
   EXPORT_HEADERS.forEach((h, i) => { ws.getColumn(i + 1).width = Math.max(12, Math.min(30, h.length + 4)); });
-  // The cell formats that stop Excel rewriting what people type — see the
-  // header of this file.
-  const fmt = (letter, numFmt) => {
-    for (let r = FIRST_DATA_ROW; r < FIRST_DATA_ROW + FORMATTED_ROWS; r++) ws.getCell(`${letter}${r}`).numFmt = numFmt;
-  };
-  fmt('F', '@');            // Log Hours, hh:mm as text
-  fmt('M', '@');            // Created On (Timesheet band)
-  fmt('V', '@');            // Created On (Item band)
-  fmt('O', 'dd/mmm/yyyy');  // Log Date, a real date
-  fmt('G', '0.00');         // hours for calculation
-  for (let r = FIRST_DATA_ROW; r < FIRST_DATA_ROW + FORMATTED_ROWS; r++) {
-    ws.getCell(`G${r}`).dataValidation = {
-      type: 'decimal', operator: 'between', formulae: [0, 24], allowBlank: true,
-      showErrorMessage: true, errorStyle: 'warning',
-      errorTitle: 'Hours for one log', error: 'Hours for one log are usually between 0 and 24 — 7.5 is seven and a half hours.',
-    };
-  }
+  // The formats that stop the spreadsheet rewriting what people type — see
+  // the header of this file. Whole columns; the headings in row 7 are text
+  // either way. No data validation on G: a rule there is what let 0.3125
+  // through as "between 0 and 24", and as text it would reject 7.5 — the
+  // parser's own check, reported per row on upload, is the one that counts.
+  ws.getColumn('F').numFmt = '@';            // Log Hours, hh:mm as text
+  ws.getColumn('G').numFmt = '@';            // hours for calculation: 8, 7.5 or 7:30
+  ws.getColumn('M').numFmt = '@';            // Created On (Timesheet band)
+  ws.getColumn('V').numFmt = '@';            // Created On (Item band)
+  ws.getColumn('O').numFmt = 'dd/mmm/yyyy';  // Log Date, a real date
   ws.views = [{ state: 'frozen', ySplit: 7, xSplit: 2 }];
 
   // The instructions. A separate sheet so nothing in it can be read as a log.
@@ -172,10 +179,10 @@ function buildTimesheetTemplate(who = {}) {
   line(['How to fill it in'], { bold: true, color: { argb: NAVY } });
   [
     '1. On the Main sheet, write one row per log from row 8 down. Do not move or rename rows 1–7.',
-    '2. Fill the three REQUIRED columns (shaded orange): Log owner, Log Date, Log Hours(for calculation).',
+    '2. Fill the three REQUIRED columns (shaded orange) on EVERY row — Log owner, Log Date, Log Hours(for calculation) — a second log on the same day too. A row missing one is reported, not loaded.',
     '3. Fill the RECOMMENDED columns (shaded yellow) too: Owner Mail Id matches you exactly, and Item Name and Description are what your hours are matched to your KRAs on.',
     '4. Every other column can stay empty. It is there because the Zoho export has it.',
-    '5. Upload on Self → Timesheet: Check the file first, then Upload. Only your own rows are loaded.',
+    '5. Upload on Self → Timesheet: Check the file first — it shows the rows, dates and total hours it will load — then Upload. Only your own rows are loaded.',
     '6. Uploading again replaces the days the new file covers, and leaves every other day as it was.',
   ].forEach((t) => line([t]));
   line([]);

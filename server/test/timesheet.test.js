@@ -140,6 +140,7 @@ test('a dry run saves nothing and says what it would do', { skip }, async () => 
   assert.equal(r.status, 200);
   assert.equal(r.body.committed, false);
   assert.equal(r.body.loadable, 3);
+  assert.equal(r.body.hours, 24, 'the check shows the hours it would load, not only the rows');
   assert.equal(r.body.meta.project_name, 'UPI 5.0 Product');
   const n = (await db.query(`SELECT count(*)::int AS n FROM pms.timesheet_entries WHERE tenant_id=$1`, [tenantId])).rows[0].n;
   assert.equal(n, 0, 'a dry run must not write');

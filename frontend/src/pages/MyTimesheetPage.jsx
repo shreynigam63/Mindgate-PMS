@@ -95,6 +95,7 @@ export default function MyTimesheetPage() {
               <span className="font-normal text-navy-600">
                 {up.total_rows} row{up.total_rows === 1 ? '' : 's'} read,
                 {' '}<b>{up.loadable}</b> {up.committed ? 'loaded' : 'ready to load'}
+                {up.hours != null && !!up.loadable && <> · <b>{up.hours}</b> hours</>}
                 {up.first_log_date && <> · {up.first_log_date} to {up.last_log_date}</>}
               </span>
             </p>

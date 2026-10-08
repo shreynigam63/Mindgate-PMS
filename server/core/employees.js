@@ -172,6 +172,36 @@ async function parseExcelBuffer(buffer) {
 // first tab would silently import a twelfth of the file and report
 // success. Sheets the caller cannot make sense of are its business to
 // report, not this function's to hide.
+// One ExcelJS cell value as the string every importer reads.
+//   * a date -> yyyy-mm-dd (flexDate and the timesheet parser handle it);
+//   * a TIME-ONLY cell — Excel's day zero, 1899-12-30, or the day after for
+//     an [h]:mm duration past 24 — is a duration, not a date in 1899, so it
+//     reads as h:mm. An hours column formatted as a time arrives like this,
+//     and "1899-12-30" once loaded as 1899 hours (8 Oct, template review);
+//   * a formula -> its cached result, normalised the same way (a Log Date of
+//     =O8+1 used to read as "Sat Sep 19 2026 05:30:00 GMT+0530…");
+//   * rich text and hyperlinks -> their plain text (rich text used to read
+//     as "[object Object]"); an error cell -> its code, e.g. #VALUE!.
+const DAY_ZERO = Date.UTC(1899, 11, 30);
+function cellText(v) {
+  if (v == null) return '';
+  if (v instanceof Date) {
+    const ms = v.getTime() - DAY_ZERO;
+    if (ms >= 0 && ms < 2 * 864e5) {
+      const mins = Math.round(ms / 60000);
+      return `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`;
+    }
+    return v.toISOString().slice(0, 10);
+  }
+  if (typeof v === 'object') {
+    if (Array.isArray(v.richText)) return v.richText.map((t) => t.text).join('');
+    if ('result' in v || 'formula' in v || 'sharedFormula' in v) return cellText(v.result);
+    if ('text' in v) return cellText(v.text);
+    if ('error' in v) return String(v.error);
+  }
+  return String(v);
+}
+
 async function parseExcelSheets(buffer) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
@@ -200,13 +230,7 @@ async function parseExcelSheets(buffer) {
       for (let c = 1; c <= row.cellCount; c++) {
         const cell = row.getCell(c);
         cont.push(!!(cell.isMerged && cell.master && cell.master.row < row.number));
-        let v = cell.value;
-        if (v == null) v = '';
-        else if (v instanceof Date) v = v.toISOString().slice(0, 10); // -> yyyy-mm-dd, flexDate handles it
-        else if (typeof v === 'object' && 'text' in v) v = v.text; // rich text
-        else if (typeof v === 'object' && 'result' in v) v = v.result; // formula cell
-        else v = String(v);
-        cells.push(v);
+        cells.push(cellText(cell.value));
       }
       if (cells.some((c) => String(c).trim() !== '')) { rows.push(cells); rowNumbers.push(row.number); merged.push(cont); }
     });

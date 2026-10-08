@@ -85,3 +85,52 @@ test('a filled template loads: a real date, a typed date, decimal hours, and hh:
   assert.equal(b.log_date, '2026-09-19'); assert.equal(b.hours, 8);
   assert.equal(ws.getCell('F8').numFmt, '@', 'Log Hours is text, so Excel cannot turn 07:30 into a time');
 });
+
+// The review on 8 Oct filled the template the ways real spreadsheets get
+// filled — LibreOffice typing, pasting from another sheet, formulas — and
+// found each of these loading a wrong number or nothing. Each is pinned.
+test('what spreadsheets do to typed cells cannot load a wrong number', async () => {
+  const wb = buildTimesheetTemplate({ name: 'Asha Rao', email: 'asha@x.com' });
+  const ws = wb.getWorksheet('Main');
+  // G and F are text for the whole column — row 2,000 too, not only the
+  // first thousand rows — so a typed 7:30 stays "7:30".
+  for (const c of ['F', 'G', 'M', 'V']) assert.equal(ws.getColumn(c).numFmt, '@', `column ${c} is text`);
+  assert.equal(ws.getColumn('O').numFmt, 'dd/mmm/yyyy');
+  assert.equal(ws.getCell('G2000').numFmt, '@');
+  const owner = (r) => { ws.getCell(`N${r}`).value = 'Asha Rao'; ws.getCell(`AX${r}`).value = 'asha@x.com'; };
+  // 8: "7:30" typed into G (text) — seven and a half hours.
+  owner(8); ws.getCell('O8').value = '18/Sep/2026'; ws.getCell('G8').value = '7:30';
+  // 9: a time-formatted cell pasted into G — what LibreOffice keeps from a
+  // paste-with-formats. Once loaded as 1899 hours.
+  owner(9); ws.getCell('O9').value = '19/Sep/2026';
+  ws.getCell('G9').value = new Date(Date.UTC(1899, 11, 30, 7, 30)); ws.getCell('G9').numFmt = 'h:mm';
+  // 10: Log Date as a formula, =O9+1. Once read as "Sun Sep 20 2026 …".
+  owner(10); ws.getCell('G10').value = '8';
+  ws.getCell('O10').value = { formula: 'O9+1', result: new Date(Date.UTC(2026, 8, 20)) };
+  // 11: the owner as rich text (part bold). Once read as "[object Object]".
+  ws.getCell('N11').value = { richText: [{ text: 'Asha ', font: { bold: true } }, { text: 'Rao' }] };
+  ws.getCell('AX11').value = 'asha@x.com'; ws.getCell('O11').value = '21/Sep/2026'; ws.getCell('G11').value = '6';
+  // 12: a second log on the same day, owner and date left off. Once dropped silently.
+  ws.getCell('G12').value = '1.5'; ws.getCell('B12').value = 'Code review';
+  // 13: a day that does not exist. Once loaded as 1 Oct.
+  owner(13); ws.getCell('O13').value = '31/Sep/2026'; ws.getCell('G13').value = '8';
+  const main = (await roundTrip(wb)).find((s) => s.name === 'Main');
+  const p = parseTimesheetSheet(main.rows, { rowNumbers: main.rowNumbers });
+  assert.deepEqual(p.entries.map((e) => [e.line, e.log_date, e.hours, e.owner_name]), [
+    [8, '2026-09-18', 7.5, 'Asha Rao'],
+    [9, '2026-09-19', 7.5, 'Asha Rao'],
+    [10, '2026-09-20', 8, 'Asha Rao'],
+    [11, '2026-09-21', 6, 'Asha Rao'],
+  ]);
+  assert.deepEqual(p.errors.map((e) => e.line), [12, 13]);
+  assert.match(p.errors[0].error, /no Log Date/);
+  assert.match(p.errors[1].error, /31\/Sep\/2026" is not a date/);
+});
+
+test('the Date stamp is local wall-clock text, like the export\'s', () => {
+  const ws = buildTimesheetTemplate({ today: new Date(Date.UTC(2026, 9, 7, 20, 30, 5)) }).getWorksheet('Main');
+  // 20:30 UTC is already 8 Oct in India; a Date cell written as UTC showed 7 Oct.
+  const tz = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+  if (tz === 'Asia/Kolkata') assert.equal(ws.getCell('B4').value, '2026-10-08 02:00:05');
+  assert.match(ws.getCell('B4').value, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+});
