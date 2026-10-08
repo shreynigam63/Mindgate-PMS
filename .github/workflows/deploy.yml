@@ -43,16 +43,11 @@ on:
         required: false
         default: 'main'
 
-# One deploy at a time. Two overlapping runs of update.sh would fight over
-# the same checkout and the same systemd unit. Queued, not cancelled: a
-# half-finished deploy is worse than a slightly stale one.
-concurrency:
-  group: deploy-poc
-  cancel-in-progress: false
-
+# Read-only by default. id-token (to mint the AWS login) is granted to the
+# deploy job alone, and contents: write to web-publish alone: the jobs that
+# run third-party npm code — test and web-build — get neither.
 permissions:
   contents: read
-  id-token: write          # required to mint the OIDC token
 
 # RUNNERS AND ACTION VERSIONS, set on 7 Oct after two GitHub notices:
 #   - ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026. Pinned to 24.04 so
@@ -242,10 +237,14 @@ jobs:
   # ---------------------------------------------------------- web-publish
   # The only job that writes, and it runs nothing from npm: git, and the
   # repository's own deploy/service/web-bundle.sh at the pinned commit.
+  # Published only once the tests have passed.
   # contents: write cannot be narrowed to a ref prefix; keeping the token
   # away from the build is what limits it.
   web-publish:
-    needs: [resolve, web-build]
+    # After the tests, not only the build: a web-build tag then means the
+    # commit passed, and update.sh's "no bundle, no deploy" rule gates a
+    # deploy run by hand on the tests as well.
+    needs: [resolve, web-build, test]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -317,7 +316,20 @@ jobs:
     needs: [resolve, preflight, web-publish]
     if: needs.preflight.outputs.configured == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write          # required to mint the OIDC token
+    # One deploy at a time — on this job only, so the tests and the build of
+    # a newer push still run and report while a deploy waits for approval.
+    # GitHub keeps ONE pending run per group: a newer trigger REPLACES a
+    # pending one (an in-progress deploy is never cancelled). A manual
+    # deploy of another branch that shows "Cancelled" was superseded and
+    # must be dispatched again. update.sh also locks on the box itself,
+    # which covers a deploy run by hand.
+    concurrency:
+      group: deploy-poc
+      cancel-in-progress: false
     # Add required reviewers to this environment in repository settings to
     # make production deploys need a human approval.
     environment: production
@@ -358,9 +370,15 @@ jobs:
           # PREVIOUS version until this run moves the checkout. Built with
           # jq so the JSON quoting is jq's problem, not a hand-escaped one;
           # SHA and REF are already validated to [0-9a-f] and [A-Za-z0-9._/-].
-          REMOTE='set -euo pipefail; D=$(mktemp -d); trap "rm -rf \"$D\"" EXIT; git -C /opt/agentic-pms fetch -q --no-tags origin; git -C /opt/agentic-pms archive "$1" deploy/service | tar -x -C "$D"; "$D/deploy/service/update.sh" "$2" "$1"'
+          # Run with `bash`, not executed: a /tmp mounted noexec must not stop it.
+          REMOTE='set -euo pipefail; D=$(mktemp -d); trap "rm -rf \"$D\"" EXIT; git -C /opt/agentic-pms fetch -q --no-tags origin; git -C /opt/agentic-pms archive "$1" deploy/service | tar -x -C "$D"; bash "$D/deploy/service/update.sh" "$2" "$1"'
+          # executionTimeout: SSM's own default is an hour, longer than this
+          # job polls. 25 minutes covers update.sh waiting up to 10 for a
+          # deploy already running on the box, plus its own run; the poll
+          # below outlasts it, so the job never gives up on a command that
+          # is still going.
           PARAMS=$(jq -nc --arg remote "$REMOTE" --arg sha "$SHA" --arg ref "$REF" \
-            '{commands: [("sudo bash -c " + ($remote | @sh) + " deploy " + $sha + " " + $ref)]}')
+            '{commands: [("sudo bash -c " + ($remote | @sh) + " deploy " + $sha + " " + $ref)], executionTimeout: ["1500"]}')
           CMD=$(aws ssm send-command \
             --instance-ids "$INSTANCE" \
             --document-name AWS-RunShellScript \
@@ -373,7 +391,7 @@ jobs:
           # aws ssm wait command-executed returns non-zero on a failed
           # command, which would hide the output we actually need to read.
           # Poll instead, then decide on the real status.
-          for i in $(seq 1 90); do
+          for i in $(seq 1 165); do
             STATUS=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE" \
               --query 'Status' --output text 2>/dev/null || echo Pending)
             case "$STATUS" in

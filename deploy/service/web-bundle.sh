@@ -59,16 +59,18 @@ publish_web_bundle() {
 
 # prune_remote_web_bundles <repo_dir> <keep_count> <branch> [extra_sha...]
 # — deletes every web-build tag on origin except those for the last
-# <keep_count> commits of origin/<branch> and any extra shas named. A
-# re-run of a recent deploy still finds its bundle; nothing older is kept.
+# <keep_count> commits of origin/<branch>, the tip of EVERY branch on
+# origin (a manual deploy of another branch can be re-run), and any extra
+# shas named. A re-run of a recent deploy still finds its bundle.
 prune_remote_web_bundles() {
   local repo="$1" keep="$2" branch="$3"; shift 3
-  local recent keepers stale
+  local recent heads keepers stale
   # No history to judge by means nothing is deleted: an empty keep-list
   # would otherwise remove every bundle there is.
   recent=$(git -C "$repo" rev-list -n "$keep" "origin/${branch}" 2>/dev/null || true)
   if [ -z "$recent" ]; then echo "==> Kept every web bundle (origin/${branch} not readable here)."; return 0; fi
-  keepers=$( { printf '%s\n' "$recent"; printf '%s\n' "$@"; } | sort -u)
+  heads=$(git -C "$repo" ls-remote origin 'refs/heads/*' 2>/dev/null | awk '{print $1}' || true)
+  keepers=$( { printf '%s\n' "$recent"; printf '%s\n' "$heads"; printf '%s\n' "$@"; } | grep . | sort -u)
   stale=$(git -C "$repo" ls-remote origin "${WEB_BUILD_PREFIX}/*" \
     | awk '{print $2}' | sed "s#^${WEB_BUILD_PREFIX}/##" \
     | grep -vxF -f <(printf '%s\n' "$keepers") || true)
@@ -111,14 +113,35 @@ check_web_bundle() {
 }
 
 # fetch_web_bundle <app_dir> <sha> <out_dir> — downloads the bundle for
-# <sha> and extracts it into <out_dir>. Returns 1, with the reason, when
-# there is no bundle for that commit or it is not a complete build of it.
-# Changes nothing outside <out_dir> and the local ref it fetches into.
+# <sha> and extracts it into <out_dir>. Returns 1, with the REAL reason,
+# when it cannot: not on GitHub, or on GitHub but the download failed (and
+# git's own message), or not a complete build of <sha>. Changes nothing
+# outside <out_dir> and the local ref it fetches into.
+#
+# Called by update.sh while it holds the box-wide deploy lock, so a lock
+# file on that ref can only be left over from a deploy that was killed
+# mid-fetch, and is cleared. A copy already on this box (the bundle of the
+# commit it runs, kept by prune_local_web_bundles) is used when GitHub no
+# longer has the tag — a repair of the running commit still works after
+# the workflow has pruned it.
 fetch_web_bundle() {
-  local app="$1" sha="$2" out="$3"
-  if ! git -C "$app" fetch -q --no-tags origin "+${WEB_BUILD_PREFIX}/${sha}:${LOCAL_WEB_PREFIX}/${sha}" 2>/dev/null; then
-    echo "!! No prebuilt web bundle for ${sha:0:7} on GitHub (${WEB_BUILD_PREFIX}/${sha})." >&2
-    return 1
+  local app="$1" sha="$2" out="$3" err lock rc=0
+  lock=$(git -C "$app" rev-parse --git-path "${LOCAL_WEB_PREFIX}/${sha}.lock")
+  case "$lock" in /*) ;; *) lock="${app}/${lock}" ;; esac
+  rm -f "$lock"
+  if ! err=$(git -C "$app" fetch -q --no-tags origin "+${WEB_BUILD_PREFIX}/${sha}:${LOCAL_WEB_PREFIX}/${sha}" 2>&1); then
+    if git -C "$app" show-ref --verify -q "${LOCAL_WEB_PREFIX}/${sha}"; then
+      echo "==> GitHub did not hand over the bundle for ${sha:0:7}; using the copy already on this box."
+    else
+      git -C "$app" ls-remote --exit-code origin "${WEB_BUILD_PREFIX}/${sha}" >/dev/null 2>&1 || rc=$?
+      if [ "$rc" = 2 ]; then
+        echo "!! No prebuilt web bundle for ${sha:0:7} on GitHub (${WEB_BUILD_PREFIX}/${sha})." >&2
+      else
+        echo "!! Could not download the web bundle for ${sha:0:7} (${WEB_BUILD_PREFIX}/${sha}). git said:" >&2
+        printf '%s\n' "${err:-(nothing)}" | sed 's/^/!!   /' >&2
+      fi
+      return 1
+    fi
   fi
   mkdir -p "$out" || return 1
   if ! git -C "$app" archive "${LOCAL_WEB_PREFIX}/${sha}" | tar -x -C "$out"; then

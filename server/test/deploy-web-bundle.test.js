@@ -159,28 +159,33 @@ function box(w) {
   git(app, 'checkout', '-q', '-B', 'main', '--track', 'origin/main');
   git(app, 'reset', '-q', '--hard', w.c1);
   // Installed packages, stamped as update.sh stamps a successful npm ci.
+  // (.ok stands for "npm ls is satisfied" — see the npm stand-in.)
   write(path.join(app, 'server/node_modules/.apms-installed'), `${depsSum(app)}\n`);
+  write(path.join(app, 'server/node_modules/.ok'), '');
   write(path.join(web, 'index.html'), 'OLD SITE');
   fs.chmodSync(web, 0o755);
   const scripts = path.join(w.root, 'scripts');
   fs.cpSync(DEPLOY, scripts, { recursive: true });
   write(path.join(scripts, 'backup.sh'), '#!/usr/bin/env bash\necho "    (backup stand-in)"\n');
-  write(path.join(scripts, 'reconcile-settings.sh'), '#!/usr/bin/env bash\necho "    (settings stand-in)"\n');
+  write(path.join(scripts, 'reconcile-settings.sh'), '#!/usr/bin/env bash\necho "    (settings stand-in)"\n[ "${RECONCILE_FAIL:-}" = 1 ] && { echo "!! refused a setting" >&2; exit 1; }\nexit 0\n');
   fs.chmodSync(path.join(scripts, 'backup.sh'), 0o755);
   fs.chmodSync(path.join(scripts, 'reconcile-settings.sh'), 0o755);
   const bin = path.join(w.root, 'bin');
   const log = path.join(w.root, 'calls.log');
+  const lock = path.join(w.root, 'deploy.lock');
   const stub = (name, body) => { write(path.join(bin, name), `#!/usr/bin/env bash\n${body}\n`); fs.chmodSync(path.join(bin, name), 0o755); };
   stub('id', 'echo 0');
   stub('systemctl', `echo "systemctl $*" >> "${log}"`);
   stub('journalctl', 'true');
   stub('chown', 'true');
-  // npm: logs where it ran. `npm ci` empties node_modules first, as the
+  // npm: logs where it ran. `npm ls` (not logged) is satisfied while
+  // node_modules/.ok exists. `npm ci` empties node_modules first, as the
   // real one does, and fails on NPM_FAIL=ci; `npm run build` writes a
   // vite-shaped dist stamped with the commit it ran on, or fails on
   // NPM_FAIL=build.
-  stub('npm', `echo "npm $* in $PWD" >> "${log}"
-if [ "$1" = ci ]; then rm -rf node_modules; mkdir -p node_modules; [ "\${NPM_FAIL:-}" = ci ] && exit 1; exit 0; fi
+  stub('npm', `if [ "$1" = ls ]; then [ -f node_modules/.ok ]; exit $?; fi
+echo "npm $* in $PWD" >> "${log}"
+if [ "$1" = ci ]; then rm -rf node_modules; mkdir -p node_modules; [ "\${NPM_FAIL:-}" = ci ] && exit 1; touch node_modules/.ok; exit 0; fi
 if [ "$1" = run ] && [ "$2" = build ]; then
   [ "\${NPM_FAIL:-}" = build ] && exit 1
   mkdir -p dist/assets
@@ -190,11 +195,11 @@ fi`);
   stub('curl', `case "$*" in *api/v1/health*) echo '{"ok":true,"build":"test"}' ;; *) cat "${web}/index.html" ;; esac`);
   const run = (args, env = {}) => spawnSync('bash', [path.join(scripts, 'update.sh'), ...args], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, APMS_APP_DIR: app, APMS_WEB_ROOT: web, ...env },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, APMS_APP_DIR: app, APMS_WEB_ROOT: web, APMS_LOCK: lock, ...env },
   });
   const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '');
   const site = () => fs.readFileSync(path.join(web, 'index.html'), 'utf8');
-  return { app, web, run, calls, site };
+  return { app, web, run, calls, site, lock };
 }
 // A commit on a second branch, pushed to origin.
 function sideBranch(w) {
@@ -234,7 +239,10 @@ test('UPDATE.SH: with no bundle for the commit it stops BEFORE changing anything
     const r = b.run(['main', w.c2]);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /Stopping before any change/);
-    assert.match(r.stderr, /sudo BUILD_ON_BOX=1 /, 'the fallback is spelled out with sudo in the right place');
+    // The box's own update.sh (here: none at all, as on a box still on the
+    // old script) cannot build in a worktree, so the advice runs THIS
+    // commit's script rather than pointing at it.
+    assert.match(r.stderr, /git -C \S+ archive [0-9a-f]{40} deploy\/service \| tar -x -C "\$D" && BUILD_ON_BOX=1 bash "\$D\/deploy\/service\/update\.sh" main [0-9a-f]{40}/);
     assert.equal(git(b.app, 'rev-parse', 'HEAD'), w.c1, 'the checkout did not move');
     assert.equal(b.site(), 'OLD SITE', 'the site was not touched');
     assert.equal(b.calls(), '', 'no npm, no restart');
@@ -308,7 +316,7 @@ test('UPDATE.SH: refuses a commit off the branch, a tag or sha for a branch, and
     const local = git(b.app, 'rev-parse', 'HEAD');
     r = b.run(['main', w.c2]);
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /has diverged/);
+    assert.match(r.stderr, /the box has commits of its own/);
     assert.equal(git(b.app, 'rev-parse', 'HEAD'), local);
     assert.equal(b.site(), 'OLD SITE');
     assert.equal(b.calls(), '');
@@ -388,6 +396,115 @@ test('UPDATE.SH: no web-build tag survives on the box, however it fetched', { sk
   } finally { fs.rmSync(w.root, { recursive: true, force: true }); }
 });
 
+test('UPDATE.SH: re-running an older deploy after one that did not finish is refused, not a green no-op', { skip: NO_RSYNC }, () => {
+  const w = world();
+  try {
+    publish(w, w.c1); publish(w, w.c2);
+    const b = box(w);
+    assert.equal(b.run(['main', w.c1]).status, 0, 'c1 deployed and finished');
+    // c2's deploy moves the checkout, then fails before the restart.
+    let r = b.run(['main', w.c2], { RECONCILE_FAIL: '1' });
+    assert.notEqual(r.status, 0);
+    assert.equal(git(b.app, 'rev-parse', 'HEAD'), w.c2);
+    assert.match(b.site(), new RegExp(`index-${w.c1.slice(0, 6)}`), 'a settings refusal leaves the screens as they were');
+    // Re-running c1's run "to get back to good" must not report success.
+    r = b.run(['main', w.c1]);
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /never finished \(last finished: [0-9a-f]{7}\)/);
+    // Re-running c2's completes it.
+    r = b.run(['main', w.c2]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(b.site(), new RegExp(`index-${w.c2.slice(0, 6)}`));
+    assert.match(b.run(['main', w.c1]).stdout, /==> Already past /, 'and from then on an older re-run is the harmless no-op');
+  } finally { fs.rmSync(w.root, { recursive: true, force: true }); }
+});
+
+test('UPDATE.SH: origin rewound below the box (a force-push rollback) is refused, not "already past"', { skip: NO_RSYNC }, () => {
+  const w = world();
+  try {
+    publish(w, w.c1); publish(w, w.c2);
+    const b = box(w);
+    assert.equal(b.run(['main', w.c2]).status, 0);
+    git(w.work, 'push', '-q', '-f', 'origin', `${w.c1}:refs/heads/main`);
+    const r = b.run(['main', w.c1]);
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /origin was rewound below it/);
+    assert.match(r.stderr, /revert the change on main instead/);
+    assert.equal(git(b.app, 'rev-parse', 'HEAD'), w.c2, 'not rolled back automatically');
+  } finally { fs.rmSync(w.root, { recursive: true, force: true }); }
+});
+
+test('UPDATE.SH: switching back to a branch never moves it backwards', { skip: NO_RSYNC }, () => {
+  const w = world();
+  try {
+    publish(w, w.c1); publish(w, w.c2);
+    const side = sideBranch(w);
+    publish(w, side);
+    const b = box(w);
+    assert.equal(b.run(['main', w.c2]).status, 0);
+    assert.equal(b.run(['side', side]).status, 0);
+    // An old main run re-run while the box is on side.
+    const r = b.run(['main', w.c1]);
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /last ran main at [0-9a-f]{7}, past [0-9a-f]{7}/);
+    assert.equal(git(b.app, 'rev-parse', '--abbrev-ref', 'HEAD'), 'side');
+    assert.equal(git(b.app, 'rev-parse', 'main'), w.c2, 'local main is not reset backwards');
+  } finally { fs.rmSync(w.root, { recursive: true, force: true }); }
+});
+
+test('UPDATE.SH: one deploy at a time on the box — a second waits, and gives up loudly', { skip: NO_RSYNC }, async () => {
+  const w = world();
+  try {
+    publish(w, w.c2);
+    const b = box(w);
+    const { spawn } = require('node:child_process');
+    const holder = spawn('flock', [b.lock, 'sleep', '30']);
+    await new Promise((res) => setTimeout(res, 300));
+    try {
+      const r = b.run(['main', w.c2], { APMS_LOCK_WAIT: '1' });
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /Another deploy has held/);
+      assert.equal(git(b.app, 'rev-parse', 'HEAD'), w.c1);
+      assert.equal(b.calls(), '');
+    } finally { holder.kill(); }
+    await new Promise((res) => holder.on('exit', res));
+    assert.equal(b.run(['main', w.c2]).status, 0, 'and goes ahead once the lock is free');
+  } finally { fs.rmSync(w.root, { recursive: true, force: true }); }
+});
+
+test('UPDATE.SH: a stale ref lock from a killed fetch is cleared, and a pruned tag falls back to the copy on the box', { skip: NO_RSYNC }, () => {
+  const w = world();
+  try {
+    publish(w, w.c2);
+    const b = box(w);
+    // A deploy killed mid-fetch leaves this behind; git then refuses the ref.
+    write(path.join(b.app, `.git/refs/web-build/${w.c2}.lock`), '');
+    let r = b.run(['main', w.c2]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    // GitHub prunes the tag; a repair of the running commit still works.
+    git(w.work, 'push', '-q', 'origin', `:refs/tags/web-build/${w.c2}`);
+    r = b.run(['main', w.c2]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /using the copy already on this box/);
+    assert.match(r.stdout, /NOTHING NEW was deployed: still at [0-9a-f]{7} on main/);
+  } finally { fs.rmSync(w.root, { recursive: true, force: true }); }
+});
+
+test('UPDATE.SH: a node_modules emptied by hand is reinstalled although the stamp survived', { skip: NO_RSYNC }, () => {
+  const w = world();
+  try {
+    publish(w, w.c2);
+    const b = box(w);
+    assert.equal(b.run(['main', w.c2]).status, 0);
+    // `rm -rf node_modules/*` skips dotfiles: the stamp stays, the packages go.
+    fs.rmSync(path.join(b.app, 'server/node_modules/.ok'));
+    const r = b.run(['main', w.c2]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /unchanged — not reinstalled/);
+    assert.match(b.calls(), /npm ci --omit=dev/);
+  } finally { fs.rmSync(w.root, { recursive: true, force: true }); }
+});
+
 test('THE DEPLOY COMMAND: what the workflow sends runs update.sh from the deployed commit, with the right arguments', () => {
   const yml = fs.readFileSync(path.resolve(__dirname, '../../.github/workflows/deploy.yml'), 'utf8');
   const remote = /REMOTE='(.*)'\n/.exec(yml);
@@ -437,7 +554,7 @@ test('THE FIRST DEPLOY, END TO END: the workflow\'s command runs the real script
     const cmd = JSON.parse(params).commands[0].replace(/^sudo /, '');
     const r = spawnSync('sh', ['-c', cmd], {
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${path.join(w.root, 'bin')}:${process.env.PATH}`, APMS_APP_DIR: b.app, APMS_WEB_ROOT: b.web },
+      env: { ...process.env, PATH: `${path.join(w.root, 'bin')}:${process.env.PATH}`, APMS_APP_DIR: b.app, APMS_WEB_ROOT: b.web, APMS_LOCK: b.lock },
     });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, new RegExp(`Healthy\\. Deployed ${w.c1.slice(0, 7)} -> ${c3.slice(0, 7)} on main`));

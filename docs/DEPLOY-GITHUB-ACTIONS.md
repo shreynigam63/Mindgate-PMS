@@ -147,17 +147,30 @@ the likeliest cause. So the build moved:
 | `resolve` | turns the push, or the branch typed into a manual run, into **one commit**. Every later job uses it, and "Re-run failed jobs" reuses it — nothing looks the branch up a second time, so a push landing mid-run cannot slip an untested commit through |
 | `test` | the server suite on that commit — the gate |
 | `web-build` | `npm ci` + `npm run build` on GitHub's runner, with a **read-only** token and no credentials left in the checkout; checks the bundle is complete and carries its commit |
-| `web-publish` | publishes that build as the tag `web-build/<full commit sha>` (an orphan commit whose files ARE `frontend/dist`). The only job that can write, and it runs no npm — third-party build code never sees a write token. Then removes old bundles; a failure there is a warning, never a reason to hold the deploy |
-| `deploy` | after all of them: one SSM command. The instance downloads that tag, checks it, and copies it into place. It never builds |
+| `web-publish` | **once the tests have passed**, publishes that build as the tag `web-build/<full commit sha>` (an orphan commit whose files ARE `frontend/dist`) — so a bundle's existence means its commit passed, and a deploy run by hand cannot pick up a red commit's screens. The only job that can write, and it runs no npm — third-party build code never sees a write token. Then removes old bundles; a failure there is a warning, never a reason to hold the deploy |
+| `deploy` | after all of them: one SSM command. The instance downloads that tag, checks it, and copies it into place. It never builds. The only job that can mint the AWS login |
+
+One deploy at a time: the `deploy` job has its own concurrency group, so
+the tests and build of a newer push still run while a deploy waits for
+approval. GitHub keeps one *pending* run per group — a newer trigger
+replaces a pending one (never one in progress), so a manual deploy of
+another branch that shows **Cancelled** was superseded and needs
+dispatching again. On the box, `update.sh` also takes a lock, so a deploy
+run by hand, or one still running after the workflow stopped waiting,
+cannot overlap another.
 
 What this changes on the box (`deploy/service/update.sh`). **Everything is
 decided before anything moves**:
 
-1. Backup, fetch.
+1. The box-wide deploy lock (waits up to 10 minutes for a deploy already
+   running), backup, fetch.
 2. Which branch — a branch on origin only, never a tag or a bare commit —
-   and which commit. It must be on that branch, and forward of what the
-   box runs. A box whose own branch has commits origin does not is refused
-   here, not halfway.
+   and which commit. It must be on that branch, and forward of where the
+   box last ran that branch, also when switching back to it. Refused here,
+   not halfway: a box whose branch has commits origin does not, and an
+   origin branch **rewound below the box** (a force-push to roll back) —
+   never rolled back automatically, because a migration cannot be undone;
+   revert on `main` instead.
 3. **The screens for that exact commit**: downloaded and checked — every
    file `index.html` names is present and not empty, and the bundle
    carries the commit it was built from.
@@ -182,7 +195,11 @@ Three details that matter:
   time the command arrives. A commit the box is already past is not
   deployed backwards: re-running an old run says "Already past", touches
   nothing — no screens, no settings, no restart — and finishes green.
-  Re-running the *current* commit is a repair: screens re-copied,
+  But only when the box's own deploy **finished**: `update.sh` records the
+  commit once the API is healthy and nginx serves the new screens
+  (`.git/apms-deployed`). After a deploy that failed half-way, re-running
+  an older run is refused and says so — re-run the newer one to complete
+  it. Re-running the *current* commit is a repair: screens re-copied,
   packages checked, API restarted, reported as "NOTHING NEW".
 - **The deploy scripts run from the commit being deployed.** The SSM
   command copies `deploy/service` out of that commit and runs the copy, so
@@ -203,6 +220,13 @@ is unavailable: `sudo BUILD_ON_BOX=1 /opt/agentic-pms/deploy/service/update.sh`
 separate worktree of the target commit before anything moves, so a failed
 or killed build leaves the box as it was — but it is still the heavy step
 on a small instance.
+
+**Until the first deploy of this change has finished, the box's own
+`update.sh` is the previous version**, which ignores `BUILD_ON_BOX` and
+builds in place. A deploy that stops for want of a bundle prints the exact
+command for whichever case applies — in that window it runs the target
+commit's own script instead of the box's. A failed download says why (git's
+own message), not just "no bundle".
 
 Tested in `server/test/deploy-web-bundle.test.js`: publish and fetch
 against real temporary git repositories, the refusal of a missing or
@@ -248,10 +272,13 @@ Chromium together, which is a slower job nobody has built yet. It is the
 suite that catches nav and layout regressions, so it stays a local
 pre-merge step. Worth closing.
 
-A deploy that pulls nothing is treated as a **failure**, not a quiet
-success: `update.sh` says "NOTHING NEW was deployed" in that case and the
-workflow greps for it. That sentence exists because a no-op deploy once
-read as a real one and was believed for days.
+A deploy that moved nothing is never a quiet success. The workflow reads
+`update.sh`'s last line and is green only when the box ended on **the
+pinned commit**: "Healthy. Deployed X -> <that commit>", "NOTHING NEW …
+still at <that commit>" (a repair), or "Already past" (an older run
+re-run, on a box whose newer deploy finished). Anything else is red — a
+no-op on another commit included. That rule exists because a no-op deploy
+once read as a real one and was believed for days.
 
 ## Deploying by hand, when you need to
 
@@ -260,8 +287,8 @@ Session Manager, on the instance:
 
 ```bash
 sudo /opt/agentic-pms/deploy/service/update.sh
-# or, if GitHub has not built the screens for that commit:
-#   sudo BUILD_ON_BOX=1 /opt/agentic-pms/deploy/service/update.sh
+# It needs the bundle GitHub publishes once a commit's tests pass. Without
+# one it stops, changes nothing, and prints the command to build here.
 sudo -u postgres psql -d apms -tc "SELECT count(*) FROM core.page_permission;"
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/api/v1/health
 ```

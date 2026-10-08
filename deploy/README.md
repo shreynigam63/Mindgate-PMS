@@ -147,7 +147,7 @@ systemctl status agentic-pms-api          # is it up
 journalctl -u agentic-pms-api -f          # what is it doing
 systemctl restart agentic-pms-api         # restart
 sudo /opt/agentic-pms/deploy/service/update.sh    # deploy a new version (screens built by GitHub)
-sudo BUILD_ON_BOX=1 /opt/agentic-pms/deploy/service/update.sh   # …or build them here
+sudo BUILD_ON_BOX=1 /opt/agentic-pms/deploy/service/update.sh   # …or build them here (see below)
 sudo /opt/agentic-pms/deploy/service/backup.sh    # backup right now
 systemctl list-timers agentic-pms-backup.timer    # when is the next backup
 sudo /opt/agentic-pms/deploy/service/restore.sh /var/backups/agentic-pms/apms-....dump
@@ -359,10 +359,15 @@ thing that says no. If you replaced the config, put it back.
 **The frontend build is "Killed"** — out of memory. See sizing above.
 Deploys no longer build here unless run with `BUILD_ON_BOX=1`.
 
-**"No prebuilt web bundle for <sha>"** — GitHub has not built the screens
-for that commit (the deploy workflow did not run for it, or its `web-build` or `web-publish` job
-failed). Let the workflow run, or deploy with `BUILD_ON_BOX=1`. Nothing
-on the box was changed.
+**"No prebuilt web bundle for <sha>"** — GitHub has not published the
+screens for that commit: the deploy workflow did not run for it, its tests
+failed, or its `web-build` / `web-publish` job did. Nothing on the box was
+changed. Let the workflow run, or build here with the command the message
+prints (until the first deploy of the GitHub-built screens has finished,
+that command runs the new script from the commit, because the box's own
+`update.sh` is still the old one and would build in place).
+**"Could not download the web bundle"** is different — the bundle is on
+GitHub and the message carries git's own reason.
 
 **`docker compose up` fails on the build** — check the Docker daemon has
 disk (`docker system df`). Note the old `deploy/docker-compose.yml`
