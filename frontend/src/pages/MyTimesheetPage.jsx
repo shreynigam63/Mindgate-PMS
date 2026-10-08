@@ -7,12 +7,12 @@
 // one: /pms/timesheet/me only ever returns the caller's own logs, and
 // the upload loads the caller's own rows and reports the rest.
 import { useEffect, useState } from 'react';
-import { api } from '../utils/api';
+import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 import TimesheetDashboard, { RatingChip } from '../TimesheetDashboard';
 import TimesheetTabs from '../TimesheetTabs';
 import TimesheetKra from '../TimesheetKra';
-import { Upload, FileSpreadsheet, Info } from 'lucide-react';
+import { Upload, FileSpreadsheet, Info, Download } from 'lucide-react';
 
 export default function MyTimesheetPage() {
   const [report, setReport] = useState(null);
@@ -71,10 +71,17 @@ export default function MyTimesheetPage() {
             onClick={() => send(true)}>
             <Upload size={13} className="inline mr-1" />Upload
           </button>
+          {/* The template is the Zoho export's own layout (8 Oct), so a
+              sheet filled in by hand uploads exactly like an export. */}
+          <a className="btn-sec sm:ml-auto" title="The upload's layout, to fill in by hand"
+            href={`${API_BASE}/pms/timesheet/template.xlsx?token=${localStorage.getItem('apms_token')}`}>
+            <Download size={13} className="inline mr-1" />Download template (.xlsx)
+          </a>
         </div>
         <p className="text-[11px] text-navy-400">
           Export your timesheet from Zoho Sprints and upload the file as it comes — the sheet's own
-          header row is found, wherever it sits. <b>Only your own rows are loaded.</b> A project
+          header row is found, wherever it sits. No export to hand? <b>Download the template</b>: it
+          has the export's layout, with the columns to fill shaded and explained. <b>Only your own rows are loaded.</b> A project
           export usually carries the whole team; everybody else's rows are listed back to you and
           left alone. Uploading again replaces the days the new file covers and leaves every other
           day untouched, so re-uploading the same export changes nothing.

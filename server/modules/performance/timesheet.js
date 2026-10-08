@@ -26,6 +26,7 @@ const logger = require('../../core/logger');
 const { hasPermission } = require('../../core/permissions');
 const { parseExcelSheets, parseCsv, detectFormat } = require('../../core/employees');
 const { parseTimesheetSheet, compliance, DEFAULTS } = require('./timesheet-rules');
+const { buildTimesheetTemplate } = require('./timesheet-template');
 
 const router = express.Router();
 const T = (req) => req.user.tenant_id;
@@ -276,6 +277,25 @@ router.get('/employee/:id', async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // Upload
+
+// The upload template — the Zoho export's own layout, so a file filled in
+// by hand and an export go through the same parser. See
+// timesheet-template.js. Anyone may download it: an employee uploads their
+// own timesheet, and the template carries no one's data but the
+// downloader's own name and email, on the instructions sheet.
+router.get('/template.xlsx', async (req, res) => {
+  try {
+    const me = (await db.query(
+      `SELECT name, email FROM core.employees WHERE tenant_id=$1 AND id=$2`, [T(req), req.user.id])).rows[0] || {};
+    const wb = buildTimesheetTemplate({ name: me.name, email: me.email });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="timesheet_upload_template.xlsx"');
+    res.send(Buffer.from(await wb.xlsx.writeBuffer()));
+  } catch (e) {
+    logger.error('timesheet template', { error: e.message });
+    res.status(500).json({ error: 'Could not build the template' });
+  }
+});
 
 router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err) => {
   if (err) return res.status(400).json({ error: err.message });

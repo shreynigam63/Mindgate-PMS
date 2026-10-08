@@ -305,3 +305,37 @@ test('every upload is audited against the employee it touched', { skip }, async 
   assert.ok(rows.some((r) => r.employee_id === farId));
   assert.ok(rows.every((r) => r.details && r.details.file));
 });
+
+test('TEMPLATE: an employee downloads it, fills one row, and it uploads like an export', { skip }, async () => {
+  const r = await fetch(`${base}/pms/timesheet/template.xlsx`, { headers: { Authorization: `Bearer ${empTok}` } });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /spreadsheetml/);
+  assert.match(r.headers.get('content-disposition'), /timesheet_upload_template\.xlsx/);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(Buffer.from(await r.arrayBuffer()));
+  const help = wb.getWorksheet('How to fill this in');
+  const helpText = [];
+  help.eachRow((row) => helpText.push(row.values.join(' ')));
+  assert.ok(helpText.some((t) => t.includes('ts-emp@x.com')), 'it tells the downloader what to put in Owner Mail Id');
+  assert.ok(helpText.some((t) => t.includes('TS Report')), 'and in Log owner');
+
+  const ws = wb.getWorksheet('Main');
+  ws.getCell('N8').value = 'TS Report';
+  ws.getCell('O8').value = '22/Sep/2026';
+  ws.getCell('G8').value = 6.5;
+  ws.getCell('AX8').value = 'ts-emp@x.com';
+  ws.getCell('B8').value = 'Filled from the template';
+  const fd = new FormData();
+  fd.append('file', new Blob([Buffer.from(await wb.xlsx.writeBuffer())]), 'timesheet_upload_template.xlsx');
+  const up = await fetch(`${base}/pms/timesheet/upload?commit=1`, { method: 'POST', headers: { Authorization: `Bearer ${empTok}` }, body: fd });
+  const body = await up.json();
+  assert.equal(up.status, 200, JSON.stringify(body));
+  assert.equal(body.loadable, 1);
+  assert.equal(body.header_row, 7);
+  const row = (await db.query(
+    `SELECT log_date::text AS d, hours::float AS h, item_name FROM pms.timesheet_entries
+      WHERE tenant_id=$1 AND employee_id=$2 AND item_name='Filled from the template'`, [tenantId, empId])).rows[0];
+  assert.deepEqual(row, { d: '2026-09-22', h: 6.5, item_name: 'Filled from the template' });
+
+  assert.equal((await fetch(`${base}/pms/timesheet/template.xlsx`)).status, 401, 'signed in only');
+});

@@ -282,4 +282,4 @@ function compliance(entries, settings = {}, asOf = null) {
   };
 }
 
-module.exports = { parseTimesheetSheet, compliance, cycleOf, ratingOf, parseDate, parseHours, key, DEFAULTS };
+module.exports = { parseTimesheetSheet, compliance, cycleOf, ratingOf, parseDate, parseHours, key, DEFAULTS, COLUMNS, HEADER_MARKERS };
