@@ -19,6 +19,44 @@ import { Award, AlertTriangle, Users, Check, Info } from 'lucide-react';
 
 const money = (p) => (p == null ? null : `₹${(Number(p) / 100).toLocaleString('en-IN')}`);
 
+// The nominations YOU raised — the only RnR list a nominator sees since the
+// company-wide dashboard was switched off (8 Oct). Your notifications about
+// a nomination (submitted, rejected, sent back) open this page.
+function YourNominations({ refresh }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    api('/people/rnr/nominations?mine=true').then((r) => setRows(r.nominations || [])).catch((e) => setErr(e.message));
+  }, [refresh]);
+  if (err) return <p className="text-xs text-rose-600">{err}</p>;
+  if (!rows || !rows.length) return null;
+  return (
+    <div className="card p-4 space-y-2">
+      <p className="lbl">Your nominations</p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead><tr className="text-left text-navy-400">
+            <th className="py-1 pr-3">Award</th><th className="py-1 pr-3">For</th><th className="py-1 pr-3">Cycle</th>
+            <th className="py-1 pr-3">Status</th><th className="py-1">Updated</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((n) => (
+              <tr key={n.id} className="border-t border-navy-50">
+                <td className="py-1.5 pr-3">{n.award_name}</td>
+                <td className="py-1.5 pr-3">{n.employee_name || n.team_name || '—'}</td>
+                <td className="py-1.5 pr-3">{n.cycle_name}</td>
+                <td className="py-1.5 pr-3"><span className="chip bg-navy-50 text-navy-600">{n.status_label}</span></td>
+                <td className="py-1.5">{String(n.updated_at || n.created_at || '').slice(0, 10)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-navy-400">A rejection or a send-back carries its reason in the notification you were sent.</p>
+    </div>
+  );
+}
+
 export default function RnrNominatePage() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
@@ -64,6 +102,7 @@ export default function RnrNominatePage() {
         No RnR cycle is open. HR opens one on <b>RnR Administration</b>, which is also what fixes the
         award quota for the cycle.
       </div>
+      <YourNominations />
     </div>
   );
 
@@ -195,6 +234,7 @@ export default function RnrNominatePage() {
         <Users size={11} />Eligibility is worked out from the employee master — date of joining, band,
         experience and status. Nobody can change it on this screen.
       </p>
+      <YourNominations refresh={done} />
     </div>
   );
 }

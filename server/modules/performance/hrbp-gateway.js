@@ -210,6 +210,12 @@ async function targetEmployeeIds(req) {
   for (const k of [...EMPLOYEE_KEYS, 'id', 'sheet_id', 'plan_id', 'assessment_id']) {
     if (isUuid(b[k])) candidates.add(b[k]);
   }
+  // Lists of people are people too. A bulk action names them in an array,
+  // and until 8 Oct those were not read: one in-remit employee_id beside
+  // an `ids` list of anybody let the whole list through.
+  for (const k of ['ids', 'employee_ids', 'employeeIds']) {
+    if (Array.isArray(b[k])) for (const v of b[k]) if (isUuid(v)) candidates.add(v);
+  }
 
   // A record id resolves to the one person it belongs to. Tried in turn
   // because the path says which id it is only by position, and position
@@ -231,7 +237,9 @@ async function targetEmployeeIds(req) {
     // every HRBP approval — failing closed, which is the right direction,
     // but it meant an HRBP could not take their own step in the RnR
     // workflow. Found by walking a nomination through all four stages.
-    'SELECT employee_id FROM rnr.nominations WHERE tenant_id=$1 AND id=$2',
+    // A team award names nobody, so it resolves to the manager who
+    // raised it — the HRBP covering that manager decides it (8 Oct).
+    'SELECT COALESCE(employee_id, nominated_by) AS employee_id FROM rnr.nominations WHERE tenant_id=$1 AND id=$2',
     // The First-Week Journey: a joiner, and one of their tasks.
     'SELECT employee_id FROM people.onboarding_joiners WHERE tenant_id=$1 AND id=$2',
     `SELECT j.employee_id FROM people.onboarding_tasks t JOIN people.onboarding_joiners j ON j.id = t.joiner_id
@@ -267,21 +275,25 @@ function gateway() {
 
       const { remit, ids } = await remitFor(req);
       const write = req.method !== 'GET' && req.method !== 'HEAD';
+      // Express routes match regardless of letter case ('/HRBP/admin' reaches
+      // the '/hrbp/admin' router), so the prefix checks below compare a
+      // lower-cased path with runs of slashes folded. Until 8 Oct they did
+      // not, and '/HRBP/admin/partners' let an HRBP widen their own remit.
+      const routePath = String(req.path || '').toLowerCase().replace(/\/{2,}/g, '/');
 
       // HR'S OWN, read as well as written. Lending pms_admin would
       // otherwise hand an HRBP the screen that decides remits — including
       // their own, which is the obvious abuse of this whole feature. The
       // browser sweep caught this: a read is not automatically safe just
       // because it changes nothing.
-      if (HR_ONLY.some((pfx) => String(req.path || '').startsWith(pfx))) {
+      if (HR_ONLY.some((pfx) => routePath.startsWith(pfx))) {
         return res.status(403).json({
           error: "Remits are set by HR.", needs: 'pms_admin',
         });
       }
 
       if (write) {
-        const path = req.path || '';
-        if (TENANT_WIDE.some((p) => path.startsWith(p))) {
+        if (TENANT_WIDE.some((p) => routePath.startsWith(p))) {
           return res.status(403).json({
             error: 'This setting applies to the whole company, so it stays with HR. '
                  + 'You can read it here, but not change it.',

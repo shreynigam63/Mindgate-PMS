@@ -39,6 +39,12 @@ const { apiPermissionParity, hasPermission, holdsPermission } = require('./permi
 // Roles and passwords are HR's and Super Admin's alone — never an HRBP
 // acting through the gateway's lent permission. See holdsPermission.
 const ACCESS_ADMIN_ONLY = { error: "Only HR and Super Admin can change roles or set passwords (requires 'people_admin').", needs: 'people_admin (held, not lent)' };
+// Adding people, removing several at once, erasing for good, and the
+// department and HOD tables that decide whose queue is whose — HR's too,
+// never reached through the gateway's lent permission (8 Oct review: an
+// in-remit id smuggled into the body, or the path in other letter case,
+// let an HRBP do each of these).
+const HR_HELD_ONLY = { error: "Only HR and Super Admin can do this (requires 'people_admin').", needs: 'people_admin (held, not lent)' };
 const bulkCreds = require('./bulk-credentials');
 
 // ---------- CSV parsing (self-contained; handles quotes and commas) --------
@@ -1218,7 +1224,7 @@ async function purgeEmployee(client, tenantId, emp) {
 // people the first would have refused.
 router.post('/', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    if (!(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(HR_HELD_ONLY);
     const T = req.user.tenant_id;
     const b = req.body || {};
     const str = (k) => String(b[k] == null ? '' : b[k]).trim();
@@ -1314,7 +1320,7 @@ router.post('/', async (req, res) => {
 router.delete('/', async (req, res) => {
   const client = await db.getClient();
   try {
-    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    if (!(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(HR_HELD_ONLY);
     const T = req.user.tenant_id;
     const body = req.body || {};
     const have = (await db.query(
@@ -1432,6 +1438,8 @@ router.delete('/:employeeId', async (req, res) => {
     const T = req.user.tenant_id;
     const id = req.params.employeeId;
     const purge = req.query.purge === '1';
+    // Erasing for good is HR's alone; removing one person in a remit is not.
+    if (purge && !(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(HR_HELD_ONLY);
     const emp = (await db.query(`SELECT id, name, email, archived_at FROM core.employees WHERE id=$1 AND tenant_id=$2`, [id, T])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
     if (emp.id === req.user.id) {
@@ -1763,7 +1771,7 @@ router.get('/department-heads', async (req, res) => {
 // Add a department before anybody is in it.
 router.post('/departments', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    if (!(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(HR_HELD_ONLY);
     const name = String((req.body && req.body.name) == null ? '' : req.body.name).trim();
     if (!name) return res.status(422).json({ error: 'A department needs a name' });
     if (name.length > 120) return res.status(422).json({ error: `That name is ${name.length} characters — keep it under 120` });
@@ -1805,7 +1813,7 @@ router.post('/departments', async (req, res) => {
 // says how many, because that is the number HR has to act on.
 router.delete('/departments/:department', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    if (!(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(HR_HELD_ONLY);
     const name = decodeURIComponent(req.params.department).trim();
     if (!name) return res.status(422).json({ error: 'Which department?' });
 
@@ -1842,7 +1850,7 @@ router.delete('/departments/:department', async (req, res) => {
 
 router.put('/department-heads/:department', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    if (!(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(HR_HELD_ONLY);
     const { employee_id } = req.body || {};
     const department = decodeURIComponent(req.params.department);
     if (!employee_id) {

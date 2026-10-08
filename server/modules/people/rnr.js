@@ -20,7 +20,8 @@ const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const db = require('../../core/db');
 const logger = require('../../core/logger');
-const { hasPermission } = require('../../core/permissions');
+const { hasPermission, holdsPermission } = require('../../core/permissions');
+const hrbpScope = require('./hrbp-scope');
 const { notify } = require('../../core/notifications');
 const elig = require('./rnr-eligibility');
 const quota = require('./rnr-quota');
@@ -339,7 +340,7 @@ router.put('/rnr/cycles/:id/allocations', async (req, res) => {
 
 /** The caller's reportees, or everybody for HR. */
 async function nominatablePool(req) {
-  const wide = await hasPermission(req.user, 'pms_admin');
+  const wide = await holdsPermission(req.user, 'pms_admin');
   return (await db.query(
     `SELECT id, emp_code, name, email, department, designation, role_band, date_of_joining,
             status, total_experience_years, manager_id
@@ -432,6 +433,12 @@ router.post('/rnr/nominations', async (req, res) => {
       if (emp.id === req.user.id) {
         return res.status(422).json({ error: 'You cannot nominate yourself.' });
       }
+      // Only someone you could pick from the list — your own reports, or
+      // anyone for HR. Checked before eligibility, so nothing about a
+      // person outside your team comes back (8 Oct review).
+      if (!(await nominatablePool(req)).some((p) => p.id === emp.id)) {
+        return res.status(403).json({ error: 'You can nominate only people in your own team.' });
+      }
       const prior = await priorAwardsBy(T(req), cycle.id);
       const r = elig.check(emp, award, {
         asOf: cycle.award_date || cycle.nominations_close, settings: m.settings,
@@ -484,13 +491,33 @@ const QUEUE_PERMISSION = {
 // SHOW_RNR_DASHBOARD switch in the frontend.
 const VIEW_ALL = 'rnr_view_all';
 
+// Does this person hold the stage a nomination is waiting on? HR's final
+// stage needs pms_admin HELD — never the copy the HRBP gateway lends, or
+// an HRBP could give Final HR approval (and override the quota) for their
+// own remit (8 Oct review).
+async function holdsStage(user, status) {
+  const perm = QUEUE_PERMISSION[status];
+  if (!perm) return false;
+  return perm === 'pms_admin' ? holdsPermission(user, perm) : hasPermission(user, perm);
+}
+const isHr = (user) => holdsPermission(user, 'pms_admin');
+// An HRBP acting as one (not HR): the people in their remit, else null.
+async function hrbpRemitOf(req) {
+  if (!(await hasPermission(req.user, 'pms_hrbp')) || (await isHr(req.user))) return null;
+  return new Set(await hrbpScope.employeeIdsFor(T(req), req.user.email, { includeInactive: true }));
+}
+// Whose nomination this is, for a remit: the nominee, or — for a team
+// award, which names nobody — the manager who raised it.
+const personOf = (n) => n.employee_id || n.nominated_by;
+
 router.get('/rnr/nominations', async (req, res) => {
   try {
     const status = req.query.status || null;
     const mine = req.query.mine === 'true';
     if (!mine) {
       const needed = (status && QUEUE_PERMISSION[status]) || VIEW_ALL;
-      if (!(await hasPermission(req.user, needed))) {
+      const allowed = needed === VIEW_ALL ? await hasPermission(req.user, VIEW_ALL) : await holdsStage(req.user, status);
+      if (!allowed) {
         return res.status(403).json({
           error: needed === VIEW_ALL
             ? 'The full list of RnR nominations is not open at present.'
@@ -513,8 +540,10 @@ router.get('/rnr/nominations', async (req, res) => {
         ORDER BY n.created_at DESC`,
       mine ? (status ? [T(req), status, req.user.id] : [T(req), req.user.id])
            : (status ? [T(req), status] : [T(req)]))).rows;
-    res.json({ nominations: rows.map((r) => ({ ...r, status_label: wf.LABELS[r.status] || r.status })),
-      total: rows.length, labels: wf.LABELS });
+    const remit = mine ? null : await hrbpRemitOf(req);
+    const shown = remit ? rows.filter((r) => remit.has(personOf(r))) : rows;
+    res.json({ nominations: shown.map((r) => ({ ...r, status_label: wf.LABELS[r.status] || r.status })),
+      total: shown.length, labels: wf.LABELS });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -534,18 +563,23 @@ router.get('/rnr/nominations/:id', async (req, res) => {
     // The person who raised it, whoever holds its current stage, and HR.
     // The nominee is not on this list: a nomination is not theirs to
     // read until it is decided, and they hear about an award by notice.
-    const stage = QUEUE_PERMISSION[n.status];
-    const mayRead = n.nominated_by === req.user.id
-      || (stage && await hasPermission(req.user, stage))
-      || await hasPermission(req.user, 'pms_admin')
-      || await hasPermission(req.user, VIEW_ALL);
-    if (!mayRead) return res.status(403).json({ error: 'This nomination is not open to you.', needs: stage || 'pms_admin' });
+    const nominator = n.nominated_by === req.user.id;
+    const stageHolder = await holdsStage(req.user, n.status);
+    const wide = (await isHr(req.user)) || (await hasPermission(req.user, VIEW_ALL));
+    if (!nominator && !stageHolder && !wide) {
+      return res.status(403).json({ error: 'This nomination is not open to you.', needs: QUEUE_PERMISSION[n.status] || 'pms_admin' });
+    }
+    const remit = nominator ? null : await hrbpRemitOf(req);
+    if (remit && !remit.has(personOf(n))) return res.status(403).json({ error: 'That person is not in your remit.' });
+    // Earlier awards are for the people deciding — not for a nominator,
+    // who could otherwise nominate anyone to read their record.
+    const showHistory = stageHolder || wide;
     const events = (await db.query(
       `SELECT actor_email, actor_role, action, from_status, to_status, comment, at
          FROM rnr.events WHERE nomination_id=$1 ORDER BY at`, [n.id])).rows;
     // Everything this person has had before — what an approver is
     // actually weighing, and what stops the same person winning twice.
-    const history = n.employee_id ? (await db.query(
+    const history = n.employee_id && showHistory ? (await db.query(
       `SELECT a.name AS award_name, c.name AS cycle_name, n2.status, n2.created_at
          FROM rnr.nominations n2 JOIN rnr.awards a ON a.id=n2.award_id
          JOIN rnr.cycles c ON c.id=n2.cycle_id
@@ -563,9 +597,24 @@ router.post('/rnr/nominations/:id/decide', async (req, res) => {
       [req.params.id, T(req)])).rows[0];
     if (!n) return res.status(404).json({ error: 'nomination not found' });
 
+    // WHO MAY MOVE IT, deny by default (8 Oct review). A stage is decided
+    // by whoever holds it — HR's in person, not through a lent permission
+    // — and an HRBP only inside their remit. Outside the stages: the
+    // nominator resubmits a draft or returned nomination, and HR marks a
+    // finally approved one awarded. Nothing else.
     const needed = QUEUE_PERMISSION[n.status];
-    if (needed && !(await hasPermission(req.user, needed))) {
-      return res.status(403).json({ error: `This nomination is waiting on ${wf.LABELS[n.status]}.`, needs: needed });
+    if (needed) {
+      if (!(await holdsStage(req.user, n.status))) {
+        return res.status(403).json({ error: `This nomination is waiting on ${wf.LABELS[n.status]}.`, needs: needed });
+      }
+      const remit = await hrbpRemitOf(req);
+      if (remit && !remit.has(personOf(n))) return res.status(403).json({ error: 'That person is not in your remit.' });
+    } else {
+      const resubmit = b.action === 'submit' && ['draft', 'sent_back'].includes(n.status) && n.nominated_by === req.user.id;
+      const marksAwarded = b.action === 'award' && n.status === 'final_approved' && (await isHr(req.user));
+      if (!resubmit && !marksAwarded) {
+        return res.status(403).json({ error: 'This nomination is not waiting on you.' });
+      }
     }
     // A manager cannot approve their own nomination — stated in the brief
     // and worth enforcing rather than trusting the role split, because an

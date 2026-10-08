@@ -22,7 +22,7 @@
 
 const express = require('express');
 const db = require('../../core/db');
-const { hasPermission } = require('../../core/permissions');
+const { hasPermission, holdsPermission } = require('../../core/permissions');
 const logger = require('../../core/logger');
 const { hrbpScope } = require('../people');
 const approvals = require('./approvals');
@@ -277,7 +277,8 @@ router.get('/nine-box', async (req, res) => {
 
 router.get('/admin/options', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    // Held, never lent: remits decide who sees what (8 Oct).
+    if (!(await holdsPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Remits are set by HR.", needs: 'pms_admin' });
     const locations = (await db.query(
       `SELECT btrim(location) AS value, count(*)::int AS people
          FROM core.employees
@@ -296,7 +297,8 @@ router.get('/admin/options', async (req, res) => {
 
 router.get('/admin/partners', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    // Held, never lent: remits decide who sees what (8 Oct).
+    if (!(await holdsPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Remits are set by HR.", needs: 'pms_admin' });
     const rows = (await db.query(
       `SELECT s.email, s.kind, s.value, e.name
          FROM core.hrbp_scope s
@@ -322,7 +324,8 @@ router.get('/admin/partners', async (req, res) => {
 
 router.put('/admin/partners/:email', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    // Held, never lent: remits decide who sees what (8 Oct).
+    if (!(await holdsPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Remits are set by HR.", needs: 'pms_admin' });
     const email = String(req.params.email || '').trim().toLowerCase();
     if (!email) return res.status(400).json({ error: 'email is required' });
     const { locations, hods } = req.body || {};
