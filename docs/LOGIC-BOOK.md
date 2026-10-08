@@ -173,6 +173,15 @@ whole module rather than edits in 104 handlers:
   as them. The client's rule: *"Only HR and Super Admins should have this
   access."* An HRBP still edits profiles in their remit; the Employees page
   shows them "Logins and roles are managed by HR" instead of the controls.
+  The same held-only check covers adding people, removing several at once,
+  erasing for good, the department list and HOD assignments, and the
+  remit-setting routes themselves.
+- **Letter case and smuggled ids are not a way round (8 Oct).** The
+  gateway's HR-only and company-wide checks compare a lower-cased path,
+  because Express matches routes in any case (`/HRBP/admin` used to slip
+  past). And a bulk action's list of people (`ids`) is checked against the
+  remit too: one in-remit `employee_id` beside a list of anybody no longer
+  carries the write.
 
 The remit itself lives in `core.hrbp_scope` (`kind` = location or HOD,
 `value`). Routes are separate from `/admin/*` on purpose: one page row
@@ -780,8 +789,14 @@ Half-open makes 3.0 Buddy Star, always.
 
 **Who can read nominations (8 Oct).** Each approval stage reads its own
 queue (HOD, HRBP in remit, HR), a nominator reads the nominations they
-raised, and one nomination opens for its nominator, its current stage and
-HR. The company-wide list — every nominee with department and nominator —
+raised (*Your nominations* on Nominate for RnR), and one nomination opens
+for its nominator, its current stage and HR. Earlier awards (the
+nominee's history) are shown to the stage and HR, not to the nominator,
+and a manager can nominate only their own team. HR's final stage needs HR
+access held in person — an HRBP cannot read it or decide it through the
+gateway. A team award, which names nobody, belongs to the remit of the
+manager who raised it. Outside the stages, only the nominator resubmits
+and only HR marks an award given. The company-wide list — every nominee with department and nominator —
 is open to nobody: *"it should not be visible currently, in future if we
 want we will allow this display access."* Until then any signed-in person
 could read it by typing the RnR Dashboard's address. The RnR Dashboard and
