@@ -635,11 +635,33 @@ same parser with nothing special-cased (`timesheet-template.js`; the
 round trip is in `timesheet-template.test.js`). The columns the PMS reads
 are shaded — required (Log owner, Log Date, Log Hours for calculation),
 recommended (Owner Mail Id, Item Id, Item Name, Description) and optional
-— with a note on each heading. Log Date is a real date cell; Log Hours
-(hh:mm) and the Created On columns are text, so Excel cannot turn "08:00"
-into a time of day. Main carries no example row, so nothing sample can be
-loaded by mistake; the example and the downloader's own name and email are
-on a second sheet, *How to fill this in*, which the upload never reads.
+— with a note on each heading. Log Date is a real date cell; both hours
+columns and the Created On columns are text, for the whole column, so a
+spreadsheet cannot turn "7:30" into a fraction of a day. Main carries no
+example row, so nothing sample can be loaded by mistake; the example and
+the downloader's own name and email are on a second sheet, *How to fill
+this in*, which the upload never reads.
+
+**What the upload refuses (8 Oct, after the template's review).** Every
+rule below is reported per row on *Check the file* — the row is not
+loaded, the rest of the file is — and the check now shows the **total
+hours** it will load, not only the row count:
+
+| A row with… | Before | Now |
+|---|---|---|
+| hours as `7:30` in *Log Hours(for calculation)* | 7 h | 7.5 h |
+| a time-formatted hours cell (pasted from another sheet) | 1899 h | read as h:mm |
+| hours that are neither a number nor h:mm, or none at all | the leading digits, or 0 h — and the day counted as filled | reported |
+| more than 24 hours in one log | loaded | reported |
+| an item, description or hours but no owner/date (a second log on the same day written by hand) | dropped without a word | reported: every row needs its date and owner |
+| a date that does not exist (31/Sep) | rolled to 1 Oct | reported |
+| a Log Date written as a formula (`=O8+1`) | "not a date" | the formula's date |
+| text partly bold (rich text) | "[object Object]" | the text |
+
+Zoho's own summary rows at the foot of an export (a Log Type and a total,
+nothing else) are still skipped, and the client's real export loads
+exactly as before. The cell-reading fixes are in the shared Excel reader,
+so the employee and KRA imports get them too.
 
 **How an hour reaches a KRA**, in order (`timesheet-kra-match.js`):
 
