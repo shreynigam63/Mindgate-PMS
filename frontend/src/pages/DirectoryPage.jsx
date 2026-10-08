@@ -402,8 +402,12 @@ export default function DirectoryPage() {
   const [sortKey, setSortKey] = useState('name');
   const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
 
+  // An HRBP reads this page through the remit gateway, which marks the
+  // response. They may manage profiles in their remit, but never logins or
+  // roles — the server refuses both, so the controls are not offered.
+  const [scoped, setScoped] = useState(false);
   const load = (withArchived = showArchived) => api(`/employees${withArchived ? '?include_archived=true' : ''}`)
-    .then((r) => { setRows(r.employees); setArchivedCount(r.archived_count || 0); setPicked(new Set()); })
+    .then((r) => { setRows(r.employees); setArchivedCount(r.archived_count || 0); setPicked(new Set()); setScoped(!!r.scoped_to_remit); })
     .catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
   useEffect(() => { load(showArchived); }, [showArchived]);
@@ -645,7 +649,8 @@ export default function DirectoryPage() {
           doing the second one person at a time is what was asked to
           end. It needs the rows and the ticked selection, so it lives
           here rather than in the header. */}
-      {rows && <BulkCredentials rows={rows.filter((r) => !r.archived_at)} picked={picked} onDone={load} />}
+      {/* Logins are HR's alone (8 Oct) — not offered to an HRBP. */}
+      {rows && !scoped && <BulkCredentials rows={rows.filter((r) => !r.archived_at)} picked={picked} onDone={load} />}
       {!rows ? <p className="text-sm text-navy-400">Loading…</p> : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-3">
@@ -805,7 +810,7 @@ export default function DirectoryPage() {
                       </td>
                     </tr>
                     {openId === r.id && (
-                      <tr><td colSpan={10} className="px-3 pb-3 bg-navy-50/50"><EmployeePanel employee={r} onDone={() => { setOpenId(null); load(); }} /></td></tr>
+                      <tr><td colSpan={10} className="px-3 pb-3 bg-navy-50/50"><EmployeePanel employee={r} canManageAccess={!scoped} onDone={() => { setOpenId(null); load(); }} /></td></tr>
                     )}
                   </Fragment>
                 ))}
@@ -895,7 +900,7 @@ function AddEmployee({ onClose, onSaved }) {
   );
 }
 
-function EmployeePanel({ employee, onDone }) {
+function EmployeePanel({ employee, onDone, canManageAccess = true }) {
   // ---- Profile edit (name/department/designation/role_band/manager/DOJ/status) ----
   const [name, setName] = useState(employee.name || '');
   const [department, setDepartment] = useState(employee.department || '');
@@ -961,6 +966,12 @@ function EmployeePanel({ employee, onDone }) {
         {profileMsg && <p className="text-leaf-600">{profileMsg}</p>}
       </div>
 
+      {!canManageAccess ? (
+        <div className="space-y-1 pt-3 border-t border-navy-100">
+          <p className="lbl">Access</p>
+          <p className="text-[11px] text-navy-400">Logins and roles are managed by HR. Current role: <b>{employee.role || 'employee'}</b>.</p>
+        </div>
+      ) : (
       <div className="space-y-2 pt-3 border-t border-navy-100">
         <p className="lbl">Access</p>
         <div className="flex flex-wrap items-end gap-2">
@@ -989,6 +1000,7 @@ function EmployeePanel({ employee, onDone }) {
         {accessErr && <p className="text-rose-600">{accessErr}</p>}
         {accessMsg && <p className="text-leaf-600">{accessMsg}</p>}
       </div>
+      )}
     </div>
   );
 }

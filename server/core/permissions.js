@@ -73,4 +73,18 @@ async function hasPermission(user, permission) {
   return wildcard || permissions.has(permission);
 }
 
-module.exports = { apiPermissionParity, effectivePermissions, hasPermission, bustRuleCache };
+// A permission the person HOLDS — their role's and their own grants —
+// and never one the HRBP gateway lent them for this request. For the few
+// actions where borrowing HR's hand is never right: who gets which role,
+// and setting somebody else's password. Asked for on 8 Oct, after it was
+// found that an HRBP could make anyone in their remit — themselves
+// included — HR or Super Admin: "Only HR and Super Admins should have
+// this access." Setting another person's password is the same power by
+// another door (sign in as them), so it sits behind the same check.
+async function holdsPermission(user, permission) {
+  const own = { ...user };
+  delete own.grantedForRequest;
+  return hasPermission(own, permission);
+}
+
+module.exports = { apiPermissionParity, effectivePermissions, hasPermission, holdsPermission, bustRuleCache };

@@ -35,7 +35,10 @@ const db = require('./db');
 const logger = require('./logger');
 const { authenticate } = require('./auth');
 const { guardUuidParams, UUID_RE } = require('./http');
-const { apiPermissionParity, hasPermission } = require('./permissions');
+const { apiPermissionParity, hasPermission, holdsPermission } = require('./permissions');
+// Roles and passwords are HR's and Super Admin's alone — never an HRBP
+// acting through the gateway's lent permission. See holdsPermission.
+const ACCESS_ADMIN_ONLY = { error: "Only HR and Super Admin can change roles or set passwords (requires 'people_admin').", needs: 'people_admin (held, not lent)' };
 const bulkCreds = require('./bulk-credentials');
 
 // ---------- CSV parsing (self-contained; handles quotes and commas) --------
@@ -1493,7 +1496,7 @@ const BULK_CREDENTIALS_MAX = 200;
 
 router.post('/credentials/bulk', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    if (!(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(ACCESS_ADMIN_ONLY);
     const T = req.user.tenant_id;
     const b = req.body || {};
     const dryRun = b.dry_run === true;
@@ -1622,7 +1625,7 @@ router.post('/credentials/bulk', async (req, res) => {
 // change it once real SSO exists.
 router.post('/:employeeId/credentials', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    if (!(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(ACCESS_ADMIN_ONLY);
     const { password } = req.body || {};
     if (!password || password.length < 8) return res.status(400).json({ error: 'password must be at least 8 characters' });
     const emp = (await db.query(`SELECT email FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, req.user.tenant_id])).rows[0];
@@ -1648,7 +1651,7 @@ router.post('/:employeeId/credentials', async (req, res) => {
 // setting a non-default role, plus clearing back to the default.
 router.put('/:employeeId/role', async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    if (!(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(ACCESS_ADMIN_ONLY);
     const { role } = req.body || {};
     // hr_ops (7 Oct): runs the onboarding tracker — see migration 083.
     const VALID = ['employee', 'manager', 'hod', 'hr', 'hr_ops', 'admin'];
@@ -1884,7 +1887,8 @@ router.post('/import', (req, res, next) => upload.single('file')(req, res, (err)
   next();
 }), async (req, res) => {
   try {
-    if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
+    // The import assigns roles too (manager, HOD), so it is held-only.
+    if (!(await holdsPermission(req.user, 'people_admin'))) return res.status(403).json(ACCESS_ADMIN_ONLY);
     if (!req.file) return res.status(400).json({ error: 'file required (multipart field "file")' });
 
     const format = detectFormat(req.file);
