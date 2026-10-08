@@ -4,10 +4,13 @@
 // nominates from Manager, the HOD approves from their own tab,
 // the HRBP from theirs, HR administers from HR. One row drives both the
 // menu entry and who may open the URL.
+//
+// The RnR Dashboard (/rnr/dashboard) and My Nominations
+// (/rnr/my-nominations) were taken out on 8 Oct — they showed every
+// nominee in the company to anyone who typed the address. 086 deletes
+// their rows; they are not seeded here any more.
 const PAGES = [
-  ['rnr_dashboard', '/rnr/dashboard', 'pms_self'],
   ['rnr_nominate', '/rnr/nominate', 'pms_team_eval'],
-  ['rnr_mine', '/rnr/my-nominations', 'pms_team_eval'],
   ['rnr_dh', '/rnr/approvals/delivery-head', 'pms_hod'],
   ['rnr_hrbp_q', '/hrbp/rnr-approvals', 'pms_hrbp'],
   ['rnr_hr', '/rnr/approvals/hr', 'pms_admin'],

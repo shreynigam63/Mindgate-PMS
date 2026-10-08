@@ -474,10 +474,31 @@ const QUEUE_PERMISSION = {
   pending_hr: 'pms_admin',
 };
 
+// WHO MAY READ NOMINATIONS (8 Oct). Each approval stage reads its own
+// queue, and a nominator reads the nominations they raised. The
+// company-wide list — every nominee, with department and nominator — is
+// open to nobody by default: "it should not be visible currently, in
+// future if we want we will allow this display access." Until 8 Oct any
+// signed-in person could read it by typing the RnR Dashboard's address.
+// Opening it later is a grant of rnr_view_all to a role, plus the
+// SHOW_RNR_DASHBOARD switch in the frontend.
+const VIEW_ALL = 'rnr_view_all';
+
 router.get('/rnr/nominations', async (req, res) => {
   try {
     const status = req.query.status || null;
     const mine = req.query.mine === 'true';
+    if (!mine) {
+      const needed = (status && QUEUE_PERMISSION[status]) || VIEW_ALL;
+      if (!(await hasPermission(req.user, needed))) {
+        return res.status(403).json({
+          error: needed === VIEW_ALL
+            ? 'The full list of RnR nominations is not open at present.'
+            : `This queue is for ${wf.LABELS[status] || status}.`,
+          needs: needed,
+        });
+      }
+    }
     const rows = (await db.query(
       `SELECT n.*, a.name AS award_name, a.key AS award_key, a.level AS award_level, a.is_team,
               e.name AS employee_name, e.emp_code, e.department, e.role_band, e.date_of_joining,
@@ -510,6 +531,15 @@ router.get('/rnr/nominations/:id', async (req, res) => {
          JOIN core.employees m ON m.id=n.nominated_by
         WHERE n.id=$1 AND n.tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!n) return res.status(404).json({ error: 'nomination not found' });
+    // The person who raised it, whoever holds its current stage, and HR.
+    // The nominee is not on this list: a nomination is not theirs to
+    // read until it is decided, and they hear about an award by notice.
+    const stage = QUEUE_PERMISSION[n.status];
+    const mayRead = n.nominated_by === req.user.id
+      || (stage && await hasPermission(req.user, stage))
+      || await hasPermission(req.user, 'pms_admin')
+      || await hasPermission(req.user, VIEW_ALL);
+    if (!mayRead) return res.status(403).json({ error: 'This nomination is not open to you.', needs: stage || 'pms_admin' });
     const events = (await db.query(
       `SELECT actor_email, actor_role, action, from_status, to_status, comment, at
          FROM rnr.events WHERE nomination_id=$1 ORDER BY at`, [n.id])).rows;
@@ -603,20 +633,20 @@ async function notifyStage(tenantId, n, award, status, reason) {
   const name = award ? award.name : 'an RnR award';
   if (status === 'pending_delivery_head') {
     await tell(n.nominated_by, 'Your RnR nomination has been submitted',
-      `${name} — it is now with the HOD.`, '/rnr/my-nominations');
+      `${name} — it is now with the HOD.`, '/rnr/nominate');
     const heads = (await db.query(
       `SELECT e.id FROM core.employees e JOIN core.user_roles ur
          ON ur.tenant_id=e.tenant_id AND lower(ur.email)=lower(e.email)
         WHERE e.tenant_id=$1 AND e.status='active' AND ur.role='hod'`, [tenantId])).rows;
     for (const h of heads) {
       await tell(h.id, 'An RnR nomination is waiting on you',
-        `${name} — pending HOD approval.`, '/rnr/approvals');
+        `${name} — pending HOD approval.`, '/rnr/approvals/delivery-head');
     }
   }
   if (status === 'rejected' || status === 'sent_back') {
     await tell(n.nominated_by,
       status === 'rejected' ? 'Your RnR nomination was rejected' : 'Your RnR nomination was sent back',
-      `${name}. Reason: ${reason || 'none given'}`, '/rnr/my-nominations');
+      `${name}. Reason: ${reason || 'none given'}`, '/rnr/nominate');
   }
   if (status === 'final_approved' && n.employee_id) {
     await tell(n.employee_id, `Congratulations — you have been selected for ${name}`,

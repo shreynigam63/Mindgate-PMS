@@ -72,9 +72,14 @@ test('a tenant created after the migrations gets the HRBP and RnR pages', { skip
     for (const [, route] of hrbp) {
       assert.ok(routes.has(route), `HRBP page ${route} missing — the HRBP tab would not appear`);
     }
-    // The 7 RnR screens.
+    // The 5 RnR screens.
     for (const [, route] of require('../migrations/078-rnr-pages').PAGES) {
       assert.ok(routes.has(route), `RnR page ${route} missing — the screen would 404`);
+    }
+    // And not the two switched off on 8 Oct (086): they showed every
+    // nominee in the company to anyone who typed the address.
+    for (const route of require('../migrations/086-rnr-dashboard-off').REMOVED) {
+      assert.ok(!routes.has(route), `${route} was switched off by 086 and must not be re-seeded`);
     }
     // And HR's own screen for handing an HRBP their people. Without it an
     // HRBP exists but can never be given anyone, which looks like a bug in

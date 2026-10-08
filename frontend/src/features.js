@@ -8,3 +8,11 @@
 // takes away: the First-Week Journey tab on New Hire Insights, the HR Ops
 // menu entry, and the "Onboarding emails for you to send" card on Home.
 export const SHOW_FIRST_WEEK_JOURNEY = false;
+
+// RNR DASHBOARD and MY NOMINATIONS: off since 8 Oct. Both showed every
+// nominee in the company to anyone who typed the address ("it should not
+// be visible currently, in future if we want we will allow this display
+// access"). The server refuses the company-wide list too, unless a role
+// is granted rnr_view_all — see server/migrations/086-rnr-dashboard-off.js
+// for everything that turning it back on takes.
+export const SHOW_RNR_DASHBOARD = false;

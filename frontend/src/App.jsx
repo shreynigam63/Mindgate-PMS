@@ -12,7 +12,7 @@ import CalibrationPage from './pages/CalibrationPage';
 import MyRatingPage from './pages/MyRatingPage';
 import MySurveysPage, { EngagementAdminPage } from './pages/EngagementPage';
 import EngagementInsightsPage, { HrOpsOnboardingPage } from './pages/EngagementInsightsPage';
-import { SHOW_FIRST_WEEK_JOURNEY } from './features';
+import { SHOW_FIRST_WEEK_JOURNEY, SHOW_RNR_DASHBOARD } from './features';
 import PeopleHubPage from './pages/PeopleHubPage';
 import DirectoryPage from './pages/DirectoryPage';
 import DepartmentHeadsPage from './pages/DepartmentHeadsPage';
@@ -593,9 +593,11 @@ function Main({ user }) {
               {/* Rewards & Recognition. The approval queue is one component
                   for all three stages — they differ only in which status
                   they read, and three copies is three places a rule moves. */}
-              <Route path="/rnr/dashboard" element={<RnrDashboardPage />} />
+              {/* The company-wide RnR Dashboard and My Nominations are off
+                  (8 Oct, features.js); a typed address lands on Home. */}
+              {SHOW_RNR_DASHBOARD && <Route path="/rnr/dashboard" element={<RnrDashboardPage />} />}
               <Route path="/rnr/nominate" element={<RnrNominatePage />} />
-              <Route path="/rnr/my-nominations" element={<RnrDashboardPage />} />
+              {SHOW_RNR_DASHBOARD && <Route path="/rnr/my-nominations" element={<RnrDashboardPage />} />}
               <Route path="/rnr/approvals/delivery-head" element={<RnrApprovalsPage />} />
               <Route path="/hrbp/rnr-approvals" element={<RnrApprovalsPage />} />
               <Route path="/rnr/approvals/hr" element={<RnrApprovalsPage />} />
