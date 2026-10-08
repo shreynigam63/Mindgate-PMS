@@ -37,6 +37,9 @@ const roleOf = async (email) => ((await db.query(
   `SELECT role FROM core.user_roles WHERE tenant_id=$1 AND LOWER(email)=LOWER($2)`, [tenantId, email])).rows[0] || {}).role || 'employee';
 
 before(async () => {
+  // First in the suite alphabetically, so on a fresh database (the CI
+  // runner's) nothing has created the schema yet.
+  await require('../core/migrate').runMigrations();
   tenantId = (await db.query(`INSERT INTO core.tenants (slug, name) VALUES ($1,$1) RETURNING id`, [SLUG])).rows[0].id;
   const mk = async (key, email, location) => {
     ids[key] = (await db.query(
