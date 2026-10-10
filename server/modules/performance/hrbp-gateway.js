@@ -70,6 +70,107 @@ const TENANT_WIDE = [
   '/timesheet/kra/scoring',
 ];
 
+// Decisions HR keeps even inside a remit. All Approvals decides through
+// one bulk route whose items[] the target check cannot see, so a single
+// in-remit employee_id beside the items let an HRBP decide anybody's
+// sheet (found 10 Oct). The page is read-only for an HRBP; this makes the
+// server agree with it.
+const HR_DECIDES = ['/approvals/bulk'];
+
+// An HRBP's OWN appraisal, used exactly as any employee uses it (10 Oct).
+//
+// Until now the gateway treated these like HR's pages: a save that named
+// nobody was refused ("HR can do it"), so an HRBP could not save their own
+// KRAs, reviews, timesheet or survey; and a read was narrowed, so their own
+// sheet vanished whenever they sat outside their own remit.
+//
+// On these routes the gateway steps aside completely: nothing is lent and
+// nothing is narrowed, so the handler sees an ordinary employee plus what
+// the HRBP role HOLDS. A route belongs here only if its handler acts on
+// req.user (or on records the caller is a party to) and widens only on
+// permissions an HRBP never holds unlent — pms_admin, people_admin,
+// pms_team_eval, pms_hod. Exact templates, never prefixes, keyed on the
+// router's mount, so a route added later stays behind the gateway until
+// somebody reads it and adds it here. ':me' must be the caller's own id;
+// any other ':name' matches one segment.
+const SELF_SERVICE = {
+  '/api/v1/pms': [
+    ['GET', '/home'],
+    ['GET', '/my/kra-sheet'], ['PUT', '/my/kra-sheet/kras'], ['POST', '/my/kra-sheet/submit'],
+    ['GET', '/my/kra-library'],
+    ['GET', '/my/development-plan'], ['PUT', '/my/development-plan/goals'],
+    ['POST', '/my/development-plan/submit'], ['PUT', '/my/development-plan/goals/:goal/progress'],
+    ['GET', '/my/midyear-review'], ['PUT', '/my/midyear-review'], ['PUT', '/my/midyear-review/form'],
+    ['POST', '/my/midyear-review/submit'],
+    ['GET', '/my/self-appraisal'], ['PUT', '/my/self-appraisal'], ['POST', '/my/self-appraisal/submit'],
+    ['GET', '/my/self-appraisal/evidence'], ['POST', '/my/self-appraisal/evidence'],
+    ['DELETE', '/my/self-appraisal/evidence/:id'], ['GET', '/evidence/:id/download'],
+    ['GET', '/my/annual-review'], ['GET', '/my/rating'], ['GET', '/my/rating/status'], ['GET', '/my/history'],
+    ['GET', '/closure-letters/me/:cycle/download'],
+    ['GET', '/review/kras/:me'], ['PUT', '/review/kras/:me'],
+    ['GET', '/competencies/me'], ['PUT', '/competencies/me'], ['POST', '/competencies/me/submit'],
+    ['GET', '/timesheet/me'], ['GET', '/timesheet/template.xlsx'], ['POST', '/timesheet/upload'],
+    ['GET', '/timesheet/kra/me'], ['GET', '/timesheet/kra/months/me'],
+    ['GET', '/connects'], ['GET', '/connects/questions'], ['GET', '/connects/people'],
+    ['GET', '/connects/kra-options/:me'], ['GET', '/connects/cadence/:me'],
+    ['POST', '/connects'], ['PUT', '/connects/:id'], ['POST', '/connects/:id/sign-off'],
+    ['GET', '/meetings/providers'], ['GET', '/meetings'], ['POST', '/meetings'],
+    ['DELETE', '/meetings/:id'], ['PUT', '/meetings/:id/transcript'],
+  ],
+  '/api/v1/agentic': [
+    ['POST', '/kra-suggest'], ['POST', '/devplan-suggest'], ['POST', '/career-suggest'], ['POST', '/career-plan'],
+    ['POST', '/review-assist'], ['POST', '/midyear-draft'], ['POST', '/justification-review'],
+    ['POST', '/appraisal-summary'], ['POST', '/meeting-summary'],
+    ['POST', '/connect-insights'], ['POST', '/connect-autotag'],
+    ['GET', '/recommendations'], ['POST', '/recommendations'], ['PUT', '/recommendations/:id'],
+  ],
+  '/api/v1/people': [
+    ['GET', '/career/my-path'], ['PUT', '/career/my-path'], ['POST', '/career/my-path/move-to-long-term'],
+    ['PUT', '/career/my-milestones'], ['PUT', '/career/my-milestones/:id/progress'],
+    ['GET', '/career/target-departments'],
+    ['GET', '/events'], ['POST', '/events/:id/rsvp'],
+    ['GET', '/awards'], ['POST', '/awards/cycles/:cycle/nominate'],
+    ['GET', '/csr'], ['POST', '/csr/:id/participate'],
+    ['GET', '/queries'], ['POST', '/queries'], ['GET', '/queries/:id/messages'], ['POST', '/queries/:id/reply'],
+  ],
+  '/api/v1/engagement': [
+    ['GET', '/my/invitations'], ['GET', '/my/submissions'],
+    ['GET', '/surveys/:id/questions'], ['POST', '/surveys/:id/respond'],
+  ],
+};
+
+// Reads that stay on HR's terms but keep the caller's own records. The
+// Improvement Plan page lists an HRBP's remit (lent), and must still show
+// the HRBP their own plan when they sit outside their own remit.
+const KEEP_SELF = { '/api/v1/pms': [['GET', '/pip'], ['GET', '/pip/:id']] };
+
+/** Does this request match one of the [method, template] pairs for its router? */
+function matchesRoute(table, req, routePath) {
+  const rows = table[String(req.baseUrl || '').toLowerCase()];
+  if (!rows) return false;
+  const method = req.method === 'HEAD' ? 'GET' : req.method;
+  const segs = routePath.replace(/\/+$/, '').split('/');
+  const me = String(req.user.id || '').toLowerCase();
+  return rows.some(([m, template]) => {
+    if (m !== method) return false;
+    const t = template.split('/');
+    if (t.length !== segs.length) return false;
+    return t.every((part, i) => {
+      if (part === ':me') return !!me && segs[i] === me;
+      if (part.startsWith(':')) return segs[i] !== '';
+      return part === segs[i];
+    });
+  });
+}
+
+// Refused when an HRBP's write through HR's pages names their own record.
+// Their own appraisal is changed on the Self pages like anyone's; HR's
+// powers over it stay with HR. Worded as the core people routes word it.
+const OWN_RECORD = {
+  error: 'Only HR and Super Admin can change your own record here. Your own appraisal is on your Self pages.',
+  needs: 'pms_admin',
+};
+
 // The keys a payload uses to name whose record a row is. Checked in this
 // order; the first one present decides.
 const EMPLOYEE_KEYS = ['employee_id', 'employeeId', 'subject_employee_id', 'person_id'];
@@ -273,7 +374,6 @@ function gateway() {
       if (!(await hasPermission(req.user, 'pms_hrbp'))) return next();
       if (await hasPermission(req.user, 'pms_admin')) return next();   // real HR, nothing to do
 
-      const { remit, ids } = await remitFor(req);
       const write = req.method !== 'GET' && req.method !== 'HEAD';
       // Express routes match regardless of letter case ('/HRBP/admin' reaches
       // the '/hrbp/admin' router), so the prefix checks below compare a
@@ -292,11 +392,25 @@ function gateway() {
         });
       }
 
+      // The HRBP's own appraisal: an ordinary employee's request, so the
+      // gateway steps aside before the remit is even looked up — an empty
+      // remit, or one that leaves the HRBP out, must not touch their own
+      // pages. Nothing lent, nothing narrowed. See SELF_SERVICE.
+      if (matchesRoute(SELF_SERVICE, req, routePath)) return next();
+
+      const { remit, ids } = await remitFor(req);
+
       if (write) {
         if (TENANT_WIDE.some((p) => routePath.startsWith(p))) {
           return res.status(403).json({
             error: 'This setting applies to the whole company, so it stays with HR. '
                  + 'You can read it here, but not change it.',
+            needs: 'pms_admin',
+          });
+        }
+        if (HR_DECIDES.some((p) => routePath.startsWith(p))) {
+          return res.status(403).json({
+            error: 'Approvals are decided by the manager or by HR. You can read them here.',
             needs: 'pms_admin',
           });
         }
@@ -313,6 +427,10 @@ function gateway() {
             needs: 'pms_admin',
           });
         }
+        // Never HR's powers over their own record: a calibration rating, a
+        // reopened sheet, their own increment. Until 10 Oct an HRBP inside
+        // their own remit could do all three through HR's pages.
+        if (targets.includes(req.user.id)) return res.status(403).json(OWN_RECORD);
         const strangers = targets.filter((id) => !ids.has(id));
         if (strangers.length) {
           return res.status(403).json({
@@ -335,11 +453,19 @@ function gateway() {
         grantedForRequest: LENT,
       });
 
+      // HR's pages never show an HRBP their own record, in or out of their
+      // remit: what HR sees of them (a calibration row, a HOD rating before
+      // publish) is not theirs to read early. Their own appraisal is on the
+      // Self pages. KEEP_SELF reads are the exception.
+      const visible = new Set(ids);
+      visible.delete(req.user.id);
+      if (matchesRoute(KEEP_SELF, req, routePath)) visible.add(req.user.id);
+
       const json = res.json.bind(res);
       res.json = (body) => {
         try {
           if (body && typeof body === 'object') {
-            narrow(body, ids);
+            narrow(body, visible);
             if (!Array.isArray(body)) {
               body.remit = { locations: remit.locations, hods: remit.hods, empty: remit.empty };
               body.scoped_to_remit = true;
@@ -367,4 +493,7 @@ function gateway() {
 // the browser sweep found it.
 require('../../core/scope-hooks').register(gateway());
 
-module.exports = { gateway, narrow, outsideRemit, rewriteTotals, targetEmployeeIds, TENANT_WIDE, HR_ONLY, LENT };
+module.exports = {
+  gateway, narrow, outsideRemit, rewriteTotals, targetEmployeeIds, matchesRoute,
+  TENANT_WIDE, HR_ONLY, HR_DECIDES, LENT, SELF_SERVICE, KEEP_SELF,
+};
