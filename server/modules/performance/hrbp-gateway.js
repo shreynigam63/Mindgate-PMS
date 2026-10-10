@@ -92,7 +92,18 @@ const HR_DECIDES = ['/approvals/bulk'];
 // pms_team_eval, pms_hod. Exact templates, never prefixes, keyed on the
 // router's mount, so a route added later stays behind the gateway until
 // somebody reads it and adds it here. ':me' must be the caller's own id;
-// any other ':name' matches one segment.
+// any other ':name' matches one segment. A third element is a further test
+// on the request.
+//
+// /meetings serves more than the HRBP's own reviews: a connect that asked
+// HR to join lists its meetings for the HRBP named on it, under the
+// employee's id. Those stay on the gateway's lent, remit-checked path, as
+// before; only a request about the HRBP themself is self-service.
+const aboutMe = (where, key) => (req) => {
+  const v = ((where === 'query' ? req.query : req.body) || {})[key];
+  return v == null || v === '' || String(v).toLowerCase() === String(req.user.id).toLowerCase();
+};
+
 const SELF_SERVICE = {
   '/api/v1/pms': [
     ['GET', '/home'],
@@ -114,7 +125,8 @@ const SELF_SERVICE = {
     ['GET', '/connects'], ['GET', '/connects/questions'], ['GET', '/connects/people'],
     ['GET', '/connects/kra-options/:me'], ['GET', '/connects/cadence/:me'],
     ['POST', '/connects'], ['PUT', '/connects/:id'], ['POST', '/connects/:id/sign-off'],
-    ['GET', '/meetings/providers'], ['GET', '/meetings'], ['POST', '/meetings'],
+    ['GET', '/meetings/providers'],
+    ['GET', '/meetings', aboutMe('query', 'employee_id')], ['POST', '/meetings', aboutMe('body', 'employee_id')],
     ['DELETE', '/meetings/:id'], ['PUT', '/meetings/:id/transcript'],
   ],
   '/api/v1/agentic': [
@@ -151,7 +163,7 @@ function matchesRoute(table, req, routePath) {
   const method = req.method === 'HEAD' ? 'GET' : req.method;
   const segs = routePath.replace(/\/+$/, '').split('/');
   const me = String(req.user.id || '').toLowerCase();
-  return rows.some(([m, template]) => {
+  return rows.some(([m, template, also]) => {
     if (m !== method) return false;
     const t = template.split('/');
     if (t.length !== segs.length) return false;
@@ -159,7 +171,7 @@ function matchesRoute(table, req, routePath) {
       if (part === ':me') return !!me && segs[i] === me;
       if (part.startsWith(':')) return segs[i] !== '';
       return part === segs[i];
-    });
+    }) && (!also || also(req));
   });
 }
 

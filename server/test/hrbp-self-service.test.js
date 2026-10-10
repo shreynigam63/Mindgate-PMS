@@ -101,7 +101,8 @@ before(async () => {
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
   if (tenantId) {
-    for (const t of ['people.appraisal_query_messages', 'people.appraisal_queries', 'pms.pip_records', 'pms.kras',
+    for (const t of ['people.appraisal_query_messages', 'people.appraisal_queries', 'pms.review_meetings',
+      'pms.connects', 'core.notifications', 'pms.audit_log', 'pms.pip_records', 'pms.kras',
       'pms.kra_sheets', 'pms.development_plans', 'pms.rating_adjustments', 'pms.cycles', 'core.audit_log',
       'core.hrbp_scope', 'core.local_credentials', 'core.user_roles', 'core.role_permissions', 'core.employees']) {
       await db.query(`DELETE FROM ${t} WHERE tenant_id=$1`, [tenantId]).catch(() => {});
@@ -212,6 +213,27 @@ test('the Improvement Plan page still shows an HRBP their own plan', async () =>
   assert.ok(one.body.pip, 'their own plan was narrowed away');
 });
 
+test('meetings: the HRBP\'s own are self-service; a remit employee\'s keep the lent path', async () => {
+  // Their own review meeting, outside their own remit: an employee's request.
+  const own = await post('outside', '/pms/meetings', { context: 'midyear', meeting_url: 'https://meet.example/own' });
+  assert.equal(own.status, 201, `own meeting refused: ${JSON.stringify(own.body)}`);
+  const mine = await call('outside', '/pms/meetings?context=midyear');
+  assert.equal(mine.status, 200);
+  assert.equal(mine.body.meetings.length, 1, 'their own meeting is not listed');
+
+  // A connect that asked HR to join lists its meetings for the HRBP named
+  // on it, under the EMPLOYEE's id. Found by review on 10 Oct: making all
+  // of /meetings self-service turned every such row into "Not your meeting".
+  const list = await call('inside', `/pms/meetings?context=connect&employee_id=${id.pune1}`);
+  assert.equal(list.status, 200, `an included HRBP lost a remit employee's meetings: ${JSON.stringify(list.body)}`);
+  const add = await post('inside', '/pms/meetings',
+    { employee_id: id.pune1, context: 'connect', meeting_url: 'https://meet.example/p1' });
+  assert.equal(add.status, 201, `an included HRBP could not add the link: ${JSON.stringify(add.body)}`);
+  const away = await post('inside', '/pms/meetings',
+    { employee_id: id.mumbai1, context: 'connect', meeting_url: 'https://meet.example/m1' });
+  assert.ok(refusedByGateway(away), 'a meeting outside the remit got past the gateway');
+});
+
 // ---- the pure half -------------------------------------------------------
 
 const ME = '11111111-1111-4111-8111-111111111111';
@@ -230,6 +252,10 @@ test('matchesRoute: exact templates, keyed on the router, and :me is only me', (
   assert.ok(!m('GET', '/api/v1/pms', `/review/kras/${OTHER}`), 'somebody else\'s KRAs stay behind the gateway');
   assert.ok(!m('POST', '/api/v1/pms', '/approvals/bulk'));
   assert.ok(!m('GET', '/api/v1/pms', '/reports/completion'), 'HR pages are not self-service');
+  const meetings = (query) => gw.matchesRoute(gw.SELF_SERVICE, { ...req('GET', '/api/v1/pms'), query }, '/meetings');
+  assert.ok(meetings({}), 'no employee_id means the caller');
+  assert.ok(meetings({ employee_id: ME.toUpperCase() }), 'the caller\'s own id, in any case');
+  assert.ok(!meetings({ employee_id: OTHER }), 'somebody else\'s meetings stay behind the gateway');
 });
 
 test('no self-service route sits under a tenant-wide or HR-only prefix', () => {
