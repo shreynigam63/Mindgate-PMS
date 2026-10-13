@@ -16,7 +16,10 @@ const skip = !HAS_DB && 'DATABASE_URL not set';
 test('experience reads the way an HRMS writes it', () => {
   const cases = [
     ['4.5', 4.5], ['4', 4], ['0', 0], ['4 Years 6 Months', 4.5], ['4 Yrs, 6 Mths', 4.5],
-    ['6 months', 0.5], ['4y 6m', 4.5], ['2 Years', 2],
+    ['6 months', 0.5], ['4y 6m', 4.5], ['2 Years', 2], ['4 years and 6 months', 4.5],
+    // Written without spaces. Read piecewise these lost their years and
+    // came back as months alone (found by review, 13 Oct).
+    ['4Y6M', 4.5], ['2yrs3mths', 2.25], ['1y6m', 1.5], ['4Years6Months', 4.5],
   ];
   for (const [raw, want] of cases) assert.equal(parseExperience(raw).value, want, raw);
   for (const raw of ['', '-', 'NA', 'n/a', null]) {
@@ -29,6 +32,8 @@ test('experience reads the way an HRMS writes it', () => {
 test('anything else is reported, never guessed', () => {
   assert.match(parseExperience('lots').error, /not a number of years/);
   assert.match(parseExperience('75').error, /outside 0 to 60 years/);
+  assert.match(parseExperience('5+').error, /not a number of years/);
+  assert.match(parseExperience('abc 4 years').error, /not a number of years/);
 });
 
 test('THE CLIENT\'S COLUMN IS READ — "CurrentExperiance", and the other spellings', () => {
@@ -38,6 +43,11 @@ test('THE CLIENT\'S COLUMN IS READ — "CurrentExperiance", and the other spelli
     assert.equal(r.rows[0].total_experience_years, 3.5, `${header} was not read`);
     assert.ok(!r.warnings.some((w) => /unknown column/i.test(w.warning || '')), `${header} reported as unknown`);
   }
+});
+
+test('two columns that both read as experience are named, not silently merged', () => {
+  const r = validateEmployeeCsv('Full Name,Office Email,CURRENTEXPERIANCE,Experience\nAsha,asha@x.com,4,\n');
+  assert.ok(r.warnings.some((w) => /"CURRENTEXPERIANCE" and "Experience" all read as total_experience_years/.test(w.warning)));
 });
 
 test('an unreadable cell is a row warning, and the row still loads', () => {

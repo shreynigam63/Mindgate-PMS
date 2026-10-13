@@ -100,9 +100,13 @@ function parseExperience(raw) {
   let years = null;
   if (/^\d+(\.\d+)?$/.test(v)) years = Number(v);
   else {
-    const y = v.match(/(\d+(?:\.\d+)?)\s*(?:years?|yrs?|y)\b/i);
-    const m = v.match(/(\d+(?:\.\d+)?)\s*(?:months?|mths?|mons?|mos?|m)\b/i);
-    if (y || m) years = (y ? Number(y[1]) : 0) + (m ? Number(m[1]) / 12 : 0);
+    // The whole value, anchored: years then months, either optional, with
+    // or without spaces. Read piecewise, "4Y6M" lost its years to a word
+    // boundary and came back as half a year (found by review, 13 Oct).
+    const hit = v.match(/^(?:(\d+(?:\.\d+)?)\s*(?:years?|yrs?|y)\.?)?[\s,]*(?:and\s*)?(?:(\d+(?:\.\d+)?)\s*(?:months?|mths?|mons?|mos?|m)\.?)?$/i);
+    if (hit && (hit[1] != null || hit[2] != null)) {
+      years = (hit[1] != null ? Number(hit[1]) : 0) + (hit[2] != null ? Number(hit[2]) / 12 : 0);
+    }
   }
   if (years == null || !Number.isFinite(years)) {
     return { value: null, error: `total experience "${v}" is not a number of years — write it as 4.5 or "4 Years 6 Months"` };
@@ -297,6 +301,16 @@ function validateEmployeeRows(rows) {
 
   const idx = Object.fromEntries(header.map((h, i) => [h, i]));
   const out = []; const errors = []; const warnings = [];
+  // Two columns that read as the same field: only the last one is used, so
+  // say which, rather than let a blank or different column win in silence.
+  const sources = {};
+  header.forEach((h, i) => { if (h && KNOWN.includes(h)) (sources[h] = sources[h] || []).push(String(rows[0][i]).trim()); });
+  for (const [field, names] of Object.entries(sources)) {
+    if (names.length > 1) {
+      warnings.push({ line: 1, warning: `columns ${names.map((n) => `"${n}"`).join(' and ')} all read as ${field}; `
+        + `only "${names[names.length - 1]}" is used — remove the others` });
+    }
+  }
   const seenEmails = new Map();
   const leaverCol = idx['resignation_date'] != null ? 'resignation_date'
     : (idx['last_working_date'] != null ? 'last_working_date' : null);
