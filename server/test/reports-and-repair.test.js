@@ -155,7 +155,7 @@ test('Team Overview: Team Competencies reads the report\'s own My Competencies a
      VALUES ($1,$2,$3,$4,'in_progress') RETURNING id`, [tenantId, cycleId, empId, mgrId])).rows[0];
   await db.query(
     `INSERT INTO pms.competency_ratings (tenant_id, assessment_id, competency_id, required_level, self_evidence)
-     VALUES ($1,$2,$3,3,'  ')`, [tenantId, a.id, comp.id]);
+     VALUES ($1,$2,$3,3,E' \n\t ')`, [tenantId, a.id, comp.id]);
   assert.equal(await status(), 'not_started', 'an empty save is not a start');
 
   await db.query(`UPDATE pms.competency_ratings SET self_rating=3 WHERE assessment_id=$1`, [a.id]);

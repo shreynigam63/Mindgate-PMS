@@ -7149,11 +7149,11 @@ router.get('/team/overview', async (req, res) => {
                 WHEN ca.id IS NULL THEN 'not_started'
                 WHEN EXISTS (SELECT 1 FROM pms.competency_ratings cr
                               WHERE cr.assessment_id = ca.id
-                                AND (cr.self_rating IS NOT NULL OR NULLIF(btrim(cr.self_evidence), '') IS NOT NULL))
+                                AND (cr.self_rating IS NOT NULL OR NULLIF(btrim(cr.self_evidence, E' \t\r\n'), '') IS NOT NULL))
                   OR NULLIF(btrim(concat(ca.top_responsibilities, ca.critical_outcomes, ca.strongest_areas,
                        ca.challenging_areas, ca.develop_next, ca.preferred_methods, ca.aspiration_2_3_years,
                        ca.next_role_competencies, ca.internal_mobility, ca.support_needed,
-                       ca.tech_primary, ca.tech_secondary, ca.tech_tertiary, ca.tech_basic)), '') IS NOT NULL
+                       ca.tech_primary, ca.tech_secondary, ca.tech_tertiary, ca.tech_basic), E' \t\r\n'), '') IS NOT NULL
                   THEN 'pending'
                 ELSE 'not_started'
               END AS competency_status
