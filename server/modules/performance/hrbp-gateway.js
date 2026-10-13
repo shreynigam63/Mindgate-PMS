@@ -144,6 +144,10 @@ const SELF_SERVICE = {
     ['GET', '/awards'], ['POST', '/awards/cycles/:cycle/nominate'],
     ['GET', '/csr'], ['POST', '/csr/:id/participate'],
     ['GET', '/queries'], ['POST', '/queries'], ['GET', '/queries/:id/messages'], ['POST', '/queries/:id/reply'],
+    // Nominating for RnR is a manager's own work, open only to someone who
+    // holds pms_team_eval (never lent), and the pool is their own team.
+    ['GET', '/rnr/nominate/options'], ['GET', '/rnr/nominate/eligible'], ['POST', '/rnr/nominations'],
+    ['GET', '/rnr/nominations', (req) => req.query && req.query.mine === 'true'],
   ],
   '/api/v1/engagement': [
     ['GET', '/my/invitations'], ['GET', '/my/submissions'],

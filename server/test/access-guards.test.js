@@ -255,3 +255,18 @@ test('outside the stages, only the nominator resubmits and only HR marks an awar
   const r = await call('hr', `/people/rnr/nominations/${ids.final}/decide`, { method: 'POST', body: JSON.stringify({ action: 'award' }) });
   assert.equal(r.status, 200, JSON.stringify(r.body));
 });
+
+test('THE AWARDS-PER-YEAR LIMIT HOLDS AT FINAL APPROVAL, not only at nomination (13 Oct)', async () => {
+  // emp already holds one award won this year (ids.final). A second
+  // nomination that reached HR must not become a second win.
+  await db.query(`INSERT INTO rnr.settings (tenant_id,value) VALUES ($1,'{"max_awards_per_year":1}'::jsonb)
+                  ON CONFLICT (tenant_id) DO UPDATE SET value=EXCLUDED.value`, [tenantId]);
+  const second = (await db.query(
+    `INSERT INTO rnr.nominations (tenant_id,cycle_id,award_id,employee_id,nominated_by,status)
+     VALUES ($1,$2,$3,$4,$5,'pending_hr') RETURNING id`, [tenantId, ids.cycle, ids.award, ids.emp, ids.boss])).rows[0].id;
+  const r = await call('hr', `/people/rnr/nominations/${second}/decide`, { method: 'POST', body: JSON.stringify({ action: 'approve' }) });
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.match(r.body.error, /already holds 1 RnR award this year, and the limit is 1/);
+  assert.equal((await db.query(`SELECT status FROM rnr.nominations WHERE id=$1`, [second])).rows[0].status, 'pending_hr');
+  await db.query(`DELETE FROM rnr.settings WHERE tenant_id=$1`, [tenantId]);
+});

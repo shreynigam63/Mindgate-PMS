@@ -110,9 +110,16 @@ async function dataGaps(tenantId) {
             count(*) FILTER (WHERE date_of_joining IS NULL)::int no_doj
        FROM core.employees WHERE tenant_id=$1 AND archived_at IS NULL`, [tenantId])).rows[0];
   const msgs = [];
-  if (r.no_experience) {
+  // Named from the award master rather than written in, so the message
+  // follows HR's edits to it (found by review, 13 Oct).
+  const onExperience = (await db.query(
+    `SELECT name FROM rnr.awards
+      WHERE tenant_id=$1 AND active IS NOT FALSE AND experience_basis='total'
+        AND (min_experience_years IS NOT NULL OR max_experience_years IS NOT NULL)
+      ORDER BY sort_order, name`, [tenantId])).rows.map((a) => a.name);
+  if (r.no_experience && onExperience.length) {
     msgs.push(`${r.no_experience} of ${r.total} have no total professional experience on record, so they cannot `
-      + 'receive the Junior awards (WOW Machine, Rising Star, Buddy Star), which are decided on it. '
+      + `receive ${onExperience.join(', ')}, which ${onExperience.length === 1 ? 'is' : 'are'} decided on it. `
       + "It is read from the HRMS file's experience column on the next employee upload.");
   }
   if (r.no_doj) msgs.push(`${r.no_doj} of ${r.total} have no date of joining, so service and loyalty cannot be worked out.`);
@@ -632,6 +639,25 @@ router.post('/rnr/nominations/:id/decide', async (req, res) => {
         return res.json({ ok: true, status: t.next, status_label: wf.LABELS[t.next],
           outside_quota: true,
           note: `${award.name} sits outside the cycle quota, so no slot was used.` });
+      }
+      // The awards-per-year limit, checked again where an award is actually
+      // won. At nomination time it only counts awards already won, so two
+      // nominations for one person in the same cycle both passed it, and
+      // with band gone one person can qualify for every quarterly award
+      // (found by review, 13 Oct).
+      if (n.employee_id) {
+        const set = (await db.query(`SELECT value FROM rnr.settings WHERE tenant_id=$1`, [T(req)])).rows[0];
+        const max = set && set.value && set.value.max_awards_per_year != null ? Number(set.value.max_awards_per_year) : null;
+        if (max) {
+          const held = ((await priorAwardsBy(T(req), n.cycle_id))[n.employee_id] || [])
+            .filter((p) => p.won && p.same_year).length;
+          if (held >= max) {
+            return res.status(409).json({
+              error: `This employee already holds ${held} RnR award${held === 1 ? '' : 's'} this year, and the limit is ${max}. `
+                + 'Reject or send this one back, or raise the limit in RnR Administration.',
+            });
+          }
+        }
       }
       const cycle = (await db.query(`SELECT * FROM rnr.cycles WHERE id=$1`, [n.cycle_id])).rows[0];
       const st = await quotaFor(T(req), cycle);
