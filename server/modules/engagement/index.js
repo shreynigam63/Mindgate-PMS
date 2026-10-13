@@ -15,7 +15,7 @@ const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
 const { guardUuidParams } = require('../../core/http');
-const { apiPermissionParity, hasPermission } = require('../../core/permissions');
+const { apiPermissionParity, hasPermission, holdsPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const { normaliseRule, audienceSql, describeRule, needsJoiningDate,
         triggerRule, validateRule, MILESTONES } = require('./audience');
@@ -1372,7 +1372,11 @@ const ANON_FLOOR = 5;
 async function exportScope(req) {
   const [isPartner, isAdmin] = await Promise.all([
     hasPermission(req.user, 'pms_hrbp'),
-    hasPermission(req.user, 'pms_admin'),
+    // HELD, never lent. Behind the HRBP gateway every HRBP request holds a
+    // lent pms_admin, so asking hasPermission made every HRBP "HR" here
+    // and their results download covered the whole company, named
+    // answers included (found by review, 13 Oct).
+    holdsPermission(req.user, 'pms_admin'),
   ]);
   if (!isPartner || isAdmin) return null;
   const people = require('../people');

@@ -477,6 +477,36 @@ test('narrowing drops a list row that names an outsider by id alone, and leaves 
   assert.equal(legacy.cells.length, 1, 'without the employee list nothing is guessed');
 });
 
+test('A SURVEY\'S RESULTS DOWNLOAD HOLDS THE REMIT: no named answer from outside it', async () => {
+  const sid = (await db.query(
+    `INSERT INTO engagement.surveys (tenant_id,title,survey_type,status,anonymity_default,allow_attribution_optin)
+     VALUES ($1,'Stay Interview','pulse','closed',true,true) RETURNING id`, [tenantId])).rows[0].id;
+  const qid = (await db.query(
+    `INSERT INTO engagement.questions (tenant_id,survey_id,qtype,prompt,sort_order)
+     VALUES ($1,$2,'text','What would make you leave?',20) RETURNING id`, [tenantId, sid])).rows[0].id;
+  const rids = [];
+  for (const who of ['pune1', 'pune2', 'mumbai1']) {
+    const r = (await db.query(`INSERT INTO engagement.responses (tenant_id,survey_id,employee_id,submitted_at)
+      VALUES ($1,$2,$3,now()) RETURNING id`, [tenantId, sid, id[who]])).rows[0].id;
+    rids.push(r);
+    await db.query(`INSERT INTO engagement.answers (response_id,question_id,value_text) VALUES ($1,$2,$3)`, [r, qid, `answer-of-${who}`]);
+  }
+  try {
+    const hrbp = await download('inside', `/engagement/surveys/${sid}/results.xlsx`);
+    assert.equal(hrbp.status, 200, hrbp.text.slice(0, 200));
+    assert.match(hrbp.text, /Your remit only/, 'the file does not say it is cut to the remit');
+    assert.match(hrbp.text, /answer-of-pune1/);
+    assert.ok(!/answer-of-mumbai1/.test(hrbp.text), 'a named answer from outside the remit reached the HRBP');
+    const hr = await download('boss', `/engagement/surveys/${sid}/results.xlsx`);
+    assert.match(hr.text, /answer-of-mumbai1/, 'HR lost an answer');
+  } finally {
+    await db.query(`DELETE FROM engagement.answers WHERE response_id = ANY($1::uuid[])`, [rids]);
+    await db.query(`DELETE FROM engagement.responses WHERE survey_id=$1`, [sid]);
+    await db.query(`DELETE FROM engagement.questions WHERE survey_id=$1`, [sid]);
+    await db.query(`DELETE FROM engagement.surveys WHERE id=$1`, [sid]);
+  }
+});
+
 test('the scope helper keeps every row when no hook narrowed the request, and none that name nobody when one did', () => {
   const { visibleRows } = require('../core/scope-hooks');
   const rows = [{ employee_id: ME }, { employee_id: OTHER }, { name: 'a total' }];
