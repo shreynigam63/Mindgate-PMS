@@ -38,7 +38,7 @@ const post = (who, path, body) => call(who, path, { method: 'POST', body: JSON.s
 
 // The gateway's own refusals, and only those. A handler's 400 or 404 means
 // the gateway stepped aside, which is what these tests are about.
-const GATEWAY = /remit|HR can do it|whole company|your own record|decided by the manager/i;
+const GATEWAY = /remit|HR can do it|whole company|your own record|decided by the manager|not one of the changes an HRBP makes|address is not valid/i;
 const refusedByGateway = (r) => r.status === 403 && GATEWAY.test(String(r.body && r.body.error));
 
 before(async () => {
@@ -101,7 +101,7 @@ before(async () => {
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
   if (tenantId) {
-    for (const t of ['people.appraisal_query_messages', 'people.appraisal_queries', 'pms.review_meetings',
+    for (const t of ['people.onboarding_tasks', 'people.onboarding_joiners', 'people.appraisal_query_messages', 'people.appraisal_queries', 'pms.review_meetings',
       'pms.connects', 'core.notifications', 'pms.audit_log', 'pms.pip_records', 'pms.kras',
       'pms.kra_sheets', 'pms.development_plans', 'pms.rating_adjustments', 'pms.cycles', 'core.audit_log',
       'core.hrbp_scope', 'core.local_credentials', 'core.user_roles', 'core.role_permissions', 'core.employees']) {
@@ -279,7 +279,135 @@ test('READS BY ID ARE CHECKED: nobody else\'s summary, and not their own, from H
   assert.ok(!refusedByGateway(inRemit), `an in-remit read was refused: ${inRemit.status} ${JSON.stringify(inRemit.body)}`);
 });
 
+// ---- ids read the way the database reads them (13 Oct) -------------------
+//
+// Found by review: the gateway knew only the canonical spelling of an id,
+// and read the path still percent-encoded. Express hands a route its params
+// decoded, and Postgres reads '{<id>}', upper case and the id without its
+// hyphens as the same row. So an id the gateway could not see went through
+// unchecked, carried past the remit check by an in-remit decoy where one
+// was needed, and needing none on a read.
+
+const spell = (u) => ({
+  'percent-encoded': `%${u.charCodeAt(0).toString(16)}${u.slice(1)}`,
+  'without hyphens': u.replace(/-/g, ''),
+  'in braces': `{${u}}`,
+  'upper case': u.toUpperCase(),
+});
+const inBody = (u) => { const s = spell(u); delete s['percent-encoded']; return s; };
+
+test('A PATH ID IN ANY SPELLING IS CHECKED — an outsider\'s review and their own', async () => {
+  for (const [who, why] of [['mumbai1', /not in your remit/], ['inside', /Self pages/]]) {
+    for (const [how, v] of Object.entries(spell(id[who]))) {
+      const r = await call('inside', `/pms/team/annual-review/${encodeURI(v).replace(/%25/g, '%')}`);
+      assert.ok(refusedByGateway(r), `${who}'s review, id ${how}: ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
+      assert.match(r.body.error, why, `${who}, ${how}`);
+    }
+  }
+});
+
+test('a query id in any spelling is checked, and so is a list of them', async () => {
+  for (const [how, v] of Object.entries(inBody(id.mumbai1))) {
+    const r = await call('inside', `/agentic/parameter-analysis?employee_id=${encodeURIComponent(v)}`);
+    assert.ok(refusedByGateway(r), `an outsider's AI reading, id ${how}: ${r.status}`);
+  }
+  const two = await call('inside', `/agentic/parameter-analysis?employee_id=${id.pune1}&employee_id=${id.mumbai1}`);
+  assert.ok(refusedByGateway(two), `an outsider beside an in-remit id: ${two.status}`);
+});
+
+test('A WRITE NAMING SOMEBODY IN ANOTHER SPELLING IS CHECKED, decoy or not', async () => {
+  for (const [how, v] of Object.entries(inBody(id.inside))) {
+    const own = await post('inside', '/pms/calibration/adjust', { employee_id: v, employeeId: id.pune1, to_rating: 5, reason: 'x' });
+    assert.equal(own.status, 403, `own rating, id ${how}: ${JSON.stringify(own.body)}`);
+    assert.match(own.body.error, /Only HR and Super Admin can change your own record/);
+  }
+  for (const [how, v] of Object.entries(inBody(id.mumbai1))) {
+    const away = await post('inside', '/pms/calibration/top-talent', { employee_id: v, email: 'p1@x.com', potential_rating: 3 });
+    assert.ok(refusedByGateway(away), `an outsider's potential, id ${how}: ${away.status} ${JSON.stringify(away.body)}`);
+  }
+  for (const [how, v] of Object.entries(spell(id.mumbai1))) {
+    const path = encodeURI(v).replace(/%25/g, '%');
+    const kras = await put('inside', `/pms/hr/kra-sheet/${path}/kras`, { employee_id: id.pune1, kras: [] });
+    assert.ok(refusedByGateway(kras), `KRAs onto an outsider's sheet, id ${how}: ${kras.status} ${JSON.stringify(kras.body)}`);
+    const map = await post('inside', `/pms/timesheet/kra/employee/${path}/map/bulk`, { employee_id: id.pune1, mappings: [] });
+    assert.ok(refusedByGateway(map), `an outsider's timesheet mapping, id ${how}: ${map.status} ${JSON.stringify(map.body)}`);
+  }
+  const adj = await db.query(`SELECT 1 FROM pms.rating_adjustments WHERE tenant_id=$1`, [tenantId]).catch(() => ({ rows: [] }));
+  assert.equal(adj.rows.length, 0, 'a rating adjustment was written anyway');
+  const top = await db.query(`SELECT 1 FROM pms.top_talent WHERE tenant_id=$1`, [tenantId]).catch(() => ({ rows: [] }));
+  assert.equal(top.rows.length, 0, 'a potential rating was written anyway');
+});
+
+test('a path the gateway cannot decode is refused, not waved through', async () => {
+  const r = await call('inside', `/pms/team/annual-review/%FF${id.mumbai1}`);
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /address is not valid/);
+});
+
+test('MEETINGS: an included HRBP takes down their own link and adds its transcript; not an outsider\'s', async () => {
+  const add = await post('inside', '/pms/meetings',
+    { employee_id: id.pune1, context: 'connect', meeting_url: 'https://meet.example/p1-again' });
+  assert.equal(add.status, 201, JSON.stringify(add.body));
+  const mid = add.body.meeting ? add.body.meeting.id : add.body.id;
+  assert.ok(mid, `no meeting id in ${JSON.stringify(add.body)}`);
+  const tr = await put('inside', `/pms/meetings/${mid}/transcript`, { content: 'Notes.' });
+  assert.ok(!refusedByGateway(tr) && tr.body.error !== 'Not your meeting',
+    `transcript on a remit employee's meeting: ${tr.status} ${JSON.stringify(tr.body)}`);
+  const del = await call('inside', `/pms/meetings/${mid}`, { method: 'DELETE' });
+  assert.equal(del.status, 200, `could not take the link down: ${JSON.stringify(del.body)}`);
+
+  const m = (await db.query(
+    `INSERT INTO pms.review_meetings (tenant_id, employee_id, context, provider, meeting_url, created_by)
+     VALUES ($1,$2,'connect','manual','https://meet.example/m2',$2) RETURNING id`, [tenantId, id.mumbai1])).rows[0];
+  const away = await call('inside', `/pms/meetings/${m.id}`, { method: 'DELETE' });
+  assert.ok(refusedByGateway(away), `deleted an outsider's meeting: ${away.status} ${JSON.stringify(away.body)}`);
+  const awayTr = await put('inside', `/pms/meetings/${m.id}/transcript`, { content: 'x' });
+  assert.ok(refusedByGateway(awayTr), `wrote an outsider's transcript: ${awayTr.status}`);
+  assert.equal((await db.query(`SELECT 1 FROM pms.review_meetings WHERE id=$1`, [m.id])).rows.length, 1);
+});
+
+test('meetings an HRBP is a party to without HR\'s powers stay theirs: their own, and their own report\'s', async () => {
+  const own = (await db.query(
+    `SELECT id FROM pms.review_meetings WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, id.outside])).rows[0];
+  assert.ok(own, 'the earlier test left no own meeting');
+  const del = await call('outside', `/pms/meetings/${own.id}`, { method: 'DELETE' });
+  assert.equal(del.status, 200, `could not delete their own meeting: ${JSON.stringify(del.body)}`);
+
+  // An HRBP for Pune who manages somebody in Mumbai, outside the remit.
+  id.mrep = (await db.query(
+    `INSERT INTO core.employees (tenant_id, name, email, status, department, location, manager_id)
+     VALUES ($1,'mrep','mrep@x.com','active','Delivery','Mumbai',$2) RETURNING id`, [tenantId, id.outside])).rows[0].id;
+  const add = await post('outside', '/pms/meetings',
+    { employee_id: id.mrep, context: 'connect', meeting_url: 'https://meet.example/rep' });
+  assert.equal(add.status, 201, `a manager could not add a link for their own report: ${JSON.stringify(add.body)}`);
+  const list = await call('outside', `/pms/meetings?context=connect&employee_id=${id.mrep}`);
+  assert.equal(list.status, 200);
+  assert.equal(list.body.meetings.length, 1, 'their report\'s meeting is not listed');
+  const gone = await call('outside', `/pms/meetings/${list.body.meetings[0].id}`, { method: 'DELETE' });
+  assert.equal(gone.status, 200, JSON.stringify(gone.body));
+});
+
+test('the First-Week Journey: an HRBP edits a joiner in their remit, not one outside it', async () => {
+  const mk = async (who) => (await db.query(
+    `INSERT INTO people.onboarding_joiners (tenant_id, employee_id, doj, started_by)
+     VALUES ($1,$2,'2026-10-01','test') RETURNING id`, [tenantId, id[who]])).rows[0].id;
+  const pj = await mk('pune2');
+  const mj = await mk('mumbai1');
+  const ok = await call('inside', `/people/onboarding/joiners/${pj}`, { method: 'PATCH', body: JSON.stringify({ personal_email: 'j@home.com' }) });
+  assert.ok(!refusedByGateway(ok), `an in-remit joiner edit was refused: ${ok.status} ${JSON.stringify(ok.body)}`);
+  const no = await call('inside', `/people/onboarding/joiners/${mj}`, { method: 'PATCH', body: JSON.stringify({ personal_email: 'j@home.com' }) });
+  assert.ok(refusedByGateway(no), `an outsider joiner edit got past the gateway: ${no.status}`);
+});
+
 // ---- the pure half -------------------------------------------------------
+
+test('uuidOf reads every spelling Postgres reads, and nothing else', () => {
+  const U = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+  for (const v of [U, U.toUpperCase(), U.replace(/-/g, ''), `{${U}}`, 'a0ee-bc99-9c0b-4ef8-bb6d-6bb9-bd38-0a11']) {
+    assert.equal(gw.uuidOf(v), U, v);
+  }
+  for (const v of ['', 'x', U.slice(1), `${U}0`, null, 42, [U], { id: U }]) assert.equal(gw.uuidOf(v), null, String(v));
+});
 
 const ME = '11111111-1111-4111-8111-111111111111';
 const OTHER = '22222222-2222-4222-8222-222222222222';
@@ -297,10 +425,12 @@ test('matchesRoute: exact templates, keyed on the router, and :me is only me', (
   assert.ok(!m('GET', '/api/v1/pms', `/review/kras/${OTHER}`), 'somebody else\'s KRAs stay behind the gateway');
   assert.ok(!m('POST', '/api/v1/pms', '/approvals/bulk'));
   assert.ok(!m('GET', '/api/v1/pms', '/reports/completion'), 'HR pages are not self-service');
-  const meetings = (query) => gw.matchesRoute(gw.SELF_SERVICE, { ...req('GET', '/api/v1/pms'), query }, '/meetings');
-  assert.ok(meetings({}), 'no employee_id means the caller');
-  assert.ok(meetings({ employee_id: ME.toUpperCase() }), 'the caller\'s own id, in any case');
-  assert.ok(!meetings({ employee_id: OTHER }), 'somebody else\'s meetings stay behind the gateway');
+  // Whether a meeting is the caller's is settled in the database first.
+  const meetings = (party) => gw.matchesRoute(gw.SELF_SERVICE,
+    { ...req('GET', '/api/v1/pms'), _hrbpMeetingParty: party }, '/meetings');
+  assert.ok(meetings(true), 'a meeting the caller is a party to');
+  assert.ok(!meetings(false), 'somebody else\'s meetings stay behind the gateway');
+  assert.ok(!meetings(undefined), 'never self-service before the gateway has looked');
 });
 
 test('no self-service route sits under a tenant-wide or HR-only prefix', () => {

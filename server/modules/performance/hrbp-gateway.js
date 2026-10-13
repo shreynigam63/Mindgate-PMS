@@ -98,11 +98,14 @@ const HR_DECIDES = ['/approvals/bulk'];
 // /meetings serves more than the HRBP's own reviews: a connect that asked
 // HR to join lists its meetings for the HRBP named on it, under the
 // employee's id. Those stay on the gateway's lent, remit-checked path, as
-// before; only a request about the HRBP themself is self-service.
-const aboutMe = (where, key) => (req) => {
-  const v = ((where === 'query' ? req.query : req.body) || {})[key];
-  return v == null || v === '' || String(v).toLowerCase() === String(req.user.id).toLowerCase();
-};
+// before; a meeting the HRBP is a party to unlent — about them, or about
+// one of their own reports — is self-service. The gateway works out which
+// before it reads this table (see meetingParty below), because a meeting
+// addressed by id says whose it is only in the database (13 Oct: until
+// then deleting one, or adding its transcript, was always self-service,
+// so an HRBP named on a remit employee's connect could add a link and
+// not take it down again).
+const partyToMeeting = (req) => req._hrbpMeetingParty === true;
 
 const SELF_SERVICE = {
   '/api/v1/pms': [
@@ -126,8 +129,8 @@ const SELF_SERVICE = {
     ['GET', '/connects/kra-options/:me'], ['GET', '/connects/cadence/:me'],
     ['POST', '/connects'], ['PUT', '/connects/:id'], ['POST', '/connects/:id/sign-off'],
     ['GET', '/meetings/providers'],
-    ['GET', '/meetings', aboutMe('query', 'employee_id')], ['POST', '/meetings', aboutMe('body', 'employee_id')],
-    ['DELETE', '/meetings/:id'], ['PUT', '/meetings/:id/transcript'],
+    ['GET', '/meetings', partyToMeeting], ['POST', '/meetings', partyToMeeting],
+    ['DELETE', '/meetings/:id', partyToMeeting], ['PUT', '/meetings/:id/transcript', partyToMeeting],
   ],
   '/api/v1/agentic': [
     ['POST', '/kra-suggest'], ['POST', '/devplan-suggest'], ['POST', '/career-suggest'], ['POST', '/career-plan'],
@@ -175,14 +178,15 @@ const HRBP_WRITES = {
     ['PUT', '/timesheet/kra/employee/:id/map'], ['POST', '/timesheet/kra/employee/:id/map/bulk'],
     ['DELETE', '/timesheet/kra/employee/:id/map/:item'],
     ['PUT', '/pip/:id'], ['POST', '/pip/:id/entries'], ['POST', '/pip/:id/gates/:gate/review'],
-    // A meeting link on a connect that asked HR to join, for a remit employee.
-    ['POST', '/meetings'],
+    // A meeting link on a connect that asked HR to join, for a remit
+    // employee: added, taken down again, or given its transcript.
+    ['POST', '/meetings'], ['DELETE', '/meetings/:id'], ['PUT', '/meetings/:id/transcript'],
   ],
   '/api/v1/people': [
     ['POST', '/rnr/nominations/:id/decide'],
     // The First-Week Journey (hidden since 8 Oct, data kept): a joiner's
     // SPOC work, one joiner at a time.
-    ['POST', '/onboarding/joiners'], ['DELETE', '/onboarding/joiners/:id'],
+    ['POST', '/onboarding/joiners'], ['PATCH', '/onboarding/joiners/:id'], ['DELETE', '/onboarding/joiners/:id'],
     ['POST', '/onboarding/joiners/:id/complete'], ['PUT', '/onboarding/joiners/:id/feedback'],
     ['PATCH', '/onboarding/tasks/:id'], ['POST', '/onboarding/tasks/:id/mark-sent'], ['POST', '/onboarding/tasks/:id/email'],
   ],
@@ -235,8 +239,40 @@ const OWN_RECORD = {
 // order; the first one present decides.
 const EMPLOYEE_KEYS = ['employee_id', 'employeeId', 'subject_employee_id', 'person_id'];
 
-const isUuid = (v) => typeof v === 'string'
-  && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+// An id in every spelling Postgres reads as one — upper case, braces,
+// hyphens left out or moved — returned in the one form the database hands
+// back, or null. Until 13 Oct this file knew only the canonical spelling,
+// so '{<id>}' or the id without its hyphens was no id at all here, yet the
+// same row to the handler's SQL: a decoy key beside it was all the gateway
+// checked, and a read named that way was not checked at all.
+function uuidOf(v) {
+  if (typeof v !== 'string') return null;
+  let s = v;
+  if (s.startsWith('{') && s.endsWith('}')) s = s.slice(1, -1);
+  s = s.replace(/-/g, '');
+  if (!/^[0-9a-f]{32}$/i.test(s)) return null;
+  s = s.toLowerCase();
+  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20)}`;
+}
+const isUuid = (v) => uuidOf(v) !== null;
+
+/** The ids a value names: one, or a list of them (?employee_id=a&employee_id=b). */
+const idsIn = (v) => (Array.isArray(v) ? v : [v]).map(uuidOf).filter(Boolean);
+
+/**
+ * Path segments as the route will read them. Express hands a route its
+ * params percent-decoded, but req.path is not: '%36' for a '6' hid an id
+ * from this file and not from the handler (13 Oct). null when a segment
+ * cannot be decoded — Express refuses such a param too.
+ */
+function pathSegments(req) {
+  const out = [];
+  for (const raw of String(req.path || '').split('/')) {
+    try { out.push(decodeURIComponent(raw)); } catch { return null; }
+  }
+  return out;
+}
+const pathIds = (req) => (pathSegments(req) || []).map(uuidOf).filter(Boolean);
 
 /**
  * Who this request may see. Resolved once and cached on the request —
@@ -260,14 +296,14 @@ async function remitFor(req) {
 function outsideRemit(ids, o) {
   if (!o || typeof o !== 'object') return null;
   for (const k of EMPLOYEE_KEYS) {
-    if (isUuid(o[k])) return !ids.has(o[k]);
+    if (isUuid(o[k])) return !ids.has(uuidOf(o[k]));
   }
   if (o.employee && typeof o.employee === 'object' && isUuid(o.employee.id)) {
-    return !ids.has(o.employee.id);
+    return !ids.has(uuidOf(o.employee.id));
   }
   // A row that IS an employee: an id beside an address. Checked last,
   // because plenty of rows carry an `id` of their own.
-  if (isUuid(o.id) && typeof o.email === 'string') return !ids.has(o.id);
+  if (isUuid(o.id) && typeof o.email === 'string') return !ids.has(uuidOf(o.id));
   return null;
 }
 
@@ -407,10 +443,9 @@ async function ownersOf(req, candidates) {
  * (a cycle id) are left to narrowing.
  */
 async function readTargetIds(req) {
-  const candidates = new Set();
-  for (const seg of String(req.path || '').split('/')) if (isUuid(seg)) candidates.add(seg);
+  const candidates = new Set(pathIds(req));
   const q = req.query && typeof req.query === 'object' ? req.query : {};
-  for (const k of [...EMPLOYEE_KEYS, 'about_employee_id']) if (isUuid(q[k])) candidates.add(q[k]);
+  for (const k of [...EMPLOYEE_KEYS, 'about_employee_id']) for (const id of idsIn(q[k])) candidates.add(id);
   return [...(await ownersOf(req, candidates)).found];
 }
 
@@ -430,17 +465,16 @@ async function readTargetIds(req) {
  * names two people is only allowed if both are covered.
  */
 async function targetEmployeeIds(req) {
-  const candidates = new Set();
-  for (const seg of String(req.path || '').split('/')) if (isUuid(seg)) candidates.add(seg);
+  const candidates = new Set(pathIds(req));
   const b = req.body && typeof req.body === 'object' ? req.body : {};
   for (const k of [...EMPLOYEE_KEYS, 'id', 'sheet_id', 'plan_id', 'assessment_id']) {
-    if (isUuid(b[k])) candidates.add(b[k]);
+    for (const id of idsIn(b[k])) candidates.add(id);
   }
   // Lists of people are people too. A bulk action names them in an array,
   // and until 8 Oct those were not read: one in-remit employee_id beside
   // an `ids` list of anybody let the whole list through.
   for (const k of ['ids', 'employee_ids', 'employeeIds']) {
-    if (Array.isArray(b[k])) for (const v of b[k]) if (isUuid(v)) candidates.add(v);
+    if (Array.isArray(b[k])) for (const id of idsIn(b[k])) candidates.add(id);
   }
 
   const { found, unresolved } = await ownersOf(req, candidates);
@@ -455,6 +489,38 @@ async function targetEmployeeIds(req) {
     if (r.rows.length) found.add(r.rows[0].id);
   }
   return [...found];
+}
+
+/**
+ * Is the HRBP a party to this meeting request without HR's powers — is it
+ * about them, or about one of their own reports? The same test the
+ * meetings routes make (meetingParty in index.js) before pms_admin, so a
+ * yes here is a request those routes allow an ordinary manager anyway.
+ */
+const MEETINGS = { '/api/v1/pms': [
+  ['GET', '/meetings'], ['POST', '/meetings'], ['DELETE', '/meetings/:id'], ['PUT', '/meetings/:id/transcript'],
+] };
+async function meetingParty(req) {
+  const me = req.user.id;
+  const segs = (pathSegments(req) || []).filter(Boolean);   // ['meetings', id?, 'transcript'?]
+  let employeeId;
+  if (segs.length > 1) {
+    const id = uuidOf(segs[1]);
+    if (!id) return false;
+    const r = await db.query(`SELECT employee_id FROM pms.review_meetings WHERE tenant_id=$1 AND id=$2`,
+      [req.user.tenant_id, id]);
+    if (!r.rows.length) return false;
+    employeeId = r.rows[0].employee_id;
+  } else {
+    const v = ((req.method === 'GET' || req.method === 'HEAD' ? req.query : req.body) || {}).employee_id;
+    if (v == null || v === '') return true;   // the routes read a blank as the caller
+    employeeId = uuidOf(v);
+    if (!employeeId) return false;
+  }
+  if (employeeId === me) return true;
+  const r = await db.query(`SELECT 1 FROM core.employees WHERE tenant_id=$1 AND id=$2 AND manager_id=$3`,
+    [req.user.tenant_id, employeeId, me]);
+  return r.rows.length > 0;
 }
 
 /**
@@ -485,10 +551,15 @@ function gateway() {
         });
       }
 
+      // An address with a segment that cannot be decoded names nobody this
+      // file can check; Express refuses such a param anyway.
+      if (!pathSegments(req)) return res.status(400).json({ error: 'This address is not valid.' });
+
       // The HRBP's own appraisal: an ordinary employee's request, so the
       // gateway steps aside before the remit is even looked up — an empty
       // remit, or one that leaves the HRBP out, must not touch their own
       // pages. Nothing lent, nothing narrowed. See SELF_SERVICE.
+      if (matchesRoute(MEETINGS, req, routePath)) req._hrbpMeetingParty = await meetingParty(req);
       if (matchesRoute(SELF_SERVICE, req, routePath)) return next();
 
       const { remit, ids } = await remitFor(req);
@@ -606,6 +677,6 @@ function gateway() {
 require('../../core/scope-hooks').register(gateway());
 
 module.exports = {
-  gateway, narrow, outsideRemit, rewriteTotals, targetEmployeeIds, matchesRoute,
+  gateway, narrow, outsideRemit, rewriteTotals, targetEmployeeIds, matchesRoute, uuidOf,
   TENANT_WIDE, HR_ONLY, HR_DECIDES, LENT, SELF_SERVICE, KEEP_SELF, HRBP_WRITES, READ_NARROWED,
 };
