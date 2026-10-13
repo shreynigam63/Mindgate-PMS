@@ -89,6 +89,28 @@ function flexDate(v) {
   const d = new Date(s); return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
+/**
+ * Years of experience as an HRMS writes them: 4.5, "4 Years 6 Months",
+ * "4 yrs", "6 months", "4y 6m". A blank, "-" or "NA" is no figure (and
+ * keeps whatever is on record). Anything else is reported, never guessed.
+ */
+function parseExperience(raw) {
+  const v = String(raw == null ? '' : raw).trim();
+  if (!v || /^(-+|na|n\/a|nil|none)$/i.test(v)) return { value: null };
+  let years = null;
+  if (/^\d+(\.\d+)?$/.test(v)) years = Number(v);
+  else {
+    const y = v.match(/(\d+(?:\.\d+)?)\s*(?:years?|yrs?|y)\b/i);
+    const m = v.match(/(\d+(?:\.\d+)?)\s*(?:months?|mths?|mons?|mos?|m)\b/i);
+    if (y || m) years = (y ? Number(y[1]) : 0) + (m ? Number(m[1]) / 12 : 0);
+  }
+  if (years == null || !Number.isFinite(years)) {
+    return { value: null, error: `total experience "${v}" is not a number of years — write it as 4.5 or "4 Years 6 Months"` };
+  }
+  if (years < 0 || years > 60) return { value: null, error: `total experience "${v}" is outside 0 to 60 years` };
+  return { value: Math.round(years * 100) / 100 };
+}
+
 // ---------- Validation (pure) ----------------------------------------------
 const REQUIRED = ['name', 'email'];
 const KNOWN = ['emp_code','name','email','department','designation','role_band',
@@ -97,7 +119,10 @@ const KNOWN = ['emp_code','name','email','department','designation','role_band',
   // since 29 Sep: the calibration retention bucket has to know who is
   // on notice, and ticking that by hand for 1,427 people is not a
   // feature. One upload now answers it for the whole company.
-  'resignation_date','last_working_date'];
+  'resignation_date','last_working_date',
+  // Read since 13 Oct: the RnR Junior awards are decided on it, and the
+  // client's export has carried it all along as "Current Experience".
+  'total_experience_years'];
 
 // The header spellings an HRMS export actually uses, mapped onto the names
 // above. The client's report calls them "Full Name" and "Office Email"; the
@@ -123,6 +148,15 @@ const HEADER_ALIASES = {
   branch: 'location', branch_name: 'location', site_location: 'location',
   work_location: 'location', base_location: 'location', office_location: 'location',
   doj: 'date_of_joining', joining_date: 'date_of_joining', date_of_join: 'date_of_joining',
+  // Total professional experience, in years. "CurrentExperiance" is the
+  // client's own spelling; the client confirmed on 13 Oct that it is total
+  // experience, not time at Mindgate (which comes from date of joining).
+  currentexperiance: 'total_experience_years', current_experience: 'total_experience_years',
+  experience: 'total_experience_years', total_experience: 'total_experience_years',
+  total_exp: 'total_experience_years', total_experience_in_years: 'total_experience_years',
+  experience_in_years: 'total_experience_years',
+  years_of_experience: 'total_experience_years', overall_experience: 'total_experience_years',
+  work_experience: 'total_experience_years',
 };
 
 // Columns the HRMS export carries that the PMS has no use for. Listed so
@@ -136,7 +170,7 @@ const HEADER_ALIASES = {
 const IGNORED_COLUMNS = new Set([
   'company', 'salutation', 'date_of_birth', 'dob', 'gender', 'marital_status',
   'branchcode', 'branch_code', 'sub_department',
-  'business_hr', 'qualification', 'currentexperiance', 'current_experience', 'experience',
+  'business_hr', 'qualification',
   'resignation_date', 'last_working_date',
 ]);
 
@@ -297,6 +331,9 @@ function validateEmployeeRows(rows) {
       last_working_date: flexDate(get('last_working_date')),
       status: (get('status') || 'active').toLowerCase(),
     };
+    const exp = parseExperience(get('total_experience_years'));
+    rec.total_experience_years = exp.value;
+    if (exp.error) warnings.push({ line, warning: `${exp.error}; left as it was on record` });
     if (!rec.name) errors.push({ line, error: 'name is empty' });
     if (emailRaw && emailClean !== emailRaw.toLowerCase()) {
       warnings.push({ line, warning: `email "${emailRaw}" contains spaces — read as "${emailClean}"; fix it in the HRMS` });
@@ -626,8 +663,8 @@ async function loadEmployees(tenantId, rows, opts = {}) {
       // from "onboarding" everyone in it.
       if (!beforeByEmail.has(String(r.email || '').toLowerCase())) newHireEmails.push(r.email);
       await client.query(
-        `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, status, resignation_date, last_working_date, location, hod_name)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, status, resignation_date, last_working_date, location, hod_name, total_experience_years)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT (tenant_id, email) DO UPDATE SET
            emp_code=EXCLUDED.emp_code, name=EXCLUDED.name, department=EXCLUDED.department,
            designation=EXCLUDED.designation, role_band=EXCLUDED.role_band,
@@ -638,6 +675,9 @@ async function loadEmployees(tenantId, rows, opts = {}) {
            -- for both, so a person who moved site must not keep the old
            -- one because the new export left the cell blank.
            location=EXCLUDED.location, hod_name=EXCLUDED.hod_name, updated_at=now(),
+           -- Coalesced, unlike location: a file without the column, or a
+           -- blank cell, must not wipe a figure an earlier upload set.
+           total_experience_years=COALESCE(EXCLUDED.total_experience_years, core.employees.total_experience_years),
            -- BACK ON THE LIST. This is what makes "clear the list, then
            -- upload a fresh sheet" work the way it was asked for on
            -- 25 Sep: archiving takes people off the list and keeps
@@ -649,7 +689,8 @@ async function loadEmployees(tenantId, rows, opts = {}) {
            archived_at=NULL, archived_by=NULL`,
         [tenantId, r.emp_code, r.name, r.email, r.department, r.designation, r.role_band,
          r.date_of_joining, r.status, r.resignation_date || null, r.last_working_date || null,
-         r.location || null, r.hod_name || null]);
+         r.location || null, r.hod_name || null,
+         r.total_experience_years == null ? null : r.total_experience_years]);
     }
     // Pass 2: manager links by email.
     for (const r of rows) {
@@ -856,6 +897,7 @@ const TEMPLATE_COLUMNS = [
   ['HOD',               'Rajesh Kulkarni',          'Head of this employee\u2019s department, by full name. Where every row in a department agrees, the department head is set automatically.'],
   ['Location',          'Pune',                     'The site this person works from. Drives what an HRBP sees, so spell it consistently \u2014 "Pune" and "Pune - Kharadi" are two different locations.'],
   ['Date of Joining',   '15/01/2024',               'dd/mm/yyyy, or yyyy-mm-dd, or a real Excel date.'],
+  ['Total Experience',  '4.5',                      'Total professional experience in years: 4.5, or "4 Years 6 Months". The RnR Junior awards are decided on it. A blank cell keeps what is on record.'],
   ['Status',            'active',                   'active or inactive. Defaults to active if the column is absent.'],
 ];
 
@@ -977,6 +1019,7 @@ const EXPORT_COLUMNS = [
   ['Location', 'location', 20],
   ['HOD', 'hod_name', 26],
   ['Role band', 'role_band', 14],
+  ['Total experience (years)', 'total_experience_years', 14],
   ['Manager', 'manager_name', 26],
   ["Manager's email", 'manager_email', 34],
   ['Date of joining', 'date_of_joining', 16],
@@ -988,7 +1031,7 @@ const EXPORT_COLUMNS = [
 async function exportRows(tenantId) {
   const r = await db.query(
     `SELECT e.emp_code, e.name, e.email, e.department, e.designation, e.role_band,
-            e.location, e.hod_name,
+            e.location, e.hod_name, e.total_experience_years,
             e.status, e.date_of_joining, m.name AS manager_name, m.email AS manager_email,
             (lc.email IS NOT NULL) AS has_login, COALESCE(ur.role, 'employee') AS role
        FROM core.employees e LEFT JOIN core.employees m ON m.id = e.manager_id
@@ -1961,4 +2004,4 @@ router.post('/import', (req, res, next) => upload.single('file')(req, res, (err)
   } catch (e) { logger.error('employee import', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
-module.exports = { router, validateEmployeeCsv, validateEmployeeXlsx, validateEmployeeRows, flexDate, parseCsv, parseExcelBuffer, parseExcelSheets, detectFormat, loadEmployees, HEADER_ALIASES, NO_EMAIL_DOMAIN, isPlaceholderEmail, TEMPLATE_COLUMNS };
+module.exports = { router, validateEmployeeCsv, validateEmployeeXlsx, validateEmployeeRows, flexDate, parseExperience, parseCsv, parseExcelBuffer, parseExcelSheets, detectFormat, loadEmployees, HEADER_ALIASES, NO_EMAIL_DOMAIN, isPlaceholderEmail, TEMPLATE_COLUMNS };

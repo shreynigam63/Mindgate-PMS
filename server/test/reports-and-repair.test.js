@@ -138,6 +138,36 @@ test('Team Overview: shows the manager\'s report with KRA/Dev Plan/Career Path/C
   assert.equal(blocked.status, 403, 'requires pms_team_eval');
 });
 
+test('Team Overview: Team Competencies reads the report\'s own My Competencies as not started / pending / completed', { skip }, async () => {
+  const mgrAuth = await login('rar-mgr@x.com');
+  const status = async () => {
+    const r = await api('/pms/team/overview', mgrAuth.token);
+    return r.body.rows.find((x) => x.employee_id === empId).competency_status;
+  };
+  assert.equal(await status(), 'not_started', 'no assessment yet');
+
+  // Opening My Competencies creates the row and its rating lines with
+  // nothing in them. That is not a start.
+  const comp = (await db.query(
+    `INSERT INTO pms.competencies (tenant_id, category, name) VALUES ($1,'Core','RAR Ownership') RETURNING id`, [tenantId])).rows[0];
+  const a = (await db.query(
+    `INSERT INTO pms.competency_assessments (tenant_id, cycle_id, employee_id, manager_id, self_status)
+     VALUES ($1,$2,$3,$4,'in_progress') RETURNING id`, [tenantId, cycleId, empId, mgrId])).rows[0];
+  await db.query(
+    `INSERT INTO pms.competency_ratings (tenant_id, assessment_id, competency_id, required_level, self_evidence)
+     VALUES ($1,$2,$3,3,'  ')`, [tenantId, a.id, comp.id]);
+  assert.equal(await status(), 'not_started', 'an empty save is not a start');
+
+  await db.query(`UPDATE pms.competency_ratings SET self_rating=3 WHERE assessment_id=$1`, [a.id]);
+  assert.equal(await status(), 'pending', 'rated but not submitted');
+
+  await db.query(`UPDATE pms.competency_assessments SET self_status='submitted', self_submitted_at=now() WHERE id=$1`, [a.id]);
+  assert.equal(await status(), 'completed');
+
+  await db.query(`DELETE FROM pms.competency_assessments WHERE id=$1`, [a.id]);
+  await db.query(`DELETE FROM pms.competencies WHERE id=$1`, [comp.id]);
+});
+
 test('Re-seed HOD evaluations: creates a pending entry for the submitted manager evaluation, is idempotent, and skips departments with no head', { skip }, async () => {
   const adminAuth = await login('rar-admin@x.com');
 

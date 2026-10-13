@@ -129,7 +129,7 @@ export default function RnrNominatePage() {
                 <Award size={13} className="text-amber-600 shrink-0" />
                 <span className="font-semibold text-sm">{a.name}</span>
               </span>
-              <span className="block text-[10.5px] text-navy-400 mt-0.5">{a.level} level</span>
+              <span className="block text-[10.5px] text-navy-400 mt-0.5">{a.level === 'all' ? 'annual / special' : a.level} award</span>
               {a.is_team
                 ? <span className="chip bg-navy-50 text-navy-500 mt-1.5">a team, not one person</span>
                 : <span className={`chip mt-1.5 ${a.eligible_count ? 'bg-leaf-50 text-leaf-600' : 'bg-navy-50 text-navy-400'}`}>
@@ -149,7 +149,7 @@ export default function RnrNominatePage() {
           {!list.eligible.length && (
             <p className="text-xs text-navy-500">
               Nobody on your team qualifies for {award.name}. The reasons are below — most often it is
-              a band or an experience figure the HRMS import has not filled in yet.
+              an experience figure the HRMS import has not filled in yet.
             </p>
           )}
           <div className="grid sm:grid-cols-2 gap-2">
@@ -160,7 +160,7 @@ export default function RnrNominatePage() {
                 <span className="font-semibold text-sm block">{x.employee.name}</span>
                 <span className="text-navy-400">{x.employee.designation || '—'} · {x.employee.department || '—'}</span>
                 <span className="block mt-1 text-navy-500">
-                  Band {x.facts.band} · {x.facts.total_experience_years ?? '—'} yrs experience ·
+                  {x.facts.total_experience_years ?? '—'} yrs experience ·
                   {' '}{Math.floor((x.facts.tenure_months || 0) / 12)}y {(x.facts.tenure_months || 0) % 12}m here
                 </span>
               </button>
@@ -231,7 +231,7 @@ export default function RnrNominatePage() {
 
       {err && !award && <p className="text-xs text-rose-600">{err}</p>}
       <p className="text-[11px] text-navy-400 flex items-center gap-1">
-        <Users size={11} />Eligibility is worked out from the employee master — date of joining, band,
+        <Users size={11} />Eligibility is worked out from the employee master — date of joining,
         experience and status. Nobody can change it on this screen.
       </p>
       <YourNominations refresh={done} />

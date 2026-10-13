@@ -40,13 +40,14 @@ async function ensureMasters(tenantId) {
 
 async function mastersFor(tenantId) {
   await ensureMasters(tenantId);
-  const [awards, bandLevels, statuses, settings] = await Promise.all([
+  // No band → level map since 13 Oct: band no longer decides any award.
+  // rnr.band_levels is left in place, unread, so nothing is lost.
+  const [awards, statuses, settings] = await Promise.all([
     db.query(`SELECT * FROM rnr.awards WHERE tenant_id=$1 ORDER BY sort_order, name`, [tenantId]),
-    db.query(`SELECT band, level FROM rnr.band_levels WHERE tenant_id=$1 ORDER BY band`, [tenantId]),
     db.query(`SELECT status, is_active FROM rnr.employment_statuses WHERE tenant_id=$1 ORDER BY status`, [tenantId]),
     db.query(`SELECT value FROM rnr.settings WHERE tenant_id=$1`, [tenantId]),
   ]);
-  return { awards: awards.rows, bandLevels: bandLevels.rows, statuses: statuses.rows,
+  return { awards: awards.rows, statuses: statuses.rows,
     settings: (settings.rows[0] && settings.rows[0].value) || {} };
 }
 
@@ -105,13 +106,15 @@ router.get('/rnr/masters', async (req, res) => {
 async function dataGaps(tenantId) {
   const r = (await db.query(
     `SELECT count(*)::int total,
-            count(*) FILTER (WHERE role_band IS NULL OR btrim(role_band)='')::int no_band,
             count(*) FILTER (WHERE total_experience_years IS NULL)::int no_experience,
             count(*) FILTER (WHERE date_of_joining IS NULL)::int no_doj
        FROM core.employees WHERE tenant_id=$1 AND archived_at IS NULL`, [tenantId])).rows[0];
   const msgs = [];
-  if (r.no_band) msgs.push(`${r.no_band} of ${r.total} employees have no band, so no band-based award can reach them.`);
-  if (r.no_experience) msgs.push(`${r.no_experience} of ${r.total} have no total professional experience on record — the Junior awards are scored on it.`);
+  if (r.no_experience) {
+    msgs.push(`${r.no_experience} of ${r.total} have no total professional experience on record, so they cannot `
+      + 'receive the Junior awards (WOW Machine, Rising Star, Buddy Star), which are decided on it. '
+      + "It is read from the HRMS file's experience column on the next employee upload.");
+  }
   if (r.no_doj) msgs.push(`${r.no_doj} of ${r.total} have no date of joining, so service and loyalty cannot be worked out.`);
   return { ...r, messages: msgs };
 }
@@ -140,24 +143,9 @@ router.put('/rnr/masters/settings', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/rnr/masters/bands', async (req, res) => {
-  try {
-    if (!(await adminOnly(req, res))) return;
-    const rows = Array.isArray(req.body && req.body.bands) ? req.body.bands : [];
-    for (const b of rows) {
-      if (!String(b.band || '').trim()) return res.status(422).json({ error: 'Every row needs a band name.' });
-      if (!['junior', 'mid', 'senior'].includes(b.level)) {
-        return res.status(422).json({ error: `"${b.band}" maps to "${b.level}", which is not junior, mid or senior.` });
-      }
-    }
-    await db.query(`DELETE FROM rnr.band_levels WHERE tenant_id=$1`, [T(req)]);
-    for (const b of rows) {
-      await db.query(`INSERT INTO rnr.band_levels (tenant_id,band,level) VALUES ($1,$2,$3)`,
-        [T(req), String(b.band).trim(), b.level]);
-    }
-    res.json({ ok: true, bands: rows });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// PUT /rnr/masters/bands removed on 13 Oct with band itself: nothing reads
+// the map any more, and an editor for a rule that does not run would only
+// mislead.
 
 router.put('/rnr/masters/statuses', async (req, res) => {
   try {
@@ -367,7 +355,7 @@ router.get('/rnr/nominate/options', async (req, res) => {
     const pool = await nominatablePool(req);
     const prior = await priorAwardsBy(T(req), cycle.id);
     const ctx = { asOf: cycle.award_date || cycle.nominations_close, settings: m.settings,
-      bandLevels: m.bandLevels, statuses: m.statuses, priorAwardsBy: prior };
+      statuses: m.statuses, priorAwardsBy: prior };
     const options = m.awards
       .filter((a) => a.active && a.frequency === cycle.kind)
       .map((a) => ({ id: a.id, key: a.key, name: a.name, level: a.level, criteria: a.criteria,
@@ -391,7 +379,7 @@ router.get('/rnr/nominate/eligible', async (req, res) => {
     const pool = await nominatablePool(req);
     const prior = await priorAwardsBy(T(req), cycle.id);
     const ctx = { asOf: cycle.award_date || cycle.nominations_close, settings: m.settings,
-      bandLevels: m.bandLevels, statuses: m.statuses };
+      statuses: m.statuses };
     const eligible = []; const blocked = [];
     for (const e of pool) {
       const r = elig.check(e, award, { ...ctx, priorAwards: prior[e.id] || [] });
@@ -442,7 +430,7 @@ router.post('/rnr/nominations', async (req, res) => {
       const prior = await priorAwardsBy(T(req), cycle.id);
       const r = elig.check(emp, award, {
         asOf: cycle.award_date || cycle.nominations_close, settings: m.settings,
-        bandLevels: m.bandLevels, statuses: m.statuses, priorAwards: prior[emp.id] || [] });
+        statuses: m.statuses, priorAwards: prior[emp.id] || [] });
       if (!r.eligible) {
         // THE SENTENCE THE BRIEF ASKED FOR, followed by the specific
         // reason — never just "not eligible", which sends the manager to

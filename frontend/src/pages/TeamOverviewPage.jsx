@@ -5,6 +5,7 @@ import SearchBox, { matches } from '../SearchBox';
 
 const STATUS_COLOR = {
   approved: 'bg-emerald-100 text-emerald-700', submitted: 'bg-emerald-100 text-emerald-700',
+  completed: 'bg-emerald-100 text-emerald-700',
   returned: 'bg-rose-100 text-rose-700',
   in_progress: 'bg-amber-100 text-amber-700', draft: 'bg-amber-100 text-amber-700', pending: 'bg-amber-100 text-amber-700',
   not_started: 'bg-navy-50 text-navy-400',
@@ -56,6 +57,7 @@ export default function TeamOverviewPage() {
               <th className="px-3 py-2">KRA</th><th className="px-3 py-2">Dev Plan</th>
               <th className="px-3 py-2">Aspiring Career</th>
               <th className="px-3 py-2">Annual Review</th><th className="px-3 py-2">Manager Eval</th>
+              <th className="px-3 py-2">Team Competencies</th>
               <th className="px-3 py-2">Connects (this cycle)</th>
             </tr>
           </thead>
@@ -69,6 +71,7 @@ export default function TeamOverviewPage() {
                 <td className="px-3 py-2">{r.has_career_path ? <span className="chip bg-emerald-100 text-emerald-700">Set</span> : <span className="chip bg-navy-50 text-navy-400">Not set</span>}</td>
                 <td className="px-3 py-2"><StatusChip value={r.self_appraisal_status} /></td>
                 <td className="px-3 py-2"><StatusChip value={r.manager_eval_status} /></td>
+                <td className="px-3 py-2"><StatusChip value={r.competency_status || 'not_started'} /></td>
                 <td className="px-3 py-2 text-navy-600">{r.connects_this_cycle}</td>
               </tr>
             ))}

@@ -7138,13 +7138,32 @@ router.get('/team/overview', async (req, res) => {
               (cp.target_role IS NOT NULL) AS has_career_path,
               COALESCE(sa.status, 'not_started') AS self_appraisal_status,
               COALESCE(me.status, 'pending') AS manager_eval_status,
-              (SELECT COUNT(*)::int FROM pms.connects cn WHERE cn.tenant_id=$2 AND cn.employee_id=e.id AND cn.held_at >= COALESCE($1::date, cn.held_at)) AS connects_this_cycle
+              (SELECT COUNT(*)::int FROM pms.connects cn WHERE cn.tenant_id=$2 AND cn.employee_id=e.id AND cn.held_at >= COALESCE($1::date, cn.held_at)) AS connects_this_cycle,
+              -- The report's own My Competencies, asked for on 13 Oct as not
+              -- started / pending / completed. Opening the page creates the
+              -- row (ensureAssessment), and a save with nothing in it still
+              -- marks it in_progress, so neither counts as started: pending
+              -- means something was actually rated or written.
+              CASE
+                WHEN ca.self_status = 'submitted' THEN 'completed'
+                WHEN ca.id IS NULL THEN 'not_started'
+                WHEN EXISTS (SELECT 1 FROM pms.competency_ratings cr
+                              WHERE cr.assessment_id = ca.id
+                                AND (cr.self_rating IS NOT NULL OR NULLIF(btrim(cr.self_evidence), '') IS NOT NULL))
+                  OR NULLIF(btrim(concat(ca.top_responsibilities, ca.critical_outcomes, ca.strongest_areas,
+                       ca.challenging_areas, ca.develop_next, ca.preferred_methods, ca.aspiration_2_3_years,
+                       ca.next_role_competencies, ca.internal_mobility, ca.support_needed,
+                       ca.tech_primary, ca.tech_secondary, ca.tech_tertiary, ca.tech_basic)), '') IS NOT NULL
+                  THEN 'pending'
+                ELSE 'not_started'
+              END AS competency_status
          FROM core.employees e
          LEFT JOIN pms.kra_sheets ks ON ks.cycle_id=$3 AND ks.employee_id=e.id
          LEFT JOIN pms.development_plans dp ON dp.cycle_id=$3 AND dp.employee_id=e.id
          LEFT JOIN people.career_paths cp ON cp.tenant_id=e.tenant_id AND cp.employee_id=e.id AND cp.horizon='short_term'
          LEFT JOIN pms.self_appraisals sa ON sa.cycle_id=$3 AND sa.employee_id=e.id
          LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$3 AND me.employee_id=e.id
+         LEFT JOIN pms.competency_assessments ca ON ca.tenant_id=e.tenant_id AND ca.cycle_id=$3 AND ca.employee_id=e.id
         WHERE e.tenant_id=$2 AND e.status='active'
           ${wide ? '' : 'AND e.manager_id=$4'} ORDER BY e.name`,
       wide ? [c.opens_at || null, T(req), c.id] : [c.opens_at || null, T(req), c.id, req.user.id]);

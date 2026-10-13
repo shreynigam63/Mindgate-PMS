@@ -194,7 +194,11 @@ test('an HRBP sees only their remit — in the list AND in the counts', { skip }
   assert.equal(p.body.kpis.in_onboarding, 1, 'the Mumbai joiner is not counted for a Pune partner');
   assert.equal(p.body.kpis.overdue, 42, 'nor are their 48 overdue tasks');
 
-  assert.equal((await req('GET', `/joiners/${ids.mumJoiner}`, hrbpTok)).status, 404);
+  // Refused at the gateway since 13 Oct: a read that names someone outside
+  // the remit is checked before the handler runs (it used to 404 there).
+  const away = await req('GET', `/joiners/${ids.mumJoiner}`, hrbpTok);
+  assert.equal(away.status, 403);
+  assert.match(away.body.error, /not in your remit/);
   const task = (await db.query(`SELECT id FROM people.onboarding_tasks WHERE joiner_id=$1 LIMIT 1`, [ids.mumJoiner])).rows[0].id;
   assert.equal((await req('PATCH', `/tasks/${task}`, hrbpTok, { remarks: 'x' })).status, 403);
   assert.equal((await req('POST', '/joiners', hrbpTok, { employee_id: ids.mum })).status, 403);

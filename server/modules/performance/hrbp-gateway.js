@@ -156,6 +156,50 @@ const SELF_SERVICE = {
 // the HRBP their own plan when they sit outside their own remit.
 const KEEP_SELF = { '/api/v1/pms': [['GET', '/pip'], ['GET', '/pip/:id']] };
 
+// The writes an HRBP's pages make, and nothing else (13 Oct). Until then
+// any write that named one in-remit person went through with HR's powers,
+// and a handler that ignores its body (publishing a whole cycle, a month
+// override) did HR's company-wide job with a decoy employee_id beside it.
+// Each of these names its subject in the path or the body, so the remit
+// check below sees exactly whom it changes. A route an HRBP page starts to
+// use has to be read and added here, or it is refused.
+const HRBP_WRITES = {
+  '/api/v1/pms': [
+    ['POST', '/hr/kra-sheet/:id/reopen'], ['PUT', '/hr/kra-sheet/:id/kras'], ['POST', '/hr/kra-sheet/:id/submit'],
+    ['POST', '/hr/development-plan/:id/reopen'],
+    ['POST', '/calibration/adjust'], ['POST', '/calibration/top-talent'], ['PUT', '/calibration/allocation/:id'],
+    ['PUT', '/timesheet/kra/employee/:id/map'], ['POST', '/timesheet/kra/employee/:id/map/bulk'],
+    ['DELETE', '/timesheet/kra/employee/:id/map/:item'],
+    ['PUT', '/pip/:id'], ['POST', '/pip/:id/entries'], ['POST', '/pip/:id/gates/:gate/review'],
+    // A meeting link on a connect that asked HR to join, for a remit employee.
+    ['POST', '/meetings'],
+  ],
+  '/api/v1/people': [
+    ['POST', '/rnr/nominations/:id/decide'],
+    // The First-Week Journey (hidden since 8 Oct, data kept): a joiner's
+    // SPOC work, one joiner at a time.
+    ['POST', '/onboarding/joiners'], ['DELETE', '/onboarding/joiners/:id'],
+    ['POST', '/onboarding/joiners/:id/complete'], ['PUT', '/onboarding/joiners/:id/feedback'],
+    ['PATCH', '/onboarding/tasks/:id'], ['POST', '/onboarding/tasks/:id/mark-sent'], ['POST', '/onboarding/tasks/:id/email'],
+  ],
+  '/api/v1/employees': [
+    ['PUT', '/:id'], ['DELETE', '/:id'], ['POST', '/:id/restore'],
+    // Refused by the routes themselves, which hold these for HR and Super
+    // Admin; listed so that refusal, and its wording, is the one shown.
+    ['PUT', '/:id/role'], ['POST', '/:id/credentials'],
+  ],
+};
+
+const NOT_AN_HRBP_CHANGE = {
+  error: 'Only HR and Super Admin can make this change. It is not one of the changes an HRBP makes.',
+  needs: 'pms_admin',
+};
+
+// Lists that may name somebody outside the remit in the query, because
+// every row carries its employee_id and narrowing removes the rest. A
+// connect that asked HR to join shows its meetings this way.
+const READ_NARROWED = { '/api/v1/pms': [['GET', '/meetings']] };
+
 /** Does this request match one of the [method, template] pairs for its router? */
 function matchesRoute(table, req, routePath) {
   const rows = table[String(req.baseUrl || '').toLowerCase()];
@@ -300,6 +344,72 @@ function rewriteTotals(parent, arrayKey, before, kept) {
   if (before !== kept.length) parent.scoped_to_remit = true;
 }
 
+// A record id resolves to the one person it belongs to. Tried in turn
+// because the path says which id it is only by position, and position
+// is exactly what a router-level middleware cannot read.
+const OWNED = [
+  'SELECT id AS employee_id FROM core.employees WHERE tenant_id=$1 AND id=$2',
+  'SELECT employee_id FROM pms.kra_sheets WHERE tenant_id=$1 AND id=$2',
+  'SELECT employee_id FROM pms.development_plans WHERE tenant_id=$1 AND id=$2',
+  'SELECT employee_id FROM pms.competency_assessments WHERE tenant_id=$1 AND id=$2',
+  'SELECT employee_id FROM pms.midyear_checkins WHERE tenant_id=$1 AND id=$2',
+  'SELECT employee_id FROM pms.manager_evaluations WHERE tenant_id=$1 AND id=$2',
+  'SELECT employee_id FROM pms.connects WHERE tenant_id=$1 AND id=$2',
+  // An improvement plan, and one of its gates.
+  'SELECT employee_id FROM pms.pip_records WHERE tenant_id=$1 AND id=$2',
+  `SELECT p.employee_id FROM pms.pip_gates g JOIN pms.pip_records p ON p.id = g.pip_id
+    WHERE g.tenant_id=$1 AND g.id=$2`,
+  // An RnR nomination names the person it is about. Without this the
+  // gateway could not resolve a nomination id to anybody and refused
+  // every HRBP approval — failing closed, which is the right direction,
+  // but it meant an HRBP could not take their own step in the RnR
+  // workflow. Found by walking a nomination through all four stages.
+  // A team award names nobody, so it resolves to the manager who
+  // raised it — the HRBP covering that manager decides it (8 Oct).
+  'SELECT COALESCE(employee_id, nominated_by) AS employee_id FROM rnr.nominations WHERE tenant_id=$1 AND id=$2',
+  // The First-Week Journey: a joiner, and one of their tasks.
+  'SELECT employee_id FROM people.onboarding_joiners WHERE tenant_id=$1 AND id=$2',
+  `SELECT j.employee_id FROM people.onboarding_tasks t JOIN people.onboarding_joiners j ON j.id = t.joiner_id
+    WHERE t.tenant_id=$1 AND t.id=$2`,
+  // A review meeting belongs to the employee it was held about. Until
+  // 13 Oct a meeting id resolved to nobody, so HR's transcript read let an
+  // HRBP open anybody's meeting by id.
+  'SELECT employee_id FROM pms.review_meetings WHERE tenant_id=$1 AND id=$2',
+];
+
+/** Each id's owner, and the ids that belong to nobody this file knows. */
+async function ownersOf(req, candidates) {
+  const found = new Set();
+  const unresolved = [];
+  for (const id of candidates) {
+    let owner = null;
+    for (const sql of OWNED) {
+      try {
+        const r = await db.query(sql, [req.user.tenant_id, id]);
+        if (r.rows.length) { owner = r.rows[0].employee_id; break; }
+      } catch (e) { logger.warn('hrbp gateway: owner lookup failed', { error: e.message }); }
+    }
+    if (owner) found.add(owner); else unresolved.push(id);
+  }
+  return { found, unresolved };
+}
+
+/**
+ * Whose records a READ names, by id: the path, and the query keys that
+ * name a person. Until 13 Oct reads were never checked, only narrowed,
+ * and a summary addressed by employee id (a manager's rating before
+ * publish, an AI reading) carries no key narrowing can see, so an HRBP
+ * could read anybody's, their own included. Ids that resolve to nobody
+ * (a cycle id) are left to narrowing.
+ */
+async function readTargetIds(req) {
+  const candidates = new Set();
+  for (const seg of String(req.path || '').split('/')) if (isUuid(seg)) candidates.add(seg);
+  const q = req.query && typeof req.query === 'object' ? req.query : {};
+  for (const k of [...EMPLOYEE_KEYS, 'about_employee_id']) if (isUuid(q[k])) candidates.add(q[k]);
+  return [...(await ownersOf(req, candidates)).found];
+}
+
 /**
  * Which people a write is about.
  *
@@ -316,7 +426,6 @@ function rewriteTotals(parent, arrayKey, before, kept) {
  * names two people is only allowed if both are covered.
  */
 async function targetEmployeeIds(req) {
-  const found = new Set();
   const candidates = new Set();
   for (const seg of String(req.path || '').split('/')) if (isUuid(seg)) candidates.add(seg);
   const b = req.body && typeof req.body === 'object' ? req.body : {};
@@ -330,42 +439,10 @@ async function targetEmployeeIds(req) {
     if (Array.isArray(b[k])) for (const v of b[k]) if (isUuid(v)) candidates.add(v);
   }
 
-  // A record id resolves to the one person it belongs to. Tried in turn
-  // because the path says which id it is only by position, and position
-  // is exactly what a router-level middleware cannot read.
-  const OWNED = [
-    'SELECT id AS employee_id FROM core.employees WHERE tenant_id=$1 AND id=$2',
-    'SELECT employee_id FROM pms.kra_sheets WHERE tenant_id=$1 AND id=$2',
-    'SELECT employee_id FROM pms.development_plans WHERE tenant_id=$1 AND id=$2',
-    'SELECT employee_id FROM pms.competency_assessments WHERE tenant_id=$1 AND id=$2',
-    'SELECT employee_id FROM pms.midyear_checkins WHERE tenant_id=$1 AND id=$2',
-    'SELECT employee_id FROM pms.manager_evaluations WHERE tenant_id=$1 AND id=$2',
-    'SELECT employee_id FROM pms.connects WHERE tenant_id=$1 AND id=$2',
-    // An improvement plan, and one of its gates.
-    'SELECT employee_id FROM pms.pip_records WHERE tenant_id=$1 AND id=$2',
-    `SELECT p.employee_id FROM pms.pip_gates g JOIN pms.pip_records p ON p.id = g.pip_id
-      WHERE g.tenant_id=$1 AND g.id=$2`,
-    // An RnR nomination names the person it is about. Without this the
-    // gateway could not resolve a nomination id to anybody and refused
-    // every HRBP approval — failing closed, which is the right direction,
-    // but it meant an HRBP could not take their own step in the RnR
-    // workflow. Found by walking a nomination through all four stages.
-    // A team award names nobody, so it resolves to the manager who
-    // raised it — the HRBP covering that manager decides it (8 Oct).
-    'SELECT COALESCE(employee_id, nominated_by) AS employee_id FROM rnr.nominations WHERE tenant_id=$1 AND id=$2',
-    // The First-Week Journey: a joiner, and one of their tasks.
-    'SELECT employee_id FROM people.onboarding_joiners WHERE tenant_id=$1 AND id=$2',
-    `SELECT j.employee_id FROM people.onboarding_tasks t JOIN people.onboarding_joiners j ON j.id = t.joiner_id
-      WHERE t.tenant_id=$1 AND t.id=$2`,
-  ];
-  for (const id of candidates) {
-    for (const sql of OWNED) {
-      try {
-        const r = await db.query(sql, [req.user.tenant_id, id]);
-        if (r.rows.length) { found.add(r.rows[0].employee_id); break; }
-      } catch (e) { logger.warn('hrbp gateway: owner lookup failed', { error: e.message }); }
-    }
-  }
+  const { found, unresolved } = await ownersOf(req, candidates);
+  // Kept for the gateway: an id that resolves to nobody is a shape this
+  // file does not know, and the safe reading of that is "no" (13 Oct).
+  req._hrbpUnresolved = unresolved;
 
   for (const k of ['employee_email', 'email']) {
     if (typeof b[k] !== 'string' || !b[k].includes('@')) continue;
@@ -426,6 +503,7 @@ function gateway() {
             needs: 'pms_admin',
           });
         }
+        if (!matchesRoute(HRBP_WRITES, req, routePath)) return res.status(403).json(NOT_AN_HRBP_CHANGE);
         if (remit.empty) {
           return res.status(403).json({
             error: hrbpScope.emptyRemitReason(remit), needs: 'an assigned remit',
@@ -436,6 +514,12 @@ function gateway() {
           return res.status(403).json({
             error: 'This action does not name whose record it changes, so it cannot be '
                  + 'checked against your remit. HR can do it.',
+            needs: 'pms_admin',
+          });
+        }
+        if ((req._hrbpUnresolved || []).length) {
+          return res.status(403).json({
+            error: 'This action names a record that cannot be checked against your remit. HR can do it.',
             needs: 'pms_admin',
           });
         }
@@ -451,6 +535,18 @@ function gateway() {
               : 'Some of those people are not in your remit, so none of it was done.',
             needs: 'a remit that covers them',
           });
+        }
+      } else if (!matchesRoute(READ_NARROWED, req, routePath)) {
+        // A read addressed to a person by id: the same remit rule as a
+        // write, checked before the handler runs (13 Oct).
+        const named = await readTargetIds(req);
+        if (named.includes(req.user.id) && !matchesRoute(KEEP_SELF, req, routePath)) {
+          return res.status(403).json({
+            error: 'Your own record is on your Self pages, not on HR\'s.', needs: 'pms_admin',
+          });
+        }
+        if (named.some((id) => id !== req.user.id && !ids.has(id))) {
+          return res.status(403).json({ error: 'That person is not in your remit.', needs: 'a remit that covers them' });
         }
       }
 
@@ -507,5 +603,5 @@ require('../../core/scope-hooks').register(gateway());
 
 module.exports = {
   gateway, narrow, outsideRemit, rewriteTotals, targetEmployeeIds, matchesRoute,
-  TENANT_WIDE, HR_ONLY, HR_DECIDES, LENT, SELF_SERVICE, KEEP_SELF,
+  TENANT_WIDE, HR_ONLY, HR_DECIDES, LENT, SELF_SERVICE, KEEP_SELF, HRBP_WRITES, READ_NARROWED,
 };

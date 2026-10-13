@@ -198,11 +198,6 @@ export default function RnrAdminPage() {
               onChange={(e) => setSettings((p) => ({ ...p, max_awards_per_year: Number(e.target.value) }))} />
           </div>
         </div>
-        <label className="text-[11px] text-navy-600 flex items-center gap-1.5">
-          <input type="checkbox" checked={!!settings.senior_in_quarterly}
-            onChange={(e) => setSettings((p) => ({ ...p, senior_in_quarterly: e.target.checked }))} />
-          Senior-level employees may be nominated in the quarterly cycle
-        </label>
         <button className="btn-pri" onClick={() => act(() =>
           api('/people/rnr/masters/settings', { method: 'PUT', body: JSON.stringify(settings) }))}>
           <Save size={13} className="inline mr-1" />Save rules
@@ -219,7 +214,7 @@ export default function RnrAdminPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-navy-50 text-[10px] uppercase tracking-wide text-navy-500">
-              <tr><th className="text-left px-3 py-2">Award</th><th className="text-left px-3 py-2">Level</th>
+              <tr><th className="text-left px-3 py-2">Award</th><th className="text-left px-3 py-2">Category</th>
                 <th className="text-left px-3 py-2">When</th><th className="text-left px-3 py-2">Experience</th>
                 <th className="text-left px-3 py-2">Measured on</th>
                 <th className="text-left px-3 py-2">Uses a slot</th>
@@ -229,7 +224,7 @@ export default function RnrAdminPage() {
               {m.awards.map((a) => (
                 <tr key={a.id} className={a.active ? '' : 'opacity-50'}>
                   <td className="px-3 py-2 font-semibold">{a.name}</td>
-                  <td className="px-3 py-2">{a.level}</td>
+                  <td className="px-3 py-2">{a.level === 'all' ? 'annual / special' : a.level}</td>
                   <td className="px-3 py-2">{kindLabel(a.frequency)}</td>
                   <td className="px-3 py-2">
                     {a.min_experience_years == null && a.max_experience_years == null ? 'any'
@@ -250,16 +245,10 @@ export default function RnrAdminPage() {
         </div>
       </div>
 
-      {/* ---- band and status masters --------------------------------- */}
-      <div className="grid sm:grid-cols-2 gap-3">
-        <div className="card p-4 space-y-2">
-          <p className="lbl mb-0">Band → level</p>
-          <div className="flex flex-wrap gap-1.5">
-            {m.bandLevels.map((b) => (
-              <span key={b.band} className="chip bg-navy-50 text-navy-600">{b.band} → {b.level}</span>
-            ))}
-          </div>
-        </div>
+      {/* ---- status master -------------------------------------------- */}
+      {/* Band was taken out of RnR on 13 Oct: no award looks at it now, so
+          the Band → level card that sat here is gone. */}
+      <div className="grid gap-3">
         <div className="card p-4 space-y-2">
           <p className="lbl mb-0">Which statuses count as active</p>
           <div className="flex flex-wrap gap-1.5">

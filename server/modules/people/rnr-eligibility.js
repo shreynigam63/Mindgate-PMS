@@ -42,13 +42,6 @@ function sayMonths(m) {
   return `${y} year${y === 1 ? '' : 's'}${r ? ` and ${r} month${r === 1 ? '' : 's'}` : ''}`;
 }
 
-/** The level a band maps to, from the editable master. */
-function levelOf(band, bandLevels) {
-  if (!band) return null;
-  const key = String(band).trim().toLowerCase();
-  const hit = (bandLevels || []).find((b) => String(b.band).trim().toLowerCase() === key);
-  return hit ? hit.level : null;
-}
 
 const isActiveStatus = (status, statuses) => {
   const key = String(status || '').trim().toLowerCase();
@@ -59,9 +52,9 @@ const isActiveStatus = (status, statuses) => {
 /**
  * Is this employee eligible for this award, on this date?
  *
- * @param {object} employee  { date_of_joining, status, role_band, total_experience_years }
+ * @param {object} employee  { date_of_joining, status, total_experience_years }
  * @param {object} award     a row from rnr.awards
- * @param {object} ctx       { asOf, settings, bandLevels, statuses, priorAwards }
+ * @param {object} ctx       { asOf, settings, statuses, priorAwards }
  * @returns {{eligible:boolean, reasons:string[], facts:object}}
  */
 function check(employee, award, ctx = {}) {
@@ -73,15 +66,12 @@ function check(employee, award, ctx = {}) {
   const tenureYears = tenureMonths == null ? null : +(tenureMonths / 12).toFixed(4);
   const totalYears = employee && employee.total_experience_years != null
     ? Number(employee.total_experience_years) : null;
-  const level = levelOf(employee && employee.role_band, ctx.bandLevels);
 
   const facts = {
     date_of_joining: employee ? employee.date_of_joining : null,
     tenure_months: tenureMonths,
     tenure_years: tenureYears,
     total_experience_years: totalYears,
-    band: employee ? employee.role_band : null,
-    level,
     status: employee ? employee.status : null,
   };
 
@@ -104,32 +94,12 @@ function check(employee, award, ctx = {}) {
       + `Minimum required service is ${minTenure} months — ${short} more month${short === 1 ? '' : 's'} to go.`);
   }
 
-  // ---- band and level ---------------------------------------------------
-  if (award.level && award.level !== 'all') {
-    if (!employee || !employee.role_band) {
-      reasons.push('No band on record, so the Junior / Mid / Senior level cannot be worked out. '
-        + 'Band comes from the HRMS import.');
-    } else if (!level) {
-      reasons.push(`Band "${employee.role_band}" is not in the band master, so it maps to no level. `
-        + 'HR can add it on the RnR masters page.');
-    } else if (level !== award.level) {
-      reasons.push(`${award.name} is a ${award.level}-level award, and this employee is `
-        + `${level}-level (band ${employee.role_band}).`);
-    }
-    if (level === 'senior' && award.frequency === 'quarterly' && settings.senior_in_quarterly === false) {
-      reasons.push('Senior-level employees are recognised through the annual and special awards, '
-        + 'not the quarterly cycle. HR can change this in the RnR settings.');
-    }
-  }
-  // An explicit band list on the award overrides the level mapping.
-  if (Array.isArray(award.bands) && award.bands.length) {
-    const ok = employee && employee.role_band
-      && award.bands.map((b) => String(b).toLowerCase()).includes(String(employee.role_band).toLowerCase());
-    if (!ok) {
-      reasons.push(`${award.name} is limited to bands ${award.bands.join(', ')}; `
-        + `this employee is ${employee && employee.role_band ? `band ${employee.role_band}` : 'on no band'}.`);
-    }
-  }
+  // ---- band: not a rule ------------------------------------------------
+  // Band decided the Junior / Mid / Senior split until 13 Oct, when the
+  // client took it out of RnR: it was blocking awards (the live bands did
+  // not match the band master, and one person had none). An award's level
+  // is now only the quota pool it draws from; who may receive it is decided
+  // by the rules below — status, service, the experience window, repeats.
 
   // ---- the experience window -------------------------------------------
   const basis = award.experience_basis === 'tenure' ? 'tenure' : 'total';
@@ -201,4 +171,4 @@ function loyaltyDue(employees, awards, ctx = {}) {
   return out;
 }
 
-module.exports = { check, eligibleFrom, loyaltyDue, monthsBetween, yearsBetween, levelOf, isActiveStatus, sayMonths };
+module.exports = { check, eligibleFrom, loyaltyDue, monthsBetween, yearsBetween, isActiveStatus, sayMonths };

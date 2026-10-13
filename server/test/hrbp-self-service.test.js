@@ -234,6 +234,51 @@ test('meetings: the HRBP\'s own are self-service; a remit employee\'s keep the l
   assert.ok(refusedByGateway(away), 'a meeting outside the remit got past the gateway');
 });
 
+// ---- the two older gaps, closed on 13 Oct ---------------------------------
+
+test('A DECOY NO LONGER CARRIES A COMPANY-WIDE ACTION: publish and month overrides are refused', async () => {
+  await db.query(`UPDATE pms.cycles SET phase='publish' WHERE tenant_id=$1`, [tenantId]);
+  const pub = await post('inside', '/pms/publish', { employee_id: id.pune1 });
+  assert.equal(pub.status, 403, `an HRBP published with a decoy: ${JSON.stringify(pub.body)}`);
+  assert.match(pub.body.error, /not one of the changes an HRBP makes/);
+  const hist = await db.query(`SELECT 1 FROM pms.employee_performance_history WHERE tenant_id=$1`, [tenantId]);
+  assert.equal(hist.rows.length, 0, 'ratings were published anyway');
+  await db.query(`UPDATE pms.cycles SET phase='kra_open' WHERE tenant_id=$1`, [tenantId]);
+
+  const ov = await put('inside', `/pms/timesheet/kra/month/${id.boss}/override`,
+    { employee_id: id.pune1, score: 100, grade: 'Green', reason: 'x' });
+  assert.equal(ov.status, 403);
+  assert.match(ov.body.error, /not one of the changes an HRBP makes/);
+});
+
+test('an HRBP change that names a record nobody owns is refused, decoy or not', async () => {
+  const r = await put('inside', '/pms/pip/33333333-3333-4333-8333-333333333333', { employee_id: id.pune1, plan: 'x' });
+  assert.equal(r.status, 403);
+  assert.match(r.body.error, /cannot be checked against your remit/);
+});
+
+test('READS BY ID ARE CHECKED: nobody else\'s summary, and not their own, from HR\'s pages', async () => {
+  const away = await call('inside', `/pms/team/annual-review/${id.mumbai1}`);
+  assert.equal(away.status, 403, `read an outsider's review: ${JSON.stringify(away.body).slice(0, 200)}`);
+  assert.match(away.body.error, /not in your remit/);
+
+  const self = await call('inside', `/pms/team/annual-review/${id.inside}`);
+  assert.equal(self.status, 403, 'read their own manager rating before publish');
+  assert.match(self.body.error, /Self pages/);
+
+  const ai = await call('inside', `/agentic/parameter-analysis?employee_id=${id.mumbai1}`);
+  assert.equal(ai.status, 403, 'read an outsider\'s AI reading');
+
+  const m = (await db.query(
+    `INSERT INTO pms.review_meetings (tenant_id, employee_id, context, provider, meeting_url, created_by)
+     VALUES ($1,$2,'connect','manual','https://meet.example/m',$2) RETURNING id`, [tenantId, id.mumbai1])).rows[0];
+  const tr = await call('inside', `/pms/meetings/${m.id}/transcript`);
+  assert.equal(tr.status, 403, 'opened an outsider\'s meeting transcript by id');
+
+  const inRemit = await call('inside', `/pms/team/annual-review/${id.pune1}`);
+  assert.ok(!refusedByGateway(inRemit), `an in-remit read was refused: ${inRemit.status} ${JSON.stringify(inRemit.body)}`);
+});
+
 // ---- the pure half -------------------------------------------------------
 
 const ME = '11111111-1111-4111-8111-111111111111';

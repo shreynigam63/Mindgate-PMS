@@ -17,9 +17,8 @@ const db = require('../core/db');
 const elig = require('../modules/people/rnr-eligibility');
 const quota = require('../modules/people/rnr-quota');
 const wf = require('../modules/people/rnr-workflow');
-const { AWARDS, BANDS, STATUSES, SETTINGS } = require('../migrations/077-rnr');
+const { AWARDS, STATUSES, SETTINGS } = require('../migrations/077-rnr');
 
-const bandLevels = BANDS.map(([band, level]) => ({ band, level }));
 const statuses = STATUSES.map(([status, is_active]) => ({ status, is_active }));
 const settings = { ...SETTINGS };
 const AS_OF = '2026-10-01';
@@ -35,7 +34,8 @@ const award = (key) => {
     bands: a[7], is_team: a[8], active: true };
 };
 const emp = (o) => ({ status: 'Active', role_band: 'Band 5', total_experience_years: 5, ...o });
-const ctx = { asOf: AS_OF, settings, bandLevels, statuses };
+// No band → level map: band was taken out of RnR on 13 Oct.
+const ctx = { asOf: AS_OF, settings, statuses };
 
 test('SCENARIO 1 — joined four months ago: not eligible, and told how long is left', () => {
   const r = elig.check(emp({ date_of_joining: '2026-06-01' }), award('wow_machine'), ctx);
@@ -57,26 +57,27 @@ test('SCENARIO 2 — six months and Band 5: eligible, subject to the award’s o
   assert.ok(rising.reasons.some((x) => /above the window/.test(x)));
 });
 
-test('SCENARIO 3 — Band 4: the mid-level categories, and not the junior ones', () => {
-  const e = emp({ date_of_joining: '2020-01-01', role_band: 'Band 4' });
-  for (const k of ['mountain_mover', 'torchbearer', 'future_leader']) {
-    assert.equal(elig.check(e, award(k), ctx).eligible, true, `${k} should be open to Band 4`);
+test('SCENARIO 3 — band no longer decides: Band 4 reaches the mid awards AND the junior ones its experience fits', () => {
+  // Until 13 Oct a Band 4 was mid-level and refused every junior award.
+  const e = emp({ date_of_joining: '2020-01-01', role_band: 'Band 4', total_experience_years: 2 });
+  for (const k of ['mountain_mover', 'torchbearer', 'future_leader', 'rising_star', 'wow_machine']) {
+    const r = elig.check(e, award(k), ctx);
+    assert.equal(r.eligible, true, `${k} should be open to Band 4 with 2 years: ${r.reasons.join(' | ')}`);
   }
-  const r = elig.check(e, award('rising_star'), ctx);
-  assert.equal(r.eligible, false);
-  assert.ok(r.reasons.some((x) => /junior-level award, and this employee is mid-level/.test(x)));
+  // The experience window still decides between the junior awards.
+  const buddy = elig.check(e, award('buddy_star'), ctx);
+  assert.equal(buddy.eligible, false);
+  assert.ok(buddy.reasons.every((x) => !/band|level/i.test(x)), 'and the reason never mentions band or level');
 });
 
-test('SCENARIO 4 — Band 2: senior, and out of the quarterly cycle unless HR says otherwise', () => {
+test('SCENARIO 4 — Band 2, once senior, is no longer kept out of the quarterly cycle', () => {
   const e = emp({ date_of_joining: '2015-01-01', role_band: 'Band 2' });
-  assert.equal(elig.levelOf('Band 2', bandLevels), 'senior');
   const r = elig.check(e, award('mountain_mover'), ctx);
-  assert.equal(r.eligible, false);
-  assert.ok(r.reasons.some((x) => /recognised through the annual and special awards/.test(x)));
-  // HR can change exactly that, which is the point of it being a setting.
-  const opened = elig.check(e, award('mountain_mover'),
-    { ...ctx, settings: { ...settings, senior_in_quarterly: true } });
-  assert.ok(opened.reasons.every((x) => !/annual and special awards/.test(x)));
+  assert.equal(r.eligible, true, r.reasons.join(' | '));
+  // The old setting no longer does anything either way.
+  const off = elig.check(e, award('mountain_mover'), { ...ctx, settings: { ...settings, senior_in_quarterly: false } });
+  assert.equal(off.eligible, true);
+  assert.equal(elig.levelOf, undefined, 'the band → level helper is gone');
 });
 
 test('SCENARIO 5 — five years of service: identified automatically, with no nomination', () => {
@@ -161,18 +162,18 @@ test('MISSING DATA IS A REASON, not a silent exclusion', () => {
   // This is the live state of the master: 4,583 of 4,622 people have no
   // band and nobody has total experience. The engine has to say so, or
   // "0 eligible employees" reads as a broken screen.
-  const noBand = elig.check(emp({ date_of_joining: '2020-01-01', role_band: null }), award('rising_star'), ctx);
-  assert.ok(noBand.reasons.some((x) => /No band on record/.test(x)));
-  assert.ok(noBand.reasons.some((x) => /HRMS import/.test(x)), 'and says where it comes from');
-
   const noExp = elig.check(emp({ date_of_joining: '2020-01-01', total_experience_years: null }), award('rising_star'), ctx);
   assert.ok(noExp.reasons.some((x) => /No total professional experience on record/.test(x)));
+  assert.ok(noExp.reasons.some((x) => /HRMS import/.test(x)), 'and says where it comes from');
 });
 
-test('an unmapped band maps to no level, and says which band', () => {
-  const r = elig.check(emp({ date_of_joining: '2020-01-01', role_band: 'E2' }), award('rising_star'), ctx);
-  assert.ok(r.reasons.some((x) => /Band "E2" is not in the band master/.test(x)),
-    'the live master uses E2, which the seeded mapping does not know');
+test('NO BAND, OR A BAND THE OLD MAP NEVER KNEW, BLOCKS NOTHING (13 Oct)', () => {
+  // These were the two blocks the client saw: one person with no band, and
+  // live bands such as "E2" or "E3 · Band 6" that matched no row.
+  for (const band of [null, '', 'E2', 'E3 · Band 6']) {
+    const r = elig.check(emp({ date_of_joining: '2020-01-01', role_band: band, total_experience_years: 2 }), award('rising_star'), ctx);
+    assert.equal(r.eligible, true, `band ${JSON.stringify(band)}: ${r.reasons.join(' | ')}`);
+  }
 });
 
 // ---- the workflow --------------------------------------------------------
