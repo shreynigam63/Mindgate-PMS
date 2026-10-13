@@ -252,24 +252,9 @@ router.get('/competency-dashboard', async (req, res) => {
   } catch (e) { logger.error('hrbp competency', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
-// ---------------------------------------------------------------- 9-box
-router.get('/nine-box', async (req, res) => {
-  try {
-    const remit = await scopeOrRefuse(req, res); if (!remit) return;
-    if (remit.empty) return res.json(emptyRemitBody(remit));
-    const people = await peopleIn(req, remit);
-    const cells = {};
-    for (const p of people) {
-      const k = p.nine_box_cell || 'unplaced';
-      (cells[k] = cells[k] || []).push({ id: p.id, name: p.name, department: p.department, location: p.location });
-    }
-    // `people` as well as `cells`: the HRBP table reads a flat list like
-    // every other view here, and a view that returns a different shape is
-    // the one that renders an empty table while holding data.
-    res.json({ remit, reason: null, cells, people, total: people.length,
-      placed: people.filter((p) => p.nine_box_cell).length });
-  } catch (e) { logger.error('hrbp nine box', { error: e.message }); res.status(500).json({ error: e.message }); }
-});
+// The HRBP's own 9-box route (reading core.employees.nine_box_cell) was
+// retired with the 9-box rebuild on 13 Oct; its page went in 085. An
+// HRBP's 9-box is HR's company grid, lent and cut to their remit.
 
 // ============================ HR's side: who is an HRBP, and of what ======
 // pms_admin, not pms_hrbp. A remit nobody but its holder can change is not

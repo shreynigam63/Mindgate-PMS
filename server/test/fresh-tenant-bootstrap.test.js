@@ -47,6 +47,7 @@ const BOOT_SEEDS = [
   ['077-rnr', 'seedFor'],
   ['060-grade-ladder', 'seed'],
   ['087-people-events-admin', 'ensureEventPages'],
+  ['089-nine-box', 'ensureNineBoxPages'],
 ];
 
 test('a tenant created after the migrations gets the HRBP and RnR pages', { skip }, async () => {

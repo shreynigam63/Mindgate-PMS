@@ -60,6 +60,8 @@ const TENANT_WIDE = [
   '/department-heads',
   '/hrbp/admin',
   '/calibration/bands',
+  // The 9-box band limits, box names, actions and potential questions.
+  '/nine-box/settings',
   '/increment-matrix',
   // The onboarding calendar and activity matrix plan every joiner's week.
   '/onboarding/holidays',
@@ -106,6 +108,7 @@ const HR_DECIDES = ['/approvals/bulk'];
 // so an HRBP named on a remit employee's connect could add a link and
 // not take it down again).
 const partyToMeeting = (req) => req._hrbpMeetingParty === true;
+const ownNineBox = (req) => !!req.query && ['team', 'departments'].includes(String(req.query.view));
 
 const SELF_SERVICE = {
   '/api/v1/pms': [
@@ -131,6 +134,12 @@ const SELF_SERVICE = {
     ['GET', '/meetings/providers'],
     ['GET', '/meetings', partyToMeeting], ['POST', '/meetings', partyToMeeting],
     ['DELETE', '/meetings/:id', partyToMeeting], ['PUT', '/meetings/:id/transcript', partyToMeeting],
+    // The 9-box of the HRBP's own team or departments, as a manager or
+    // Delivery Head (held, never lent). Their company view stays on HR's
+    // terms: lent, and cut to the remit before it is counted.
+    ['GET', '/nine-box', ownNineBox], ['GET', '/nine-box/movement', ownNineBox], ['GET', '/nine-box/reports', ownNineBox],
+    ['GET', '/nine-box/export.xlsx', ownNineBox], ['GET', '/nine-box/actions', ownNineBox],
+    ['PUT', '/nine-box/actions/:id'],
   ],
   '/api/v1/agentic': [
     ['POST', '/kra-suggest'], ['POST', '/devplan-suggest'], ['POST', '/career-suggest'], ['POST', '/career-plan'],
@@ -176,7 +185,7 @@ const HRBP_WRITES = {
   '/api/v1/pms': [
     ['POST', '/hr/kra-sheet/:id/reopen'], ['PUT', '/hr/kra-sheet/:id/kras'], ['POST', '/hr/kra-sheet/:id/submit'],
     ['POST', '/hr/development-plan/:id/reopen'],
-    ['POST', '/calibration/adjust'], ['POST', '/calibration/top-talent'], ['PUT', '/calibration/allocation/:id'],
+    ['POST', '/calibration/adjust'], ['POST', '/nine-box/override'], ['PUT', '/calibration/allocation/:id'],
     ['PUT', '/timesheet/kra/employee/:id/map'], ['POST', '/timesheet/kra/employee/:id/map/bulk'],
     ['DELETE', '/timesheet/kra/employee/:id/map/:item'],
     ['PUT', '/pip/:id'], ['POST', '/pip/:id/entries'], ['POST', '/pip/:id/gates/:gate/review'],

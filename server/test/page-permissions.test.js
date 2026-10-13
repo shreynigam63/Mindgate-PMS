@@ -51,7 +51,7 @@ const PROBE = {
   '/admin/kra-library': '/pms/hr/kra-library',
   '/admin/completion-report': '/pms/reports/completion',
   '/admin/calibration': '/pms/calibration',
-  '/admin/nine-box': '/pms/nine-box',
+  '/admin/nine-box': '/pms/nine-box?view=company',
   '/admin/closure-letters': '/pms/closure-letters',
   '/admin/increments': '/pms/increment-simulations',
   '/admin/watchlist': '/pms/watchlist',
@@ -214,7 +214,9 @@ test('a manager adds the team pages and nothing else', { skip }, async () => {
 test('a delivery head adds their own queue, HR adds the admin pages', { skip }, async () => {
   const mgr = (await me(tok.manager)).pages;
   const hod = (await me(tok.hod)).pages;
-  assert.deepEqual(hod.filter(p => !mgr.includes(p)).sort(), ['/admin/nine-box', '/hod']);
+  // Not /admin/nine-box since 13 Oct: HR's company grid is pms_admin, and
+  // a Delivery Head's own departments' grid is /hod/nine-box (089).
+  assert.deepEqual(hod.filter(p => !mgr.includes(p)).sort(), ['/hod']);
 
   const hr = (await me(tok.hr)).pages;
   for (const p of ['/admin/cycles', '/admin/directory', '/admin/increments',

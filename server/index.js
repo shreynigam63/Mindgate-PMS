@@ -92,6 +92,8 @@ async function main() {
   await require('./migrations/084-connects-pip-hod-competencies').ensurePages(db, TENANT_ID);
   // HR's Events & CSR page, which feeds People Hub.
   await require('./migrations/087-people-events-admin').ensureEventPages(db, TENANT_ID);
+  // The manager's and Delivery Head's own 9-box grids.
+  await require('./migrations/089-nine-box').ensureNineBoxPages(db, TENANT_ID);
 
   const app = express();
   app.use(cors());

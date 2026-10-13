@@ -14,9 +14,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  derivePlacement, performanceBand, potentialFromCompetencies, scalePosition, isForward,
-} = require('../modules/performance/nine-box-derive');
-const {
   super50Check, isSuper50Eligible, gradeValue, DEFAULT_SCALE,
 } = require('../modules/performance/rating-rules');
 const { parsePriorRatings, sortYear } = require('../modules/performance/prior-ratings-import');
@@ -24,92 +21,10 @@ const { parsePriorRatings, sortYear } = require('../modules/performance/prior-ra
 const SCALE = DEFAULT_SCALE; // A+=5, A=4, B+=3, B=2, C=1 — this client's own
 
 // ---- 9-box --------------------------------------------------------------
-
-test('performance bands put the top TWO grades in high, matching Super 50', () => {
-  // Not cosmetic: Super 50 treats A and A+ as one top tier. A grid that
-  // called an A "mid performance" while the watchlist called the same
-  // rating top-tier would have the product contradicting itself.
-  assert.equal(performanceBand(5, SCALE), 'high');
-  assert.equal(performanceBand(4, SCALE), 'high');
-  assert.equal(performanceBand(3, SCALE), 'mid');
-  assert.equal(performanceBand(2, SCALE), 'low');
-  assert.equal(performanceBand(1, SCALE), 'low');
-  // Unrated is NOT "low" — it is not placed at all.
-  assert.equal(performanceBand(null, SCALE), null);
-});
-
-test('the bands are fractions of whatever scale a client uses', () => {
-  const ten = [{ label: 'x', value: 1 }, { label: 'y', value: 10 }];
-  assert.equal(performanceBand(10, ten), 'high');
-  assert.equal(performanceBand(8, ten), 'high');
-  assert.equal(performanceBand(5, ten), 'mid');
-  assert.equal(performanceBand(2, ten), 'low');
-  assert.equal(scalePosition(1, ten), 0);
-  assert.equal(scalePosition(10, ten), 1);
-  // A one-value scale has no positions to speak of.
-  assert.equal(scalePosition(3, [{ label: 'only', value: 3 }]), null);
-});
-
-test('potential uses the FORWARD-LOOKING competencies only', () => {
-  // Functional competencies describe the job somebody already does,
-  // which is performance. Counting them on the potential axis too
-  // would put one fact on both axes and flatten the grid onto a
-  // diagonal — which is the single thing that makes a 9-box useless.
-  assert.equal(isForward('LEADERSHIP COMPETENCY'), true);
-  assert.equal(isForward('DIGITAL & FUTURE SKILLS'), true);
-  assert.equal(isForward('FUNCTIONAL / TECHNICAL COMPETENCY'), false);
-  assert.equal(isForward('BEHAVIOURAL COMPETENCY'), false);
-
-  const rows = [
-    { category: 'LEADERSHIP COMPETENCY', required_level: 4, manager_rating: 5 },
-    { category: 'DIGITAL & FUTURE SKILLS', required_level: 4, manager_rating: 5 },
-    // A catastrophic functional score must not drag potential down.
-    { category: 'FUNCTIONAL / TECHNICAL COMPETENCY', required_level: 4, manager_rating: 1 },
-  ];
-  const p = potentialFromCompetencies(rows);
-  assert.equal(p.rated, 2);
-  assert.equal(p.avg_gap, 1);
-  assert.equal(p.band, 'high');
-});
-
-test('a self-rating can never move somebody up the potential axis', () => {
-  const rows = [
-    { category: 'LEADERSHIP COMPETENCY', required_level: 4, self_rating: 5, manager_rating: null },
-  ];
-  const p = potentialFromCompetencies(rows);
-  assert.equal(p.rated, 0);
-  assert.equal(p.band, null, 'no manager rating means no potential band, not a generous one');
-});
-
-test('potential is a GAP against the role, not a raw average', () => {
-  // 4 out of 5 means different things for a job that needs 3 and a job
-  // that needs 5, and knowing the difference is the whole point of the
-  // competency framework.
-  const easy = potentialFromCompetencies([{ category: 'LEADERSHIP COMPETENCY', required_level: 3, manager_rating: 4 }]);
-  const hard = potentialFromCompetencies([{ category: 'LEADERSHIP COMPETENCY', required_level: 5, manager_rating: 4 }]);
-  assert.equal(easy.band, 'high');
-  assert.equal(hard.band, 'low');
-  assert.equal(easy.avg_gap, 1);
-  assert.equal(hard.avg_gap, -1);
-});
-
-test('a placement needs both halves, and says which one is missing', () => {
-  const comp = [{ category: 'LEADERSHIP COMPETENCY', required_level: 4, manager_rating: 4 }];
-  const full = derivePlacement({ finalRating: 5, scale: SCALE, competencyRows: comp });
-  assert.equal(full.cell, 'high-high');
-  assert.match(full.why, /final rating of 5/);
-
-  const noRating = derivePlacement({ finalRating: null, scale: SCALE, competencyRows: comp });
-  assert.equal(noRating.cell, null);
-  assert.match(noRating.why, /no published annual rating/);
-
-  const noComp = derivePlacement({ finalRating: 5, scale: SCALE, competencyRows: [] });
-  assert.equal(noComp.cell, null);
-  assert.match(noComp.why, /Leadership or Digital/);
-
-  const neither = derivePlacement({ finalRating: null, scale: SCALE, competencyRows: [] });
-  assert.match(neither.why, /and/, 'both reasons are given, not just the first');
-});
+// The 24 Sep 9-box rules tested here (fractions of the scale, potential as
+// a gap over forward-looking categories) were replaced by the client's
+// 9-box build specification on 13 Oct. Their tests went with them; the
+// spec's rules are in nine-box-rules.test.js.
 
 // ---- Super 50 -----------------------------------------------------------
 

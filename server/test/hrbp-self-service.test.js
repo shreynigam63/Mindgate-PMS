@@ -323,8 +323,8 @@ test('A WRITE NAMING SOMEBODY IN ANOTHER SPELLING IS CHECKED, decoy or not', asy
     assert.match(own.body.error, /Only HR and Super Admin can change your own record/);
   }
   for (const [how, v] of Object.entries(inBody(id.mumbai1))) {
-    const away = await post('inside', '/pms/calibration/top-talent', { employee_id: v, email: 'p1@x.com', potential_rating: 3 });
-    assert.ok(refusedByGateway(away), `an outsider's potential, id ${how}: ${away.status} ${JSON.stringify(away.body)}`);
+    const away = await post('inside', '/pms/nine-box/override', { employee_id: v, email: 'p1@x.com', axis: 'potential', band: 2, reason: 'x' });
+    assert.ok(refusedByGateway(away), `an outsider's 9-box band, id ${how}: ${away.status} ${JSON.stringify(away.body)}`);
   }
   for (const [how, v] of Object.entries(spell(id.mumbai1))) {
     const path = encodeURI(v).replace(/%25/g, '%');
@@ -335,8 +335,8 @@ test('A WRITE NAMING SOMEBODY IN ANOTHER SPELLING IS CHECKED, decoy or not', asy
   }
   const adj = await db.query(`SELECT 1 FROM pms.rating_adjustments WHERE tenant_id=$1`, [tenantId]).catch(() => ({ rows: [] }));
   assert.equal(adj.rows.length, 0, 'a rating adjustment was written anyway');
-  const top = await db.query(`SELECT 1 FROM pms.top_talent WHERE tenant_id=$1`, [tenantId]).catch(() => ({ rows: [] }));
-  assert.equal(top.rows.length, 0, 'a potential rating was written anyway');
+  const top = await db.query(`SELECT 1 FROM pms.nine_box_overrides WHERE tenant_id=$1`, [tenantId]).catch(() => ({ rows: [] }));
+  assert.equal(top.rows.length, 0, 'a 9-box override was written anyway');
 });
 
 test('a path the gateway cannot decode is refused, not waved through', async () => {
@@ -435,19 +435,36 @@ test('AN HRBP\'S DOWNLOADS HOLD THEIR REMIT ONLY — not the company, not themse
   }
 });
 
-test('THE 9-BOX HOLDS THE REMIT ONLY, and counts it — a cell names its people by id alone', async () => {
+test('THE 9-BOX HOLDS THE REMIT ONLY, and counts it over the remit', async () => {
   const c = (await db.query(`SELECT id FROM pms.cycles WHERE tenant_id=$1`, [tenantId])).rows[0].id;
   for (const who of ['pune1', 'mumbai1']) {
-    await db.query(`INSERT INTO pms.top_talent (tenant_id, cycle_id, employee_id, potential_rating, nine_box_cell, noted_by)
-      VALUES ($1,$2,$3,5,'high-high','boss@x.com')`, [tenantId, c, id[who]]);
+    await db.query(
+      `INSERT INTO pms.manager_evaluations (tenant_id, cycle_id, employee_id, manager_id, entries, overall_rating, status)
+       VALUES ($1,$2,$3,$4,'{}'::jsonb,4.5,'submitted')
+       ON CONFLICT (cycle_id, employee_id) DO UPDATE SET overall_rating=4.5, status='submitted'`, [tenantId, c, id[who], id.boss]);
+    await db.query(
+      `INSERT INTO pms.potential_answers (tenant_id, cycle_id, employee_id, answers) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (cycle_id, employee_id) DO NOTHING`,
+      [tenantId, c, id[who], JSON.stringify({ learning_agility: 5, leadership: 5, ownership: 5, readiness: 5 })]);
   }
-  const placed = (r) => r.body.groups.flatMap((g) => Object.values(g.cells).flat()).map((p) => p.id).sort();
-  const hrbp = await call('inside', '/pms/nine-box');
+  const everyone = (r) => [...Object.values(r.body.boxes).flatMap((b) => b.people), ...r.body.not_placed.people]
+    .map((p) => p.employee_id).sort();
+  const hrbp = await call('inside', '/pms/nine-box?view=company');
   assert.equal(hrbp.status, 200, JSON.stringify(hrbp.body));
-  assert.deepEqual(placed(hrbp), [id.pune1], 'the HRBP\'s 9-box is not their remit');
-  assert.equal(hrbp.body.groups[0].total, 1, 'the group count still counts the company');
-  const hr = await call('boss', '/pms/nine-box');
-  assert.deepEqual(placed(hr), [id.pune1, id.mumbai1].sort(), 'HR lost somebody');
+  assert.deepEqual(everyone(hrbp), [id.pune1], 'the HRBP\'s 9-box is not their remit');
+  assert.equal(hrbp.body.boxes['2,2'].count, 1);
+  assert.equal(hrbp.body.totals.placed, 1, 'counted over the remit, not the company');
+  const hr = await call('boss', '/pms/nine-box?view=company');
+  assert.deepEqual(everyone(hr), [id.pune1, id.mumbai1].sort(), 'HR lost somebody');
+  // The download, too.
+  const x = await download('inside', '/pms/nine-box/export.xlsx?view=company');
+  assert.equal(x.status, 200, x.text.slice(0, 200));
+  assert.match(x.text, /\bpune1\b/);
+  assert.ok(!/\bmumbai1\b/.test(x.text), 'the 9-box export carries an outsider');
+  // Settings are company-wide: an HRBP reads the grid, never changes its limits.
+  const s = await put('inside', `/pms/nine-box/settings/${c}`, {});
+  assert.equal(s.status, 403);
+  assert.match(s.body.error, /whole company/);
 });
 
 test('THE CYCLE ACTIVITY FEED HOLDS THE REMIT: not an outsider\'s rating reason, not their own', async () => {

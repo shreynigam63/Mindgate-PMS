@@ -1,18 +1,12 @@
-// node --test — potential is recorded in BOTH places, and neither
-// overwrites the other.
+// node --test — the manager's Potential step (9-box build, 13 Oct).
 //
-// Asked for on 23 Sep: "potential should [be] in for both". It was only
-// ever captured at Calibration, as the 9-box cell on pms.top_talent — a
-// judgement made in the room with the distribution on screen. The
-// manager, who has spent the year with the person, had nowhere to record
-// their own view.
-//
-// THE TEST THAT CARRIES THE WEIGHT is `calibration does not overwrite the
-// manager, and the manager does not overwrite calibration`. Two people
-// making the same call at different times is exactly the shape that
-// invites one value quietly clobbering the other, and then nobody can
-// answer "whose judgement is this?" — the same reason rating adjustments
-// are a separate table rather than an overwrite.
+// Potential used to be one Low/Medium/High chip on the evaluation, and
+// calibration typed a 9-box cell beside it. The client's 9-box
+// specification replaced both: the manager answers four questions, 1–5,
+// which are averaged with the competency score, and HR moves a box only
+// by overriding a band with a reason. These tests hold the manager's
+// half: what may be answered, when, by whom — and that HR's override
+// never rewrites what the manager said.
 //
 // Real Postgres, real HTTP surface, skips cleanly without DATABASE_URL.
 const { test, after, before } = require('node:test');
@@ -67,12 +61,11 @@ before(async () => {
   await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'pt-admin@x.com','admin')`, [t.id]);
   await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'pt-mgr@x.com','manager')`, [t.id]);
 
-  // A mid-year cycle: the annual one refuses a directly typed overall
-  // rating (the 7-parameter engine owns it), and this test is about
-  // potential, not about that gate.
+  // The Potential step belongs to the annual review, where the 9-box
+  // is placed.
   cycleId = (await db.query(
     `INSERT INTO pms.cycles (tenant_id,name,fiscal_year,cycle_type,phase)
-     VALUES ($1,'PT Cycle','FY26','midyear','manager_eval') RETURNING id`, [t.id])).rows[0].id;
+     VALUES ($1,'PT Cycle','FY26','annual','manager_eval') RETURNING id`, [t.id])).rows[0].id;
 
   const app = express();
   app.use(express.json());
@@ -95,102 +88,77 @@ after(async () => {
   await db.pool.end();
 });
 
-test('a manager records potential with their evaluation', { skip }, async () => {
-  const r = await req('PUT', `/pms/team/evaluations/${empId}`, mgrTok, { potential_rating: 'high' });
+const four = { learning_agility: 4, leadership: 5, ownership: 4, readiness: 5 };
+
+test('a manager answers the four questions; three of four is not yet a score', { skip }, async () => {
+  const part = await req('PUT', `/pms/team/evaluations/${empId}/potential`, mgrTok,
+    { answers: { learning_agility: 4, leadership: 5, ownership: 4 } });
+  assert.equal(part.status, 200, JSON.stringify(part.body));
+  assert.equal(part.body.questions_score.answered, 3);
+  assert.equal(part.body.questions_score.score, null);
+  assert.equal(part.body.potential.score, null, 'no competency assessment and incomplete questions: no potential yet');
+
+  const all = await req('PUT', `/pms/team/evaluations/${empId}/potential`, mgrTok, { answers: { readiness: 5 } });
+  assert.equal(all.status, 200);
+  assert.deepEqual(all.body.answers, four, 'a save merges into what was already answered');
+  assert.equal(all.body.questions_score.score, 4.5);
+  assert.equal(all.body.potential.score, 4.5);
+  assert.equal(all.body.potential.partial, true, 'the questions alone, said as such');
+  assert.equal(all.body.potential.from, 'questions');
+});
+
+test('an answer can be taken back — the old chip could not be cleared', { skip }, async () => {
+  const r = await req('PUT', `/pms/team/evaluations/${empId}/potential`, mgrTok, { answers: { readiness: null } });
   assert.equal(r.status, 200);
-  const row = (await db.query(
-    `SELECT potential_rating FROM pms.manager_evaluations WHERE cycle_id=$1 AND employee_id=$2`,
-    [cycleId, empId])).rows[0];
-  assert.equal(row.potential_rating, 'high');
+  assert.equal(r.body.answers.readiness, undefined);
+  assert.equal(r.body.questions_score.score, null);
+  await req('PUT', `/pms/team/evaluations/${empId}/potential`, mgrTok, { answers: { readiness: 5 } });
 });
 
-test('it is audited, because potential feeds the 9-box', { skip }, async () => {
-  // POLLED, not read once. audit() in the performance module is
-  // deliberately not awaited — the handler answers the caller and lets
-  // the row land behind it — so under a full-suite run this query could
-  // fire before the write committed and report "not audited" about a
-  // feature that audits perfectly well. Waiting is the honest fix here;
-  // whether the product should await its own audit writes is a separate
-  // question, and a bigger one.
-  let a = [];
-  for (let i = 0; i < 50 && !a.length; i++) {
-    a = (await db.query(
-      `SELECT action, details FROM pms.audit_log
-        WHERE tenant_id=$1 AND employee_id=$2 AND action='POTENTIAL_SET_BY_MANAGER'`,
-      [tenantId, empId])).rows;
-    if (!a.length) await new Promise((r) => setTimeout(r, 50));
-  }
-  assert.equal(a.length, 1);
-  assert.equal(a[0].details.potential_rating, 'high');
+test('every save is audited with what it was before', { skip }, async () => {
+  const a = (await db.query(
+    `SELECT details FROM pms.audit_log WHERE tenant_id=$1 AND employee_id=$2 AND action='POTENTIAL_ANSWERED' ORDER BY at`,
+    [tenantId, empId])).rows;
+  assert.equal(a.length, 4);
+  assert.deepEqual(a[1].details.after, four);
+  assert.equal(a[2].details.before.readiness, 5);
 });
 
-test('only low, mid or high is accepted', { skip }, async () => {
-  const r = await req('PUT', `/pms/team/evaluations/${empId}`, mgrTok, { potential_rating: 'stellar' });
-  assert.equal(r.status, 400);
-  assert.match(r.body.error, /low.*mid.*high/);
-  const row = (await db.query(
-    `SELECT potential_rating FROM pms.manager_evaluations WHERE cycle_id=$1 AND employee_id=$2`,
-    [cycleId, empId])).rows[0];
-  assert.equal(row.potential_rating, 'high', 'the refused value must not have landed');
-});
-
-test('saving other fields leaves potential alone', { skip }, async () => {
-  await req('PUT', `/pms/team/evaluations/${empId}`, mgrTok, { strengths: 'Owns delivery end to end' });
-  const row = (await db.query(
-    `SELECT potential_rating, strengths FROM pms.manager_evaluations WHERE cycle_id=$1 AND employee_id=$2`,
-    [cycleId, empId])).rows[0];
-  assert.equal(row.strengths, 'Owns delivery end to end');
-  assert.equal(row.potential_rating, 'high', 'an unrelated save must not clear it');
-});
-
-test('calibration does not overwrite the manager, and the manager does not overwrite calibration', { skip }, async () => {
-  // Calibration settles on something different from the manager's read.
-  // The phase has to move for that, exactly as it does in a real cycle:
-  // the top-talent write is gated on the calibration phase, and the
-  // manager's edit on manager_eval. Moving it here rather than starting
-  // the cycle in calibration keeps both halves of this test real.
-  await db.query(`UPDATE pms.cycles SET phase='calibration' WHERE id=$1`, [cycleId]);
-  const cal = await req('POST', '/pms/calibration/top-talent', adminTok,
-    { employee_id: empId, nine_box_cell: 'mid-mid' });
-  assert.equal(cal.status, 200);
-
-  const tt = (await db.query(
-    `SELECT nine_box_cell FROM pms.top_talent WHERE cycle_id=$1 AND employee_id=$2`,
-    [cycleId, empId])).rows[0];
-  const me = (await db.query(
-    `SELECT potential_rating FROM pms.manager_evaluations WHERE cycle_id=$1 AND employee_id=$2`,
-    [cycleId, empId])).rows[0];
-  assert.equal(tt.nine_box_cell, 'mid-mid', 'calibration owns the cell');
-  assert.equal(me.potential_rating, 'high', "the manager's judgement survives calibration");
-
-  // And the manager revising theirs afterwards does not move the cell.
-  await db.query(`UPDATE pms.cycles SET phase='manager_eval' WHERE id=$1`, [cycleId]);
-  const rev = await req('PUT', `/pms/team/evaluations/${empId}`, mgrTok, { potential_rating: 'mid' });
-  assert.equal(rev.status, 200);
-  const after = (await db.query(
-    `SELECT nine_box_cell FROM pms.top_talent WHERE cycle_id=$1 AND employee_id=$2`,
-    [cycleId, empId])).rows[0];
-  assert.equal(after.nine_box_cell, 'mid-mid', 'calibration keeps the last word on placement');
-});
-
-test("calibration's list shows the manager's potential as its starting point", { skip }, async () => {
-  await db.query(
-    `UPDATE pms.manager_evaluations SET status='submitted', overall_rating=4, submitted_at=now()
-      WHERE cycle_id=$1 AND employee_id=$2`, [cycleId, empId]);
-  const r = await req('GET', '/pms/calibration', adminTok);
-  assert.equal(r.status, 200);
-  const row = (r.body.rows || []).find(x => x.employee_id === empId);
-  assert.ok(row, 'the employee appears in calibration');
-  assert.equal(row.manager_potential, 'mid', "the manager's own read is carried through");
-  assert.equal(row.nine_box_cell, 'mid-mid', 'alongside the calibrated cell, not instead of it');
-});
-
-test('a manager cannot set potential on someone who is not their report', { skip }, async () => {
+test('only while manager evaluation is open, and only for your own reports', { skip }, async () => {
   const stranger = (await db.query(
     `INSERT INTO core.employees (tenant_id,name,email,status,designation,department)
      VALUES ($1,'PT Stranger','pt-stranger@x.com','active','Executive','Delivery') RETURNING id`,
     [tenantId])).rows[0].id;
-  const r = await req('PUT', `/pms/team/evaluations/${stranger}`, mgrTok, { potential_rating: 'high' });
+  const r = await req('PUT', `/pms/team/evaluations/${stranger}/potential`, mgrTok, { answers: { leadership: 3 } });
   assert.equal(r.status, 403);
   assert.match(r.body.error, /Not your report/);
+
+  await db.query(`UPDATE pms.cycles SET phase='calibration' WHERE id=$1`, [cycleId]);
+  const late = await req('PUT', `/pms/team/evaluations/${empId}/potential`, mgrTok, { answers: { leadership: 1 } });
+  assert.equal(late.status, 409);
+  const read = await req('GET', `/pms/team/evaluations/${empId}/potential`, mgrTok);
+  assert.equal(read.body.editable, false, 'still readable, no longer editable');
+});
+
+test("HR's override moves the box, never the manager's answers", { skip }, async () => {
+  await db.query(
+    `INSERT INTO pms.manager_evaluations (tenant_id, cycle_id, employee_id, manager_id, entries, overall_rating, status, submitted_at)
+     VALUES ($1,$2,$3,$4,'{}'::jsonb,4,'submitted',now())
+     ON CONFLICT (cycle_id, employee_id) DO UPDATE SET overall_rating=4, status='submitted'`, [tenantId, cycleId, empId, mgrId]);
+  const ov = await req('POST', '/pms/nine-box/override', adminTok,
+    { employee_id: empId, axis: 'potential', band: 1, reason: 'Calibrated against the peer group' });
+  assert.equal(ov.status, 200, JSON.stringify(ov.body));
+  assert.equal(ov.body.placement.box_key, '2,1');
+  assert.equal(ov.body.placement.computed_pot_band, 2, 'the scores still say High');
+  const saved = (await db.query(`SELECT answers FROM pms.potential_answers WHERE cycle_id=$1 AND employee_id=$2`,
+    [cycleId, empId])).rows[0];
+  assert.deepEqual(saved.answers, four, "the manager's answers are untouched");
+});
+
+test('a mid-year cycle has no Potential step', { skip }, async () => {
+  await db.query(`UPDATE pms.cycles SET phase='closed' WHERE id=$1`, [cycleId]);
+  await db.query(`INSERT INTO pms.cycles (tenant_id,name,fiscal_year,cycle_type,phase) VALUES ($1,'PT Mid','FY27','midyear','manager_eval')`, [tenantId]);
+  const r = await req('GET', `/pms/team/evaluations/${empId}/potential`, mgrTok);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.applies, false);
 });

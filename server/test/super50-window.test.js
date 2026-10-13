@@ -237,75 +237,12 @@ test('the watchlist and the import are HR-only', { skip }, async () => {
   }
 });
 
-// ---- the derived 9-box ---------------------------------------------------
-
-test('the 9-box places people from the annual rating and the competencies', { skip }, async () => {
-  // Alpha: top rating, strong forward competencies -> Star.
-  // Beta:  top rating, weak forward competencies   -> Trusted professional.
-  const comps = (await db.query(
-    `SELECT id, category FROM pms.competencies WHERE tenant_id=$1`, [tenantId])).rows;
-  const forward = comps.filter((c) => /LEADERSHIP|DIGITAL/.test(c.category));
-  const functional = comps.filter((c) => /FUNCTIONAL/.test(c.category));
-  assert.ok(forward.length && functional.length);
-
-  for (const [emp, rating, fwd, fn] of [[empA, 5, 5, 1], [empB, 5, 2, 5]]) {
-    await db.query(
-      `INSERT INTO pms.employee_performance_history (tenant_id, employee_id, cycle_id, final_rating)
-       VALUES ($1,$2,$3,$4) ON CONFLICT (employee_id, cycle_id) DO UPDATE SET final_rating=EXCLUDED.final_rating`,
-      [tenantId, emp, annualId, rating]);
-    const a = (await db.query(
-      `INSERT INTO pms.competency_assessments (tenant_id, cycle_id, employee_id, manager_status)
-       VALUES ($1,$2,$3,'submitted')
-       ON CONFLICT (tenant_id, cycle_id, employee_id) DO UPDATE SET manager_status='submitted'
-       RETURNING id`, [tenantId, annualId, emp])).rows[0].id;
-    for (const c of forward) {
-      await db.query(
-        `INSERT INTO pms.competency_ratings (tenant_id, assessment_id, competency_id, required_level, manager_rating)
-         VALUES ($1,$2,$3,4,$4) ON CONFLICT (assessment_id, competency_id)
-           DO UPDATE SET manager_rating=EXCLUDED.manager_rating`, [tenantId, a, c.id, fwd]);
-    }
-    for (const c of functional) {
-      await db.query(
-        `INSERT INTO pms.competency_ratings (tenant_id, assessment_id, competency_id, required_level, manager_rating)
-         VALUES ($1,$2,$3,4,$4) ON CONFLICT (assessment_id, competency_id)
-           DO UPDATE SET manager_rating=EXCLUDED.manager_rating`, [tenantId, a, c.id, fn]);
-    }
-  }
-
-  const r = await call(adminTok, '/pms/nine-box?source=derived');
-  assert.equal(r.status, 200, JSON.stringify(r.body));
-  const cells = r.body.groups[0].cells;
-  const find = (name) => Object.entries(cells).find(([, v]) => v.some((p) => p.name === name));
-  assert.equal(find('S50 Alpha')[0], 'high-high');
-  // Beta's FUNCTIONAL ratings are the best in the company and their
-  // forward ones are the worst. If functional competencies leaked onto
-  // the potential axis, Beta would not land in low potential.
-  assert.equal(find('S50 Beta')[0], 'high-low');
-  assert.equal(r.body.coverage.with_final_rating, 2);
-  assert.equal(r.body.coverage.derived, 2);
-});
-
-test('the derived grid never overwrites a calibrated cell, and flags the difference', { skip }, async () => {
-  await db.query(
-    `INSERT INTO pms.top_talent (tenant_id, cycle_id, employee_id, nine_box_cell, noted_by)
-     VALUES ($1,$2,$3,'mid-mid','test')
-     ON CONFLICT (cycle_id, employee_id) DO UPDATE SET nine_box_cell='mid-mid'`,
-    [tenantId, annualId, empA]);
-
-  const cal = await call(adminTok, '/pms/nine-box?source=calibrated');
-  assert.ok(cal.body.groups[0].cells['mid-mid'].some((p) => p.name === 'S50 Alpha'),
-    'calibration still says what HR said');
-
-  const der = await call(adminTok, '/pms/nine-box?source=derived');
-  const alpha = der.body.groups[0].cells['high-high'].find((p) => p.name === 'S50 Alpha');
-  assert.ok(alpha, 'and the derived view still says what the data says');
-  assert.equal(alpha.differs, true);
-  assert.equal(alpha.calibrated_cell, 'mid-mid');
-  assert.equal(der.body.coverage.differs, 1);
-  assert.ok(alpha.why.includes('final rating'), 'and it explains itself');
-});
+// ---- the 9-box -----------------------------------------------------------
+// The derived-vs-calibrated grid tested here until 13 Oct was replaced by
+// the client's 9-box build specification; see nine-box.test.js.
 
 test('the 9-box is closed to somebody without the permission', { skip }, async () => {
-  assert.equal((await call(empTok, '/pms/nine-box')).status, 403);
-  assert.equal((await call(empTok, '/pms/nine-box?source=derived')).status, 403);
+  for (const view of ['company', 'departments', 'team']) {
+    assert.equal((await call(empTok, `/pms/nine-box?view=${view}`)).status, 403, view);
+  }
 });

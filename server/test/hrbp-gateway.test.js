@@ -117,7 +117,8 @@ function peopleNamed(node, acc = new Set(), depth = 0) {
 // The HR-facing reads. Kept here rather than derived from the router so
 // that deleting a route does not silently shrink the sweep.
 const HR_READS = [
-  '/approvals', '/kra/org-overview', '/reports/completion', '/nine-box', '/calibration',
+  '/approvals', '/kra/org-overview', '/reports/completion', '/nine-box?view=company',
+  '/nine-box/movement?view=company', '/nine-box/reports?view=company', '/nine-box/actions?view=company', '/calibration',
   '/calibration/kitty', '/watchlist', '/closure-letters', '/connects', '/pip', '/home',
   '/cycles', '/hr/settings', '/hr/kra-library', '/compensation', '/increment-matrix',
   '/increment-simulations', '/review-parameters', '/meetings',

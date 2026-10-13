@@ -31,7 +31,7 @@ const approvals = require('./approvals');
 const homeData = require('./home');
 const { super50Roster, super50Scale, super50Rule, super50History, gradeOf } = require('./super50');
 const { parsePriorRatings } = require('./prior-ratings-import');
-const { derivePlacement, PERFORMANCE_BANDS, POTENTIAL_BANDS } = require('./nine-box-derive');
+const nineBox = require('./nine-box');
 const { grade } = require('./grade');
 
 const router = express.Router();
@@ -4182,10 +4182,12 @@ router.get('/team/evaluations', async (req, res) => {
               sa.status AS self_status, sa.entries AS self_entries, sa.overall_self_rating,
               sa.went_well, sa.could_improve,
               me.id AS eval_id, me.status AS eval_status, me.entries AS eval_entries,
-              me.overall_rating, me.strengths, me.improvement_areas, me.potential_rating
+              me.overall_rating, me.strengths, me.improvement_areas,
+              pa.answers AS potential_answers
          FROM core.employees e
          LEFT JOIN pms.self_appraisals sa ON sa.cycle_id=$1 AND sa.employee_id=e.id
          LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id
+         LEFT JOIN pms.potential_answers pa ON pa.cycle_id=$1 AND pa.employee_id=e.id
         WHERE e.tenant_id=$2 AND e.status='active'
           ${wide ? '' : 'AND e.manager_id=$3'} ORDER BY e.name`,
       wide ? [c.id, T(req)] : [c.id, T(req), req.user.id]);
@@ -4251,29 +4253,25 @@ router.put('/team/evaluations/:employeeId', async (req, res) => {
     } else if (b.overall_rating != null) {
       overallRating = b.overall_rating;
     }
-    // Potential: the manager's own judgement of it, recorded with the
-    // review rather than only in the calibration room months later. It
-    // does NOT overwrite what calibration settles on — that stays on
-    // pms.top_talent. See migration 043 for why both are kept.
-    if (b.potential_rating !== undefined && b.potential_rating !== null
-        && !['low', 'mid', 'high'].includes(b.potential_rating)) {
-      return res.status(400).json({ error: "potential_rating must be 'low', 'mid' or 'high'" });
+    // Potential is no longer one Low/Medium/High chip here. Since the
+    // 9-box build (13 Oct) it is the four questions of the Potential step
+    // (PUT /team/evaluations/:id/potential, nine-box.js), averaged with
+    // the competency score. Refused rather than ignored, so an old client
+    // learns where it went instead of believing it saved.
+    if (b.potential_rating !== undefined) {
+      return res.status(422).json({ error: 'Potential is now the four questions on the Potential step, not a single rating.' });
     }
     await db.query(
-      `INSERT INTO pms.manager_evaluations (tenant_id, cycle_id, employee_id, manager_id, entries, overall_rating, strengths, improvement_areas, potential_rating, status)
-       VALUES ($1,$2,$3,$4,COALESCE($5,'{}'::jsonb),$6,$7,$8,$9,'pending')
+      `INSERT INTO pms.manager_evaluations (tenant_id, cycle_id, employee_id, manager_id, entries, overall_rating, strengths, improvement_areas, status)
+       VALUES ($1,$2,$3,$4,COALESCE($5,'{}'::jsonb),$6,$7,$8,'pending')
        ON CONFLICT (cycle_id, employee_id) DO UPDATE SET
          entries=COALESCE($5,pms.manager_evaluations.entries),
          overall_rating=COALESCE($6,pms.manager_evaluations.overall_rating),
          strengths=COALESCE($7,pms.manager_evaluations.strengths),
          improvement_areas=COALESCE($8,pms.manager_evaluations.improvement_areas),
-         potential_rating=COALESCE($9,pms.manager_evaluations.potential_rating),
          updated_at=now()`,
       [T(req), c.id, emp.id, req.user.id, b.entries ? JSON.stringify(b.entries) : null,
-       overallRating, b.strengths ?? null, b.improvement_areas ?? null, b.potential_rating ?? null]);
-    // Potential feeds the 9-box, so a change to it is a change a person
-    // can be asked about later.
-    if (b.potential_rating) audit(req, 'POTENTIAL_SET_BY_MANAGER', c.id, emp.id, { potential_rating: b.potential_rating });
+       overallRating, b.strengths ?? null, b.improvement_areas ?? null]);
     res.json({ ok: true, overall_rating: overallRating });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4531,18 +4529,23 @@ router.get('/calibration', async (req, res) => {
       `SELECT e.id AS employee_id, e.name, e.department,
               me.overall_rating AS manager_rating, he.overall_rating AS hod_rating,
               COALESCE(adj.to_rating, he.overall_rating, me.overall_rating) AS proposed,
-              adj.reason AS adjustment_reason, adj.adjusted_by, adj.at AS adjusted_at,
-              tt.nine_box_cell, tt.potential_rating,
-              -- The manager's own read on potential, so calibration starts
-              -- from a view rather than a blank (migration 043).
-              me.potential_rating AS manager_potential
+              adj.reason AS adjustment_reason, adj.adjusted_by, adj.at AS adjusted_at
          FROM core.employees e
          JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id AND me.status='submitted'
          LEFT JOIN pms.hod_evaluations he ON he.cycle_id=$1 AND he.employee_id=e.id AND he.status='submitted'
          LEFT JOIN LATERAL (SELECT to_rating, reason, adjusted_by, at FROM pms.rating_adjustments ra
                              WHERE ra.cycle_id=$1 AND ra.employee_id=e.id ORDER BY at DESC LIMIT 1) adj ON true
-         LEFT JOIN pms.top_talent tt ON tt.cycle_id=$1 AND tt.employee_id=e.id
         WHERE e.tenant_id=$2 ORDER BY e.department, e.name`, [c.id, T(req)])).rows;
+    // The 9-box, worked out live from the same ratings plus potential and
+    // HR's band overrides (nine-box.js) — so the room sees the box move
+    // as it adjusts. Annual cycles only; a mid-year cycle has no 9-box.
+    let nineBoxSettings = null;
+    if (c.cycle_type === 'annual') {
+      const nb = await nineBox.cycleRows(T(req), c);
+      nineBoxSettings = { ...nb.settings, published: nb.published };
+      const byId = new Map(nb.people.map((p) => [p.employee_id, nineBox.personOut(p, 'company')]));
+      for (const r of rows) r.nine_box = byId.get(r.employee_id) || null;
+    }
     const dist = {};
     for (const r of rows) { const k = r.proposed == null ? 'unrated' : String(Math.round(r.proposed)); dist[k] = (dist[k] || 0) + 1; }
 
@@ -4597,6 +4600,11 @@ router.get('/calibration', async (req, res) => {
     }
 
     res.json({ cycle: cycleForClient(c, { bell_curve: c.bell_curve }), rows, distribution: dist,
+               nine_box: nineBoxSettings && {
+                 published: nineBoxSettings.published, mid_from: nineBoxSettings.mid_from, high_from: nineBoxSettings.high_from,
+                 competency_weight: nineBoxSettings.competency_weight,
+                 boxes: Object.fromEntries(Object.entries(nineBoxSettings.boxes).map(([k, v]) => [k, { name: v.name }])),
+               },
                timesheet,
                // Said in the payload so the screen cannot present it as
                // anything else.
@@ -4987,150 +4995,22 @@ router.post('/calibration/adjust', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ---------------- 9-Box Grid — BR-6.4 -------------------------------------
-// Aggregates pms.top_talent entries (nine_box_cell values already captured
-// via the existing top-talent endpoint above) into the grid, at whichever
-// of the three levels the BRD names: org-wide, per-department, or per
-// reporting-line (each employee's direct manager). HR and HOD
-// both get view access, per BR-6.4's stated audience — unlike /watchlist
-// (BR-6.5/6.6), which is HR/Management only.
-//
-// nine_box_cell convention (see frontend CalibrationPage.jsx's NINE_BOX
-// list, unchanged here): "<performance>-<potential>", each low|mid|high.
-router.get('/nine-box', async (req, res) => {
-  try {
-    if (!(await hasPermission(req.user, 'pms_admin')) && !(await hasPermission(req.user, 'pms_hod'))) {
-      return res.status(403).json({ error: "Requires 'pms_admin' or 'pms_hod'" });
-    }
-    const level = ['org', 'department', 'manager'].includes(req.query.level) ? req.query.level : 'org';
-    // THE ANNUAL CYCLE, not simply "the active" one. The 9-box is an
-    // annual artefact — the client's own words on 24 Sep were "in
-    // Annual review cycle" — and a tenant running a mid-year cycle
-    // alongside it would otherwise have the grid read the mid-year
-    // one, find no published ratings there, and show empty. Falls
-    // back to the active cycle only when no annual cycle is live, so
-    // a single-cycle tenant behaves exactly as before.
-    const c = (await activeCycle(T(req), 'annual')) || (await activeCycle(T(req)));
-    if (!c) return res.status(409).json({ error: 'No active cycle' });
-    // TWO SOURCES NOW, and the difference between them is the point.
-    //
-    // CALIBRATED is what HR typed on the Calibration screen — a
-    // judgment made by people in a room, and still the only thing this
-    // product treats as a decision.
-    //
-    // DERIVED is new, asked for on 24 Sep: "after analyzing competency
-    // mapping of employees in Annual review cycle, please confirm how
-    // 9 box grid will be displayed." Performance from the annual final
-    // rating, potential from the FORWARD-LOOKING competency categories
-    // — see nine-box-derive.js for why functional competencies are
-    // excluded and why the bands are what they are.
-    //
-    // ?source=derived switches the grid; the default stays calibrated,
-    // so nobody's existing view changes under them.
-    const source = req.query.source === 'derived' ? 'derived' : 'calibrated';
+// ---------------- 9-Box Grid ----------------------------------------------
+// Rebuilt to the client's build specification on 13 Oct — see
+// nine-box-rules.js for the rules and nine-box.js for the screens,
+// settings, overrides, the manager's Potential step and the publish
+// actions. Mounted here, where the old grid route was.
+router.use('/nine-box', nineBox.router);
+router.use('/team/evaluations', nineBox.teamRouter);
 
-    const calibrated = (await db.query(
-      `SELECT e.id, e.name, e.department, e.designation, m.name AS manager_name,
-              tt.nine_box_cell, tt.potential_rating
-         FROM pms.top_talent tt JOIN core.employees e ON e.id=tt.employee_id
-         LEFT JOIN core.employees m ON m.id=e.manager_id
-        WHERE tt.tenant_id=$1 AND tt.cycle_id=$2 AND tt.nine_box_cell IS NOT NULL`,
-      [T(req), c.id])).rows;
-
-    // Everyone with either a published rating or a manager competency
-    // rating this cycle, and the two inputs the placement needs.
-    const derivedRows = (await db.query(
-      `SELECT e.id, e.name, e.department, e.designation, m.name AS manager_name,
-              h.final_rating,
-              coalesce(json_agg(json_build_object(
-                'category', cc.category, 'required_level', cr.required_level,
-                'manager_rating', cr.manager_rating)) FILTER (WHERE cr.id IS NOT NULL), '[]') AS competencies
-         FROM core.employees e
-         LEFT JOIN core.employees m ON m.id = e.manager_id
-         LEFT JOIN pms.employee_performance_history h
-                ON h.tenant_id=$1 AND h.cycle_id=$2 AND h.employee_id=e.id
-         LEFT JOIN pms.competency_assessments ca
-                ON ca.tenant_id=$1 AND ca.cycle_id=$2 AND ca.employee_id=e.id
-         LEFT JOIN pms.competency_ratings cr
-                ON cr.assessment_id=ca.id AND cr.manager_rating IS NOT NULL
-         LEFT JOIN pms.competencies cc ON cc.id = cr.competency_id
-        WHERE e.tenant_id=$1 AND e.status='active'
-        GROUP BY e.id, e.name, e.department, e.designation, m.name, h.final_rating`,
-      [T(req), c.id])).rows;
-
-    const scale = Array.isArray(c.rating_scale) && c.rating_scale.length ? c.rating_scale : DEFAULT_SCALE;
-    const calibratedBy = new Map(calibrated.map((r) => [r.id, r.nine_box_cell]));
-    const placed = [];
-    for (const r of derivedRows) {
-      const p = derivePlacement({ finalRating: r.final_rating, scale, competencyRows: r.competencies });
-      if (!p.cell) continue;
-      placed.push({ ...r, ...p, calibrated_cell: calibratedBy.get(r.id) || null });
-    }
-
-    // Cut to an HRBP's remit before grouping, so each group's "N placed"
-    // counts the people in it (13 Oct: an HRBP saw the whole company here).
-    const rows = visibleRows(req, source === 'derived' ? placed : calibrated, 'id');
-    const groupKey = (r) => (level === 'department' ? (r.department || 'Unassigned') : level === 'manager' ? (r.manager_name || 'No manager') : 'Organisation');
-    const groups = new Map();
-    for (const r of rows) {
-      const key = groupKey(r);
-      if (!groups.has(key)) groups.set(key, { key, total: 0, cells: {} });
-      const g = groups.get(key);
-      g.total++;
-      const cellKey = source === 'derived' ? r.cell : r.nine_box_cell;
-      if (!g.cells[cellKey]) g.cells[cellKey] = [];
-      g.cells[cellKey].push({
-        id: r.id, employee_id: r.id, name: r.name,
-        ...(source === 'derived'
-          ? { why: r.why, final_rating: r.final_rating, competency_gap: r.competency_gap,
-              calibrated_cell: r.calibrated_cell,
-              // The one fact worth acting on: the data and the room
-              // disagreed about this person.
-              differs: !!(r.calibrated_cell && r.calibrated_cell !== r.cell) }
-          : {}),
-      });
-    }
-
-    // Why a grid might be empty, said out loud. Without this "no
-    // employees have a 9-box cell" is the only message, whether the
-    // cause is no calibration, no published ratings, or no competency
-    // assessments — three different problems with three different fixes.
-    const withRating = derivedRows.filter((r) => r.final_rating != null).length;
-    const withCompetency = derivedRows.filter((r) => (r.competencies || []).length > 0).length;
-
-    res.json({
-      cycle: cycleForClient(c), level, source,
-      bands: { performance: PERFORMANCE_BANDS, potential: POTENTIAL_BANDS },
-      coverage: {
-        employees: derivedRows.length,
-        calibrated: calibrated.length,
-        with_final_rating: withRating,
-        with_manager_competencies: withCompetency,
-        derived: placed.length,
-        // How often the computed placement and the calibrated one part
-        // company. This is the number HR should look at in the room.
-        differs: placed.filter((p) => p.calibrated_cell && p.calibrated_cell !== p.cell).length,
-      },
-      groups: [...groups.values()].sort((a, b) => a.key.localeCompare(b.key)),
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/calibration/top-talent', async (req, res) => {
-  try {
-    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
-    const c = await activeCycle(T(req));
-    if (!c || !pm.phaseAllows(c.phase, 'top_talent')) return res.status(409).json({ error: 'Calibration is not open' });
-    const { employee_id, potential_rating, nine_box_cell } = req.body || {};
-    if (!employee_id) return res.status(400).json({ error: 'employee_id required' });
-    await db.query(
-      `INSERT INTO pms.top_talent (tenant_id, cycle_id, employee_id, potential_rating, nine_box_cell, noted_by)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (cycle_id, employee_id) DO UPDATE SET
-         potential_rating=EXCLUDED.potential_rating, nine_box_cell=EXCLUDED.nine_box_cell, noted_by=EXCLUDED.noted_by, at=now()`,
-      [T(req), c.id, employee_id, potential_rating || null, nine_box_cell || null, req.user.email]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+// The cell HR typed by hand. A placement now comes from the scores, and
+// HR moves it only by overriding one band with a reason (POST
+// /nine-box/override); a typed cell had neither a reason nor an audit
+// row. Answered rather than removed, so an old screen says where it went.
+router.post('/calibration/top-talent', (req, res) => {
+  res.status(410).json({
+    error: 'The 9-box box is now worked out from the performance and potential scores. To move someone, override a band with a reason on Calibration.',
+  });
 });
 
 // ---------------- Publish ----------------------------------------------------
@@ -5145,14 +5025,20 @@ router.post('/publish', async (req, res) => {
     const rows = (await db.query(
       `SELECT e.id AS employee_id, e.name AS employee_name,
               COALESCE(adj.to_rating, he.overall_rating, me.overall_rating) AS final_rating,
-              tt.potential_rating, tt.nine_box_cell
+              e.super50_flag
          FROM core.employees e
          JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id AND me.status='submitted'
          LEFT JOIN pms.hod_evaluations he ON he.cycle_id=$1 AND he.employee_id=e.id AND he.status='submitted'
          LEFT JOIN LATERAL (SELECT to_rating FROM pms.rating_adjustments ra
                              WHERE ra.cycle_id=$1 AND ra.employee_id=e.id ORDER BY at DESC LIMIT 1) adj ON true
-         LEFT JOIN pms.top_talent tt ON tt.cycle_id=$1 AND tt.employee_id=e.id
         WHERE e.tenant_id=$2`, [c.id, T(req)])).rows;
+    // The 9-box runs on annual cycles (nine-box.js). It needs each
+    // person's Super 50 flag as it was BEFORE this publish recomputes it:
+    // a Super 50 employee who leaves (2,2) is alerted even if this same
+    // publish takes them off the watchlist.
+    const annual = c.cycle_type === 'annual';
+    const wasFlagged = new Map(rows.map((r) => [r.employee_id, !!r.super50_flag]));
+    const publishedIds = [];
     const scale = Array.isArray(c.rating_scale) ? c.rating_scale : [];
     const label = (v) => { const m = scale.find(s => Math.round(v) === s.value); return m ? m.label : null; };
     let published = 0; let pipsOpened = 0; let super50Flagged = 0; const failures = [];
@@ -5169,10 +5055,11 @@ router.post('/publish', async (req, res) => {
           `INSERT INTO pms.employee_performance_history (tenant_id, employee_id, cycle_id, final_rating, rating_label)
            VALUES ($1,$2,$3,$4,$5) ON CONFLICT (employee_id, cycle_id) DO UPDATE SET final_rating=EXCLUDED.final_rating, rating_label=EXCLUDED.rating_label, published_at=now()`,
           [T(req), r.employee_id, c.id, r.final_rating, label(r.final_rating)]);
+        // The box itself (nine_box_cell, potential_rating) is written by
+        // the 9-box step after this loop, from the computed placement.
         await db.query(
-          `UPDATE core.employees SET last_appraisal_rating=$2, last_appraisal_cycle_id=$3, last_appraisal_at=now(),
-                  potential_rating=COALESCE($4,potential_rating), nine_box_cell=COALESCE($5,nine_box_cell), updated_at=now()
-            WHERE id=$1`, [r.employee_id, String(r.final_rating), c.id, r.potential_rating, r.nine_box_cell]);
+          `UPDATE core.employees SET last_appraisal_rating=$2, last_appraisal_cycle_id=$3, last_appraisal_at=now(), updated_at=now()
+            WHERE id=$1`, [r.employee_id, String(r.final_rating), c.id]);
         await db.query(
           `INSERT INTO pms.closure_letters (tenant_id, cycle_id, employee_id) VALUES ($1,$2,$3)
            ON CONFLICT (cycle_id, employee_id) DO NOTHING`, [T(req), c.id, r.employee_id]);
@@ -5210,7 +5097,13 @@ router.post('/publish', async (req, res) => {
         // ON CONFLICT DO NOTHING (unique on tenant/employee/cycle, migration
         // 006) makes this safe if publish is re-run — it won't reopen or
         // duplicate a PIP that already exists for this cycle.
-        if (Number(r.final_rating) < Number(c.pip_threshold)) {
+        //
+        // MID-YEAR ONLY since the 9-box build (13 Oct). On an annual cycle
+        // the PIP follows the box: (0,0) Underperformer opens one, and so
+        // does anybody below the Low limit who could not be placed — the
+        // client's answer to the spec's open question 2. (0,1) and (0,2)
+        // get a development action instead. See nine-box.js.
+        if (!annual && Number(r.final_rating) < Number(c.pip_threshold)) {
           const pipR = await db.query(
             `INSERT INTO pms.pip_records (tenant_id, employee_id, cycle_id, status, opened_by)
              VALUES ($1,$2,$3,'open',$4) ON CONFLICT (tenant_id, employee_id, cycle_id) DO NOTHING RETURNING id`,
@@ -5223,10 +5116,26 @@ router.post('/publish', async (req, res) => {
         }
         await notify(T(req), r.employee_id, 'rating_published', `Your ${c.name} rating is published`, null, '/pms/my-rating');
         published++;
+        publishedIds.push(r.employee_id);
       } catch (e) { failures.push({ employee_id: r.employee_id, reason: e.message }); }
     }
-    await audit(req, 'CYCLE_PUBLISHED', c.id, null, { published, failed: failures.length, pips_opened: pipsOpened, super50_flagged: super50Flagged });
-    res.json({ ok: true, published, pips_opened: pipsOpened, super50_flagged: super50Flagged, failures });
+    // The 9-box: every published person placed (or recorded as not
+    // placed, with the reason), and the box's actions created.
+    let nine = null;
+    if (annual) {
+      nine = await nineBox.publishPlacements(req, c, { ids: publishedIds, wasFlagged });
+      pipsOpened += nine.pips_opened;
+      failures.push(...nine.failures);
+    }
+    const nineSummary = nine && {
+      placed: nine.placed, not_placed: nine.not_placed, by_box: nine.by_box, not_placed_by_reason: nine.not_placed_by_reason,
+      actions_created: nine.actions_created, actions_superseded: nine.actions_superseded,
+      succession_added: nine.succession_added, retention_alerts: nine.retention_alerts, escalations: nine.escalations,
+    };
+    await audit(req, 'CYCLE_PUBLISHED', c.id, null, { published, failed: failures.length, pips_opened: pipsOpened, super50_flagged: super50Flagged,
+      ...(nineSummary ? { nine_box: nineSummary } : {}) });
+    res.json({ ok: true, published, pips_opened: pipsOpened, super50_flagged: super50Flagged, failures,
+      ...(nineSummary ? { nine_box: nineSummary } : {}) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

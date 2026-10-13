@@ -39,6 +39,12 @@ async function buildExport(tenantId, employeeId, { includeRestricted = false } =
             last_appraisal_rating, last_appraisal_at, potential_rating, nine_box_cell, super50_flag, super50_since
        FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!profile) return null;
+  // The 9-box box is never shown to the employee (the client's 9-box
+  // specification: "employees do not see their box"), so their own
+  // export leaves it out and HR's export carries it, under hr_only.
+  const nineBox = { potential_rating: profile.potential_rating, nine_box_cell: profile.nine_box_cell };
+  delete profile.potential_rating;
+  delete profile.nine_box_cell;
 
   const [kraSheets, selfAppraisals, managerEvals, devPlans, careerPath, connects, pips, ratingHistory, consents, parameterScores, pulseChecks, meetings, aiRecs] = await Promise.all([
     db.query(`SELECT s.cycle_id, s.status, s.manager_comment, k.title, k.weight, k.measures FROM pms.kra_sheets s LEFT JOIN pms.kras k ON k.sheet_id=s.id WHERE s.tenant_id=$1 AND s.employee_id=$2`, [tenantId, employeeId]),
@@ -88,7 +94,7 @@ async function buildExport(tenantId, employeeId, { includeRestricted = false } =
     midyear_pulse_checks: pulseChecks.rows,
     review_meetings: meetings.rows,
     ai_recommendations: aiRecs.rows,
-    ...(includeRestricted ? { hr_only: await restrictedSections(tenantId, employeeId) } : {}),
+    ...(includeRestricted ? { hr_only: { ...(await restrictedSections(tenantId, employeeId)), nine_box_current: nineBox } } : {}),
   };
 }
 
@@ -101,7 +107,18 @@ async function restrictedSections(tenantId, employeeId) {
        FROM pms.parameter_ai_analyses a JOIN pms.cycles c ON c.id = a.cycle_id
       WHERE a.tenant_id=$1 AND a.employee_id=$2 ORDER BY a.updated_at DESC`,
     [tenantId, employeeId]);
-  return { annual_review_parameter_ai_analysis: analyses.rows };
+  const placements = await db.query(
+    `SELECT p.cycle_id, c.name AS cycle_name, p.status, p.not_placed_reason, p.box_key, p.box_name,
+            p.performance_score, p.competency_score, p.questions_score, p.potential_score, p.potential_partial,
+            p.perf_band, p.pot_band, p.overrides, p.prev_box_key, p.movement, p.placed_at
+       FROM pms.nine_box_placements p JOIN pms.cycles c ON c.id = p.cycle_id
+      WHERE p.tenant_id=$1 AND p.employee_id=$2 ORDER BY p.placed_at DESC`, [tenantId, employeeId]);
+  const potential = await db.query(
+    `SELECT a.cycle_id, c.name AS cycle_name, a.answers, a.updated_at
+       FROM pms.potential_answers a JOIN pms.cycles c ON c.id = a.cycle_id
+      WHERE a.tenant_id=$1 AND a.employee_id=$2 ORDER BY a.updated_at DESC`, [tenantId, employeeId]);
+  return { annual_review_parameter_ai_analysis: analyses.rows,
+    nine_box_placements: placements.rows, potential_answers: potential.rows };
 }
 
 const router = express.Router();

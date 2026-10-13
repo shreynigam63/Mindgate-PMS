@@ -86,7 +86,10 @@ const PAGES = [
   ['hr_timesheet',       '/admin/timesheet',          'pms_admin'],
   ['completion_report',  '/admin/completion-report',  'pms_admin'],
   ['calibration',        '/admin/calibration',        'pms_admin'],
-  ['nine_box',           '/admin/nine-box',           'pms_hod'],
+  // HR's company grid. pms_hod until 13 Oct, when a Delivery Head was
+  // found reaching the whole company through it; they now have their own
+  // departments' grid at /hod/nine-box (migration 089).
+  ['nine_box',           '/admin/nine-box',           'pms_admin'],
   ['closure_letters',    '/admin/closure-letters',    'letters_admin'],
   ['increments',         '/admin/increments',         'pms_compensation'],
   // review_analysis ('/admin/parameter-analysis') was REMOVED on 23 Sep
