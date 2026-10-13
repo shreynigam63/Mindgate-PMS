@@ -337,6 +337,14 @@ router.post('/cycles/:id/phase', async (req, res) => {
     else if (rollback) check = pm.canRollback(c.phase, to);
     else check = pm.canAdvance(c.phase, to);
     if (!check.ok) return res.status(409).json({ error: check.reason });
+    // A cycle published, rolled back and brought forward again has stored
+    // boxes that are no longer its published ones. Closing it like that
+    // would leave a closed cycle with no published 9-box, and the next
+    // cycle would compare against the one before it. Publish first.
+    if (!rollback && !cancel && target === 'closed' && c.cycle_type === 'annual' && !c.nine_box_published_at
+        && (await db.query(`SELECT 1 FROM pms.nine_box_placements WHERE tenant_id=$1 AND cycle_id=$2 LIMIT 1`, [T(req), c.id])).rows[0]) {
+      return res.status(409).json({ error: 'This cycle was rolled back after it was published. Press Publish ratings again before closing it, so its 9-box is the published one.' });
+    }
     // Rolled back before publish, a cycle's 9-box is no longer published:
     // the boxes are worked out live again until the next publish.
     await db.query(
@@ -6449,22 +6457,39 @@ router.post('/pip', async (req, res) => {
     if (problem) return res.status(422).json({ error: problem });
     const c = await activeCycle(T(req));
     const cycleId = c ? c.id : null;
+    let dup = null;
     if (cycleId) {
-      const dup = (await db.query(
-        `SELECT id, status FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id=$3`,
+      dup = (await db.query(
+        `SELECT id, status, opened_by FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id=$3`,
         [T(req), b.employee_id, cycleId])).rows[0];
-      if (dup) return res.status(409).json({ error: 'This employee already has an improvement plan for this cycle — open it to edit.', pip_id: dup.id });
+      // An automatic plan that a later publish withdrew (9-box, 13 Oct)
+      // holds the cycle's one plan slot but is closed. The manager's plan
+      // takes that row over rather than being refused for good.
+      if (dup && !(dup.status === 'closed_withdrawn' && String(dup.opened_by || '').startsWith('system:publish'))) {
+        return res.status(409).json({ error: 'This employee already has an improvement plan for this cycle — open it to edit.', pip_id: dup.id });
+      }
     }
     const client = await db.getClient();
     let id;
     try {
       await client.query('BEGIN');
-      id = (await client.query(
-        `INSERT INTO pms.pip_records (tenant_id, employee_id, cycle_id, status, opened_by, opened_by_id,
-                                      performance_description, target_areas, start_date, end_date, updated_at)
-         VALUES ($1,$2,$3,'open',$4,$5,$6,$7::jsonb,$8,$9,now()) RETURNING id`,
-        [T(req), b.employee_id, cycleId, req.user.email, req.user.id, String(b.performance_description).trim(),
-          JSON.stringify(areas), b.start_date || null, b.end_date || null])).rows[0].id;
+      if (dup) {
+        id = (await client.query(
+          `UPDATE pms.pip_records SET status='open', opened_by=$2, opened_by_id=$3, opened_at=now(),
+                  performance_description=$4, target_areas=$5::jsonb, start_date=$6, end_date=$7,
+                  closed_at=NULL, closed_reason=NULL, updated_at=now()
+            WHERE id=$1 RETURNING id`,
+          [dup.id, req.user.email, req.user.id, String(b.performance_description).trim(),
+            JSON.stringify(areas), b.start_date || null, b.end_date || null])).rows[0].id;
+        await client.query(`DELETE FROM pms.pip_gates WHERE pip_id=$1`, [id]);
+      } else {
+        id = (await client.query(
+          `INSERT INTO pms.pip_records (tenant_id, employee_id, cycle_id, status, opened_by, opened_by_id,
+                                        performance_description, target_areas, start_date, end_date, updated_at)
+           VALUES ($1,$2,$3,'open',$4,$5,$6,$7::jsonb,$8,$9,now()) RETURNING id`,
+          [T(req), b.employee_id, cycleId, req.user.email, req.user.id, String(b.performance_description).trim(),
+            JSON.stringify(areas), b.start_date || null, b.end_date || null])).rows[0].id;
+      }
       for (let i = 0; i < gates.length; i++) {
         const g = gates[i];
         await client.query(
@@ -6473,7 +6498,8 @@ router.post('/pip', async (req, res) => {
       }
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
-    await audit(req, 'PIP_OPENED_BY_MANAGER', cycleId, b.employee_id, { pip_id: id, areas: areas.length, gates: gates.length });
+    await audit(req, 'PIP_OPENED_BY_MANAGER', cycleId, b.employee_id, { pip_id: id, areas: areas.length, gates: gates.length,
+      ...(dup ? { replaced_withdrawn_automatic_plan: true } : {}) });
     await notify(T(req), b.employee_id, 'pip_opened', `${req.user.name} opened a Performance Improvement Plan with you`,
       'It names the areas to improve and the gates where the improvement will be checked.', '/pip');
     res.json({ ok: true, id, pip: await pipWithGates(T(req), id) });

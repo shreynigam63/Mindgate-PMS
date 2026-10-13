@@ -1024,12 +1024,12 @@ async function publishPlacements(req, cycle, { ids, wasFlagged = new Map() }) {
           // is a manager's live process, kept open and handed to HR.
           const auto = (await client.query(
             `SELECT p.id,
-                    (COALESCE(btrim(p.plan),'') <> '' OR COALESCE(btrim(p.performance_description),'') <> ''
+                    (p.status = 'in_progress' OR COALESCE(btrim(p.plan),'') <> '' OR COALESCE(btrim(p.performance_description),'') <> ''
                       OR COALESCE(jsonb_array_length(p.target_areas),0) > 0
                       OR EXISTS (SELECT 1 FROM pms.pip_gates g WHERE g.pip_id=p.id)
                       OR EXISTS (SELECT 1 FROM pms.pip_weekly_entries w WHERE w.pip_id=p.id)) AS started
                FROM pms.pip_records p
-              WHERE p.tenant_id=$1 AND p.employee_id=$2 AND p.cycle_id=$3 AND p.status='open'
+              WHERE p.tenant_id=$1 AND p.employee_id=$2 AND p.cycle_id=$3 AND p.status IN ('open','in_progress')
                 AND p.opened_by LIKE 'system:publish%' FOR UPDATE`, [t, p.employee_id, cycle.id])).rows[0];
           if (auto && !auto.started) {
             await client.query(
@@ -1091,6 +1091,17 @@ async function publishPlacements(req, cycle, { ids, wasFlagged = new Map() }) {
           const ra = await upsertAction('retention_alert', 'retention',
             `Retention review: moved out of Top Performer (2,2) to ${p.box_name} (${p.box_key})${s50 ? ' — on the Super 50 watchlist' : ''}`,
             p.manager_id, null, null);
+          if (!ra.rows[0]) {
+            // Still open from an earlier publish of this cycle, from which
+            // the person has moved on to another box: say where they are now.
+            await client.query(
+              `UPDATE pms.nine_box_actions SET title=$4, box_key=$5, assignee_id=$6
+                WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND action_key='retention_alert' AND status='open'
+                  AND (box_key IS DISTINCT FROM $5 OR title IS DISTINCT FROM $4)`,
+              [t, cycle.id, p.employee_id,
+                `Retention review: moved out of Top Performer (2,2) to ${p.box_name} (${p.box_key})${s50 ? ' — on the Super 50 watchlist' : ''}`,
+                p.box_key, p.manager_id]);
+          }
           if (ra.rows[0]) {
             await logAction(ra.rows[0], { kind: 'retention', from: '2,2', to: p.box_key });
             if (ra.rows[0].inserted) {
@@ -1171,7 +1182,7 @@ async function publishPlacements(req, cycle, { ids, wasFlagged = new Map() }) {
   const summary = rules.BOX_KEYS.filter((k) => out.by_box[k]).map((k) => `${settings.boxes[k].name} ${out.by_box[k]}`).join(', ');
   for (const id of hr) {
     await quietly(notify(t, id, 'nine_box_digest', `9-box published for ${cycle.name}`,
-      `${out.placed} placed${out.not_placed ? `, ${out.not_placed} not placed` : ''}. ${summary}. ${out.succession_added} joined the succession pool; ${out.pips_opened} PIP${out.pips_opened === 1 ? '' : 's'} opened.`,
+      `${out.placed} placed${out.not_placed ? `, ${out.not_placed} not placed` : ''}. ${summary}. ${out.succession_added} joined the succession pool; ${out.pips_opened} PIP${out.pips_opened === 1 ? '' : 's'} opened${out.pips_withdrawn ? `, ${out.pips_withdrawn} withdrawn` : ''}${out.pips_to_review ? `, ${out.pips_to_review} kept open for your decision` : ''}.`,
       '/admin/nine-box'));
   }
   return out;

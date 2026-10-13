@@ -61,6 +61,7 @@ export default function NineBoxPage({ view = 'company' }) {
   const [tab, setTabState] = useState(() => remembered(`ninebox.tab.${view}`, 'grid'));
   const setTab = (t) => { setTabState(t); remember(`ninebox.tab.${view}`, t); };
   const [data, setData] = useState(null);
+  const [shownQuery, setShownQuery] = useState(null); // the selection `data` answers
   const [err, setErr] = useState(null);
   const [open, setOpen] = useState(null); // a box key, or 'none' for not placed
   const [q, setQ] = useState('');
@@ -80,21 +81,24 @@ export default function NineBoxPage({ view = 'company' }) {
     let live = true;
     setErr(null);
     api(`/pms/nine-box?${query}`)
-      .then((d) => { if (!live) return; setData(d); if (!cycleId && d.cycle) setCycleId(d.cycle.id); })
+      .then((d) => { if (!live) return; setData(d); setShownQuery(query); if (!cycleId && d.cycle) setCycleId(d.cycle.id); })
       .catch((e) => { if (live) setErr(e.message); });
     return () => { live = false; };
   }, [query]);
 
   const v = VIEW[view] || VIEW.company;
+  // The controls have moved on but this selection could not be loaded: the
+  // grid below is the previous one, and says so rather than passing for it.
+  const stale = !!(data && err && shownQuery !== query);
   const setFilter = (k, val) => { setFilters((f) => ({ ...f, [k]: val })); setOpen(null); };
   const anyFilter = Object.values(filters).some(Boolean);
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
       <PageHead title="9-Box Grid" hue={v.hue} sub={v.sub}>
-        {data && <a className="btn-sec" href={dl(`/pms/nine-box/export.xlsx?${query}`)}><Download size={13} className="inline mr-1" />Export to Excel</a>}
+        {data && !stale && <a className="btn-sec" href={dl(`/pms/nine-box/export.xlsx?${query}`)}><Download size={13} className="inline mr-1" />Export to Excel</a>}
       </PageHead>
-      {err && <p className="text-sm text-rose-600">{err}</p>}
+      {err && <p className="text-sm text-rose-600">{err}{stale ? ' Still showing the previous selection; this one could not be loaded.' : ''}</p>}
       {!data && !err && <p className="text-sm text-navy-400">Loading…</p>}
       {data && (
         <>
@@ -138,7 +142,9 @@ export default function NineBoxPage({ view = 'company' }) {
           </div>
 
           {tab === 'grid' && (
-            <GridTab data={data} view={view} open={open} setOpen={(k) => { setOpen(k); setQ(''); }} q={q} setQ={setQ} />
+            <div className={stale ? 'opacity-40 pointer-events-none select-none' : ''} aria-hidden={stale || undefined}>
+              <GridTab data={data} view={view} open={open} setOpen={(k) => { setOpen(k); setQ(''); }} q={q} setQ={setQ} />
+            </div>
           )}
           {tab === 'movement' && <MovementTab query={query} view={view} />}
           {tab === 'reports' && <ReportsTab query={query} view={view} />}

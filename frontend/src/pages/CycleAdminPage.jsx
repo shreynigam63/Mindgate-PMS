@@ -351,6 +351,11 @@ function PublishResult({ r, onClose }) {
           <p>{n.actions_created} action{n.actions_created === 1 ? '' : 's'} created · {n.succession_added} added to the succession pool · {r.pips_opened} PIP{r.pips_opened === 1 ? '' : 's'} opened
             {n.retention_alerts ? ` · ${n.retention_alerts} retention alert${n.retention_alerts === 1 ? '' : 's'}` : ''}
             {n.escalations ? ` · ${n.escalations} escalated after two cycles in (0,0)` : ''}</p>
+          {(n.pips_withdrawn > 0 || n.pips_to_review > 0 || n.actions_superseded > 0) && (
+            <p className="text-navy-600">Published again: {n.actions_superseded} earlier action{n.actions_superseded === 1 ? '' : 's'} replaced
+              {n.pips_withdrawn ? ` · ${n.pips_withdrawn} automatic PIP${n.pips_withdrawn === 1 ? '' : 's'} withdrawn (nobody had started on ${n.pips_withdrawn === 1 ? 'it' : 'them'})` : ''}
+              {n.pips_to_review ? ` · ${n.pips_to_review} automatic PIP${n.pips_to_review === 1 ? '' : 's'} already started, kept open for HR to decide` : ''}.</p>
+          )}
         </>
       )}
       {!n && <p>{r.pips_opened} PIP{r.pips_opened === 1 ? '' : 's'} opened.</p>}

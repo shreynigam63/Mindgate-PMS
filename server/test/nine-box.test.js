@@ -579,3 +579,65 @@ test('a cycle somebody was not evaluated in breaks the streak: no escalation acr
   assert.equal(pl.prev_box_key, null);
   assert.equal(pl.movement, 'new');
 });
+
+test('re-publish: a started automatic PIP is kept for HR, an untouched one withdrawn and taken over by the manager; a stale retention alert is renamed; closing needs a fresh publish', { skip }, async () => {
+  const c4 = (await db.query(`SELECT id FROM pms.cycles WHERE tenant_id=$1 AND fiscal_year='FY29-30'`, [tenantId])).rows[0].id;
+  // Top was Top Performer in FY29-30 (written straight in: that cycle is history).
+  await db.query(
+    `INSERT INTO pms.nine_box_placements (tenant_id, cycle_id, employee_id, status, box_key, box_name, perf_band, pot_band, settings, placed_by)
+     VALUES ($1,$2,$3,'placed','2,2','Top Performer',2,2,'{}'::jsonb,'test')`, [tenantId, c4, id.top]);
+  await db.query(`UPDATE pms.cycles SET phase='closed' WHERE id=$1`, [c4]);
+  const c5 = (await db.query(
+    `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase, created_at)
+     VALUES ($1,'NB FY30-31','FY30-31','annual','publish', now() + interval '4 seconds') RETURNING id`, [tenantId])).rows[0].id;
+  for (const k of ['rough', 'core']) await seed(c5, k, 2.0, [2, 2]);
+  await seed(c5, 'top', 4.5, [3, 4]);
+  for (const [k, a, b] of [['rough', 2, 2], ['core', 2, 2], ['top', 3, 4]]) {
+    await db.query(`INSERT INTO pms.potential_answers (tenant_id, cycle_id, employee_id, answers) VALUES ($1,$2,$3,$4)`,
+      [tenantId, c5, id[k], JSON.stringify(answers(a, b))]);
+  }
+  const first = await call('POST', '/pms/publish', 'hr');
+  assert.equal(first.body.pips_opened, 2);
+  assert.equal(first.body.nine_box.retention_alerts, 1);
+  const pip = async (k) => (await db.query(`SELECT id, status, opened_by FROM pms.pip_records WHERE cycle_id=$1 AND employee_id=$2`, [c5, id[k]])).rows[0];
+  // The manager starts on Rough's plan: a weekly note moves it to in progress.
+  const started = await call('POST', `/pms/pip/${(await pip('rough')).id}/entries`, 'mgr', { week_ending: '2031-07-04', notes: 'First check-in held' });
+  assert.equal(started.status, 200);
+  assert.equal((await pip('rough')).status, 'in_progress');
+
+  await phase(c5, 'calibration', true);
+  for (const k of ['rough', 'core']) {
+    await call('POST', '/pms/nine-box/override', 'hr', { employee_id: id[k], axis: 'potential', band: 1, reason: 'Client feedback reviewed' });
+  }
+  await call('POST', '/pms/nine-box/override', 'hr', { employee_id: id.top, axis: 'performance', band: 1, reason: 'Calibrated with peers' });
+  await phase(c5, 'publish');
+  // Rolled back and brought forward without publishing: not closable yet.
+  const early = await phase(c5, 'closed');
+  assert.equal(early.status, 409);
+  assert.match(early.body.error, /Publish ratings again/);
+
+  const again = await call('POST', '/pms/publish', 'hr');
+  assert.equal(again.body.nine_box.pips_withdrawn, 1, 'Core\'s untouched plan');
+  assert.equal(again.body.nine_box.pips_to_review, 1, 'Rough\'s started plan');
+  assert.equal((await pip('rough')).status, 'in_progress', 'a started plan is never closed by publish');
+  assert.equal((await pip('core')).status, 'closed_withdrawn');
+  assert.ok((await db.query(`SELECT 1 FROM core.notifications WHERE employee_id=$1 AND kind='nine_box_pip_review'`, [id.hr])).rows.length);
+  const alert = (await db.query(`SELECT title, box_key, status FROM pms.nine_box_actions WHERE cycle_id=$1 AND employee_id=$2 AND action_key='retention_alert'`,
+    [c5, id.top])).rows[0];
+  assert.equal(alert.status, 'open');
+  assert.equal(alert.box_key, '1,1', 'from High Performer (2,1) to Core Player (1,1) on the performance override');
+  assert.match(alert.title, /Core Player \(1,1\)/, 'the open alert names where they are now');
+
+  // The manager can still open a plan for Core: it takes over the withdrawn row.
+  const withdrawnId = (await pip('core')).id;
+  const own = await call('POST', '/pms/pip', 'mgr', {
+    employee_id: id.core, performance_description: 'Delivery dates slipping', target_areas: [{ area: 'Estimation', expected: 'Within 10%' }],
+    gates: [{ title: 'First review', due_date: '2031-08-01' }], start_date: '2031-07-01', end_date: '2031-09-30' });
+  assert.equal(own.status, 200, JSON.stringify(own.body));
+  assert.equal(own.body.id, withdrawnId);
+  const now = await pip('core');
+  assert.equal(now.status, 'open');
+  assert.equal(now.opened_by, 'nb-mgr@x.com', 'now the manager\'s plan, which a later publish leaves alone');
+
+  assert.equal((await phase(c5, 'closed')).status, 200, 'published again, it closes');
+});
