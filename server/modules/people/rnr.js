@@ -204,7 +204,13 @@ router.put('/rnr/masters/awards/:id', async (req, res) => {
 router.get('/rnr/cycles', async (req, res) => {
   try {
     const rows = (await db.query(
-      `SELECT c.*, (SELECT count(*)::int FROM rnr.nominations n WHERE n.cycle_id=c.id) AS nominations,
+      // Dates as written ('2026-10-06'), never a midnight the server's time
+      // zone shows as the day before (13 Oct).
+      `SELECT c.*, to_char(c.nominations_open, 'YYYY-MM-DD') AS nominations_open,
+              to_char(c.nominations_close, 'YYYY-MM-DD') AS nominations_close,
+              to_char(c.approval_deadline, 'YYYY-MM-DD') AS approval_deadline,
+              to_char(c.award_date, 'YYYY-MM-DD') AS award_date,
+              (SELECT count(*)::int FROM rnr.nominations n WHERE n.cycle_id=c.id) AS nominations,
               (SELECT count(*)::int FROM rnr.nominations n WHERE n.cycle_id=c.id
                  AND n.status IN ('final_approved','awarded')) AS approved
          FROM rnr.cycles c WHERE c.tenant_id=$1 ORDER BY c.nominations_open DESC`, [T(req)])).rows;
@@ -259,6 +265,35 @@ router.post('/rnr/cycles/:id/open', async (req, res) => {
       note: `Quota fixed at ${total} awards — ${pct}% of the ${head} active employees counted today, `
           + `rounded ${m.settings.rounding || 'down'}.` });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// THE AWARD DATE, set or moved later (13 Oct, found by review). People
+// Hub's winners wall shows a cycle's winners from its award date, so a
+// cycle created without one would never show them, and a postponed
+// presentation would be spoiled on the old date. Any status; HR's alone.
+router.put('/rnr/cycles/:id/award-date', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    const v = req.body && req.body.award_date;
+    let d = null;
+    if (v != null && v !== '') {
+      const s = String(v);
+      const t = new Date(`${s}T00:00:00Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(t.getTime()) || t.toISOString().slice(0, 10) !== s) {
+        return res.status(400).json({ error: 'The award date is not a valid date.' });
+      }
+      d = s;
+    }
+    const was = (await db.query(`SELECT name, to_char(award_date,'YYYY-MM-DD') AS award_date FROM rnr.cycles WHERE id=$1 AND tenant_id=$2`,
+      [req.params.id, T(req)])).rows[0];
+    if (!was) return res.status(404).json({ error: 'cycle not found' });
+    await db.query(`UPDATE rnr.cycles SET award_date=$3 WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req), d]);
+    await db.query(`INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details) VALUES ($1,$2,'RNR_AWARD_DATE_SET','rnr_cycles',$3)`,
+      [T(req), req.user.email, JSON.stringify({ id: req.params.id, cycle: was.name, from: was.award_date, to: d })])
+      .catch((e) => logger.warn('rnr audit failed', { error: e.message }));
+    res.json({ ok: true, award_date: d,
+      note: d ? `Award date set to ${d}. Its winners appear on People Hub from that day.` : 'Award date cleared. Its winners stay off People Hub until one is set.' });
+  } catch (e) { logger.error('rnr award date', { error: e.message }); res.status(500).json({ error: 'Could not save the award date' }); }
 });
 
 router.post('/rnr/cycles/:id/close', async (req, res) => {

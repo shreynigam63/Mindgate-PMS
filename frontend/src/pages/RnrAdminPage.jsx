@@ -135,7 +135,7 @@ export default function RnrAdminPage() {
               <tr key={c.id}>
                 <td className="px-3 py-2"><b>{c.name}</b><span className="block text-[10px] text-navy-400">{kindLabel(c.kind)}</span></td>
                 <td className="px-3 py-2">{fmt(c.nominations_open)} → {fmt(c.nominations_close)}</td>
-                <td className="px-3 py-2">{fmt(c.award_date) || '—'}</td>
+                <td className="px-3 py-2"><AwardDate c={c} save={(d) => act(() => api(`/people/rnr/cycles/${c.id}/award-date`, { method: 'PUT', body: JSON.stringify({ award_date: d || null }) }))} /></td>
                 <td className="px-3 py-2">{c.quota_total == null ? '—' : `${c.approved}/${c.quota_total}`}</td>
                 <td className="px-3 py-2"><span className={`chip ${c.status === 'open' ? 'bg-leaf-50 text-leaf-600' : 'bg-navy-50 text-navy-500'}`}>{c.status}</span></td>
                 <td className="px-3 py-2 text-right">
@@ -262,5 +262,30 @@ export default function RnrAdminPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// The award date, set or moved after the cycle was made (13 Oct). People
+// Hub shows a cycle's winners from this day, so a cycle without one never
+// shows them.
+function AwardDate({ c, save }) {
+  const [edit, setEdit] = useState(false);
+  const [v, setV] = useState(fmt(c.award_date));
+  if (!edit) {
+    return (
+      <span className="whitespace-nowrap">
+        {fmt(c.award_date) || <span className="text-amber-700">not set</span>}
+        <button className="ml-2 text-brand-600 font-semibold" onClick={() => { setV(fmt(c.award_date)); setEdit(true); }}>
+          {c.award_date ? 'Change' : 'Set'}
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1">
+      <input className="inp !w-36 !py-1 !text-xs" type="date" value={v} onChange={(e) => setV(e.target.value)} />
+      <button className="btn-pri !py-1" onClick={async () => { await save(v); setEdit(false); }}>Save</button>
+      <button className="btn-sec !py-1" onClick={() => setEdit(false)}>Cancel</button>
+    </span>
   );
 }

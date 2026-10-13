@@ -3,6 +3,7 @@
 // winners of each cycle once its award date has come. Never a nominee, a
 // pending nomination, a justification or an award's money value.
 process.env.AUTH_DEV = 'true';
+process.env.TZ = 'Asia/Kolkata';   // the deploy's zone, where a DATE read as midnight slips a day
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'rnr-hub-test';
 
 const { test, before, after } = require('node:test');
@@ -29,7 +30,10 @@ before(async () => {
     id[k] = (await db.query(`INSERT INTO core.employees (tenant_id,name,email,status,department,location) VALUES ($1,$2,$3,'active','Delivery',$4) RETURNING id`,
       [tenantId, `${k}-person`, `${k}@x.com`, loc])).rows[0].id;
   }
-  await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'mgr@x.com','manager'),($1,'hrbp@x.com','hrbp')`, [tenantId]);
+  await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'mgr@x.com','manager'),($1,'hrbp@x.com','hrbp'),($1,'emp@x.com','employee')`, [tenantId]);
+  id.hr = (await db.query(`INSERT INTO core.employees (tenant_id,name,email,status) VALUES ($1,'hr-person','hr@x.com','active') RETURNING id`, [tenantId])).rows[0].id;
+  await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'hr@x.com','hr')`, [tenantId]);
+  await db.query(`INSERT INTO core.role_permissions (tenant_id,role,permission) VALUES ($1,'hr','pms_admin'),($1,'hr','people_view') ON CONFLICT DO NOTHING`, [tenantId]);
   for (const [role, p] of [['employee', 'people_view'], ['manager', 'people_view'], ['manager', 'pms_team_eval'], ['hrbp', 'pms_hrbp'], ['hrbp', 'people_view']]) {
     await db.query(`INSERT INTO core.role_permissions (tenant_id,role,permission) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, [tenantId, role, p]);
   }
@@ -54,7 +58,7 @@ before(async () => {
   await nom(upcoming, award, id.soon, 'final_approved');
   await nom(open, award, id.pending, 'pending_hr');
   const hash = await bcrypt.hash('pw', 4);
-  for (const k of ['emp', 'mgr', 'soon', 'hrbp']) {
+  for (const k of ['emp', 'mgr', 'soon', 'hrbp', 'hr']) {
     await db.query(`INSERT INTO core.local_credentials (tenant_id,email,password_hash) VALUES ($1,$2,$3)`, [tenantId, `${k}@x.com`, hash]);
   }
   require('../modules/performance/hrbp-gateway');
@@ -66,7 +70,7 @@ before(async () => {
   app.use('/api/v1/people', require('../modules/people').router);
   await new Promise((r) => { server = app.listen(0, r); });
   base = `http://127.0.0.1:${server.address().port}`;
-  for (const k of ['emp', 'mgr', 'soon', 'hrbp']) {
+  for (const k of ['emp', 'mgr', 'soon', 'hrbp', 'hr']) {
     tok[k] = (await (await fetch(`${base}/api/v1/auth/dev-login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: `${k}@x.com`, password: 'pw' }) })).json()).token;
   }
@@ -75,7 +79,7 @@ before(async () => {
 after(async () => {
   if (!HAS_DB) return;
   if (server) await new Promise((r) => server.close(r));
-  for (const t of ['rnr.nominations', 'rnr.cycles', 'rnr.awards', 'core.hrbp_scope', 'core.local_credentials', 'core.user_roles', 'core.role_permissions', 'core.employees']) {
+  for (const t of ['core.audit_log', 'rnr.nominations', 'rnr.cycles', 'rnr.awards', 'core.hrbp_scope', 'core.local_credentials', 'core.user_roles', 'core.role_permissions', 'core.employees']) {
     await db.query(`DELETE FROM ${t} WHERE tenant_id=$1`, [tenantId]).catch(() => {});
   }
   await db.query(`DELETE FROM core.tenants WHERE id=$1`, [tenantId]).catch(() => {});
@@ -109,4 +113,26 @@ test('an HRBP sees the same company-wide wall, not one cut to their remit', { sk
   const r = await call('hrbp', '/people/rnr/hub');
   assert.equal(r.status, 200);
   assert.ok(r.body.winners[0].winners.some((w) => w.name === 'past-person'), 'a Mumbai winner was cut from a Pune HRBP\'s wall');
+});
+
+// 13 Oct, found by review: a cycle made without an award date would never
+// show its winners, and a postponed presentation would be spoiled.
+test('HR SETS OR MOVES A CYCLE\'S AWARD DATE, and the wall follows it', { skip }, async () => {
+  const put = async (who, cycleName, d) => {
+    const c = (await db.query(`SELECT id FROM rnr.cycles WHERE tenant_id=$1 AND name=$2`, [tenantId, cycleName])).rows[0].id;
+    const r = await fetch(`${base}/api/v1/people/rnr/cycles/${c}/award-date`, { method: 'PUT',
+      headers: { Authorization: `Bearer ${tok[who]}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ award_date: d }) });
+    return { status: r.status, body: await r.json() };
+  };
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  assert.equal((await put('emp', 'Q2', today)).status, 403, 'an employee cannot');
+  assert.equal((await put('hrbp', 'Q2', today)).status, 403, 'nor an HRBP: a cycle is the whole company\'s');
+  assert.equal((await put('hr', 'Q2', '2026-02-30')).status, 400);
+  assert.equal((await put('hr', 'Q2', today)).status, 200, 'brought forward to today');
+  const wall = (await call('emp', '/people/rnr/hub')).body.winners.map((g) => g.cycle_name).sort();
+  assert.deepEqual(wall, ['Q1', 'Q2']);
+  assert.equal((await put('hr', 'Q1', null)).status, 200, 'cleared');
+  assert.deepEqual((await call('emp', '/people/rnr/hub')).body.winners.map((g) => g.cycle_name), ['Q2'], 'no date, no wall');
+  const listed = (await call('hr', '/people/rnr/cycles')).body.cycles.find((c) => c.name === 'Q2');
+  assert.equal(listed.award_date, today, 'the cycle list shows the date as set, not the day before');
 });

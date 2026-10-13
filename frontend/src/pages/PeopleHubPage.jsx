@@ -131,7 +131,7 @@ function Awards({ user }) {
           ))}
         </div>
       ))}
-      {!data.winners.length && <p className="text-xs text-navy-400 px-1">Winners appear here on each cycle's award date.</p>}
+      {!data.winners.length && <p className="text-xs text-navy-400 px-1">Winners appear here on each cycle's award date, once HR has set one.</p>}
 
       {data.awards.length > 0 && (
         <div className="card divide-y divide-navy-100">
