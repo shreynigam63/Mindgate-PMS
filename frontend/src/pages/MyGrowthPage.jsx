@@ -896,7 +896,12 @@ function CareerPathCard() {
     if (data.experience && data.experience.source === 'hrms') return data.experience;
     const typed = horizon === 'long_term' ? String(form.years_experience ?? '').trim() : '';
     const y = Number(typed);
-    if (typed !== '' && Number.isFinite(y) && y >= 0) return { months: Math.round(y * 12), years: y, source: 'self_reported' };
+    // The form is pre-filled with the saved years; while it still holds
+    // them, the server's figure (counted up from the day they were saved)
+    // stands. Only a different number is new today.
+    const saved = data.path && data.path.years_experience != null ? Number(data.path.years_experience)
+      : (data.short_term_goal && data.short_term_goal.years_experience != null ? Number(data.short_term_goal.years_experience) : null);
+    if (typed !== '' && Number.isFinite(y) && y >= 0 && y !== saved) return { months: Math.round(y * 12), years: y, source: 'self_reported' };
     return data.experience;
   };
   const leftOf = (o) => (!o ? null : remainingLeft(o, expNow()));

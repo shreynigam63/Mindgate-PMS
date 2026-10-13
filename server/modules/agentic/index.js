@@ -914,7 +914,8 @@ router.post('/career-plan', async (req, res) => {
       experience_used: { years: exp.years, source: exp.source || 'none' },
       target_role: targetRole,
       short_term_goal: st && st.target_role ? st : null,
-      self_reported: { years_experience: val('years_experience', 10), skills_and_interests: val('skills_interests', 2000), current_plan: val('plan', 3000) },
+      self_reported: { years_experience: exp.source === 'self_reported' ? exp.years : val('years_experience', 10),
+        skills_and_interests: val('skills_interests', 2000), current_plan: val('plan', 3000) },
       // Facts from the organisation's data, not for the model to change.
       cross_department: where,
       organisation_path: onPath
@@ -1043,8 +1044,10 @@ router.post('/career-suggest', async (req, res) => {
           `SELECT title, to_char(target_date,'YYYY-MM-DD') target_date FROM people.career_milestones
             WHERE career_path_id=$1 ORDER BY sort_order, created_at LIMIT 10`, [stRow.id])).rows;
         shortTerm = { target_role: stRow.target_role,
-          // As the employee's own Short-Term tab shows it today.
-          target_timeline: await shortTermTimelineNow(T(req), req.user.id, stRow.target_role, stRow.target_timeline),
+          // As the employee's own Short-Term tab shows it today, from the
+          // same experience as everything else in this request.
+          target_timeline: await shortTermTimelineNow(T(req), req.user.id, stRow.target_role, stRow.target_timeline,
+            await experienceOf(T(req), req.user.id, typed.years_experience)),
           plan: stRow.plan ? String(stRow.plan).slice(0, 2000) : null, milestones: ms };
         if (current.years_experience == null && stRow.years_experience != null) current.years_experience = Number(stRow.years_experience);
         if (!current.skills_interests && stRow.skills_interests) current.skills_interests = String(stRow.skills_interests).slice(0, 2000);
@@ -1062,6 +1065,10 @@ router.post('/career-suggest', async (req, res) => {
     // Long-Term. Until review on 13 Oct this route read the tab's own row
     // first, and could disagree with the screen.
     const exp = await experienceOf(T(req), req.user.id, typed.years_experience);
+    // The employee's own figure, said ONE way: when the timelines rest on
+    // what they entered, the years quoted back to them are those same
+    // years (as of today), not another tab's (review, 13 Oct).
+    if (exp.source === 'self_reported') current.years_experience = exp.years;
     const input = {
       employee: { name: emp.name, designation: emp.designation, department: emp.department, joined: emp.date_of_joining },
       experience_used: { years: exp.years, source: exp.source || 'none' },

@@ -1273,7 +1273,11 @@ async function experienceOf(tenantId, employeeId, typed) {
     `SELECT years_experience, years_experience_as_of FROM people.career_paths
       WHERE tenant_id=$1 AND employee_id=$2 AND years_experience IS NOT NULL
       ORDER BY (horizon='long_term') DESC LIMIT 1`, [tenantId, employeeId])).rows[0] || {};
-  const hasTyped = typed != null && String(typed).trim() !== '' && Number.isFinite(Number(typed));
+  // Years on the form that are the saved years (the form is pre-filled
+  // with them) are the saved figure, still dated; only a different number
+  // is new today (found by review, 13 Oct).
+  let hasTyped = typed != null && String(typed).trim() !== '' && Number.isFinite(Number(typed));
+  if (hasTyped && saved.years_experience != null && Number(typed) === Number(saved.years_experience)) hasTyped = false;
   return experienceFrom(me.total_experience_years, hasTyped ? typed : saved.years_experience,
     { hrmsAsOf: me.total_experience_as_of, selfAsOf: hasTyped ? null : saved.years_experience_as_of });
 }
@@ -1521,7 +1525,8 @@ router.put('/career/my-path', async (req, res) => {
          years_experience=CASE WHEN $10 THEN EXCLUDED.years_experience ELSE people.career_paths.years_experience END,
          -- Dated when the years CHANGE (migration 088), so they count up
          -- from the day they were true, not from the last edit of the plan.
-         years_experience_as_of=CASE WHEN $10 AND EXCLUDED.years_experience IS DISTINCT FROM people.career_paths.years_experience
+         years_experience_as_of=CASE WHEN $10 AND (EXCLUDED.years_experience IS DISTINCT FROM people.career_paths.years_experience
+                                              OR people.career_paths.years_experience_as_of IS NULL)
                                      THEN EXCLUDED.years_experience_as_of ELSE people.career_paths.years_experience_as_of END,
          skills_interests=CASE WHEN $11 THEN EXCLUDED.skills_interests ELSE people.career_paths.skills_interests END,
          updated_at=now()`,
@@ -1560,14 +1565,16 @@ router.post('/career/my-path/move-to-long-term', async (req, res) => {
       let ltId = lt && lt.id;
       if (ltId) {
         await client.query(
+          // The years travel with the day they were true (migration 088).
           `UPDATE people.career_paths SET target_role=$2, target_timeline=$3, plan=COALESCE(NULLIF(BTRIM(plan),''), $4),
+                  years_experience_as_of=CASE WHEN years_experience IS NULL THEN $7 ELSE years_experience_as_of END,
                   years_experience=COALESCE(years_experience,$5), skills_interests=COALESCE(NULLIF(BTRIM(skills_interests),''),$6), updated_at=now()
-            WHERE id=$1`, [ltId, st.target_role, st.target_timeline, st.plan, st.years_experience, st.skills_interests]);
+            WHERE id=$1`, [ltId, st.target_role, st.target_timeline, st.plan, st.years_experience, st.skills_interests, st.years_experience_as_of]);
       } else {
         ltId = (await client.query(
-          `INSERT INTO people.career_paths (tenant_id, employee_id, horizon, target_role, target_timeline, plan, years_experience, skills_interests)
-           VALUES ($1,$2,'long_term',$3,$4,$5,$6,$7) RETURNING id`,
-          [T(req), req.user.id, st.target_role, st.target_timeline, st.plan, st.years_experience, st.skills_interests])).rows[0].id;
+          `INSERT INTO people.career_paths (tenant_id, employee_id, horizon, target_role, target_timeline, plan, years_experience, skills_interests, years_experience_as_of)
+           VALUES ($1,$2,'long_term',$3,$4,$5,$6,$7,$8) RETURNING id`,
+          [T(req), req.user.id, st.target_role, st.target_timeline, st.plan, st.years_experience, st.skills_interests, st.years_experience_as_of])).rows[0].id;
       }
       await client.query(`UPDATE people.career_milestones SET career_path_id=$1 WHERE career_path_id=$2`, [ltId, st.id]);
       await client.query(

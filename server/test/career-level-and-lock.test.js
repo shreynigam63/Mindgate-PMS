@@ -226,14 +226,20 @@ test('THE TIMELINE COMES FROM THE MATRIX, and a long-term goal saved as short-te
   // saved before the matrix matched; Long-Term is empty.
   await db.query(`UPDATE people.career_paths SET target_role='Lead - Technical', target_timeline='72 months', plan='Move into technical leadership'
                    WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
-  await db.query(`UPDATE people.career_paths SET target_role=NULL, target_timeline=NULL, plan=NULL
+  await db.query(`UPDATE people.career_paths SET target_role=NULL, target_timeline=NULL, plan=NULL, years_experience=NULL, years_experience_as_of=NULL
                    WHERE tenant_id=$1 AND employee_id=$2 AND horizon='long_term'`, [tenantId, empId]);
+  await db.query(`UPDATE people.career_paths SET years_experience_as_of=now() - interval '12 months'
+                   WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
   const stMs = (await api('GET', '/career/my-path?horizon=short_term')).body;
   assert.equal(stMs.stale_target, true, 'not a next move from this role');
   const before = stMs.milestones.map((m) => m.title);
 
   const mv = await api('POST', '/career/my-path/move-to-long-term');
   assert.equal(mv.status, 200, JSON.stringify(mv.body));
+  // The years travel with the day they were true (review, 13 Oct).
+  const dated = (await db.query(`SELECT horizon, years_experience, years_experience_as_of FROM people.career_paths
+    WHERE tenant_id=$1 AND employee_id=$2 ORDER BY horizon`, [tenantId, empId])).rows;
+  assert.equal(String(dated[0].years_experience_as_of), String(dated[1].years_experience_as_of), 'Long-Term lost the date of the years');
   const after = await api('GET', '/career/my-path?horizon=long_term');
   assert.equal(after.body.path.target_role, 'Lead - Technical');
   assert.equal(after.body.path.target_timeline, '72 months');
@@ -280,14 +286,19 @@ test('SHORT-TERM IS THE ROLE AND ITS TIMELINE: saving it keeps the rest, and its
   const real = ai.narrate;
   let seen = null;
   ai.narrate = async (args) => { seen = args; return { draft: { aspirations: [] } }; };
+  // Undated here, so the years read as entered (counting up is tested below).
+  await db.query(`UPDATE people.career_paths SET years_experience_as_of=NULL WHERE tenant_id=$1`, [tenantId]);
+  await db.query(`UPDATE core.employees SET total_experience_years=NULL WHERE id=$1`, [empId]);
   try {
     await fetch(`${base}/api/v1/agentic/career-suggest`, { method: 'POST',
       headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ horizon: 'short_term', draft: { target_role: 'Senior Software Developer', target_timeline: '24 months' } }) });
     assert.equal(seen.input.current_aspiration.plan, null, 'an old short-term plan is not the employee\'s current word');
-    // The saved short-term facts (3, old skills) are still there; with them
-    // set, they are used — the long-term ones fill only a blank.
-    assert.equal(seen.input.self_reported.years_experience, 3);
+    // ONE experience figure (review, 13 Oct): the years the timelines are
+    // worked out from — Long-Term's 9 — not the Short-Term row's old 3 in
+    // one place and 9 in another.
+    assert.equal(seen.input.self_reported.years_experience, 9);
+    assert.deepEqual(seen.input.experience_used, { years: 9, source: 'self_reported' });
     await db.query(`UPDATE people.career_paths SET years_experience=NULL, skills_interests=NULL
                      WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
     await fetch(`${base}/api/v1/agentic/career-suggest`, { method: 'POST',
@@ -346,6 +357,17 @@ test('EXPECTED TIMELINE IS WHAT IS LEFT after total experience — the HRMS figu
   const due = (await api('GET', '/career/my-path?horizon=short_term')).body;
   assert.equal(due.path.target_timeline, 'Due now');
   assert.equal(due.target_options.find((o) => o.role === 'Senior Software Developer').remaining_time_months, 0);
+
+  // Years entered a year ago count up to today; the same years on the form
+  // (it is pre-filled with them) are still that figure, not new today.
+  await db.query(`UPDATE core.employees SET total_experience_years=NULL WHERE id=$1`, [empId]);
+  await db.query(`UPDATE people.career_paths SET years_experience=1, years_experience_as_of=now() - interval '12 months'
+                   WHERE tenant_id=$1 AND employee_id=$2 AND horizon='long_term'`, [tenantId, empId]);
+  const { experienceOf } = require('../modules/people');
+  assert.equal((await experienceOf(tenantId, empId)).months, 24, '1 year entered a year ago is 2 years today');
+  assert.equal((await experienceOf(tenantId, empId, '1')).months, 24, 'the pre-filled years are not new today');
+  assert.equal((await experienceOf(tenantId, empId, '3')).months, 36, 'a different number is');
+  await db.query(`UPDATE people.career_paths SET years_experience_as_of=NULL WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, empId]);
 
   // No HRMS figure: the years they entered on Long-Term, labelled as theirs.
   await db.query(`UPDATE core.employees SET total_experience_years=NULL WHERE id=$1`, [empId]);
