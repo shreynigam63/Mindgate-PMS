@@ -165,8 +165,13 @@ router.post('/awards/nominations/:id/decide', async (req, res) => {
 // awards, there is no option for HR to start Events"). The create routes
 // were here from the start with no screen in front of them, and nothing
 // could change or remove an event once made.
+// An instant, written in full with its zone (2026-10-20T09:30:00.000Z or
+// …+05:30). Anything looser — "1", "Diwali 12", a time with no zone that
+// each server would read in its own — is refused, not guessed at.
+const ISO_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})$/;
 const isoAt = (v) => {
   if (v == null || v === '') return null;
+  if (!ISO_AT.test(String(v))) return undefined;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 };
@@ -229,7 +234,9 @@ router.get('/events', async (req, res) => {
               (SELECT COUNT(*)::int FROM people.event_rsvps r WHERE r.event_id=e.id) AS rsvp_count,
               (SELECT response FROM people.event_rsvps r WHERE r.event_id=e.id AND r.employee_id=$2) AS my_rsvp
          FROM people.events e WHERE e.tenant_id=$1 ORDER BY e.starts_at DESC LIMIT 100`, [T(req), req.user.id]);
-    res.json({ events: r.rows });
+    // The company's time zone: event times are entered and shown in it, so
+    // 6 pm means 6 pm in Pune whatever the viewer's laptop is set to.
+    res.json({ events: r.rows, timezone: APP_TZ });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -300,8 +307,14 @@ router.post('/events/:id/rsvp', async (req, res) => {
     const response = (req.body && req.body.response) || 'yes';
     if (!['yes', 'no', 'maybe'].includes(response)) return res.status(400).json({ error: 'response must be yes|no|maybe' });
     // An event HR has since removed is a clear answer, not a database error.
-    const ev = (await db.query(`SELECT id FROM people.events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    // One that is over takes no more answers: it ends at its end time, or
+    // without one at the end of the day it starts, in the company's zone —
+    // the rule the pages use to file it under "past".
+    const ev = (await db.query(
+      `SELECT id, COALESCE(ends_at, (date_trunc('day', starts_at AT TIME ZONE $3) + interval '1 day') AT TIME ZONE $3) < now() AS over
+         FROM people.events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req), APP_TZ])).rows[0];
     if (!ev) return res.status(404).json({ error: 'That event no longer exists.' });
+    if (ev.over) return res.status(409).json({ error: 'This event has ended, so it takes no more answers.' });
     await db.query(
       `INSERT INTO people.event_rsvps (tenant_id, event_id, employee_id, response) VALUES ($1,$2,$3,$4)
        ON CONFLICT (event_id, employee_id) DO UPDATE SET response=EXCLUDED.response, at=now()`,
@@ -336,7 +349,8 @@ router.get('/csr', async (req, res) => {
       // time zone can move to the day before (13 Oct, found by review).
       `SELECT c.id, c.title, c.description, to_char(c.event_date, 'YYYY-MM-DD') AS event_date, c.hours_credit, c.created_at,
               (SELECT COUNT(*)::int FROM people.csr_participations p WHERE p.csr_event_id=c.id) AS participants,
-              (SELECT hours FROM people.csr_participations p WHERE p.csr_event_id=c.id AND p.employee_id=$2) AS my_hours
+              (SELECT hours FROM people.csr_participations p WHERE p.csr_event_id=c.id AND p.employee_id=$2) AS my_hours,
+              EXISTS (SELECT 1 FROM people.csr_participations p WHERE p.csr_event_id=c.id AND p.employee_id=$2) AS joined
          FROM people.csr_events c WHERE c.tenant_id=$1 ORDER BY c.event_date DESC NULLS LAST LIMIT 100`, [T(req), req.user.id]);
     res.json({ csr: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -413,8 +427,9 @@ router.post('/csr/:id/participate', async (req, res) => {
     const c = (await db.query(`SELECT id FROM people.csr_events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!c) return res.status(404).json({ error: 'That activity no longer exists.' });
     await db.query(
+      // A blank answer signs up; it never wipes hours already logged.
       `INSERT INTO people.csr_participations (tenant_id, csr_event_id, employee_id, hours) VALUES ($1,$2,$3,$4)
-       ON CONFLICT (csr_event_id, employee_id) DO UPDATE SET hours=EXCLUDED.hours, at=now()`,
+       ON CONFLICT (csr_event_id, employee_id) DO UPDATE SET hours=COALESCE(EXCLUDED.hours, people.csr_participations.hours), at=now()`,
       [T(req), c.id, req.user.id, hours]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }

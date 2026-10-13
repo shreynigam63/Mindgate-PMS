@@ -95,7 +95,11 @@ test('HR SCHEDULES AN EVENT, PEOPLE HUB SHOWS IT, AND EVERYONE ACTIVE IS TOLD IN
 
 test('an event is checked before it is saved', { skip }, async () => {
   for (const [body, why] of [[{ starts_at: soon(1) }, /title/], [{ title: 'X' }, /start/], [{ title: 'X', starts_at: 'not a date' }, /start/],
-    [{ title: 'X', starts_at: soon(2), ends_at: soon(1) }, /ends before it starts/], [{ title: 'X', starts_at: soon(1), ends_at: 'soon' }, /end date/]]) {
+    [{ title: 'X', starts_at: soon(2), ends_at: soon(1) }, /ends before it starts/], [{ title: 'X', starts_at: soon(1), ends_at: 'soon' }, /end date/],
+    // Loose text is refused, not guessed at, and so is a time with no zone
+    // (each server would read it in its own) — found by review, 13 Oct.
+    [{ title: 'X', starts_at: '1' }, /start/], [{ title: 'X', starts_at: 'Diwali 12' }, /start/], [{ title: 'X', starts_at: '2026-10-20T15:00' }, /start/],
+    [{ title: 'X', starts_at: '+010000-01-01T00:00:00Z' }, /start/]]) {
     const r = await send('hr', 'POST', '/people/events', { ...body, notify: false });
     assert.equal(r.status, 400, JSON.stringify(body));
     assert.match(r.body.error, why);
@@ -147,6 +151,12 @@ test('CSR: HR adds, edits and removes an activity; people take part; HR sees who
   }
   assert.equal((await send('emp', 'POST', `/people/csr/${cid}/participate`, { hours: 3 })).status, 200);
   assert.equal((await send('emp', 'POST', `/people/csr/${cid}/participate`, { hours: 'lots' })).status, 400);
+  // A blank answer signs up; it never wipes hours already logged (review, 13 Oct).
+  assert.equal((await send('emp', 'POST', `/people/csr/${cid}/participate`, { hours: null })).status, 200);
+  const mine = (await call('emp', '/people/csr')).body.csr.find((x) => x.id === cid);
+  assert.equal(Number(mine.my_hours), 3, 'a blank answer wiped the hours');
+  assert.equal(mine.joined, true);
+  assert.equal((await call('hr', '/people/csr')).body.csr.find((x) => x.id === cid).joined, false, 'HR did not take part');
   const who = await call('hr', `/people/csr/${cid}/participants`);
   assert.deepEqual(who.body.participants.map((p) => [p.name, Number(p.hours)]), [['emp', 3]]);
   assert.equal(made.body.csr.event_date, '2026-11-02', 'the date as written');
@@ -167,4 +177,19 @@ test('the page is HR\'s: its row opens it to people_admin, so HR and Super Admin
   const row = (await db.query(`SELECT required_permission FROM core.page_permission WHERE tenant_id=$1 AND route='/admin/events'`, [tenantId])).rows[0];
   assert.equal(row.required_permission, 'people_admin');
   await db.query(`DELETE FROM core.page_permission WHERE tenant_id=$1`, [tenantId]);
+});
+
+test('AN EVENT THAT IS OVER TAKES NO MORE ANSWERS — at its end, or without one at the end of its day', { skip }, async () => {
+  const past = await send('hr', 'POST', '/people/events', { title: 'Last week', starts_at: soon(-3), notify: false });
+  assert.equal(past.status, 200);
+  const late = await send('emp', 'POST', `/people/events/${past.body.event.id}/rsvp`, { response: 'yes' });
+  assert.equal(late.status, 409);
+  assert.match(late.body.error, /ended/);
+  // Started an hour ago with no end time: still on today, so still open.
+  const now = await send('hr', 'POST', '/people/events', { title: 'Town hall', starts_at: new Date(Date.now() - 3600000).toISOString(), notify: false });
+  const today = new Date(); const ist = today.toLocaleString('en-CA', { timeZone: 'Asia/Kolkata', hour12: false });
+  if (!/ 00:/.test(ist)) {   // not in the first hour of an IST day, when an hour ago was yesterday
+    assert.equal((await send('emp', 'POST', `/people/events/${now.body.event.id}/rsvp`, { response: 'yes' })).status, 200);
+  }
+  assert.equal((await call('emp', '/people/events')).body.timezone, 'Asia/Kolkata', 'People Hub is told the company zone');
 });

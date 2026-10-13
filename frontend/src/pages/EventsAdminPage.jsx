@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { api } from '../utils/api';
+import { wallToIso, isoToWall, showAt, endOfEvent } from '../utils/zone';
 import PageHead from '../PageHead';
 import { Plus, Save, Trash2, Pencil, Users, X } from 'lucide-react';
 
@@ -9,27 +10,16 @@ import { Plus, Save, Trash2, Pencil, Users, X } from 'lucide-react';
 // What is scheduled here is what everyone sees, and answers, on People Hub
 // → Events and → CSR. A new one tells every employee in the app.
 
-// <input type="datetime-local"> speaks local time with no zone; the server
-// stores an instant. Converted here, both ways, so an event set for 3 pm
-// is shown at 3 pm and not five and a half hours off.
-const pad = (n) => String(n).padStart(2, '0');
-const toLocal = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-const fromLocal = (v) => (v ? new Date(v).toISOString() : null);
-// An event with no end time runs to the end of the day it starts, so it is
-// not filed under "past" (and its RSVPs closed) the moment it begins.
-export const endOf = (e) => {
-  if (e.ends_at) return new Date(e.ends_at);
-  const d = new Date(e.starts_at); d.setHours(23, 59, 59, 999); return d;
-};
+// <input type="datetime-local"> speaks wall-clock time with no zone; the
+// server stores an instant. Both are read in the COMPANY's zone (the
+// server says which), so 6 pm is 6 pm in Pune for whoever types or reads
+// it. An event with no end time runs to the end of the day it starts
+// (endOfEvent), the rule the server closes RSVPs by. See utils/zone.js.
 // What HR is told after creating one: the truth about the notice.
 const toldWho = (n, asked) => (!asked ? '' : n == null
   ? ' The in-app notice could not be sent — tell people another way, or try again later.'
   : `, and ${n} employee${n === 1 ? ' has' : 's have'} been told in the app`);
-const when = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '');
+
 const day = (d) => (d ? String(d).slice(0, 10) : '');
 
 const BLANK_EVENT = { title: '', starts_at: '', ends_at: '', location: '', description: '', notify: true };
@@ -45,25 +35,32 @@ export default function EventsAdminPage() {
   const [c, setC] = useState(BLANK_CSR);
   const [cId, setCId] = useState(null);
   const [who, setWho] = useState(null);          // { kind, id, title, rows }
+  const [tz, setTz] = useState('Asia/Kolkata');  // the company's zone, from the server
+  const [saving, setSaving] = useState(false);   // one save at a time: a double click is not two events
+  const when = (iso) => showAt(iso, tz);
 
   const load = async () => {
     try {
       const [e, s] = await Promise.all([api('/people/events'), api('/people/csr')]);
-      setEvents(e.events || []); setCsr(s.csr || []);
+      setEvents(e.events || []); setCsr(s.csr || []); if (e.timezone) setTz(e.timezone);
     } catch (x) { setErr(x.message); }
   };
   useEffect(() => { load(); }, []);
 
   const act = async (fn, done) => {
-    setErr(null); setMsg(null);
-    try { const r = await fn(); setMsg(typeof done === 'function' ? done(r) : done); await load(); return true; } catch (x) { setErr(x.message); return false; }
+    if (saving) return false;
+    setErr(null); setMsg(null); setSaving(true);
+    try { const r = await fn(); setMsg(typeof done === 'function' ? done(r) : done); await load(); return true; }
+    catch (x) { setErr(x.message); return false; }
+    finally { setSaving(false); }
   };
 
   const saveEvent = async () => {
-    const body = {
-      title: ev.title, location: ev.location, description: ev.description,
-      starts_at: fromLocal(ev.starts_at), ends_at: fromLocal(ev.ends_at),
-    };
+    const starts = wallToIso(ev.starts_at, tz);
+    const ends = ev.ends_at ? wallToIso(ev.ends_at, tz) : null;
+    if (!starts) { setErr('The start is not a valid date and time.'); return; }
+    if (ends === undefined) { setErr('The end is not a valid date and time.'); return; }
+    const body = { title: ev.title, location: ev.location, description: ev.description, starts_at: starts, ends_at: ends };
     const ok = await act(
       () => (evId
         ? api(`/people/events/${evId}`, { method: 'PUT', body: JSON.stringify(body) })
@@ -94,7 +91,7 @@ export default function EventsAdminPage() {
 
   const editEvent = (e) => {
     setEvId(e.id);
-    setEv({ title: e.title, starts_at: toLocal(e.starts_at), ends_at: toLocal(e.ends_at), location: e.location || '', description: e.description || '', notify: false });
+    setEv({ title: e.title, starts_at: isoToWall(e.starts_at, tz), ends_at: isoToWall(e.ends_at, tz), location: e.location || '', description: e.description || '', notify: false });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   const deleteEvent = (e) => {
@@ -106,8 +103,8 @@ export default function EventsAdminPage() {
   if (!events || !csr) return err ? <div className="card p-4"><p className="text-sm text-rose-600">{err}</p></div>
     : <p className="text-sm text-navy-400">Loading…</p>;
 
-  const upcoming = events.filter((e) => endOf(e) >= new Date()).reverse();
-  const past = events.filter((e) => endOf(e) < new Date());
+  const upcoming = events.filter((e) => endOfEvent(e, tz) >= new Date()).reverse();
+  const past = events.filter((e) => endOfEvent(e, tz) < new Date());
 
   return (
     <div className="space-y-3 max-w-5xl mx-auto">
@@ -128,7 +125,7 @@ export default function EventsAdminPage() {
             <input className="inp" value={ev.title} maxLength={200} onChange={(e) => setEv({ ...ev, title: e.target.value })} placeholder="e.g. Diwali celebration" />
           </div>
           <div>
-            <label className="lbl">Starts *</label>
+            <label className="lbl">Starts * <span className="normal-case font-normal text-navy-400">({tz})</span></label>
             <input className="inp" type="datetime-local" value={ev.starts_at} onChange={(e) => setEv({ ...ev, starts_at: e.target.value })} />
           </div>
           <div>
@@ -153,7 +150,7 @@ export default function EventsAdminPage() {
           )}
           <div className="flex-1" />
           {evId && <button className="btn-sec" onClick={() => { setEv(BLANK_EVENT); setEvId(null); }}>Cancel</button>}
-          <button className="btn-pri" disabled={!ev.title.trim() || !ev.starts_at} onClick={saveEvent}>
+          <button className="btn-pri" disabled={saving || !ev.title.trim() || !ev.starts_at} onClick={saveEvent}>
             {evId ? <><Save size={14} className="inline mr-1" />Save changes</> : <><Plus size={14} className="inline mr-1" />Schedule</>}
           </button>
         </div>
@@ -161,10 +158,10 @@ export default function EventsAdminPage() {
 
       <div className="card divide-y divide-navy-100">
         <p className="lbl px-4 pt-3 mb-0">Upcoming events · {upcoming.length}</p>
-        {upcoming.map((e) => <EventRow key={e.id} e={e} onEdit={() => editEvent(e)} onWho={() => showWho('event', e)} onDelete={() => deleteEvent(e)} />)}
+        {upcoming.map((e) => <EventRow key={e.id} e={e} when={when} onEdit={() => editEvent(e)} onWho={() => showWho('event', e)} onDelete={() => deleteEvent(e)} />)}
         {!upcoming.length && <p className="p-4 text-sm text-navy-400">Nothing scheduled. Schedule one above and it appears on People Hub.</p>}
         {past.length > 0 && <p className="lbl px-4 pt-3 mb-0">Past events · {past.length}</p>}
-        {past.map((e) => <EventRow key={e.id} e={e} past onEdit={() => editEvent(e)} onWho={() => showWho('event', e)} onDelete={() => deleteEvent(e)} />)}
+        {past.map((e) => <EventRow key={e.id} e={e} when={when} past onEdit={() => editEvent(e)} onWho={() => showWho('event', e)} onDelete={() => deleteEvent(e)} />)}
       </div>
 
       {/* ---- CSR ---- */}
@@ -197,7 +194,7 @@ export default function EventsAdminPage() {
           )}
           <div className="flex-1" />
           {cId && <button className="btn-sec" onClick={() => { setC(BLANK_CSR); setCId(null); }}>Cancel</button>}
-          <button className="btn-pri" disabled={!c.title.trim()} onClick={saveCsr}>
+          <button className="btn-pri" disabled={saving || !c.title.trim()} onClick={saveCsr}>
             {cId ? <><Save size={14} className="inline mr-1" />Save changes</> : <><Plus size={14} className="inline mr-1" />Add</>}
           </button>
         </div>
@@ -252,7 +249,7 @@ export default function EventsAdminPage() {
   );
 }
 
-function EventRow({ e, past, onEdit, onWho, onDelete }) {
+function EventRow({ e, when, past, onEdit, onWho, onDelete }) {
   return (
     <div className="p-3 px-4 flex flex-wrap items-center gap-2">
       <div className="flex-1 min-w-[200px]">

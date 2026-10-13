@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
-import { endOf } from './EventsAdminPage';
+import { showAt, endOfEvent } from '../utils/zone';
 
 export default function PeopleHubPage({ user }) {
   const [tab, setTab] = useState('events');
@@ -30,18 +30,20 @@ const canManage = (user) => (user && user.pages ? user.pages.includes('/admin/ev
 const ManageLink = ({ manage, label }) => (manage
   ? <div className="flex justify-end"><NavLink to="/admin/events" className="text-xs font-semibold text-brand-600">{label} →</NavLink></div>
   : null);
-const when = (iso) => new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 
 function Events({ manage }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState(null);
-  const load = () => api('/people/events').then(r => setRows(r.events)).catch(e => setErr(e.message));
+  // Times in the company's zone, named, as HR entered them (utils/zone.js).
+  const [tz, setTz] = useState('Asia/Kolkata');
+  const when = (iso) => showAt(iso, tz);
+  const load = () => api('/people/events').then(r => { setRows(r.events); if (r.timezone) setTz(r.timezone); }).catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
   if (!rows) return err ? <p className="text-sm text-rose-600">{err}</p> : <p className="text-sm text-navy-400">Loading…</p>;
   // Coming up first, soonest at the top; what has happened after it.
   const now = new Date();
-  const upcoming = rows.filter(e => endOf(e) >= now).reverse();
-  const past = rows.filter(e => endOf(e) < now);
+  const upcoming = rows.filter(e => endOfEvent(e, tz) >= now).reverse();
+  const past = rows.filter(e => endOfEvent(e, tz) < now);
   const rsvp = async (e, r) => {
     setErr(null);
     try { await api(`/people/events/${e.id}/rsvp`, { method: 'POST', body: JSON.stringify({ response: r }) }); load(); }
@@ -114,17 +116,18 @@ function Csr({ manage }) {
       {rows.map(c => (
         <div key={c.id} className="p-3 flex flex-wrap items-center gap-2">
           <div className="flex-1 min-w-[200px]"><p className="text-sm font-semibold">{c.title}</p>
-            <p className="text-xs text-navy-400">{c.event_date ? String(c.event_date).slice(0, 10) : 'date TBD'}{Number(c.hours_credit) ? ` · ${Number(c.hours_credit)} hours credit` : ''} · {c.participants} participating {c.my_hours != null && `· you: ${c.my_hours}h`}</p>
+            <p className="text-xs text-navy-400">{c.event_date ? String(c.event_date).slice(0, 10) : 'date TBD'}{Number(c.hours_credit) ? ` · ${Number(c.hours_credit)} hours credit` : ''} · {c.participants} participating {c.joined && (c.my_hours != null ? `· you: ${Number(c.my_hours)}h` : '· you have signed up')}</p>
             {c.description && <p className="text-xs text-navy-500 mt-0.5 whitespace-pre-line">{c.description}</p>}</div>
           <button className="btn-sec" onClick={async () => {
-            const h = prompt('Hours you contributed (blank = sign up)');
+            const h = prompt(c.joined ? 'Hours you contributed (leave as is to keep them)' : 'Hours you contributed (blank = sign up)',
+              c.my_hours != null ? String(Number(c.my_hours)) : '');
             if (h === null) return;
             // Sent as typed, so "4 hrs" is refused with a reason instead of
             // quietly wiping the hours already on record.
             try { await api(`/people/csr/${c.id}/participate`, { method: 'POST', body: JSON.stringify({ hours: h.trim() === '' ? null : h.trim() }) }); }
             catch (e) { alert(e.message); }
             load();
-          }}>{c.my_hours != null ? 'Update hours' : 'Participate'}</button>
+          }}>{c.joined ? 'Update hours' : 'Participate'}</button>
         </div>
       ))}
       {!rows.length && <p className="p-6 text-center text-sm text-navy-400">No CSR activities.</p>}
