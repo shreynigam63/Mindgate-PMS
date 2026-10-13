@@ -176,7 +176,9 @@ router.get('/cycles/:id/activity', async (req, res) => {
     const c = (await db.query(`SELECT id, name FROM pms.cycles WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!c) return res.status(404).json({ error: 'cycle not found' });
     const rows = (await db.query(
-      `SELECT al.at, al.actor_email, al.action, al.details, e.name AS employee_name
+      // employee_id rides along so an HRBP's view is cut to their remit
+      // (13 Oct: they read every outsider's reopen and rating-change reason).
+      `SELECT al.at, al.actor_email, al.action, al.details, al.employee_id, e.name AS employee_name
          FROM pms.audit_log al
          LEFT JOIN core.employees e ON e.id=al.employee_id
         WHERE al.tenant_id=$1 AND al.cycle_id=$2

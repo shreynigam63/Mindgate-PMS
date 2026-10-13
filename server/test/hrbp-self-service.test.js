@@ -450,6 +450,24 @@ test('THE 9-BOX HOLDS THE REMIT ONLY, and counts it — a cell names its people 
   assert.deepEqual(placed(hr), [id.pune1, id.mumbai1].sort(), 'HR lost somebody');
 });
 
+test('THE CYCLE ACTIVITY FEED HOLDS THE REMIT: not an outsider\'s rating reason, not their own', async () => {
+  const c = (await db.query(`SELECT id FROM pms.cycles WHERE tenant_id=$1`, [tenantId])).rows[0].id;
+  for (const who of ['pune1', 'mumbai1', 'inside']) {
+    await db.query(`INSERT INTO pms.audit_log (tenant_id, actor_email, action, cycle_id, employee_id, details)
+      VALUES ($1,'boss@x.com','RATING_ADJUSTED',$2,$3,$4)`, [tenantId, c, id[who], JSON.stringify({ reason: `why-${who}` })]);
+  }
+  await db.query(`INSERT INTO pms.audit_log (tenant_id, actor_email, action, cycle_id, details)
+    VALUES ($1,'boss@x.com','PHASE_CHANGED',$2,'{}')`, [tenantId, c]);
+  const hrbp = await call('inside', `/pms/cycles/${c}/activity`);
+  assert.equal(hrbp.status, 200, JSON.stringify(hrbp.body));
+  const text = JSON.stringify(hrbp.body.events);
+  assert.match(text, /why-pune1/, 'the remit\'s events went missing');
+  assert.match(text, /PHASE_CHANGED/, 'an event about the cycle went missing');
+  assert.ok(!/why-mumbai1|why-inside/.test(text), `an outsider's or their own event reached the HRBP: ${text}`);
+  const hr = JSON.stringify((await call('boss', `/pms/cycles/${c}/activity`)).body.events);
+  for (const who of ['pune1', 'mumbai1', 'inside']) assert.match(hr, new RegExp(`why-${who}`), `HR lost ${who}`);
+});
+
 test('narrowing drops a list row that names an outsider by id alone, and leaves rows that are not people', () => {
   const body = { cells: [{ id: ME, name: 'in' }, { id: OTHER, name: 'out' }, { id: 'c0ffee00-0000-4000-8000-000000000000', name: 'a cycle' }] };
   gw.narrow(body, new Set([ME]), 0, new Set([ME, OTHER]));
