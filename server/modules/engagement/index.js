@@ -1385,6 +1385,16 @@ async function exportScope(req) {
   return { ids: new Set(ids), remit };
 }
 
+// Whether one response belongs to an HRBP's remit. A manager survey is
+// ABOUT a new joiner, so it is the joiner who must be in the remit — a
+// Pune manager's comment on a Mumbai joiner is about Mumbai. Any other
+// survey is its respondent's, and an unattributed response belongs to
+// nobody's remit (13 Oct).
+const inRemit = (scope, survey, r) => {
+  const who = survey.audience_kind === 'manager_about_reportee' ? r.subject_employee_id : r.employee_id;
+  return !!who && scope.ids.has(who);
+};
+
 router.get('/surveys/:id/results.xlsx', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'engagement_admin'))) {
@@ -1403,7 +1413,7 @@ router.get('/surveys/:id/results.xlsx', async (req, res) => {
     // is NULL for anybody who did not opt in.
     const rows = (await db.query(
       `SELECT a.question_id, a.value_num, a.value_text, a.value_list,
-              r.id AS response_id, r.employee_id, r.submitted_at,
+              r.id AS response_id, r.employee_id, r.subject_employee_id, r.submitted_at,
               e.name AS employee_name, e.email AS employee_email, e.department, e.location
          FROM engagement.responses r
          JOIN engagement.answers a ON a.response_id = r.id
@@ -1413,7 +1423,7 @@ router.get('/surveys/:id/results.xlsx', async (req, res) => {
     // An HRBP's file covers their own people. An UNATTRIBUTED response
     // cannot be placed in anybody's remit, so it is counted for HR and
     // left out of an HRBP's aggregate rather than guessed at.
-    const inScope = (r) => !scope || (r.employee_id && scope.ids.has(r.employee_id));
+    const inScope = (r) => !scope || inRemit(scope, s, r);
     const mine = scope ? rows.filter(inScope) : rows;
     const responders = new Set(mine.map((r) => r.response_id));
 
@@ -1520,11 +1530,29 @@ router.get('/surveys/:id/results', async (req, res) => {
     if (!(await hasPermission(req.user, 'engagement_admin'))) return res.status(403).json({ error: "Requires 'engagement_admin'" });
     const s = (await db.query(`SELECT * FROM engagement.surveys WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!s) return res.status(404).json({ error: 'survey not found' });
+    // An HRBP's results are their remit's, as in the download: answers
+    // from it, figures under ANON_FLOOR withheld, unattributed answers
+    // left out rather than guessed at. Until 13 Oct this page gave an HRBP
+    // every verbatim and average in the company, comments naming people
+    // outside the remit among them (found by review). HR's view is
+    // unchanged: `only` stays null.
+    const scope = await exportScope(req);
+    let only = null;
+    if (scope) {
+      only = (await db.query(
+        `SELECT id, employee_id, subject_employee_id FROM engagement.responses WHERE survey_id=$1`, [s.id])).rows
+        .filter((r) => inRemit(scope, s, r)).map((r) => r.id);
+    }
+    const scopeIds = scope ? [...scope.ids] : null;
     const part = (await db.query(
       `SELECT COUNT(*)::int AS invited, COUNT(completed_at)::int AS completed
-         FROM engagement.invitations WHERE survey_id=$1`, [s.id])).rows[0];
+         FROM engagement.invitations
+        WHERE survey_id=$1 AND ($2::uuid[] IS NULL OR
+              COALESCE(${s.audience_kind === 'manager_about_reportee' ? 'subject_employee_id' : 'employee_id'}, employee_id) = ANY($2::uuid[]))`,
+      [s.id, scopeIds])).rows[0];
     const qs = (await db.query(`SELECT id, qtype, prompt, options, sort_order FROM engagement.questions WHERE survey_id=$1 ORDER BY sort_order`, [s.id])).rows;
     const out = [];
+    const withheld = (q, n) => ({ ...q, n, withheld: `fewer than ${ANON_FLOOR} responses in your remit` });
     for (const q of qs) {
       // Choice and multi are TALLIED. They used to fall through to the
       // numeric branch and report "n=0 · avg" with the answers sitting
@@ -1534,7 +1562,9 @@ router.get('/surveys/:id/results', async (req, res) => {
       // option listed so a zero is visible as a zero.
       if (q.qtype === 'choice' || q.qtype === 'multi') {
         const rows = (await db.query(
-          `SELECT value_text, value_list FROM engagement.answers WHERE question_id=$1`, [q.id])).rows;
+          `SELECT value_text, value_list FROM engagement.answers
+            WHERE question_id=$1 AND ($2::uuid[] IS NULL OR response_id = ANY($2::uuid[]))`, [q.id, only])).rows;
+        if (only && rows.length && rows.length < ANON_FLOOR) { out.push(withheld(q, rows.length)); continue; }
         const tally = new Map((Array.isArray(q.options) ? q.options : []).map((o) => [String(o), 0]));
         let answered = 0;
         for (const r of rows) {
@@ -1552,11 +1582,15 @@ router.get('/surveys/:id/results', async (req, res) => {
       }
       if (q.qtype === 'text') {
         const verb = (await db.query(
-          `SELECT a.value_text FROM engagement.answers a WHERE a.question_id=$1 AND a.value_text IS NOT NULL LIMIT 200`, [q.id])).rows;
+          `SELECT a.value_text FROM engagement.answers a WHERE a.question_id=$1 AND a.value_text IS NOT NULL
+              AND ($2::uuid[] IS NULL OR a.response_id = ANY($2::uuid[])) LIMIT 200`, [q.id, only])).rows;
+        if (only && verb.length && verb.length < ANON_FLOOR) { out.push({ ...withheld(q, verb.length), verbatims: [] }); continue; }
         out.push({ ...q, verbatims: verb.map(v => v.value_text) }); // no identity columns in reach
       } else {
         const nums = (await db.query(
-          `SELECT a.value_num FROM engagement.answers a WHERE a.question_id=$1 AND a.value_num IS NOT NULL`, [q.id])).rows.map(r => +r.value_num);
+          `SELECT a.value_num FROM engagement.answers a WHERE a.question_id=$1 AND a.value_num IS NOT NULL
+              AND ($2::uuid[] IS NULL OR a.response_id = ANY($2::uuid[]))`, [q.id, only])).rows.map(r => +r.value_num);
+        if (only && nums.length && nums.length < ANON_FLOOR) { out.push(withheld(q, nums.length)); continue; }
         const avg = nums.length ? +(nums.reduce((x, y) => x + y, 0) / nums.length).toFixed(2) : null;
         out.push({ ...q, n: nums.length, average: avg, enps: q.qtype === 'enps' ? enps(nums) : undefined });
       }

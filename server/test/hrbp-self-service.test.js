@@ -525,6 +525,55 @@ test('AI DRAFTS ARE THEIR AUTHOR\'S: an HRBP lists their own, not HR\'s draft ab
   for (const d of ['draft-by-hr-about-mumbai1', 'draft-by-hr-no-ref', 'draft-by-the-hrbp']) assert.match(hr, new RegExp(d), `HR lost ${d}`);
 });
 
+test('A SURVEY\'S RESULTS PAGE HOLDS THE REMIT, as its download does', async () => {
+  const mkSurvey = async (kind) => (await db.query(
+    `INSERT INTO engagement.surveys (tenant_id,title,survey_type,status,anonymity_default,allow_attribution_optin,audience_kind)
+     VALUES ($1,'Results test','pulse','closed',$3,true,$2) RETURNING id`,
+    [tenantId, kind, kind !== 'manager_about_reportee'])).rows[0].id;   // a manager survey is never anonymous
+  const mkQ = async (sid, qtype, prompt) => (await db.query(
+    `INSERT INTO engagement.questions (tenant_id,survey_id,qtype,prompt,sort_order) VALUES ($1,$2,$3,$4,10) RETURNING id`,
+    [tenantId, sid, qtype, prompt])).rows[0].id;
+  const answer = async (sid, by, subject, qid, text) => {
+    const r = (await db.query(`INSERT INTO engagement.responses (tenant_id,survey_id,employee_id,subject_employee_id,submitted_at)
+      VALUES ($1,$2,$3,$4,now()) RETURNING id`, [tenantId, sid, by, subject])).rows[0].id;
+    await db.query(`INSERT INTO engagement.answers (response_id,question_id,value_text) VALUES ($1,$2,$3)`, [r, qid, text]);
+  };
+  const made = [];
+  try {
+    // A manager survey about new joiners: the joiner decides the remit.
+    const ms = await mkSurvey('manager_about_reportee'); made.push(ms);
+    const mq = await mkQ(ms, 'text', 'How is your new joiner doing?');
+    await answer(ms, id.boss, id.pune1, mq, 'pune1-is-settling-in');
+    await answer(ms, id.boss, id.mumbai1, mq, 'mumbai1-is-not-working-out');
+    const m = await call('inside', `/engagement/surveys/${ms}/results`);
+    assert.equal(m.status, 200, JSON.stringify(m.body));
+    assert.ok(!/mumbai1-is-not-working-out/.test(JSON.stringify(m.body)), 'a comment about an outsider reached the HRBP');
+    assert.ok(m.body.questions[0].withheld, 'one answer in the remit was shown, not withheld');
+    const mhr = JSON.stringify((await call('boss', `/engagement/surveys/${ms}/results`)).body);
+    assert.match(mhr, /mumbai1-is-not-working-out/, 'HR lost an answer');
+
+    // A staff survey with enough of the remit answering to be shown.
+    for (let i = 3; i <= 6; i += 1) {
+      id[`pune${i}`] = (await db.query(`INSERT INTO core.employees (tenant_id, name, email, status, department, location)
+        VALUES ($1,$2,$3,'active','Delivery','Pune') RETURNING id`, [tenantId, `pune${i}`, `p${i}@x.com`])).rows[0].id;
+    }
+    const ss = await mkSurvey('self'); made.push(ss);
+    const sq = await mkQ(ss, 'text', 'What would make you leave?');
+    for (const who of ['pune1', 'pune2', 'pune3', 'pune4', 'pune5', 'mumbai1']) await answer(ss, id[who], null, sq, `leave-${who}`);
+    const st = JSON.stringify((await call('inside', `/engagement/surveys/${ss}/results`)).body);
+    for (let i = 1; i <= 5; i += 1) assert.match(st, new RegExp(`leave-pune${i}`), `the remit's answer pune${i} is missing`);
+    assert.ok(!/leave-mumbai1/.test(st), 'an outsider\'s answer reached the HRBP');
+    assert.match(JSON.stringify((await call('boss', `/engagement/surveys/${ss}/results`)).body), /leave-mumbai1/);
+  } finally {
+    for (const sid of made) {
+      await db.query(`DELETE FROM engagement.answers WHERE response_id IN (SELECT id FROM engagement.responses WHERE survey_id=$1)`, [sid]);
+      await db.query(`DELETE FROM engagement.responses WHERE survey_id=$1`, [sid]);
+      await db.query(`DELETE FROM engagement.questions WHERE survey_id=$1`, [sid]);
+      await db.query(`DELETE FROM engagement.surveys WHERE id=$1`, [sid]);
+    }
+  }
+});
+
 test('the scope helper keeps every row when no hook narrowed the request, and none that name nobody when one did', () => {
   const { visibleRows } = require('../core/scope-hooks');
   const rows = [{ employee_id: ME }, { employee_id: OTHER }, { name: 'a total' }];
