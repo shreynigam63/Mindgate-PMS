@@ -150,6 +150,8 @@ const SELF_SERVICE = {
     // Nominating for RnR is a manager's own work, open only to someone who
     // holds pms_team_eval (never lent), and the pool is their own team.
     ['GET', '/rnr/nominate/options'], ['GET', '/rnr/nominate/eligible'], ['POST', '/rnr/nominations'],
+    // People Hub → Awards: the same company-wide winners wall as anyone's.
+    ['GET', '/rnr/hub'],
     ['GET', '/rnr/nominations', (req) => req.query && req.query.mine === 'true'],
   ],
   '/api/v1/engagement': [

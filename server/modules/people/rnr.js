@@ -717,4 +717,56 @@ async function notifyStage(tenantId, n, award, status, reason) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// People Hub → Awards (13 Oct: the tab read an older awards system nothing
+// else used; "please link" it to RnR). What ANY employee may see of RnR:
+//   - the cycle that is open, with its dates, and the latest ones before it;
+//   - the awards and what each is for — never their money value;
+//   - their own awards;
+//   - the winners of each cycle whose AWARD DATE has come, company-wide
+//     (the client's choice: a wall that never spoils the presentation).
+// Never a nominee, a pending or rejected nomination, a justification or a
+// reason: the RnR dashboards that showed those to everyone came out on
+// 8 Oct (migration 086).
+const APP_TZ = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+router.get('/rnr/hub', async (req, res) => {
+  try {
+    const t = T(req);
+    const day = (col) => `to_char(${col}, 'YYYY-MM-DD')`;
+    const cycles = (await db.query(
+      `SELECT id, name, kind, period_label, ${day('nominations_open')} AS nominations_open,
+              ${day('nominations_close')} AS nominations_close, ${day('award_date')} AS award_date, status
+         FROM rnr.cycles WHERE tenant_id=$1 AND status <> 'draft' ORDER BY nominations_open DESC LIMIT 12`, [t])).rows;
+    const awards = (await db.query(
+      `SELECT name, level, frequency, criteria, is_team FROM rnr.awards
+        WHERE tenant_id=$1 AND active ORDER BY sort_order, name`, [t])).rows;
+    const mine = (await db.query(
+      `SELECT a.name AS award_name, c.name AS cycle_name, ${day('c.award_date')} AS award_date, n.status
+         FROM rnr.nominations n JOIN rnr.awards a ON a.id=n.award_id JOIN rnr.cycles c ON c.id=n.cycle_id
+        WHERE n.tenant_id=$1 AND n.employee_id=$2 AND n.status IN ('final_approved','awarded')
+        ORDER BY c.nominations_open DESC, a.sort_order`, [t, req.user.id])).rows;
+    const won = (await db.query(
+      `SELECT c.id AS cycle_id, c.name AS cycle_name, ${day('c.award_date')} AS award_date,
+              a.name AS award_name, a.is_team, e.name AS employee_name, e.department, n.team_name, n.team_members
+         FROM rnr.nominations n JOIN rnr.awards a ON a.id=n.award_id JOIN rnr.cycles c ON c.id=n.cycle_id
+         LEFT JOIN core.employees e ON e.id=n.employee_id AND e.tenant_id=n.tenant_id
+        WHERE n.tenant_id=$1 AND n.status IN ('final_approved','awarded')
+          AND c.award_date IS NOT NULL AND c.award_date <= (now() AT TIME ZONE $2)::date
+        ORDER BY c.award_date DESC, c.name, a.sort_order, a.name, e.name, n.team_name`, [t, APP_TZ])).rows;
+    const winners = [];
+    for (const w of won) {
+      let g = winners.find((x) => x.cycle_id === w.cycle_id);
+      if (!g) { g = { cycle_id: w.cycle_id, cycle_name: w.cycle_name, award_date: w.award_date, winners: [] }; winners.push(g); }
+      g.winners.push(w.is_team
+        ? { award_name: w.award_name, team_name: w.team_name, team_members: w.team_members }
+        : { award_name: w.award_name, name: w.employee_name, department: w.department });
+    }
+    res.json({
+      open_cycle: cycles.find((c) => c.status === 'open') || null,
+      awards, mine, winners,
+      can_nominate: await hasPermission(req.user, 'pms_team_eval'),
+    });
+  } catch (e) { logger.error('rnr hub', { error: e.message }); res.status(500).json({ error: 'Could not load the awards' }); }
+});
+
 module.exports = { router, quotaFor, activeHeadcount, mastersFor, dataGaps };

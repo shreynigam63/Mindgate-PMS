@@ -78,28 +78,72 @@ function Events({ manage }) {
   );
 }
 
+// Rewards & Recognition, read from RnR (13 Oct: the tab read an older
+// awards system nothing else used). Everyone sees the open cycle, the
+// awards, their own awards and the winners of each cycle once its award
+// date has come; never a nominee or a pending nomination.
+const LEVEL = { junior: 'Junior', mid: 'Mid-level', senior: 'Senior', all: 'All levels' };
+const FREQ = { quarterly: 'quarterly', half_yearly: 'half-yearly', annual: 'annual' };
+const day = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+
 function Awards({ user }) {
   const [data, setData] = useState(null);
-  useEffect(() => { api('/people/awards').then(setData); }, []);
-  if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
+  const [err, setErr] = useState(null);
+  useEffect(() => { api('/people/rnr/hub').then(setData).catch(e => setErr(e.message)); }, []);
+  if (!data) return err ? <p className="text-sm text-rose-600">{err}</p> : <p className="text-sm text-navy-400">Loading…</p>;
+  const c = data.open_cycle;
+  const canNominate = data.can_nominate && (!user || !user.pages || user.pages.includes('/rnr/nominate'));
   return (
-    <div className="card divide-y divide-navy-100">
-      {data.cycles.map(c => (
-        <div key={c.id} className="p-3 flex flex-wrap items-center gap-2">
-          <div className="flex-1"><p className="text-sm font-semibold">{c.program_name} — {c.name}</p>
-            <p className="text-xs text-navy-400">{c.nominations} nomination(s)</p></div>
-          <span className={`chip ${c.status === 'open' ? 'bg-emerald-100 text-emerald-700' : 'bg-navy-50 text-navy-600'}`}>{c.status}</span>
-          {c.status === 'open' && <button className="btn-sec" onClick={async () => {
-            const email = prompt('Nominee email'); if (!email) return;
-            const emp = await api('/employees'); const nom = emp.employees.find(x => x.email === email.toLowerCase().trim());
-            if (!nom) return alert('No employee with that email');
-            const citation = prompt('Citation — why do they deserve it?'); if (!citation) return;
-            try { await api(`/people/awards/cycles/${c.id}/nominate`, { method: 'POST', body: JSON.stringify({ nominee_id: nom.id, citation }) }); alert('Nominated.'); }
-            catch (e) { alert(e.message); }
-          }}>Nominate</button>}
+    <div className="space-y-3">
+      <div className="card p-4 flex flex-wrap items-center gap-3">
+        <div className="flex-1 min-w-[220px]">
+          {c ? <>
+            <p className="text-sm font-semibold">{c.name} is open for nominations</p>
+            <p className="text-xs text-navy-400">Nominations {day(c.nominations_open)} – {day(c.nominations_close)}{c.award_date ? ` · awards on ${day(c.award_date)}` : ''}</p>
+          </> : <p className="text-sm text-navy-500">No Rewards &amp; Recognition cycle is open for nominations right now.</p>}
+        </div>
+        {c && canNominate && <NavLink to="/rnr/nominate" className="btn-pri">Nominate for RnR →</NavLink>}
+      </div>
+
+      {data.mine.length > 0 && (
+        <div className="card divide-y divide-navy-100">
+          <p className="lbl px-3 pt-3 mb-0">Your awards</p>
+          {data.mine.map((m, i) => (
+            <div key={i} className="p-3 flex flex-wrap items-center gap-2">
+              <div className="flex-1"><p className="text-sm font-semibold">{m.award_name}</p>
+                <p className="text-xs text-navy-400">{m.cycle_name}{m.award_date ? ` · ${day(m.award_date)}` : ''}</p></div>
+              <span className="chip bg-emerald-100 text-emerald-700">{m.status === 'awarded' ? 'Awarded' : 'Approved'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data.winners.map(g => (
+        <div key={g.cycle_id} className="card divide-y divide-navy-100">
+          <p className="lbl px-3 pt-3 mb-0">Winners · {g.cycle_name}{g.award_date ? ` · ${day(g.award_date)}` : ''}</p>
+          {g.winners.map((w, i) => (
+            <div key={i} className="p-3 flex flex-wrap items-center gap-2">
+              <span className="chip bg-amber-100 text-amber-800">{w.award_name}</span>
+              {w.team_name
+                ? <p className="text-sm"><b>{w.team_name}</b>{w.team_members ? <span className="text-navy-400"> · {w.team_members}</span> : null}</p>
+                : <p className="text-sm"><b>{w.name}</b>{w.department ? <span className="text-navy-400"> · {w.department}</span> : null}</p>}
+            </div>
+          ))}
         </div>
       ))}
-      {!data.cycles.length && <p className="p-6 text-center text-sm text-navy-400">No award cycles.</p>}
+      {!data.winners.length && <p className="text-xs text-navy-400 px-1">Winners appear here on each cycle's award date.</p>}
+
+      {data.awards.length > 0 && (
+        <div className="card divide-y divide-navy-100">
+          <p className="lbl px-3 pt-3 mb-0">The awards</p>
+          {data.awards.map((a, i) => (
+            <div key={i} className="p-3">
+              <p className="text-sm font-semibold">{a.name} <span className="text-xs font-normal text-navy-400">· {a.is_team ? 'team' : 'individual'} · {FREQ[a.frequency] || a.frequency} · {LEVEL[a.level] || a.level}</span></p>
+              {a.criteria && <p className="text-xs text-navy-500 mt-0.5 whitespace-pre-line">{a.criteria}</p>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
