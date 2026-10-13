@@ -152,6 +152,8 @@ const NAV = [
     { to: '/team/midyear', label: 'Team Mid-Year', icon: Clock },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/team/competencies', label: 'Team Competencies', icon: Gauge },
+    // The manager's own team on the 9-box (13 Oct build specification).
+    { to: '/team/nine-box', label: '9-Box Grid', icon: Grid3x3 },
     // Opened by the manager from here or from Team Evaluation (7 Oct).
     { to: '/team/pip', label: 'Improvement Plans', icon: ShieldAlert },
     { to: '/team/timesheet', label: 'Timesheet', icon: CalendarClock },
@@ -175,6 +177,8 @@ const NAV = [
     { to: '/hod', label: 'HOD Review', icon: Landmark },
     // Every employee in the HOD's departments, by department (7 Oct).
     { to: '/hod/competencies', label: 'Team Competencies', icon: Gauge },
+    // The departments this person heads, on the 9-box (13 Oct).
+    { to: '/hod/nine-box', label: '9-Box Grid', icon: Grid3x3 },
     { to: '/rnr/approvals/delivery-head', label: 'RnR Approvals', icon: Award },
   ]},
   // HRBP — HR for a slice of the company rather than all of it. Between
@@ -641,7 +645,9 @@ function Main({ user }) {
               <Route path="/admin/kra-library" element={<RequireRole user={user} roles={['admin', 'hr']}><KraLibraryPage /></RequireRole>} />
               <Route path="/admin/closure-letters" element={<ClosureLettersPage />} />
               <Route path="/admin/watchlist" element={<WatchlistPage />} />
-              <Route path="/admin/nine-box" element={<NineBoxPage />} />
+              <Route path="/admin/nine-box" element={<NineBoxPage key="company" view="company" />} />
+              <Route path="/hod/nine-box" element={<NineBoxPage key="departments" view="departments" />} />
+              <Route path="/team/nine-box" element={<NineBoxPage key="team" view="team" />} />
               <Route path="/engagement" element={<MySurveysPage />} />
               <Route path="/admin/engagement" element={<EngagementAdminPage />} />
               <Route path="/admin/engagement-insights" element={<EngagementInsightsPage />} />

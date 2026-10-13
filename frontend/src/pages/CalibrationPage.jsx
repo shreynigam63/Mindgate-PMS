@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Sparkles, SlidersHorizontal, Download } from 'lucide-react';
+import { Sparkles, SlidersHorizontal, Download, PenLine, X } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
@@ -8,7 +8,12 @@ import SearchBox, { matches } from '../SearchBox';
 import BellCurveChart from './BellCurveChart';
 import { KittyPanel, BracketFilter, AllocationRow, Section, short } from './CalibrationKitty';
 
-const NINE_BOX = ['low-low', 'low-mid', 'low-high', 'mid-low', 'mid-mid', 'mid-high', 'high-low', 'high-mid', 'high-high'];
+// The 9-box column (13 Oct build specification). The box is worked out
+// from the scores, live: performance is the Final Rating beside it,
+// potential the competency score and the manager's four questions. HR
+// moves a box only by overriding ONE band, with a reason — the free
+// dropdown of nine cells that used to sit here had neither.
+const BAND = ['Low', 'Medium', 'High'];
 
 export default function CalibrationPage() {
   const [q, setQ] = useState('');
@@ -31,6 +36,7 @@ export default function CalibrationPage() {
   const [kitty, setKitty] = useState(null);
   const [noComp, setNoComp] = useState(false);
   const [bracket, setBracket] = useState('all');
+  const [overriding, setOverriding] = useState(null);
 
   const load = () => api('/pms/calibration').then(setData).catch(e => setErr(e.message));
   const loadKitty = (b = bracket) => api(`/pms/calibration/kitty?bracket=${b}`)
@@ -164,11 +170,15 @@ export default function CalibrationPage() {
           </thead>
           <tbody className="divide-y divide-navy-100">
             {rowsShown.map(r => <CalRow key={r.employee_id} r={r} reload={load} scale={data.cycle.rating_scale}
-              ts={(data.timesheet || {})[r.employee_id]} />)}
+              ts={(data.timesheet || {})[r.employee_id]} nineBox={data.nine_box}
+              onOverride={data.cycle.phase === 'calibration' ? setOverriding : null} />)}
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-navy-400">Every adjustment requires a reason — it is the permanent answer to "why did my rating change".</p>
+      <p className="text-[11px] text-navy-400">Every adjustment requires a reason — it is the permanent answer to "why did my rating change".
+        {data.nine_box && <> The 9-box moves with the Final Rating; to move a box otherwise, override one band — that needs a reason too.</>}</p>
+      {overriding && <OverrideModal r={overriding}
+        onClose={() => setOverriding(null)} onSaved={() => { setOverriding(null); load(); }} />}
       {/* Verbatim from the server, so the screen cannot soften it. */}
       {data.timesheet_note && (
         <p className="text-[11px] text-navy-500 mt-1"><b>Timesheet:</b> {data.timesheet_note}</p>
@@ -239,9 +249,8 @@ export default function CalibrationPage() {
   );
 }
 
-function CalRow({ r, reload, scale, ts }) {
+function CalRow({ r, reload, scale, ts, nineBox, onOverride }) {
   const [to, setTo] = useState('');
-  const [box, setBox] = useState(r.nine_box_cell || '');
   const [err, setErr] = useState(null);
   const adjust = async () => {
     const reason = prompt(`Adjust ${r.name} from ${r.proposed} to ${to}. Reason (required):`);
@@ -250,11 +259,6 @@ function CalRow({ r, reload, scale, ts }) {
       await api('/pms/calibration/adjust', { method: 'POST', body: JSON.stringify({ employee_id: r.employee_id, from_rating: r.proposed, to_rating: Number(to), reason }) });
       setTo(''); reload();
     } catch (e) { setErr(e.message); }
-  };
-  const saveBox = async (v) => {
-    setBox(v);
-    try { await api('/pms/calibration/top-talent', { method: 'POST', body: JSON.stringify({ employee_id: r.employee_id, nine_box_cell: v || null }) }); }
-    catch (e) { setErr(e.message); }
   };
   // Requested: the adjustment reason typed into the prompt was saved but
   // never shown again anywhere on this page. A badge next to Proposed
@@ -297,19 +301,7 @@ function CalRow({ r, reload, scale, ts }) {
           )}
         </td>
         <td className="px-3 py-2">
-          <select className="inp !py-1 !text-[11px] w-auto" value={box} onChange={e => saveBox(e.target.value)}>
-            <option value="">—</option>{NINE_BOX.map(b => <option key={b}>{b}</option>)}
-          </select>
-          {/* The manager's own read on potential, recorded with their
-              evaluation (migration 043). Shown as the starting point for
-              this conversation, not as the answer: calibration still sets
-              the cell, and the two are kept apart so "why did this change"
-              stays answerable. */}
-          {r.manager_potential && (
-            <div className="text-[10px] text-navy-400 mt-1">
-              manager: <b className="text-violet-700">{r.manager_potential}</b> potential
-            </div>
-          )}
+          <NineBoxCell b={r.nine_box} on={!!nineBox} onOverride={onOverride ? () => onOverride(r) : null} />
         </td>
         <td className="px-3 py-2">
           <span className="inline-flex items-center gap-1">
@@ -337,5 +329,97 @@ function CalRow({ r, reload, scale, ts }) {
         </tr>
       )}
     </>
+  );
+}
+
+function NineBoxCell({ b, on, onOverride }) {
+  if (!on) return <span className="text-[10.5px] text-navy-300">annual cycles only</span>;
+  if (!b) return <span className="text-[10.5px] text-navy-300">—</span>;
+  const ov = b.overridden || {};
+  const said = (o) => o && `HR override to ${BAND[o.band]}: ${o.reason} — ${o.by}`;
+  return (
+    <div className="space-y-0.5">
+      {b.box_key
+        ? <p className="text-[11px] font-semibold text-navy-800">{b.box_name} <span className="text-navy-400 font-normal">({b.box_key})</span></p>
+        : <p className="text-[10.5px] text-amber-800" title={b.not_placed_text}>Not placed</p>}
+      <p className="text-[10px] text-navy-500" title={b.performance_score == null ? '' : `Performance ${b.performance_score}`}>
+        Perf {b.perf_band == null ? '—' : BAND[b.perf_band]}
+        {ov.performance && <span className="ml-0.5 inline-flex text-violet-600" title={said(ov.performance)}><PenLine size={10} /></span>}
+        {' · '}Pot {b.potential_score == null ? '—' : b.potential_score} {b.pot_band == null ? '' : BAND[b.pot_band]}
+        {b.potential_partial && <span className="text-amber-700" title="Only one half of potential was available"> ½</span>}
+        {ov.potential && <span className="ml-0.5 inline-flex text-violet-600" title={said(ov.potential)}><PenLine size={10} /></span>}
+      </p>
+      {!b.box_key && <p className="text-[10px] text-navy-400">{b.not_placed_text}</p>}
+      {onOverride && <button className="text-[10.5px] text-violet-700 hover:underline" onClick={onOverride}>Override a band</button>}
+    </div>
+  );
+}
+
+// One band, one reason. The reason is required by the server too, and it
+// is what anybody asking "why is this person in that box" will be shown.
+function OverrideModal({ r, onClose, onSaved }) {
+  const b = r.nine_box || {};
+  const [axis, setAxis] = useState('potential');
+  const current = axis === 'performance' ? b.perf_band : b.pot_band;
+  const computed = axis === 'performance' ? b.computed_perf_band : b.computed_pot_band;
+  const active = (b.overridden || {})[axis];
+  const [band, setBand] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const save = async (to) => {
+    setBusy(true); setErr(null);
+    try {
+      await api('/pms/nine-box/override', { method: 'POST', body: JSON.stringify({ employee_id: r.employee_id, axis, band: to, reason }) });
+      onSaved();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-900/40" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-navy-100">
+          <p className="text-base font-bold">Override a 9-box band — {r.name}</p>
+          <button className="text-navy-400 hover:text-navy-600" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-3 text-xs">
+          <p className="text-navy-600">
+            Now: {b.box_key ? <b>{b.box_name} ({b.box_key})</b> : <b>Not placed</b>}. Performance {b.performance_score ?? '—'}
+            {' '}({b.perf_band == null ? '—' : BAND[b.perf_band]}), potential {b.potential_score ?? '—'} ({b.pot_band == null ? '—' : BAND[b.pot_band]}).
+          </p>
+          <div>
+            <label className="lbl">Band to override</label>
+            <div className="flex gap-1">
+              {['performance', 'potential'].map((a) => (
+                <button key={a} onClick={() => { setAxis(a); setBand(''); }}
+                  className={`px-3 py-1.5 rounded-lg font-medium capitalize ${axis === a ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}>{a}</button>
+              ))}
+            </div>
+            <p className="text-[10.5px] text-navy-400 mt-1">
+              The scores put this at {computed == null ? 'no band' : BAND[computed]}{active ? `; overridden to ${BAND[active.band]} (${active.reason})` : ''}.
+            </p>
+          </div>
+          <div>
+            <label className="lbl">New band</label>
+            <div className="flex gap-1">
+              {[0, 1, 2].map((n) => (
+                <button key={n} disabled={n === current} onClick={() => setBand(String(n))}
+                  className={`px-3 py-1.5 rounded-lg font-medium ${band === String(n) ? 'bg-violet-600 text-white' : 'bg-navy-50 text-navy-600'} disabled:opacity-40`}>{BAND[n]}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="lbl">Reason (required)</label>
+            <textarea className="inp" rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
+              placeholder="Why the scores do not tell the whole story — kept with the override and in the audit trail" />
+          </div>
+          {err && <p className="text-rose-600">{err}</p>}
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-navy-100">
+          {active && <button className="btn-sec mr-auto" disabled={busy || !reason.trim()} onClick={() => save(null)}>Back to the worked-out band</button>}
+          <button className="btn-sec" onClick={onClose}>Cancel</button>
+          <button className="btn-pri" disabled={busy || band === '' || !reason.trim()} onClick={() => save(Number(band))}>{busy ? 'Saving…' : 'Override'}</button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, ArrowRight, RotateCcw, Rocket, Activity, BellRing, Trash2, Save, X, Info, History, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, ArrowRight, RotateCcw, Rocket, Activity, BellRing, Trash2, Save, X, Info, History, ChevronDown, ChevronUp, Grid3x3 } from 'lucide-react';
 import { api, PHASES, phaseLabel, phaseColor } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
@@ -34,12 +34,17 @@ export default function CycleAdminPage() {
     try { await api(`/pms/cycles/${c.id}/phase`, { method: 'POST', body: JSON.stringify({ to, rollback }) }); load(); }
     catch (e) { setErr(e.message); }
   };
-  const publish = async () => {
-    if (!confirm('Publish ratings to all employees? This writes performance history and notifies everyone rated.')) return;
+  const [published, setPublished] = useState(null);
+  const [nineBoxFor, setNineBoxFor] = useState(null);
+  const publish = async (c) => {
+    const nine = c.cycle_type === 'annual'
+      ? ' It also places everyone on the 9-box and creates its actions: a PIP for Underperformer (0,0) and for anyone below the Low limit who cannot be placed, development actions, and the succession pool.'
+      : '';
+    if (!confirm(`Publish ratings to all employees? This writes performance history and notifies everyone rated.${nine}`)) return;
     setBusy(true); setErr(null);
     try {
       const r = await api('/pms/publish', { method: 'POST' });
-      alert(`Published: ${r.published}. ${r.failures.length ? `Failed: ${r.failures.length} — ` + r.failures.slice(0, 3).map(f => f.reason).join('; ') : ''}`);
+      setPublished(r);
       load();
     } catch (e) { setErr(e.message); }
     setBusy(false);
@@ -106,6 +111,7 @@ export default function CycleAdminPage() {
       </PageHead>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {sweep && <p className="text-xs text-emerald-700">{sweep}</p>}
+      {published && <PublishResult r={published} onClose={() => setPublished(null)} />}
       {/* Over the page, not above the cycle list — this screen's job is
           the cycles and their phase controls. */}
       {health?.draft && !healthOpen && (
@@ -143,7 +149,8 @@ export default function CycleAdminPage() {
               <div className="flex flex-wrap gap-2">
                 {next && <button className="btn-pri" onClick={() => phase(c, next, false)}><ArrowRight size={13} className="inline mr-1" />Advance to {phaseLabel(next)}</button>}
                 {prev && <button className="btn-sec" onClick={() => phase(c, prev, true)}><RotateCcw size={13} className="inline mr-1" />Roll back to {phaseLabel(prev)}</button>}
-                {c.phase === 'publish' && <button className="btn-pri !bg-emerald-700" disabled={busy} onClick={publish}><Rocket size={13} className="inline mr-1" />Publish ratings</button>}
+                {c.phase === 'publish' && <button className="btn-pri !bg-emerald-700" disabled={busy} onClick={() => publish(c)}><Rocket size={13} className="inline mr-1" />Publish ratings</button>}
+                {c.cycle_type === 'annual' && <button className="btn-sec" onClick={() => setNineBoxFor(c)}><Grid3x3 size={13} className="inline mr-1" />9-Box settings</button>}
                 {(c.rating_scale || []).some(s => s.value === 6) && (
                   <button className="btn-sec" onClick={() => resetRatingScale(c)}>Update to 5-grade scale (A+-C)</button>
                 )}
@@ -160,6 +167,7 @@ export default function CycleAdminPage() {
       })}
       {!cycles.length && <div className="card p-8 text-center text-sm text-navy-400">No cycles yet. Create one to begin — it starts in Draft; advance to KRA Setting when ready.</div>}
       {showNew && <NewCycleModal onClose={() => setShowNew(false)} onCreated={() => { setShowNew(false); load(); }} />}
+      {nineBoxFor && <NineBoxSettingsModal cycle={nineBoxFor} onClose={() => setNineBoxFor(null)} />}
     </div>
   );
 }
@@ -189,6 +197,12 @@ const ACTION_LABELS = {
   RETENTION_ALERT_SENT: 'Retention alert sent', SUPER50_FLAGGED: 'Flagged on Super 50', SUPER50_UNFLAGGED: 'Removed from Super 50',
   CONNECT_LOGGED: 'Connect logged', CONNECT_SIGNED_OFF: 'Connect signed off', CONNECT_REMINDERS_CHECKED: 'Connect reminders checked',
   CLOSURE_LETTER_GENERATED: 'Closure letter generated',
+  NINE_BOX_PLACED: '9-box placed', NINE_BOX_NOT_PLACED: '9-box: not placed', NINE_BOX_OVERRIDDEN: '9-box band overridden',
+  NINE_BOX_SETTINGS_UPDATED: '9-box settings changed', NINE_BOX_ACTION_CREATED: '9-box action created',
+  NINE_BOX_ACTION_DONE: '9-box action done', NINE_BOX_ACTION_REOPENED: '9-box action reopened',
+  NINE_BOX_ACTION_SUPERSEDED: '9-box action replaced', NINE_BOX_ESCALATED: 'Escalated: two cycles in (0,0)',
+  SUCCESSION_POOL_ADDED: 'Added to the succession pool', SUCCESSION_POOL_REMOVED: 'Left the succession pool',
+  POTENTIAL_ANSWERED: 'Potential questions answered',
 };
 function actionLabel(a) { return ACTION_LABELS[a] || a.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase()); }
 
@@ -317,3 +331,141 @@ function NewCycleModal({ onClose, onCreated }) {
 // seven rows, and GET/PUT /pms/review-parameters still serve and validate
 // them, so nothing a client has already configured is lost and putting
 // the editor back is putting this component back.
+
+const BOX_ORDER = ['2,2', '1,2', '2,1', '0,2', '1,1', '2,0', '0,1', '1,0', '0,0'];
+const NOT_PLACED_WORDS = { new_joiner: 'new joiners', no_rating: 'no rating', no_potential: 'no potential input' };
+
+// What publish did, said in full rather than in an alert().
+function PublishResult({ r, onClose }) {
+  const n = r.nine_box;
+  return (
+    <div className="card p-4 text-xs space-y-1.5 border-emerald-200">
+      <div className="flex items-start gap-2">
+        <p className="text-sm font-bold text-emerald-800 flex-1">Published: {r.published}</p>
+        <button className="text-navy-400 hover:text-navy-600" onClick={onClose} aria-label="Close"><X size={16} /></button>
+      </div>
+      {n && (
+        <>
+          <p><b>9-box:</b> {n.placed} placed{n.not_placed ? `, ${n.not_placed} not placed (${Object.entries(n.not_placed_by_reason).map(([k, v]) => `${v} ${NOT_PLACED_WORDS[k] || k}`).join(', ')})` : ''}.</p>
+          <p className="text-navy-600">{BOX_ORDER.filter((k) => n.by_box[k]).map((k) => `(${k}) ${n.by_box[k]}`).join(' · ')}</p>
+          <p>{n.actions_created} action{n.actions_created === 1 ? '' : 's'} created · {n.succession_added} added to the succession pool · {r.pips_opened} PIP{r.pips_opened === 1 ? '' : 's'} opened
+            {n.retention_alerts ? ` · ${n.retention_alerts} retention alert${n.retention_alerts === 1 ? '' : 's'}` : ''}
+            {n.escalations ? ` · ${n.escalations} escalated after two cycles in (0,0)` : ''}</p>
+        </>
+      )}
+      {!n && <p>{r.pips_opened} PIP{r.pips_opened === 1 ? '' : 's'} opened.</p>}
+      {r.failures.length > 0 && (
+        <p className="text-rose-600">Failed: {r.failures.length} — {r.failures.slice(0, 3).map((f) => f.reason).join('; ')}</p>
+      )}
+    </div>
+  );
+}
+
+// The 9-box settings of one annual cycle (13 Oct build specification):
+// band limits, the weight of potential's two halves, the nine box names
+// and actions, the potential questions. Saving before publish re-places
+// people at once and says how many moved; after publish they are fixed.
+function NineBoxSettingsModal({ cycle, onClose }) {
+  const [d, setD] = useState(null);
+  const [f, setF] = useState(null);
+  const [err, setErr] = useState(null);
+  const [errors, setErrors] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);
+  useEffect(() => {
+    api(`/pms/nine-box/settings?cycle_id=${cycle.id}`).then((r) => { setD(r); setF(JSON.parse(JSON.stringify(r.settings))); })
+      .catch((e) => setErr(e.message));
+  }, [cycle.id]);
+  const locked = d && d.locked;
+  const setBox = (k, field, v) => setF((x) => ({ ...x, boxes: { ...x.boxes, [k]: { ...x.boxes[k], [field]: v } } }));
+  const setQ = (i, field, v) => setF((x) => ({ ...x, questions: x.questions.map((q, j) => (j === i ? { ...q, [field]: v } : q)) }));
+  const save = async () => {
+    setBusy(true); setErr(null); setErrors([]); setDone(null);
+    try {
+      const r = await api(`/pms/nine-box/settings/${cycle.id}`, { method: 'PUT', body: JSON.stringify({
+        ...f, mid_from: Number(f.mid_from), high_from: Number(f.high_from), competency_weight: Number(f.competency_weight) }) });
+      setDone(`Saved. ${r.moved ? `${r.moved} ${r.moved === 1 ? 'person moves' : 'people move'} box.` : 'Nobody changes box.'}`);
+    } catch (e) { setErr(e.message); if (e.data && e.data.errors) setErrors(e.data.errors); }
+    setBusy(false);
+  };
+  const below = f ? (Math.round(Number(f.high_from) * 10 - 1) / 10).toFixed(1) : '';
+  return (
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 bg-navy-900/40 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-navy-100">
+          <p className="text-base font-bold">9-Box settings — {cycle.name}</p>
+          <button className="text-navy-400 hover:text-navy-600" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        </div>
+        {!f && !err && <p className="p-5 text-sm text-navy-400">Loading…</p>}
+        {err && !f && <p className="p-5 text-sm text-rose-600">{err}</p>}
+        {f && (
+          <div className="p-5 space-y-4 text-xs">
+            {locked && <p className="bg-amber-50 text-amber-800 rounded-lg p-2">{locked}</p>}
+            {!d.stored && <p className="text-navy-500">{d.inherited_from ? `Not set for this cycle yet — showing ${d.inherited_from.name}'s settings, which apply until you save.` : 'Not set for this cycle yet — showing the defaults from the 9-box specification.'}</p>}
+            <div>
+              <p className="lbl">Bands (1–5 scale, both axes)</p>
+              <div className="flex flex-wrap items-end gap-3">
+                <label>Medium from<input className="inp !w-20 mt-0.5" type="number" step="0.1" min="1" max="5" disabled={!!locked}
+                  value={f.mid_from} onChange={(e) => setF({ ...f, mid_from: e.target.value })} /></label>
+                <label>High from<input className="inp !w-20 mt-0.5" type="number" step="0.1" min="1" max="5" disabled={!!locked}
+                  value={f.high_from} onChange={(e) => setF({ ...f, high_from: e.target.value })} /></label>
+                <p className="text-navy-500 pb-2">Low below {Number(f.mid_from).toFixed(1)} · Medium {Number(f.mid_from).toFixed(1)}–{below} · High {Number(f.high_from).toFixed(1)} and above</p>
+              </div>
+            </div>
+            <div>
+              <p className="lbl">Potential</p>
+              <label className="flex flex-wrap items-center gap-2">Competency score counts
+                <input className="inp !w-20" type="number" step="5" min="0" max="100" disabled={!!locked}
+                  value={f.competency_weight} onChange={(e) => setF({ ...f, competency_weight: e.target.value })} />
+                % · the manager's questions {100 - Number(f.competency_weight || 0)}%
+              </label>
+              <p className="text-navy-400 mt-1">If one half is missing for somebody, the other is used alone and marked as one half.</p>
+            </div>
+            <div>
+              <p className="lbl">Boxes — name and the action publish creates</p>
+              <div className="space-y-2">
+                {BOX_ORDER.map((k) => (
+                  <div key={k} className="grid sm:grid-cols-[3rem_10rem_1fr] gap-1.5 items-start">
+                    <span className="text-navy-400 pt-1.5">({k})</span>
+                    <input className="inp" value={f.boxes[k].name} disabled={!!locked} onChange={(e) => setBox(k, 'name', e.target.value)} />
+                    <input className="inp" value={f.boxes[k].action} disabled={!!locked} onChange={(e) => setBox(k, 'action', e.target.value)} />
+                  </div>
+                ))}
+              </div>
+              <p className="text-navy-400 mt-1">(0,0) always opens a PIP and (2,2) always joins the succession pool; the wording is yours.</p>
+            </div>
+            <div>
+              <p className="lbl">Potential questions (rated 1–5 by the manager)</p>
+              {d.questions_answered && <p className="text-navy-500 mb-1">Managers have already answered these this cycle, so they can be reworded but not added or removed.</p>}
+              <div className="space-y-1.5">
+                {f.questions.map((q, i) => (
+                  <div key={q.key || i} className="grid sm:grid-cols-[14rem_1fr_auto] gap-1.5">
+                    <input className="inp" value={q.label} disabled={!!locked} onChange={(e) => setQ(i, 'label', e.target.value)} placeholder="Question" />
+                    <input className="inp" value={q.hint || ''} disabled={!!locked} onChange={(e) => setQ(i, 'hint', e.target.value)} placeholder="Hint shown to the manager" />
+                    {!locked && !d.questions_answered && f.questions.length > 1 && (
+                      <button className="text-navy-400 hover:text-rose-600 px-1" aria-label="Remove question"
+                        onClick={() => setF((x) => ({ ...x, questions: x.questions.filter((_, j) => j !== i) }))}><X size={14} /></button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {!locked && !d.questions_answered && f.questions.length < 8 && (
+                <button className="text-[11px] text-navy-600 hover:underline mt-1" onClick={() => setF((x) => ({ ...x, questions: [...x.questions, { key: '', label: '', hint: '' }] }))}>
+                  <Plus size={11} className="inline" /> Add a question
+                </button>
+              )}
+            </div>
+            {errors.length > 1 ? <ul className="text-rose-600 list-disc pl-4">{errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+              : err && <p className="text-rose-600">{err}</p>}
+            {done && <p className="text-emerald-700">{done}</p>}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-navy-100">
+          {f && !locked && <button className="btn-sec mr-auto" onClick={() => setF(JSON.parse(JSON.stringify(d.defaults)))}>Reset to the specification's defaults</button>}
+          <button className="btn-sec" onClick={onClose}>Close</button>
+          {f && !locked && <button className="btn-pri" disabled={busy} onClick={save}><Save size={13} className="inline mr-1" />{busy ? 'Saving…' : 'Save'}</button>}
+        </div>
+      </div>
+    </div>
+  );
+}

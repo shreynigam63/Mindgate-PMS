@@ -77,7 +77,7 @@ export default function TeamEvalPage() {
 }
 
 function EvalEditor({ t, phase, scale, reload }) {
-  const [f, setF] = useState({ overall_rating: t.overall_rating ?? '', strengths: t.strengths || '', improvement_areas: t.improvement_areas || '', potential_rating: t.potential_rating || '' });
+  const [f, setF] = useState({ overall_rating: t.overall_rating ?? '', strengths: t.strengths || '', improvement_areas: t.improvement_areas || '' });
   const [state, setState] = useState('idle');
   const [err, setErr] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -172,28 +172,7 @@ function EvalEditor({ t, phase, scale, reload }) {
         <textarea className="inp" rows={3} value={f.strengths} onChange={setText('strengths')} disabled={!editable} /></div>
       <div><label className="lbl">Improvement areas</label>
         <textarea className="inp" rows={3} value={f.improvement_areas} onChange={setText('improvement_areas')} disabled={!editable} /></div>
-      {/* Potential, recorded here as well as at calibration. This is the
-          MANAGER'S read, made with a year of context; calibration still
-          settles the final 9-box placement with the distribution on
-          screen, and sees this as its starting point. Neither overwrites
-          the other — see migration 043. */}
-      <div>
-        <label className="lbl">Potential</label>
-        <div className="flex gap-2">
-          {[['', 'Not set'], ['low', 'Low'], ['mid', 'Medium'], ['high', 'High']].map(([v, label]) => (
-            <button key={v} type="button" disabled={!editable}
-              onClick={() => { setF(x => ({ ...x, potential_rating: v })); persist({ potential_rating: v || null }); }}
-              className={`chip px-3 py-1.5 ${f.potential_rating === v
-                ? 'bg-violet-600 text-white' : 'bg-white text-navy-500 border border-navy-100'} ${editable ? '' : 'opacity-50'}`}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-navy-400 mt-1">
-          Your read on how far this person could go. Calibration sees it and settles the final
-          9-box placement; this is not overwritten by that.
-        </p>
-      </div>
+      <PotentialStep employeeId={t.employee_id} />
       {/* Performance Improvement Plan (7 Oct) — opened from here when the
           year has gone badly, rather than only by publish. */}
       <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2">
@@ -221,6 +200,79 @@ function EvalEditor({ t, phase, scale, reload }) {
 // overall computed server-side as the weighted average — see
 // PUT /team/evaluations/:employeeId. Employee's own self-rating per KRA
 // is shown alongside (read-only) for direct comparison while rating.
+// THE POTENTIAL STEP (9-box build specification, 13 Oct). Four questions,
+// each 1 to 5, averaged with the competency score from Team Competencies
+// to give the potential axis of the 9-box. It replaced a single
+// Low/Medium/High chip. Annual cycles only — the server says when it does
+// not apply, and then nothing is shown. Each click saves.
+const SCORE = [1, 2, 3, 4, 5];
+function PotentialStep({ employeeId }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [state, setState] = useState('idle');
+  useEffect(() => {
+    api(`/pms/team/evaluations/${employeeId}/potential`).then(setD).catch((e) => setErr(e.message));
+  }, [employeeId]);
+  if (err && !d) return <p className="text-[11px] text-rose-600">Potential: {err}</p>;
+  if (!d || !d.applies) return null;
+  const answer = async (key, value) => {
+    setState('saving'); setErr(null);
+    try {
+      const r = await api(`/pms/team/evaluations/${employeeId}/potential`, { method: 'PUT', body: JSON.stringify({ answers: { [key]: value } }) });
+      setD(r); setState('saved');
+    } catch (e) { setErr(e.message); setState('error'); }
+  };
+  const c = d.competency;
+  const p = d.potential;
+  return (
+    <div className="border border-violet-100 bg-violet-50/40 rounded-lg p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <p className="lbl !mb-0 flex-1">Potential</p>
+        {state === 'saving' && <span className="text-[10.5px] text-amber-600">Saving…</span>}
+        {state === 'saved' && <span className="text-[10.5px] text-emerald-600">Saved ✓</span>}
+      </div>
+      <p className="text-[11px] text-navy-500">
+        Rate each from 1 (well below what the role needs) to 5 (far beyond it). With the competency
+        score these make the potential axis of the 9-box — {d.weights.competency}% competencies,
+        {' '}{d.weights.questions}% these questions. {d.employee.name} never sees their box.
+      </p>
+      {d.questions.map((q) => (
+        <div key={q.key} className="flex flex-wrap items-center gap-2">
+          <div className="flex-1 min-w-[12rem]">
+            <p className="text-xs font-semibold text-navy-700">{q.label}</p>
+            {q.hint && <p className="text-[10.5px] text-navy-400">{q.hint}</p>}
+          </div>
+          <div className="flex gap-1">
+            {SCORE.map((n) => (
+              <button key={n} type="button" disabled={!d.editable} onClick={() => answer(q.key, d.answers[q.key] === n ? null : n)}
+                aria-pressed={d.answers[q.key] === n} title={d.answers[q.key] === n ? 'Click again to clear' : undefined}
+                className={`w-7 h-7 rounded-lg text-xs font-semibold ${d.answers[q.key] === n
+                  ? 'bg-violet-600 text-white' : 'bg-white text-navy-500 border border-navy-100'} ${d.editable ? '' : 'opacity-50'}`}>
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+      <div className="text-[11px] text-navy-600 border-t border-violet-100 pt-2 space-y-0.5">
+        <p>
+          <b>Competency score:</b>{' '}
+          {c.score != null ? <>{c.score} <span className="text-navy-400">({c.rated} of {c.total} competencies, submitted)</span></>
+            : <span className="text-amber-800">{c.status === 'not_started' ? 'not started' : 'not submitted yet'} — rate and submit it on <Link className="underline" to="/team/competencies">Team Competencies</Link></span>}
+        </p>
+        <p><b>Questions:</b> {d.questions_score.score != null ? d.questions_score.score : `${d.questions_score.answered} of ${d.questions_score.total} answered`}</p>
+        <p>
+          <b>Potential now:</b>{' '}
+          {p.score != null ? <>{p.score} · {p.band_name}{p.partial && <span className="text-amber-700"> (from the {p.from} only)</span>}</> : <span className="text-navy-400">not enough yet</span>}
+          <span className="text-navy-400"> · {d.band_text}</span>
+        </p>
+      </div>
+      {!d.editable && <p className="text-[10.5px] text-navy-400">Manager evaluation is closed, so these can no longer be changed.</p>}
+      {err && <p className="text-[11px] text-rose-600">{err}</p>}
+    </div>
+  );
+}
+
 function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries, onOverallChange, hideOverallFooter, selfSubmitted, kraEdit, reloadKey }) {
   const [kras, setKras] = useState(null);
   const [entries, setEntries] = useState({});

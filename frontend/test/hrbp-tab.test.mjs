@@ -75,11 +75,12 @@ test('THE HRBP TAB SITS BETWEEN DELIVERY HEAD AND HR, and carries HR’s own tab
   const iR = names.findIndex((x) => x === 'HR');
   assert.ok(iB > -1, `no HRBP tab — tabs were ${names.filter(Boolean).slice(0, 10).join(', ')}`);
   assert.ok(iH > -1 && iH < iB, `HRBP must sit after HOD: ${iH}, ${iB}`);
-  // WRITTEN TWICE. This first asserted the HR tab was absent entirely.
-  // It is not, and should not be: hod@shot.in is a genuine HOD,
-  // and /admin/nine-box is gated on pms_hod on purpose, so one HR entry
-  // legitimately remains. What actually matters is that the HRBP tab
-  // carries HR's OWN tabs rather than a hand-picked subset.
+  // WRITTEN TWICE. This first asserted the HR tab was absent entirely,
+  // then allowed one HR entry because /admin/nine-box was gated on
+  // pms_hod. Since 13 Oct it is pms_admin and a Delivery Head has their
+  // own /hod/nine-box, so whether an HR tab shows is not this test's
+  // business. What matters is that the HRBP tab carries HR's OWN tabs
+  // rather than a hand-picked subset.
   // The sub-nav only renders for the ACTIVE tab, so read it from a page
   // inside the group rather than from Home.
   await page.goto(APP + '/hrbp/approvals', { waitUntil: 'networkidle' });
