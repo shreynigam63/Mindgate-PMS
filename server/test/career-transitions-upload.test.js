@@ -50,7 +50,7 @@ test('the rules that reject a row', () => {
     HEADERS,
     ['', '', 'Manager', '', '', '', '', '', ''],                       // no From Role
     ['Executive', '', 'Executive', '', '', '', '', '', ''],            // to itself
-    ['Executive', 'L1', 'Executive', 'L2', '', '', '', '', ''],        // same role, DIFFERENT level: fine
+    ['Executive', 'L1', 'Executive', 'L2', '', '', '', '', ''],        // same role, different level: no move (13 Oct)
     ['Executive', '', 'Manager', '', 'soon', '', '', '', ''],          // not a number
     ['Executive', '', 'Senior Executive', '', '', '', '', '', ''],
     ['executive', '', '  Senior   Executive ', '', '', '', '', '', ''], // same rung, different spelling
@@ -59,7 +59,9 @@ test('the rules that reject a row', () => {
   const at = (line) => r.errors.filter((e) => e.line === line).map((e) => e.error).join(' | ');
   assert.match(at(2), /required/);
   assert.match(at(3), /moves to itself/);
-  assert.equal(at(4), '', 'a level change within one role is a real transition');
+  // 13 Oct: moves are matched on role alone, so a level (or band) change
+  // within one role would offer people the role they already hold.
+  assert.match(at(4), /moves to itself/, 'a level change within one role is no move any more');
   assert.match(at(5), /whole number/);
   assert.match(at(7), /duplicate of line 6/);
 });

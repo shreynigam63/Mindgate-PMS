@@ -14,7 +14,8 @@ const { requireConsent } = require('../../core/consent');
 // house rule that modules never import each other's internals. This is
 // also what guarantees career suggestions stay inside the set the
 // career-path form accepts — both resolve eligibility through it.
-const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor, targetDepartments } = require('../people');
+const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor, targetDepartments,
+  experienceFrom, remainingTimeline } = require('../people');
 // Same house rule, the other direction: the appraisal summary narrates the
 // performance module's own consolidation rather than re-gathering it.
 const { buildAnnualReviewSummary, kraSuggestionCandidates } = require('../performance');
@@ -885,7 +886,7 @@ router.post('/career-plan', async (req, res) => {
     const targetRole = String(b.target_role || '').trim().slice(0, 200);
     if (!targetRole) return res.status(400).json({ error: 'Type the role you are aiming at first.' });
     const emp = (await db.query(
-      `SELECT id, name, department, designation, role_band, date_of_joining FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      `SELECT id, name, department, designation, date_of_joining, total_experience_years FROM core.employees WHERE id=$1 AND tenant_id=$2`,
       [req.user.id, T(req)])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee record not found' });
 
@@ -902,7 +903,8 @@ router.post('/career-plan', async (req, res) => {
     const val = (k, max) => { const v = typed[k] != null && String(typed[k]).trim() !== '' ? typed[k] : lt[k]; return v == null || String(v).trim() === '' ? null : String(v).trim().slice(0, max); };
 
     const input = {
-      employee: { designation: emp.designation, department: emp.department, role_band: emp.role_band, joined: emp.date_of_joining },
+      employee: { designation: emp.designation, department: emp.department, joined: emp.date_of_joining,
+        hrms_total_experience_years: emp.total_experience_years == null ? null : Number(emp.total_experience_years) },
       target_role: targetRole,
       short_term_goal: st && st.target_role ? st : null,
       self_reported: { years_experience: val('years_experience', 10), skills_and_interests: val('skills_interests', 2000), current_plan: val('plan', 3000) },
@@ -910,6 +912,9 @@ router.post('/career-plan', async (req, res) => {
       cross_department: where,
       organisation_path: onPath
         ? { steps_from_current_role: onPath.steps || 1, via: onPath.via || [], typical_time_months: onPath.typical_time_months,
+            // What is left of it after their total experience (13 Oct).
+            remaining_time_months: remainingTimeline(onPath.typical_time_months, onPath.min_time_months,
+              experienceFrom(emp.total_experience_years, val('years_experience', 10))).remaining_time_months,
             required_competencies: onPath.required_competencies || [], from: onPath.source === 'grade_sheet' ? 'grade_and_level_sheet' : 'career_pathing_matrix' }
         : null,
     };
@@ -928,8 +933,9 @@ Use the facts as given; do not contradict them:
   held or filed anywhere yet — say it could not be checked.
 - organisation_path, when present, is the organisation's own route (its
   Career Pathing Matrix or Grade and Level sheet): use its
-  typical_time_months for the timeline and its required_competencies in
-  the skills. When absent, the role is not on the organisation's path from
+  remaining_time_months for the timeline — the time LEFT of the path's
+  typical_time_months after the employee's total experience (0 means due
+  now) — and its required_competencies in the skills. When absent, the role is not on the organisation's path from
   here — say so once, and estimate the timeline as a range, marked as an
   estimate.
 - short_term_goal, when present, is the step already planned; the plan
@@ -962,7 +968,7 @@ Respond ONLY with JSON:
 router.post('/career-suggest', async (req, res) => {
   try {
     const emp = (await db.query(
-      `SELECT id, name, department, designation, role_band, date_of_joining FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+      `SELECT id, name, department, designation, date_of_joining, total_experience_years FROM core.employees WHERE id=$1 AND tenant_id=$2`,
       [req.user.id, T(req)])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee record not found' });
     if (!emp.designation) return res.status(409).json({ error: 'Your designation is not set — ask HR to complete your record before asking for career suggestions.' });
@@ -1041,7 +1047,8 @@ router.post('/career-suggest', async (req, res) => {
       ? { reason: 'none_beyond_short_term', short_term_role: shortTerm.target_role } : null;
 
     const input = {
-      employee: { name: emp.name, designation: emp.designation, department: emp.department, role_band: emp.role_band, joined: emp.date_of_joining },
+      employee: { name: emp.name, designation: emp.designation, department: emp.department, joined: emp.date_of_joining,
+        hrms_total_experience_years: emp.total_experience_years == null ? null : Number(emp.total_experience_years) },
       horizon: horizon === 'long_term' ? 'long_term: three years and beyond' : 'short_term: the next one to two years',
       current_aspiration: anyTyped || current.years_experience != null || current.skills_interests ? current : null,
       // Long-Term only: the plan already made for the next move.
@@ -1058,15 +1065,18 @@ router.post('/career-suggest', async (req, res) => {
       // The closed list. Empty means HR has configured no ladder from this
       // role — reported as such rather than filled in by the model.
       configured_transitions: transitions.map((t) => ({
-        to_role: t.to_role, to_level: t.to_level,
+        to_role: t.to_role, to_level: t.to_level || null,
         ...(t.steps ? { steps_up: t.steps, via: t.via } : {}),
         ...(t.source === 'grade_sheet' ? { from_grade_sheet: true } : {}),
         ...(stTarget ? { builds_on_short_term_goal: (t.via || []).some((v) => String(v).trim().toLowerCase() === stTarget) } : {}),
         typical_time_months: t.typical_time_months,
+        // The time LEFT of it after their total experience (13 Oct).
+        remaining_time_months: remainingTimeline(t.typical_time_months, t.min_time_months,
+          experienceFrom(emp.total_experience_years, current.years_experience)).remaining_time_months,
         required_competencies: t.required_competencies || [],
       })),
       // Present only when configured_transitions is empty. reason is one
-      // of: none_configured | level_mismatch | all_inactive | no_designation
+      // of: none_configured | department_mismatch | all_inactive | no_designation
       why_no_transitions: beyond || diagnostics,
     };
     const out = await ai.narrate({
@@ -1089,8 +1099,8 @@ long-term role as what comes AFTER it: prefer configured_transitions with
 builds_on_short_term_goal true; only if none, use the others and say why.
 Never propose the short-term target role itself as the long-term one.
 Write the fit as continuing from the short-term goal ("once you are a
-<short-term role> …"), give typical_time as the time from now (the
-matrix's figure for the whole climb), make first_steps things to start
+<short-term role> …"), give typical_time as the time from now (remaining_time_months: what is
+left of the matrix's figure for the whole climb after their experience), make first_steps things to start
 alongside the short-term plan, and make the suggested_milestones the
 steps AFTER the short-term milestones — never repeat one of those. If
 short_term_goal is null, say once in notes that setting the short-term
@@ -1119,13 +1129,6 @@ When configured_transitions is empty, why_no_transitions says why, and
 you must report THAT reason rather than assuming nothing exists:
 - none_configured: no path has been defined from this role yet; HR needs
   to add one to the Career Pathing Matrix.
-- level_mismatch: a path IS configured from this role, but it is
-  restricted to a level that does not match this employee's role band.
-  Say so explicitly, quote the required level and the employee's actual
-  role_band from the input, and say HR should either clear the level on
-  that transition (blank means any level) or correct the employee's role
-  band. Do NOT say nothing is configured — it is, and saying otherwise
-  sends people looking for the wrong thing.
 - all_inactive: the path exists but every transition from this role is
   deactivated; HR can reactivate it.
 - none_beyond_short_term: (long_term) the employee's short-term goal is
@@ -1138,8 +1141,10 @@ you must report THAT reason rather than assuming nothing exists:
   employee's department or make one company-wide (blank department).
 - no_designation: the employee has no designation on their record, so
   nothing can be matched until HR sets it.
-Use the matrix's own typical_time_months and required_competencies rather
-than estimating your own. You never suggest, imply or hint at a
+Use the matrix's own figures rather than estimating your own: give
+typical_time as remaining_time_months — the time LEFT of the matrix's
+typical_time_months after the employee's total experience, 0 meaning due
+now — and use its required_competencies. You never suggest, imply or hint at a
 performance rating or score, and you never promise a promotion — you are
 describing what an aspiration would require, not what will happen.
 Each suggested_milestone must be a step the employee could actually put a

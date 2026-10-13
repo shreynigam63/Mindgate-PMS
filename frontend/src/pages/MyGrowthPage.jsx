@@ -644,7 +644,7 @@ function CareerAiPanel({ onUse, horizon, draft, shortTerm }) {
     >
       {(d) => (
         <div className="space-y-2">
-          {d.no_path_configured && <p className="text-amber-700">No role could be suggested from the Career Pathing Matrix for your role and level — the note above the form says why, and who can fix it.</p>}
+          {d.no_path_configured && <p className="text-amber-700">No role could be suggested from the Career Pathing Matrix for your role — the note above the form says why, and who can fix it.</p>}
           {/* THE READINESS READ, from the two questions on the form.
               Asked for on 23 Sep: benchmark, competencies, and whether
               they are eligible. It leads, because it is the question the
@@ -670,36 +670,36 @@ function CareerAiPanel({ onUse, horizon, draft, shortTerm }) {
 // not set this up". Saying "nothing is configured" when a transition
 // exists but was excluded on level sent people looking for a row that was
 // already there.
+// What is left of a move's time after the employee's total experience
+// (13 Oct: the Expected timeline is the months REMAINING, not the matrix's
+// whole figure). The server does the sum; this says what it was based on.
+function TimeLeft({ o, experience, months }) {
+  if (!o || o.typical_time_months == null) return null;
+  if (o.timeline_basis === 'no_experience' || !experience || experience.years == null) {
+    return <>Your total experience is not on record yet (HR loads it from the HRMS), so this is the matrix's full figure.</>;
+  }
+  const from = experience.source === 'hrms' ? 'on your HR record' : 'as you entered it on Long-Term';
+  return (
+    <>With your <b>{experience.years} years</b> of total experience ({from}),{' '}
+      {o.remaining_time_months > 0
+        ? <>about <b>{months(o.remaining_time_months)}</b> remain{o.steps === 1 && o.remaining_min_months != null
+          ? (o.remaining_min_months > 0 ? <>, at least {months(o.remaining_min_months)}</> : <> — you are already past the minimum</>)
+          : null}.</>
+        : <>you are past it — this move is <b>due now</b>.</>}
+    </>
+  );
+}
+
 function CareerPathGap({ d }) {
   if (!d || d.reason === 'ok') return null;
 
-  if (d.reason === 'level_mismatch') {
-    return (
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs space-y-1.5">
-        <p className="font-bold text-amber-800">A career path exists for your role, but it does not match your level</p>
-        <p className="text-navy-600">
-          The matrix has {d.excluded_by_level.length === 1 ? 'a transition' : `${d.excluded_by_level.length} transitions`} from
-          <b> {d.designation}</b>, but {d.excluded_by_level.length === 1 ? 'it is' : 'they are'} restricted to a level that
-          does not match your role band {d.role_band ? <>(<b>{d.role_band}</b>)</> : <>(<b>not set on your record</b>)</>}.
-        </p>
-        <ul className="list-disc pl-4 text-navy-500">
-          {d.excluded_by_level.map((t, i) => (
-            <li key={i}>→ {t.to_role} — requires level <b>{t.requires_level}</b></li>
-          ))}
-        </ul>
-        <p className="text-navy-600">
-          Ask HR to either clear the level on that transition (blank means <i>any level</i>) or correct your role band.
-        </p>
-      </div>
-    );
-  }
   // Long-Term starts after the saved short-term goal (8 Oct); this is the
   // matrix stopping there, not a missing path from the employee's role.
   if (d.reason === 'none_beyond_short_term') {
     return <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs">
       <p className="font-bold text-amber-800">Nothing configured beyond your short-term goal yet</p>
       <p className="text-navy-600">Your long-term goal is the step <i>after</i> <b>{d.short_term_role}</b>, and neither the Career Pathing Matrix
-        nor the Grade and Level sheet has a level above {d.short_term_role}{d.short_term_level ? <> ({d.short_term_level})</> : null} yet.
+        nor the Grade and Level sheet has a level above {d.short_term_role} yet.
         Ask HR to add the next one (for example <i>{d.short_term_role} → Lead - Technical</i>).</p>
     </div>;
   }
@@ -874,10 +874,13 @@ function CareerPathCard() {
   // whatever was typed for a different role.
   const option = (role) => (data.target_options || []).find((o) => o.role === role) || null;
   const months = (m) => (m == null ? '' : `${m} months`);
+  // A role's Expected timeline: what is LEFT of the matrix's figure after
+  // the employee's total experience (13 Oct), worked out by the server.
+  const timelineOf = (o) => (!o ? '' : (o.timeline_text ?? months(o.typical_time_months)));
   const pickRole = (role) => setForm((f) => {
     if (role === f.target_role) return f;
     const o = option(role);
-    if (o && o.typical_time_months != null) return { ...f, target_role: role, target_timeline: months(o.typical_time_months) };
+    if (o && o.typical_time_months != null) return { ...f, target_role: role, target_timeline: timelineOf(o) };
     // Long-Term is typed freely: a role off the list keeps what is there.
     return { ...f, target_role: role, target_timeline: horizon === 'long_term' ? f.target_timeline : '' };
   });
@@ -924,7 +927,6 @@ function CareerPathCard() {
           <span className="text-navy-400">Current role</span>
           <b className="text-navy-900">{data.current.designation || 'not set on your record'}</b>
           {data.current.department && <span className="text-navy-500">· {data.current.department}</span>}
-          {data.current.role_band && <span className="chip bg-white text-navy-500">{data.current.role_band}</span>}
         </div>
       )}
       {/* Why the matrix offers nothing — a Short-Term matter now that
@@ -934,7 +936,8 @@ function CareerPathCard() {
       {horizon === 'long_term' && (data.short_term_goal ? (
         <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 text-xs text-indigo-900">
           Builds on your short-term goal: <b>{data.short_term_goal.target_role}</b>
-          {data.short_term_goal.target_timeline && <> in {data.short_term_goal.target_timeline}</>}.
+          {data.short_term_goal.target_timeline && (data.short_term_goal.target_timeline === 'Due now'
+            ? <> (due now)</> : <> in {data.short_term_goal.target_timeline}</>)}.
           {' '}The suggestion below starts from there.
         </div>
       ) : (
@@ -978,7 +981,7 @@ function CareerPathCard() {
         setForm((fm) => {
           const changed = !!a.target_role && a.target_role !== fm.target_role;
           const o = option(a.target_role);
-          const matrixTime = o && o.typical_time_months != null ? months(o.typical_time_months) : (a.typical_time || '');
+          const matrixTime = o && o.typical_time_months != null ? timelineOf(o) : (a.typical_time || '');
           return {
           ...fm,
           target_role: a.target_role || fm.target_role,
@@ -1087,9 +1090,10 @@ function CareerPathCard() {
             Career Pathing Matrix: typically <b>{months(chosen.typical_time_months)}</b>
             {chosen.steps > 1 ? ` for the ${chosen.steps} steps` : ' for this move'}
             {chosen.min_time_months != null && chosen.steps === 1 ? `, at least ${months(chosen.min_time_months)}` : ''}.
-            {horizon === 'long_term' && form.target_timeline !== months(chosen.typical_time_months) && editable && (
+            {' '}<TimeLeft o={chosen} experience={data.experience} months={months} />
+            {horizon === 'long_term' && form.target_timeline !== timelineOf(chosen) && editable && (
               <button type="button" className="ml-1 font-semibold text-brand-600"
-                onClick={() => setForm(f => ({ ...f, target_timeline: months(chosen.typical_time_months) }))}>Use it</button>
+                onClick={() => setForm(f => ({ ...f, target_timeline: timelineOf(chosen) }))}>Use it</button>
             )}
           </p>
         )}

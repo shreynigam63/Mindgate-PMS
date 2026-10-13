@@ -15,6 +15,10 @@
 // The spreadsheet columns, in order, and what each maps to. The labels
 // match the New transition modal's field names so somebody filling the
 // sheet recognises them from the screen they already use.
+// A level is the grade alone; the band stays on the Grade and Level sheet
+// (13 Oct). See career-level.js.
+const { gradeOnly } = require('./career-level');
+
 const COLUMNS = [
   // Department leads the sheet, as the filled-in template sent on 23 Sep
   // has it. BLANK means the rung applies to every department — the same
@@ -44,8 +48,8 @@ for (const [alias, field] of [
   ['departmentname', 'department'],
   ['fromdesignation', 'from_role'], ['currentrole', 'from_role'], ['role', 'from_role'],
   ['todesignation', 'to_role'], ['nextrole', 'to_role'], ['targetrole', 'to_role'],
-  ['fromband', 'from_level'], ['currentlevel', 'from_level'],
-  ['toband', 'to_level'], ['nextlevel', 'to_level'], ['targetlevel', 'to_level'],
+  ['currentlevel', 'from_level'],
+  ['nextlevel', 'to_level'], ['targetlevel', 'to_level'],
   ['levelchange', 'expected_level_change'], ['expectedlevelchange', 'expected_level_change'],
   ['mintimemonths', 'min_time_months'], ['mintimeinrolemonths', 'min_time_months'],
   ['minmonths', 'min_time_months'],
@@ -84,7 +88,9 @@ function wholeNumber(cell, label, line, errors) {
 // manager" are the same rung and publishing both would put two identical
 // arrows on the matrix.
 const norm = (v) => txt(v).toLowerCase().replace(/\s+/g, ' ');
-const rung = (role, level) => `${norm(role)}@${norm(level)}`;
+// The level counts by its grade only, so a row stored as "E3 · Band 6"
+// and its re-upload as "E3" are the same rung, not two.
+const rung = (role, level) => `${norm(role)}@${norm(gradeOnly(level))}`;
 // The department is PART OF the identity. "Executive → Senior Executive"
 // in Sales and the same pair in Infrastructure are two different rungs
 // with different competencies, so re-uploading one must not overwrite
@@ -144,9 +150,9 @@ function validateCareerTransitionRows(rows, knownRoles = new Set(), knownDepartm
       line,
       department: get('department') || null,
       from_role: fromRole,
-      from_level: get('from_level') || null,
+      from_level: gradeOnly(get('from_level')) || null,
       to_role: toRole,
-      to_level: get('to_level') || null,
+      to_level: gradeOnly(get('to_level')) || null,
       expected_level_change: wholeNumber(get('expected_level_change'), 'Expected Level Change', line, errors),
       min_time_months: wholeNumber(get('min_time_months'), 'Min Time In Current Role', line, errors),
       typical_time_months: wholeNumber(get('typical_time_months'), 'Typical Time In Current Role', line, errors),
@@ -154,10 +160,11 @@ function validateCareerTransitionRows(rows, knownRoles = new Set(), knownDepartm
       notes: get('notes') || null,
     };
 
-    // A transition from a rung to itself is not a step, and the matrix
-    // would render an arrow pointing at its own tail.
-    if (rung(rec.from_role, rec.from_level) === rung(rec.to_role, rec.to_level)) {
-      errors.push({ line, error: `"${fromRole}" moves to itself — a transition needs a different role or level` });
+    // A transition from a role to itself is not a step. Moves are matched
+    // on role alone now (13 Oct), so a row that changes only the level or
+    // band would offer people the role they already hold.
+    if (norm(rec.from_role) === norm(rec.to_role)) {
+      errors.push({ line, error: `"${fromRole}" moves to itself — a transition needs a different To Role (level and band play no part in a move)` });
       continue;
     }
 

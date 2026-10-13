@@ -30,17 +30,19 @@ function parseLevel(s) {
   return { text, grade, band };
 }
 
-/** True when an employee at `actual` may take a move written for `required`. Blank `required` = any level. */
-function levelMatches(required, actual) {
-  if (!clean(required)) return true;
-  const r = parseLevel(required);
-  const a = parseLevel(actual);
-  if (!a) return false;
-  if (r.text === a.text) return true;
-  if (!r.grade && !r.band) return false;
-  if (r.grade && a.grade && r.grade !== a.grade) return false;
-  if (r.band && a.band && r.band !== a.band) return false;
-  return !!((r.grade && a.grade) || (r.band && a.band));
+// BAND IS OFF THE MATRIX (13 Oct: "remove band from career pathing
+// matrix and just keep it on grade and level sheet"). A matrix level is
+// the GRADE alone — "E3 · Band 6" reads as E3, "Band 6" as nothing — and
+// it is for reference: no move is matched on level any more, only on
+// role and department. Stored rows keep whatever text they were written
+// with; everything that reads or writes a level goes through this.
+/** The grade a level names (E3), '' for a band alone, else the text as written. */
+function gradeOnly(s) {
+  const p = parseLevel(s);
+  if (!p) return '';
+  if (p.grade) return p.grade.toUpperCase();
+  if (p.band) return '';
+  return String(s).trim();
 }
 
-module.exports = { parseLevel, levelMatches };
+module.exports = { parseLevel, gradeOnly };

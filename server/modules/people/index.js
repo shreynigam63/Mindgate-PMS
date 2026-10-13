@@ -10,7 +10,7 @@ const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
 const { guardUuidParams } = require('../../core/http');
-const { apiPermissionParity, hasPermission } = require('../../core/permissions');
+const { apiPermissionParity, hasPermission, holdsPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const pm = require('../performance/phase-machine');
 const { activeCycle } = require('../performance/active-cycle');
@@ -47,6 +47,10 @@ router.use(authenticate, require('../../core/scope-hooks').run(), apiPermissionP
 // handler can pass one into a query (see core/http.js).
 guardUuidParams(router);
 const T = (req) => req.user.tenant_id;
+// A matrix level is the grade alone (see career-level.js, 13 Oct).
+const { gradeOnly } = require('./career-level');
+const { experienceFrom, remainingTimeline } = require('./career-timeline');
+const levelsAsGrades = (t) => (t ? { ...t, from_level: gradeOnly(t.from_level) || null, to_level: gradeOnly(t.to_level) || null } : t);
 const adminOnly = async (req, res) => {
   if (await hasPermission(req.user, 'people_admin')) return true;
   res.status(403).json({ error: "Requires 'people_admin'" }); return false;
@@ -156,6 +160,59 @@ router.post('/awards/nominations/:id/decide', async (req, res) => {
 });
 
 // ---- Events + RSVP ---------------------------------------------------------
+// HR schedules events and CSR activities on HR → Events & CSR, and
+// everyone sees and answers them on People Hub (13 Oct: "apart from
+// awards, there is no option for HR to start Events"). The create routes
+// were here from the start with no screen in front of them, and nothing
+// could change or remove an event once made.
+const isoAt = (v) => {
+  if (v == null || v === '') return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+};
+const isoDay = (v) => {
+  if (v == null || v === '') return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(v)) && !Number.isNaN(new Date(`${v}T00:00:00Z`).getTime()) ? String(v) : undefined;
+};
+const text = (v, max) => { const t = String(v == null ? '' : v).trim(); return t ? t.slice(0, max) : null; };
+// One line per change, so "who cancelled the offsite" has an answer.
+const peopleAudit = (req, action, entity, details) => db.query(
+  `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, details) VALUES ($1,$2,$3,$4,$5)`,
+  [req.user.tenant_id, req.user.email, action, entity, JSON.stringify(details || {})])
+  .catch((e) => logger.warn('people audit failed', { action, error: e.message }));
+// Everyone on the payroll hears about a new one, in the app only — one
+// statement for the whole company rather than a notify() per person, and
+// no email: mailing everybody per event is not a default anyone chose.
+const tellEveryone = (req, kind, title, body) => db.query(
+  `INSERT INTO core.notifications (tenant_id, employee_id, kind, title, body, link)
+   SELECT $1, id, $2, $3, $4, '/people' FROM core.employees
+    WHERE tenant_id=$1 AND status='active' AND archived_at IS NULL`,
+  [T(req), kind, title, body])
+  .catch((e) => logger.warn('people notify-all failed', { kind, error: e.message }));
+// Attendee lists are HR's: pms_admin's sibling people_admin HELD, never the
+// copy the HRBP gateway lends.
+const holdsPeopleAdmin = async (req, res) => {
+  if (await holdsPermission(req.user, 'people_admin')) return true;
+  res.status(403).json({ error: "Requires 'people_admin'", needs: 'people_admin' }); return false;
+};
+
+/** An event's fields from a request, merged over what is stored; errors in words. */
+function eventFrom(b, was = {}) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(b, k);
+  const ev = {
+    title: has('title') ? text(b.title, 200) : was.title,
+    description: has('description') ? text(b.description, 4000) : was.description ?? null,
+    location: has('location') ? text(b.location, 300) : was.location ?? null,
+    starts_at: has('starts_at') ? isoAt(b.starts_at) : (was.starts_at ? new Date(was.starts_at).toISOString() : null),
+    ends_at: has('ends_at') ? isoAt(b.ends_at) : (was.ends_at ? new Date(was.ends_at).toISOString() : null),
+  };
+  if (!ev.title) return { error: 'Give the event a title.' };
+  if (!ev.starts_at) return { error: 'Give the event a valid start date and time.' };
+  if (ev.ends_at === undefined) return { error: 'The end date and time is not a valid date.' };
+  if (ev.ends_at && ev.ends_at < ev.starts_at) return { error: 'The event ends before it starts.' };
+  return { ev };
+}
+
 router.get('/events', async (req, res) => {
   try {
     const r = await db.query(
@@ -169,13 +226,61 @@ router.get('/events', async (req, res) => {
 router.post('/events', async (req, res) => {
   try {
     if (!(await adminOnly(req, res))) return;
-    const { title, description, location, starts_at, ends_at } = req.body || {};
-    if (!title || !starts_at) return res.status(400).json({ error: 'title and starts_at required' });
+    const { ev, error } = eventFrom(req.body || {});
+    if (error) return res.status(400).json({ error });
     const r = await db.query(
       `INSERT INTO people.events (tenant_id, title, description, location, starts_at, ends_at, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [T(req), title, description || null, location || null, starts_at, ends_at || null, req.user.email]);
+      [T(req), ev.title, ev.description, ev.location, ev.starts_at, ev.ends_at, req.user.email]);
+    await peopleAudit(req, 'EVENT_CREATED', 'people_events', { id: r.rows[0].id, title: ev.title, starts_at: ev.starts_at });
+    if (req.body.notify !== false) {
+      const when = new Date(ev.starts_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
+      await tellEveryone(req, 'event_scheduled', `New event: ${ev.title}`, [when, ev.location].filter(Boolean).join(' · '));
+    }
     res.json({ ok: true, event: r.rows[0] });
+  } catch (e) { logger.error('event create', { error: e.message }); res.status(500).json({ error: 'Could not save the event' }); }
+});
+
+router.put('/events/:id', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    const was = (await db.query(`SELECT * FROM people.events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!was) return res.status(404).json({ error: 'That event no longer exists.' });
+    const { ev, error } = eventFrom(req.body || {}, was);
+    if (error) return res.status(400).json({ error });
+    const r = await db.query(
+      `UPDATE people.events SET title=$3, description=$4, location=$5, starts_at=$6, ends_at=$7
+        WHERE id=$1 AND tenant_id=$2 RETURNING *`,
+      [req.params.id, T(req), ev.title, ev.description, ev.location, ev.starts_at, ev.ends_at]);
+    await peopleAudit(req, 'EVENT_UPDATED', 'people_events', { id: was.id, title: ev.title, from: { title: was.title, starts_at: was.starts_at } });
+    res.json({ ok: true, event: r.rows[0] });
+  } catch (e) { logger.error('event update', { error: e.message }); res.status(500).json({ error: 'Could not save the event' }); }
+});
+
+router.delete('/events/:id', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    const r = await db.query(
+      `DELETE FROM people.events WHERE id=$1 AND tenant_id=$2
+       RETURNING title, starts_at, (SELECT COUNT(*)::int FROM people.event_rsvps WHERE event_id=$1) AS rsvps`,
+      [req.params.id, T(req)]);
+    if (!r.rows.length) return res.status(404).json({ error: 'That event no longer exists.' });
+    await peopleAudit(req, 'EVENT_DELETED', 'people_events', { id: req.params.id, ...r.rows[0] });
+    res.json({ ok: true });
+  } catch (e) { logger.error('event delete', { error: e.message }); res.status(500).json({ error: 'Could not delete the event' }); }
+});
+
+// Who answered, and how. HR's view of an event's turnout.
+router.get('/events/:id/rsvps', async (req, res) => {
+  try {
+    if (!(await holdsPeopleAdmin(req, res))) return;
+    const ev = (await db.query(`SELECT id FROM people.events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!ev) return res.status(404).json({ error: 'That event no longer exists.' });
+    const r = await db.query(
+      `SELECT r.employee_id, e.name, e.department, r.response, r.at
+         FROM people.event_rsvps r JOIN core.employees e ON e.id=r.employee_id AND e.tenant_id=r.tenant_id
+        WHERE r.event_id=$1 AND r.tenant_id=$2 ORDER BY r.response, e.name`, [ev.id, T(req)]);
+    res.json({ rsvps: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -183,15 +288,34 @@ router.post('/events/:id/rsvp', async (req, res) => {
   try {
     const response = (req.body && req.body.response) || 'yes';
     if (!['yes', 'no', 'maybe'].includes(response)) return res.status(400).json({ error: 'response must be yes|no|maybe' });
+    // An event HR has since removed is a clear answer, not a database error.
+    const ev = (await db.query(`SELECT id FROM people.events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!ev) return res.status(404).json({ error: 'That event no longer exists.' });
     await db.query(
       `INSERT INTO people.event_rsvps (tenant_id, event_id, employee_id, response) VALUES ($1,$2,$3,$4)
        ON CONFLICT (event_id, employee_id) DO UPDATE SET response=EXCLUDED.response, at=now()`,
-      [T(req), req.params.id, req.user.id, response]);
+      [T(req), ev.id, req.user.id, response]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---- CSR --------------------------------------------------------------------
+/** A CSR activity's fields from a request, merged over what is stored. */
+function csrFrom(b, was = {}) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(b, k);
+  const hours = has('hours_credit') ? (b.hours_credit === '' || b.hours_credit == null ? 0 : Number(b.hours_credit)) : Number(was.hours_credit || 0);
+  const c = {
+    title: has('title') ? text(b.title, 200) : was.title,
+    description: has('description') ? text(b.description, 4000) : was.description ?? null,
+    event_date: has('event_date') ? isoDay(b.event_date) : (was.event_date ? new Date(was.event_date).toISOString().slice(0, 10) : null),
+    hours_credit: hours,
+  };
+  if (!c.title) return { error: 'Give the activity a title.' };
+  if (c.event_date === undefined) return { error: 'The date is not a valid date.' };
+  if (!Number.isFinite(c.hours_credit) || c.hours_credit < 0 || c.hours_credit > 999) return { error: 'Hours credit must be a number from 0 to 999.' };
+  return { c };
+}
+
 router.get('/csr', async (req, res) => {
   try {
     const r = await db.query(
@@ -205,22 +329,75 @@ router.get('/csr', async (req, res) => {
 router.post('/csr', async (req, res) => {
   try {
     if (!(await adminOnly(req, res))) return;
-    const { title, description, event_date, hours_credit } = req.body || {};
-    if (!title) return res.status(400).json({ error: 'title required' });
+    const { c, error } = csrFrom(req.body || {});
+    if (error) return res.status(400).json({ error });
     const r = await db.query(
       `INSERT INTO people.csr_events (tenant_id, title, description, event_date, hours_credit) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [T(req), title, description || null, event_date || null, hours_credit || 0]);
+      [T(req), c.title, c.description, c.event_date, c.hours_credit]);
+    await peopleAudit(req, 'CSR_CREATED', 'people_csr', { id: r.rows[0].id, title: c.title, event_date: c.event_date });
+    if (req.body.notify !== false) {
+      await tellEveryone(req, 'csr_scheduled', `New CSR activity: ${c.title}`,
+        [c.event_date, c.hours_credit ? `${c.hours_credit} hours credit` : null].filter(Boolean).join(' · ') || null);
+    }
     res.json({ ok: true, csr: r.rows[0] });
+  } catch (e) { logger.error('csr create', { error: e.message }); res.status(500).json({ error: 'Could not save the activity' }); }
+});
+
+router.put('/csr/:id', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    const was = (await db.query(`SELECT * FROM people.csr_events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!was) return res.status(404).json({ error: 'That activity no longer exists.' });
+    const { c, error } = csrFrom(req.body || {}, was);
+    if (error) return res.status(400).json({ error });
+    const r = await db.query(
+      `UPDATE people.csr_events SET title=$3, description=$4, event_date=$5, hours_credit=$6
+        WHERE id=$1 AND tenant_id=$2 RETURNING *`,
+      [req.params.id, T(req), c.title, c.description, c.event_date, c.hours_credit]);
+    await peopleAudit(req, 'CSR_UPDATED', 'people_csr', { id: was.id, title: c.title, from: { title: was.title } });
+    res.json({ ok: true, csr: r.rows[0] });
+  } catch (e) { logger.error('csr update', { error: e.message }); res.status(500).json({ error: 'Could not save the activity' }); }
+});
+
+router.delete('/csr/:id', async (req, res) => {
+  try {
+    if (!(await adminOnly(req, res))) return;
+    const r = await db.query(
+      `DELETE FROM people.csr_events WHERE id=$1 AND tenant_id=$2
+       RETURNING title, event_date, (SELECT COUNT(*)::int FROM people.csr_participations WHERE csr_event_id=$1) AS participants`,
+      [req.params.id, T(req)]);
+    if (!r.rows.length) return res.status(404).json({ error: 'That activity no longer exists.' });
+    await peopleAudit(req, 'CSR_DELETED', 'people_csr', { id: req.params.id, ...r.rows[0] });
+    res.json({ ok: true });
+  } catch (e) { logger.error('csr delete', { error: e.message }); res.status(500).json({ error: 'Could not delete the activity' }); }
+});
+
+router.get('/csr/:id/participants', async (req, res) => {
+  try {
+    if (!(await holdsPeopleAdmin(req, res))) return;
+    const c = (await db.query(`SELECT id FROM people.csr_events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!c) return res.status(404).json({ error: 'That activity no longer exists.' });
+    const r = await db.query(
+      `SELECT p.employee_id, e.name, e.department, p.hours, p.at
+         FROM people.csr_participations p JOIN core.employees e ON e.id=p.employee_id AND e.tenant_id=p.tenant_id
+        WHERE p.csr_event_id=$1 AND p.tenant_id=$2 ORDER BY e.name`, [c.id, T(req)]);
+    res.json({ participants: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.post('/csr/:id/participate', async (req, res) => {
   try {
-    const hours = req.body && req.body.hours;
+    const raw = req.body && req.body.hours;
+    const hours = raw == null || raw === '' ? null : Number(raw);
+    if (hours != null && (!Number.isFinite(hours) || hours < 0 || hours > 999)) {
+      return res.status(400).json({ error: 'Hours must be a number from 0 to 999.' });
+    }
+    const c = (await db.query(`SELECT id FROM people.csr_events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!c) return res.status(404).json({ error: 'That activity no longer exists.' });
     await db.query(
       `INSERT INTO people.csr_participations (tenant_id, csr_event_id, employee_id, hours) VALUES ($1,$2,$3,$4)
        ON CONFLICT (csr_event_id, employee_id) DO UPDATE SET hours=EXCLUDED.hours, at=now()`,
-      [T(req), req.params.id, req.user.id, hours != null ? Number(hours) : null]);
+      [T(req), c.id, req.user.id, hours]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -359,36 +536,33 @@ router.get('/departments', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// The role_band values that actually exist, so From Level can be a
-// dropdown like From Role already is instead of a free-text box nobody
-// can spell consistently.
-router.get('/role-bands', async (req, res) => {
+// The grades on the Grade and Level sheet, for the matrix's From Level /
+// To Level dropdowns. Grade only: the band stays on that sheet (13 Oct).
+// Until then these dropdowns listed the employee master's role bands.
+router.get('/grades', async (req, res) => {
   try {
     const r = await db.query(
-      `SELECT DISTINCT role_band FROM core.employees
-        WHERE tenant_id=$1 AND role_band IS NOT NULL AND TRIM(role_band) <> '' ORDER BY role_band`,
-      [T(req)]);
-    res.json({ role_bands: r.rows.map((row) => row.role_band) });
+      `SELECT grade FROM pms.grade_ladder WHERE tenant_id=$1 ORDER BY sort_order`, [T(req)]);
+    res.json({ grades: r.rows.map((row) => row.grade) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// How many active employees a from_role/from_level pair actually matches.
-// Shown while HR fills the form, so a transition that matches NOBODY is
-// visible at the moment it is created rather than discovered weeks later
-// by an employee being told no path exists.
+// How many active employees a from_role (in a department, if one is
+// named) actually matches. Shown while HR fills the form, so a transition
+// that matches NOBODY is visible at the moment it is created rather than
+// discovered weeks later by an employee being told no path exists. Level
+// plays no part: moves are matched on role and department (13 Oct).
 router.get('/career/match-count', async (req, res) => {
   try {
     const fromRole = (req.query.from_role || '').trim();
     if (!fromRole) return res.json({ count: 0, from_role: null });
-    const fromLevel = (req.query.from_level || '').trim() || null;
-    // The same level rule employees are matched by (career-level.js), so
-    // the count HR sees is the count that will actually get the path.
+    const department = (req.query.department || '').trim() || null;
     const r = await db.query(
-      `SELECT role_band FROM core.employees
-        WHERE tenant_id=$1 AND status='active' AND LOWER(TRIM(designation)) = LOWER(TRIM($2))`,
-      [T(req), fromRole]);
-    const n = r.rows.filter((e) => levelMatches(fromLevel, e.role_band)).length;
-    res.json({ count: n, from_role: fromRole, from_level: fromLevel });
+      `SELECT count(*)::int AS n FROM core.employees
+        WHERE tenant_id=$1 AND status='active' AND LOWER(TRIM(designation)) = LOWER(TRIM($2))
+          AND ($3::text IS NULL OR LOWER(TRIM(department)) = LOWER(TRIM($3)))`,
+      [T(req), fromRole, department]);
+    res.json({ count: r.rows[0].n, from_role: fromRole, department });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -419,7 +593,9 @@ router.get('/career/transitions', async (req, res) => {
               count(DISTINCT btrim(department)) FILTER (WHERE coalesce(btrim(department),'') <> '')::int AS departments,
               count(DISTINCT btrim(designation)) FILTER (WHERE coalesce(btrim(designation),'') <> '')::int AS designations
          FROM core.employees WHERE tenant_id=$1 AND status='active'`, [T(req)])).rows[0];
-    res.json({ transitions: r.rows, master });
+    // Grade only on the way out: rows written before 13 Oct may say
+    // "E3 · Band 6", and the band stays on the Grade and Level sheet.
+    res.json({ transitions: r.rows.map(levelsAsGrades), master });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -434,31 +610,43 @@ router.post('/career/transitions', async (req, res) => {
       `INSERT INTO people.career_transitions
          (tenant_id, department, from_role, from_level, to_role, to_level, expected_level_change, min_time_months, typical_time_months, required_competencies, notes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [T(req), (b.department || '').trim() || null, b.from_role, b.from_level || null, b.to_role, b.to_level || null,
+      [T(req), (b.department || '').trim() || null, b.from_role, gradeOnly(b.from_level) || null, b.to_role, gradeOnly(b.to_level) || null,
        b.expected_level_change ?? null, b.min_time_months ?? null, b.typical_time_months ?? null, competencies, b.notes || null]);
-    res.json({ ok: true, transition: r.rows[0] });
+    res.json({ ok: true, transition: levelsAsGrades(r.rows[0]) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Only the fields the request sends are changed. Until 13 Oct every field
+// left out was written as NULL, so Deactivate / Reactivate (which sends
+// only `active`) turned a department's rung company-wide and wiped its
+// levels, times and notes.
 router.put('/career/transitions/:id', async (req, res) => {
   try {
     if (!(await adminOnly(req, res))) return;
     const b = req.body || {};
-    const competencies = Array.isArray(b.required_competencies) ? b.required_competencies
-      : (typeof b.required_competencies === 'string' ? b.required_competencies.split('\n').map((s) => s.trim()).filter(Boolean) : undefined);
+    const has = (k) => Object.prototype.hasOwnProperty.call(b, k);
+    const sets = [];
+    const params = [req.params.id, T(req)];
+    const set = (col, v) => { params.push(v); sets.push(`${col}=$${params.length}`); };
+    if (b.from_role) set('from_role', b.from_role);
+    if (b.to_role) set('to_role', b.to_role);
+    if (has('from_level')) set('from_level', gradeOnly(b.from_level) || null);
+    if (has('to_level')) set('to_level', gradeOnly(b.to_level) || null);
+    for (const k of ['expected_level_change', 'min_time_months', 'typical_time_months']) {
+      if (has(k)) set(k, b[k] === '' ? null : b[k]);
+    }
+    if (has('required_competencies')) {
+      set('required_competencies', Array.isArray(b.required_competencies) ? b.required_competencies
+        : String(b.required_competencies || '').split('\n').map((s) => s.trim()).filter(Boolean));
+    }
+    if (has('notes')) set('notes', b.notes || null);
+    if (has('active') && b.active != null) set('active', !!b.active);
+    if (has('department')) set('department', (b.department || '').trim() || null);
     const r = await db.query(
-      `UPDATE people.career_transitions SET
-         from_role=COALESCE($3,from_role), from_level=$4, to_role=COALESCE($5,to_role), to_level=$6,
-         expected_level_change=$7, min_time_months=$8, typical_time_months=$9,
-         required_competencies=COALESCE($10,required_competencies), notes=$11,
-         active=COALESCE($12,active), department=$13, updated_at=now()
-       WHERE id=$1 AND tenant_id=$2 RETURNING *`,
-      [req.params.id, T(req), b.from_role || null, b.from_level ?? null, b.to_role || null, b.to_level ?? null,
-       b.expected_level_change ?? null, b.min_time_months ?? null, b.typical_time_months ?? null,
-       competencies || null, b.notes ?? null, b.active ?? null,
-       b.department === undefined ? null : ((b.department || '').trim() || null)]);
+      `UPDATE people.career_transitions SET ${[...sets, 'updated_at=now()'].join(', ')}
+        WHERE id=$1 AND tenant_id=$2 RETURNING *`, params);
     if (!r.rows.length) return res.status(404).json({ error: 'transition not found' });
-    res.json({ ok: true, transition: r.rows[0] });
+    res.json({ ok: true, transition: levelsAsGrades(r.rows[0]) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -541,7 +729,7 @@ router.delete('/career/transitions', async (req, res) => {
 // that shape once; a second importer that behaves differently is a
 // second thing to learn and a new set of mistakes.
 
-const TRANSITION_BANNER = 'One row per transition. From Role and To Role are required and should match designations on the employee master exactly — a role nobody holds yet is allowed (that is what a career path is for) and only warned about. Leave Department blank for a rung that applies to EVERY department; fill it in and the rung applies only to that department, and a department-specific rung wins over a blank one for the same move. Leave From Level blank for "any level". Required Competencies: one per line, or separated by ; — Months fields are advisory and not enforced. Re-uploading a transition that already exists UPDATES it rather than adding a second copy — Department is part of what makes a transition "the same one". Delete the sample rows before uploading.';
+const TRANSITION_BANNER = 'One row per transition. From Role and To Role are required and should match designations on the employee master exactly — a role nobody holds yet is allowed (that is what a career path is for) and only warned about. Leave Department blank for a rung that applies to EVERY department; fill it in and the rung applies only to that department, and a department-specific rung wins over a blank one for the same move. From Level and To Level are the GRADE on your Grade and Level sheet (e.g. E3), for reference — the band stays on that sheet, and a move applies to everyone in its From Role (and Department), whatever their grade or band. Required Competencies: one per line, or separated by ; — Months fields are advisory and not enforced. Re-uploading a transition that already exists UPDATES it rather than adding a second copy — Department is part of what makes a transition "the same one". Delete the sample rows before uploading.';
 const TRANSITION_HEADERS = CT_COLUMNS.map(([, label]) => label);
 // Three samples now, not two: the third shows the SAME move as the first
 // with a department filled in, which is the one rule about this sheet
@@ -595,7 +783,7 @@ router.get('/career/transitions/template.xlsx', async (req, res) => {
 // master changes. It writes NOTHING — the output is the importer's own
 // sheet, which HR edits and uploads through Validate/Publish like any
 // other. See career-ladder.js for the three rules it uses.
-const SUGGESTED_BANNER = 'SUGGESTED career pathing matrix. Every rung is read from your own GRADE AND LEVEL sheet — the Level columns carry the grade and band (E3 · Band 6), and the To Role is the role that sheet names at the next grade, in the job family the department belongs to. EVERY ROW IS ONE GRADE UP, never a jump, so Expected Level Change is always 1, and the times come from the sheet\'s own experience bands. It is built from the employee master RIGHT NOW — re-download it after you change the employee list and it changes with it. It is a DRAFT: read it, edit it, delete what does not apply, then upload it through Validate and Publish on this same page. Rows marked PLEASE CHECK are designations that are NOT ON THE GRADE SHEET AT ALL — they have no grade and no next rung, and the file will not upload until you either give them one here or add them to the grade sheet. The importer treats a BLANK Department as "every department", so you can blank a cell by hand to make one rung company-wide. Nothing is saved until you publish.';
+const SUGGESTED_BANNER = 'SUGGESTED career pathing matrix. Every rung is read from your own GRADE AND LEVEL sheet — the Level columns carry the grade (E3) — the band stays on that sheet — and the To Role is the role that sheet names at the next grade, in the job family the department belongs to. EVERY ROW IS ONE GRADE UP, never a jump, so Expected Level Change is always 1, and the times come from the sheet\'s own experience bands. It is built from the employee master RIGHT NOW — re-download it after you change the employee list and it changes with it. It is a DRAFT: read it, edit it, delete what does not apply, then upload it through Validate and Publish on this same page. Rows marked PLEASE CHECK are designations that are NOT ON THE GRADE SHEET AT ALL — they have no grade and no next rung, and the file will not upload until you either give them one here or add them to the grade sheet. The importer treats a BLANK Department as "every department", so you can blank a cell by hand to make one rung company-wide. Nothing is saved until you publish.';
 
 // The grade ladder (migration 060), read as one object the pure
 // generator can work from. Four small tables; the whole thing is about
@@ -745,10 +933,14 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
           await client.query(
             `UPDATE people.career_transitions SET
                expected_level_change=$3, min_time_months=$4, typical_time_months=$5,
-               required_competencies=$6, notes=$7, active=true, updated_at=now()
+               required_competencies=$6, notes=$7, active=true, updated_at=now(),
+               from_level=$8, to_level=$9
              WHERE id=$1 AND tenant_id=$2`,
             [r.existing_id, T(req), r.expected_level_change, r.min_time_months,
-             r.typical_time_months, r.required_competencies, r.notes]);
+             r.typical_time_months, r.required_competencies, r.notes,
+             // Rewritten as the grade alone, so a re-upload clears old
+             // band text from the row it updates (13 Oct).
+             r.from_level, r.to_level]);
           // department is NOT in the SET list on purpose: it is part of
           // the key that found this row, so it already matches.
           updated += 1;
@@ -814,10 +1006,10 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
 // every row written before 044 is, so an existing matrix keeps working
 // untouched. A rung WITH a department applies only there.
 //
-// THE LEVEL is no longer compared as text (8 Oct): "Band 6" on the matrix
-// and "E3 · Band 6" on the employee master are the same rung. See
-// career-level.js — grade and band are read separately.
-const { levelMatches } = require('./career-level');
+// LEVEL PLAYS NO PART (13 Oct). A move applies to everyone in its From
+// Role (and Department); the level on a row is the grade, for reference.
+// Band is off the matrix entirely and stays on the Grade and Level sheet.
+// See career-level.js.
 const TRANSITION_MATCH = `
   LOWER(TRIM(from_role)) = LOWER(TRIM($2))
   AND (NULLIF(TRIM(COALESCE(department, '')), '') IS NULL
@@ -826,33 +1018,33 @@ const TRANSITION_MATCH = `
 const lc = (v) => String(v == null ? '' : v).trim().toLowerCase();
 
 async function eligibleTransitionsFor(tenantId, employeeId) {
-  const emp = (await db.query(`SELECT designation, role_band, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+  const emp = (await db.query(`SELECT designation, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp || !emp.designation) return [];
-  return transitionsFrom(tenantId, emp.designation, emp.role_band, emp.department);
+  return transitionsFrom(tenantId, emp.designation, emp.department);
 }
 
-// The moves open from one role at one level in one department — the
-// employee's own rung, or (for the long-term ladder below) a rung they
-// would reach first.
-async function transitionsFrom(tenantId, role, level, department) {
-  const emp = { role_band: level };
+// The moves open from one role in one department — the employee's own
+// rung, or (for the long-term ladder below) a rung they would reach first.
+async function transitionsFrom(tenantId, role, department) {
   const rows = (await db.query(
     `SELECT * FROM people.career_transitions WHERE tenant_id=$1 AND active=true AND ${TRANSITION_MATCH}`,
     [tenantId, role, department || null])).rows
-    .filter((t) => levelMatches(t.from_level, emp.role_band));
+    // A row that only changed band ("Executive, Band 6 → Executive, Band 7")
+    // is, with band gone, a move to the role they already hold.
+    .filter((t) => lc(t.to_role) !== lc(role))
+    .map(levelsAsGrades);
   // ONE ROW PER TARGET ROLE. The same move written several times — once
-  // per department in the suggested matrix, or as "Band 6" and as
-  // "E3 · Band 6" — is one step for this employee. MOST SPECIFIC WINS:
-  // their own department's row over a company-wide one (its competencies
-  // and time-in-role are why the column exists), then a row naming a
-  // level over one that applies to any level, then the one whose level
-  // text is exactly theirs.
-  const rank = (t) => [lc(t.department) ? 0 : 1, lc(t.from_level) ? 0 : 1, lc(t.from_level) === lc(emp.role_band) ? 0 : 1];
+  // per department in the suggested matrix, or once per band before 13
+  // Oct — is one step for this employee. MOST SPECIFIC WINS: their own
+  // department's row over a company-wide one (its competencies and
+  // time-in-role are why the column exists), then the latest edited.
+  const rank = (t) => [lc(t.department) ? 0 : 1, -new Date(t.updated_at || t.created_at || 0).getTime()];
+  const better = (a, b) => { const x = rank(a); const y = rank(b); return x[0] - y[0] || x[1] - y[1]; };
   const best = new Map();
   for (const t of rows) {
     const k = lc(t.to_role);
     const cur = best.get(k);
-    if (!cur || rank(t).join() < rank(cur).join()) best.set(k, t);
+    if (!cur || better(t, cur) < 0) best.set(k, t);
   }
   return [...best.values()].sort((a, b) => lc(a.to_role).localeCompare(lc(b.to_role)));
 }
@@ -933,17 +1125,17 @@ async function targetDepartments(tenantId, employeeId, role) {
 // own — the saved short-term goal, for Long-Term — carrying that first
 // move's time and competencies; it is never itself offered.
 async function careerLadderFor(tenantId, employeeId, maxSteps = 3, start = null) {
-  const emp = (await db.query(`SELECT designation, role_band, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+  const emp = (await db.query(`SELECT designation, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp || !emp.designation) return [];
   const out = new Map();
-  let frontier = [start || { role: emp.designation, level: emp.role_band, via: [], months: 0, comps: [] }];
+  let frontier = [start || { role: emp.designation, via: [], months: 0, comps: [] }];
   const seen = new Set([lc(emp.designation), ...(start ? [lc(start.role)] : [])]);
   const first = start ? start.via.length + 1 : 1;
   const cache = {};
   for (let step = first; step <= maxSteps && frontier.length; step += 1) {
     const next = [];
     for (const f of frontier) {
-      let moves = await transitionsFrom(tenantId, f.role, f.level, emp.department);
+      let moves = await transitionsFrom(tenantId, f.role, emp.department);
       // No row in the matrix from here: one grade up on the Grade and
       // Level sheet instead (gradeRungAbove).
       if (!moves.length) {
@@ -959,7 +1151,7 @@ async function careerLadderFor(tenantId, employeeId, maxSteps = 3, start = null)
         const rung = { to_role: t.to_role, to_level: t.to_level, steps: step, via: f.via,
           typical_time_months: months, required_competencies: comps, source: t.source || 'matrix' };
         out.set(k, rung);
-        next.push({ role: t.to_role, level: t.to_level, via: [...f.via, t.to_role], months, comps });
+        next.push({ role: t.to_role, via: [...f.via, t.to_role], months, comps });
       }
     }
     frontier = next;
@@ -992,7 +1184,7 @@ async function targetsFor(tenantId, employeeId, horizon) {
   const anchor = await shortTermAnchor(tenantId, employeeId);
   if (!anchor) return careerLadderFor(tenantId, employeeId, 3);
   return (await careerLadderFor(tenantId, employeeId, 3, {
-    role: anchor.to_role, level: anchor.to_level, via: [anchor.to_role],
+    role: anchor.to_role, via: [anchor.to_role],
     months: anchor.typical_time_months == null ? null : Number(anchor.typical_time_months),
     comps: anchor.required_competencies || [],
   })).map((r) => ({ ...r, after_short_term: anchor.to_role }));
@@ -1007,13 +1199,12 @@ async function targetsFor(tenantId, employeeId, horizon) {
 // distinct causes and they need distinct answers.
 async function careerPathDiagnostics(tenantId, employeeId) {
   const emp = (await db.query(
-    `SELECT designation, role_band, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+    `SELECT designation, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp) return { reason: 'no_employee' };
   if (!emp.designation) {
-    return { reason: 'no_designation', designation: null, role_band: emp.role_band || null, matched: 0 };
+    return { reason: 'no_designation', designation: null, matched: 0 };
   }
-  const base = { designation: emp.designation, role_band: emp.role_band || null,
-                 department: emp.department || null };
+  const base = { designation: emp.designation, department: emp.department || null };
 
   // Everything configured FROM this role, ignoring level and active, so we
   // can tell "nothing exists" from "something exists but was filtered".
@@ -1041,19 +1232,10 @@ async function careerPathDiagnostics(tenantId, employeeId) {
       excluded_by_department: [...new Set(active.map((t) => t.department).filter(Boolean))] };
   }
 
-  // Configured and active, so the only thing left that can exclude them is
-  // the level. Report both sides of the comparison — the whole failure was
-  // that neither was visible.
-  // Only the rungs that apply in this employee's department, and each
-  // move once — the same move written for four departments used to be
-  // listed four times.
-  const seen = new Set();
-  const excluded = active.filter((t) => mine(t.department)).filter((t) => {
-    const k = `${lc(t.to_role)}|${lc(t.from_level)}`;
-    if (seen.has(k)) return false;
-    seen.add(k); return true;
-  }).map((t) => ({ to_role: t.to_role, requires_level: t.from_level }));
-  return { ...base, reason: 'level_mismatch', matched: 0, excluded_by_level: excluded };
+  // Configured, active and in their department, yet nothing offered: every
+  // such row leads back to the role they hold — a move that only changed
+  // band before 13 Oct. As far as a career path goes, there is none.
+  return { ...base, reason: 'none_configured', matched: 0 };
 }
 
 // Two horizons, not one. Asked for: Aspiring Career "structured into
@@ -1084,7 +1266,7 @@ router.get('/career/my-path', async (req, res) => {
     // Read here rather than typed, because a designation somebody types
     // is a designation that stops matching the matrix.
     const me = (await db.query(
-      `SELECT designation, department, role_band, date_of_joining
+      `SELECT designation, department, date_of_joining, total_experience_years
          FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.user.id, T(req)])).rows[0] || {};
     const milestones = await milestonesFor(p ? p.id : null);
     const transitions = await targetsFor(T(req), req.user.id, horizon);
@@ -1099,13 +1281,21 @@ router.get('/career/my-path', async (req, res) => {
     // and it is the short-term goal.
     if (!eligibleTargetRoles.length && horizon === 'long_term') {
       const anchor = await shortTermAnchor(T(req), req.user.id);
-      if (anchor) diagnostics = { reason: 'none_beyond_short_term', designation: me.designation || null, short_term_role: anchor.to_role, short_term_level: anchor.to_level || null };
+      if (anchor) diagnostics = { reason: 'none_beyond_short_term', designation: me.designation || null, short_term_role: anchor.to_role };
     }
-    // Short-Term's timeline IS the matrix's figure for the chosen move —
-    // shown as such even where an older version stored something typed.
+    // The employee's total experience, for what is LEFT of each move's
+    // time (career-timeline.js, 13 Oct): the HRMS figure, else what they
+    // entered on their Long-Term tab.
+    const selfYears = (rows.find((r) => r.horizon === 'long_term' && r.years_experience != null)
+      || rows.find((r) => r.years_experience != null) || {}).years_experience;
+    const experience = experienceFrom(me.total_experience_years, selfYears);
+    const left = (t) => remainingTimeline(t && t.typical_time_months, t && t.min_time_months, experience);
+    // Short-Term's timeline IS what is left of the matrix's figure for the
+    // chosen move — shown as such even where an older version stored the
+    // whole figure, or something typed.
     if (p && horizon === 'short_term' && p.target_role) {
       const t = transitions.find((x) => x.to_role === p.target_role);
-      if (t && t.typical_time_months != null) p.target_timeline = `${t.typical_time_months} months`;
+      if (t && t.typical_time_months != null) p.target_timeline = left(t).timeline_text;
     }
     const gw = await growthWindowFor(T(req), req.user.id, horizon);
     // The Long-Term tab shows the short-term goal it builds on, and fills
@@ -1114,8 +1304,9 @@ router.get('/career/my-path', async (req, res) => {
     const anchorMove = horizon === 'long_term' && st && st.target_role ? await shortTermAnchor(T(req), req.user.id) : null;
     const shortTermGoal = horizon === 'long_term' && st && st.target_role
       ? { target_role: st.target_role,
-          // The matrix's figure for that move, as the Short-Term tab shows it.
-          target_timeline: anchorMove && anchorMove.typical_time_months != null ? `${anchorMove.typical_time_months} months` : st.target_timeline,
+          // What is left of the matrix's figure for that move, as the
+          // Short-Term tab shows it.
+          target_timeline: anchorMove && anchorMove.typical_time_months != null ? left(anchorMove).timeline_text : st.target_timeline,
           years_experience: st.years_experience, skills_interests: st.skills_interests }
       : null;
     // Each role's time from the matrix, so the form's Expected timeline
@@ -1127,7 +1318,8 @@ router.get('/career/my-path', async (req, res) => {
     for (const t of transitions) {
       if (!targetOptions.some((o) => o.role === t.to_role)) {
         targetOptions.push({ role: t.to_role, typical_time_months: t.typical_time_months ?? null,
-          min_time_months: t.min_time_months ?? null, steps: t.steps || 1, source: t.source || 'matrix' });
+          min_time_months: t.min_time_months ?? null, steps: t.steps || 1, source: t.source || 'matrix',
+          ...left(t) });
       }
     }
     const staleTarget = !!(p && p.target_role && eligibleTargetRoles.length && !eligibleTargetRoles.includes(p.target_role));
@@ -1135,7 +1327,8 @@ router.get('/career/my-path', async (req, res) => {
     res.json({ path: p || null, horizon, short_term_goal: shortTermGoal, target_departments: crossDept,
       target_options: targetOptions, stale_target: staleTarget, horizons_filled: filled, milestones, progress_pct: careerProgress(milestones),
       current: { designation: me.designation || null, department: me.department || null,
-                 role_band: me.role_band || null, date_of_joining: me.date_of_joining || null },
+                 date_of_joining: me.date_of_joining || null },
+      experience,
       eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
       editable: gw.window.ok, editable_via: gw.window.via || null,
       shut_because: gw.window.ok ? null : gw.window.reason,
@@ -1189,8 +1382,8 @@ router.put('/career/my-path', async (req, res) => {
     // nothing is configured, or keep one already saved.
     if (horizon === 'short_term' && !eligibleTargetRoles.length) {
       const why = await careerPathDiagnostics(T(req), req.user.id);
-      return res.status(422).json({ error: why && why.reason === 'level_mismatch'
-        ? 'Your short-term goal comes from the Career Pathing Matrix, and its paths from your role are set for a different level — ask HR to check the level on those transitions or your role band.'
+      return res.status(422).json({ error: why && why.reason === 'department_mismatch'
+        ? 'Your short-term goal comes from the Career Pathing Matrix, and its paths from your role are filed under a different department — ask HR to check them.'
         : 'Your short-term goal comes from the Career Pathing Matrix, and no path is configured from your current role yet — ask HR to add one.' });
     }
     // LONG-TERM TARGET IS OPEN (8 Oct: "please keep target role open for
@@ -1201,12 +1394,22 @@ router.put('/career/my-path', async (req, res) => {
     if (horizon === 'short_term' && eligibleTargetRoles.length && !eligibleTargetRoles.includes(target_role)) {
       return res.status(422).json({ error: `target_role must be one of the transitions configured from your current role in the Career Pathing Matrix: ${eligibleTargetRoles.join(', ')}` });
     }
-    // The short-term timeline is the matrix's own figure for that move,
-    // whatever was typed; typed only when HR left the figure blank.
+    // The short-term timeline is what is left of the matrix's own figure
+    // for that move, whatever was typed; typed only when HR left the
+    // figure blank. Stored as the figure on the day of saving; the tab
+    // shows it worked out afresh each time (13 Oct).
     let timeline = (target_timeline || '').trim() || null;
     if (horizon === 'short_term') {
       const t = transitions.find((x) => x.to_role === target_role);
-      if (t && t.typical_time_months != null) timeline = `${t.typical_time_months} months`;
+      if (t && t.typical_time_months != null) {
+        const me = (await db.query(`SELECT total_experience_years FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+          [req.user.id, T(req)])).rows[0] || {};
+        const self = (await db.query(
+          `SELECT years_experience FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND years_experience IS NOT NULL
+            ORDER BY (horizon='long_term') DESC LIMIT 1`, [T(req), req.user.id])).rows[0] || {};
+        timeline = remainingTimeline(t.typical_time_months, t.min_time_months,
+          experienceFrom(me.total_experience_years, req.body.years_experience ?? self.years_experience)).timeline_text;
+      }
     }
     // A field the request does not send is KEPT, not cleared (8 Oct): the
     // Short-Term tab now asks only for the role and its timeline — the
@@ -1471,5 +1674,5 @@ router.use('/onboarding', require('./onboarding').router);
 router.use('/', require('./rnr').router);
 
 module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor, targetDepartments,
-                   transitionsWorkbook, suggestedTransitionRows,
+                   experienceFrom, remainingTimeline, transitionsWorkbook, suggestedTransitionRows,
                    TRANSITION_HEADERS, TRANSITION_BANNER, SUGGESTED_BANNER };

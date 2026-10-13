@@ -13,21 +13,16 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'career-level-test';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 
-const { levelMatches, parseLevel } = require('../modules/people/career-level');
+const { gradeOnly, parseLevel } = require('../modules/people/career-level');
 const pm = require('../modules/performance/phase-machine');
 
-test('a level is read as grade and band, so the same rung matches however it is written', () => {
+// 13 Oct: "remove band from career pathing matrix and just keep it on
+// grade and level sheet". A matrix level is the grade alone.
+test('A MATRIX LEVEL IS THE GRADE ALONE — band stays on the Grade and Level sheet', () => {
   assert.deepEqual([parseLevel('E3 · Band 6').grade, parseLevel('E3 · Band 6').band], ['e3', '6']);
-  assert.equal(levelMatches('Band 6', 'E3 · Band 6'), true, 'the matrix\'s "Band 6" fits an E3 at Band 6');
-  assert.equal(levelMatches('E3', 'E3 · Band 6'), true);
-  assert.equal(levelMatches('E3 · Band 6', 'E3 - band 6'), true, 'punctuation and case do not matter');
-  assert.equal(levelMatches('E3 · Band 6', 'Band 6'), true, 'a band-only record fits a row naming that band');
-  assert.equal(levelMatches('E2 · Band 6', 'E3 · Band 6'), false, 'E2 is not E3, though both are Band 6');
-  assert.equal(levelMatches('Band 7', 'E3 · Band 6'), false);
-  assert.equal(levelMatches('', 'anything'), true, 'blank means any level');
-  assert.equal(levelMatches('Band 6', null), false, 'a level-specific row does not match someone with no band');
-  assert.equal(levelMatches('Senior', 'senior'), true, 'text with no grade or band still matches exactly');
-  assert.equal(levelMatches('Senior', 'Junior'), false);
+  const cases = [['E3 · Band 6', 'E3'], ['E3 - band 6', 'E3'], ['e3', 'E3'], ['Band 6', ''], ['B8', 'B8'],
+    ['UGO', 'UGO'], ['L2', 'L2'], ['Senior', 'Senior'], ['', ''], [null, '']];
+  for (const [raw, want] of cases) assert.equal(gradeOnly(raw), want, String(raw));
 });
 
 test('LONG-TERM stays open through Manager Evaluation and locks at HOD Review; Short-Term is unchanged', () => {
@@ -305,6 +300,10 @@ test('SHORT-TERM IS THE ROLE AND ITS TIMELINE: saving it keeps the rest, and its
 
 test('SHORT-TERM TIMELINE IS THE MATRIX\'S FIGURE, whatever is typed', { skip }, async () => {
   await phase('kra_open');
+  // No experience on record anywhere, so nothing is taken off the figure
+  // (what is, is tested below).
+  await db.query(`UPDATE people.career_paths SET years_experience=NULL WHERE tenant_id=$1`, [tenantId]);
+  await db.query(`UPDATE core.employees SET total_experience_years=NULL WHERE tenant_id=$1`, [tenantId]);
   assert.equal((await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Senior Software Developer', target_timeline: '99 months' })).status, 200);
   assert.equal((await api('GET', '/career/my-path?horizon=short_term')).body.path.target_timeline, '24 months');
   // Long-Term keeps what the employee wrote.
@@ -312,10 +311,50 @@ test('SHORT-TERM TIMELINE IS THE MATRIX\'S FIGURE, whatever is typed', { skip },
   assert.equal((await api('GET', '/career/my-path?horizon=long_term')).body.path.target_timeline, 'about 5 years');
 });
 
+// 13 Oct: "expected timeline should be remaining months from current
+// experience/total experience and not total expected timeline". The
+// client chose: the matrix's figure less total experience.
+test('EXPECTED TIMELINE IS WHAT IS LEFT after total experience — the HRMS figure first, then what they entered', { skip }, async () => {
+  await phase('kra_open');
+  await db.query(`UPDATE people.career_transitions SET active=true WHERE tenant_id=$1`, [tenantId]);
+  await db.query(`UPDATE people.career_paths SET years_experience=NULL WHERE tenant_id=$1`, [tenantId]);
+  await db.query(`UPDATE core.employees SET total_experience_years=1.5 WHERE id=$1`, [empId]);   // 18 months
+  const st = await api('GET', '/career/my-path?horizon=short_term');
+  const senior = st.body.target_options.find((o) => o.role === 'Senior Software Developer');
+  assert.equal(senior.typical_time_months, 24, 'the matrix figure is still reported');
+  assert.equal(senior.remaining_time_months, 6, '24 less 18 months of experience');
+  assert.equal(senior.timeline_text, '6 months');
+  assert.equal(senior.timeline_basis, 'hrms');
+  assert.deepEqual(st.body.experience, { months: 18, years: 1.5, source: 'hrms' });
+  assert.equal((await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Senior Software Developer', target_timeline: '99 months' })).status, 200);
+  const stored = (await db.query(`SELECT target_timeline FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId])).rows[0];
+  assert.equal(stored.target_timeline, '6 months', 'saved as what is left, whatever was typed');
+  const lt = await api('GET', '/career/my-path?horizon=long_term');
+  const lead = lt.body.target_options.find((o) => o.role === 'Tech Lead');
+  assert.equal(lead.remaining_time_months, 54 - 18, 'the whole climb, less experience');
+  assert.equal(lt.body.short_term_goal.target_timeline, '6 months');
+
+  // Past the figure: due now, never negative.
+  await db.query(`UPDATE core.employees SET total_experience_years=12 WHERE id=$1`, [empId]);
+  const due = (await api('GET', '/career/my-path?horizon=short_term')).body;
+  assert.equal(due.path.target_timeline, 'Due now');
+  assert.equal(due.target_options.find((o) => o.role === 'Senior Software Developer').remaining_time_months, 0);
+
+  // No HRMS figure: the years they entered on Long-Term, labelled as theirs.
+  await db.query(`UPDATE core.employees SET total_experience_years=NULL WHERE id=$1`, [empId]);
+  await db.query(`UPDATE people.career_paths SET years_experience=1 WHERE tenant_id=$1 AND employee_id=$2 AND horizon='long_term'`, [tenantId, empId]);
+  const self = (await api('GET', '/career/my-path?horizon=short_term')).body;
+  assert.equal(self.experience.source, 'self_reported');
+  assert.equal(self.path.target_timeline, '12 months', '24 less the 12 months they entered');
+  await db.query(`UPDATE people.career_paths SET years_experience=NULL WHERE tenant_id=$1`, [tenantId]);
+});
+
 // 8 Oct: "long term should derive next goal pathing of saved short term
 // details and not same as short term details".
 test('LONG-TERM STARTS AFTER THE SAVED SHORT-TERM GOAL — and says so when the matrix stops there', { skip }, async () => {
   await phase('kra_open');
+  await db.query(`UPDATE people.career_paths SET years_experience=NULL WHERE tenant_id=$1`, [tenantId]);
+  await db.query(`UPDATE core.employees SET total_experience_years=NULL WHERE tenant_id=$1`, [tenantId]);
   await api('PUT', '/career/my-path', { horizon: 'short_term', target_role: 'Senior Software Developer' });
   const lt = await api('GET', '/career/my-path?horizon=long_term');
   assert.deepEqual(lt.body.eligible_target_roles, ['Tech Lead'], 'not the short-term role again');

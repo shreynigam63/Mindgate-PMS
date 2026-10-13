@@ -30,13 +30,15 @@ const ladderWith = (gradeOf, familyOf = []) => ({
 });
 const one = (out, role) => out.find((r) => r.from_role === role);
 
-test('the Level columns carry the grade and the band — they used to be blank', () => {
+// 13 Oct: band is off the matrix and stays on the Grade and Level sheet.
+test('the Level columns carry the grade alone — never the band', () => {
   const out = suggestFromGrades(
     [{ department: 'Development', designation: 'Senior Software Developer', headcount: 3 }],
     ladderWith([['senior software developer', { grade: 'E3', family: 'Technical' }]]));
   const r = one(out, 'Senior Software Developer');
-  assert.equal(r.from_level, 'E3 · Band 6');
-  assert.equal(r.to_level, 'E4 · Band 5');
+  assert.equal(r.from_level, 'E3');
+  assert.equal(r.to_level, 'E4');
+  assert.ok(!/band/i.test(`${r.from_level} ${r.to_level} ${r.notes || ''}`), `band reached the matrix: ${JSON.stringify(r)}`);
 });
 
 test('the next rung is the next GRADE, and its name comes from the family column', () => {

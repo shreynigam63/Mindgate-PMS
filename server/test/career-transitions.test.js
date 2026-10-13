@@ -108,9 +108,15 @@ test('PUT deactivates a transition; GET without show_inactive then excludes it, 
   const list = await api('/people/career/transitions', token);
   const id = list.body.transitions[0].id;
 
+  const before = list.body.transitions[0];
   const deactivate = await api(`/people/career/transitions/${id}`, token, { method: 'PUT', body: JSON.stringify({ active: false }) });
   assert.equal(deactivate.status, 200);
   assert.equal(deactivate.body.transition.active, false);
+  // 13 Oct: until then every field the request left out was written as
+  // NULL, so Deactivate wiped the levels, times and notes.
+  for (const k of ['from_level', 'to_level', 'expected_level_change', 'min_time_months', 'typical_time_months', 'notes']) {
+    assert.deepEqual(deactivate.body.transition[k], before[k], `deactivating wiped ${k}`);
+  }
 
   const defaultView = await api('/people/career/transitions', token);
   assert.equal(defaultView.body.transitions.length, 0, 'inactive entries hidden by default');
@@ -219,4 +225,26 @@ test('the list reports what a suggested draft would be built from', { skip }, as
   assert.equal(typeof r.body.master.departments, 'number');
   assert.equal(typeof r.body.master.designations, 'number');
   assert.ok(r.body.master.employees > 0, 'and it counts the real master, not zero');
+});
+
+// 13 Oct: "remove band from career pathing matrix and just keep it on
+// grade and level sheet".
+test('BAND NEVER REACHES THE MATRIX: a level is stored and shown as the grade alone', { skip }, async () => {
+  const { token } = await login('ct-admin@x.com');
+  const made = await api('/people/career/transitions', token, { method: 'POST', body: JSON.stringify({
+    from_role: 'Software Engineer II', from_level: 'E3 · Band 6', to_role: 'Tech Lead', to_level: 'Band 5' }) });
+  assert.equal(made.status, 200);
+  assert.equal(made.body.transition.from_level, 'E3');
+  assert.equal(made.body.transition.to_level, null, 'a band alone is no grade');
+  const stored = (await db.query(`SELECT from_level, to_level FROM people.career_transitions WHERE id=$1`, [made.body.transition.id])).rows[0];
+  assert.deepEqual(stored, { from_level: 'E3', to_level: null });
+  // A row written before 13 Oct is shown without its band.
+  await db.query(`UPDATE people.career_transitions SET from_level='E3 · Band 6', to_level='E4 · Band 5' WHERE id=$1`, [made.body.transition.id]);
+  const shown = (await api('/people/career/transitions?show_inactive=true', token)).body.transitions
+    .find((t) => t.id === made.body.transition.id);
+  assert.deepEqual([shown.from_level, shown.to_level], ['E3', 'E4']);
+  // And the move applies by role, whatever band the employee has.
+  const count = await api('/people/career/match-count?from_role=Software%20Engineer%20II', token);
+  assert.equal(count.body.count, 1);
+  await api(`/people/career/transitions/${made.body.transition.id}`, token, { method: 'DELETE' });
 });

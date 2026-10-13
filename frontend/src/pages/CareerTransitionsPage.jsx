@@ -35,7 +35,9 @@ export default function CareerTransitionsPage() {
       .catch(e => setErr(e.message));
   };
   useEffect(() => { load(); }, [q, showInactive]);
-  const [roleBands, setRoleBands] = useState([]);
+  // The grades on the Grade and Level sheet. A matrix level is the grade
+  // alone; the band stays on that sheet (13 Oct).
+  const [grades, setGrades] = useState([]);
   // What a suggested draft would be built from right now, so the page
   // can say out loud that it follows the employee list.
   const [master, setMaster] = useState(null);
@@ -43,7 +45,7 @@ export default function CareerTransitionsPage() {
   // survives a reload can delete a row the user is no longer looking at.
   const [picked, setPicked] = useState(new Set());
   useEffect(() => { api('/people/designations').then(r => setDesignations(r.designations)).catch(() => setDesignations([])); }, []);
-  useEffect(() => { api('/people/role-bands').then(r => setRoleBands(r.role_bands)).catch(() => setRoleBands([])); }, []);
+  useEffect(() => { api('/people/grades').then(r => setGrades(r.grades || [])).catch(() => setGrades([])); }, []);
   const [departments, setDepartments] = useState([]);
   useEffect(() => { api('/people/departments').then(r => setDepartments(r.departments)).catch(() => setDepartments([])); }, []);
 
@@ -122,7 +124,7 @@ export default function CareerTransitionsPage() {
         <p className="lbl">Start from a suggested matrix</p>
         <p className="text-[11.5px] text-navy-500">
           Every rung is read from your own <b>Grade and Level sheet</b>. The Level columns carry the grade
-          and band (<span className="font-mono">E3 · Band 6</span>), the To Role is the role that sheet names
+          (<span className="font-mono">E3</span>) — the band stays on that sheet — the To Role is the role that sheet names
           at the <b>next grade</b> in the job family the department belongs to, and the times come from its
           own experience bands. Every row names a department, and <b>every row is one grade up</b> — one
           rung, never a jump — so Expected Level Change is always 1. Which designations sit on which grade
@@ -168,8 +170,10 @@ export default function CareerTransitionsPage() {
         <p className="text-[11px] text-navy-400">
           Columns: Department, From Role, From Level, To Role, To Level, Expected Level Change,
           Min Time In Current Role (Months), Typical Time In Current Role (Months), Required
-          Competencies, Notes. Only <b>From Role</b> and <b>To Role</b> are required; blank From
-          Level means any level. <b>Blank Department means every department</b>; fill it in and
+          Competencies, Notes. Only <b>From Role</b> and <b>To Role</b> are required. From Level and
+          To Level are the <b>grade</b> on your Grade and Level sheet (e.g. E3), for reference — the
+          band stays on that sheet, and a move applies to everyone in its From Role whatever their
+          grade or band. <b>Blank Department means every department</b>; fill it in and
           the rung applies only there, and beats a company-wide rung for the same move. Required Competencies go one per line, or separated by a semicolon.
           {' '}<b>Re-uploading a transition that already exists updates it</b> rather than adding a
           second copy, so a corrected file can be uploaded again safely. A role nobody holds yet is
@@ -191,7 +195,7 @@ export default function CareerTransitionsPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-300" />
-          <input className="inp pl-8" value={q} onChange={e => setQ(e.target.value)} placeholder="Search department / role / level…" />
+          <input className="inp pl-8" value={q} onChange={e => setQ(e.target.value)} placeholder="Search department / role / grade…" />
         </div>
         <label className="flex items-center gap-1.5 text-xs text-navy-500">
           <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />Show inactive
@@ -273,12 +277,12 @@ export default function CareerTransitionsPage() {
         </div>
       )}
 
-      {showForm && <TransitionForm designations={designations} roleBands={roleBands} departments={departments} initial={editing} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load(); }} />}
+      {showForm && <TransitionForm designations={designations} grades={grades} departments={departments} initial={editing} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load(); }} />}
     </div>
   );
 }
 
-function TransitionForm({ designations, roleBands, departments, initial, onClose, onSaved }) {
+function TransitionForm({ designations, grades, departments, initial, onClose, onSaved }) {
   const [f, setF] = useState({
     department: initial?.department || '',
     from_role: initial?.from_role || '', from_level: initial?.from_level || '',
@@ -290,7 +294,7 @@ function TransitionForm({ designations, roleBands, departments, initial, onClose
   });
   const [err, setErr] = useState(null);
   const [saving, setSaving] = useState(false);
-  // How many active employees this from_role/from_level pair actually
+  // How many active employees this From Role (in its department) actually
   // matches. A transition that matches nobody is the failure this form
   // used to make easy and invisible — it now shows up before saving.
   const [match, setMatch] = useState(null);
@@ -301,12 +305,12 @@ function TransitionForm({ designations, roleBands, departments, initial, onClose
     if (!f.from_role) { setMatch(null); return; }
     let cancelled = false;
     const p = new URLSearchParams({ from_role: f.from_role });
-    if (f.from_level) p.set('from_level', f.from_level);
+    if (f.department) p.set('department', f.department);
     api(`/people/career/match-count?${p}`)
       .then(r => { if (!cancelled) setMatch(r.count); })
       .catch(() => { if (!cancelled) setMatch(null); });
     return () => { cancelled = true; };
-  }, [f.from_role, f.from_level]);
+  }, [f.from_role, f.department]);
 
   const save = async () => {
     setErr(null);
@@ -365,23 +369,12 @@ function TransitionForm({ designations, roleBands, departments, initial, onClose
               <p className="text-[10px] text-navy-400 mt-1">Sourced from employee records — exact match guaranteed.</p>
             </div>
             <div>
-              <label className="lbl">From Level</label>
-              {/* A dropdown of role bands that actually exist, for the same
-                  reason From Role is one: this was a free-text box compared
-                  exactly against employee.role_band, so a typo or a level
-                  nobody holds produced a transition matching nobody, with
-                  no way to see why. */}
-              <select className="inp" value={f.from_level} onChange={set('from_level')}>
-                <option value="">— Any level —</option>
-                {roleBands.map(b => <option key={b} value={b}>{b}</option>)}
-                {f.from_level && !roleBands.includes(f.from_level) && (
-                  <option value={f.from_level}>{f.from_level} (not used by any employee)</option>
-                )}
-              </select>
-              <p className="text-[10px] text-navy-400 mt-1">
-                {roleBands.length ? 'Sourced from employee role bands. "Any level" is usually what you want.'
-                                  : 'No role bands are set on any employee — leave this as "Any level".'}
-              </p>
+              <label className="lbl">From Level (grade)</label>
+              {/* The grade from the Grade and Level sheet, for reference.
+                  Band is not on the matrix (13 Oct): it stays on that
+                  sheet, and no move is matched on level. */}
+              <GradeSelect value={f.from_level} onChange={set('from_level')} grades={grades} />
+              <p className="text-[10px] text-navy-400 mt-1">From the Grade and Level sheet — the band stays on that sheet.</p>
             </div>
           </div>
           {f.from_role && (
@@ -390,9 +383,8 @@ function TransitionForm({ designations, roleBands, departments, initial, onClose
               : 'bg-emerald-50 border border-emerald-100 text-emerald-800'}`}>
               {match === null ? 'Checking who this applies to…'
                 : match === 0
-                  ? <>This matches <b>no employees</b>. {f.from_level
-                      ? <>No active employee is a <b>{f.from_role}</b> at level <b>{f.from_level}</b> — set the level to “Any level”, or check their role band.</>
-                      : <>No active employee has the designation <b>{f.from_role}</b>.</>} Saving it is allowed, but nobody will see this path.</>
+                  ? <>This matches <b>no employees</b>. No active employee{f.department ? <> in <b>{f.department}</b></> : null} has
+                      the designation <b>{f.from_role}</b>. Saving it is allowed, but nobody will see this path.</>
                   : <>Applies to <b>{match}</b> active employee{match === 1 ? '' : 's'}.</>}
             </p>
           )}
@@ -406,8 +398,8 @@ function TransitionForm({ designations, roleBands, departments, initial, onClose
               <p className="text-[10px] text-navy-400 mt-1">Sourced from employee records — exact match guaranteed.</p>
             </div>
             <div>
-              <label className="lbl">To Level</label>
-              <input className="inp" value={f.to_level} onChange={set('to_level')} placeholder="e.g. L2, Senior" />
+              <label className="lbl">To Level (grade)</label>
+              <GradeSelect value={f.to_level} onChange={set('to_level')} grades={grades} />
             </div>
           </div>
           <div>
@@ -444,5 +436,18 @@ function TransitionForm({ designations, roleBands, departments, initial, onClose
         </div>
       </div>
     </div>
+  );
+}
+
+// A grade from the Grade and Level sheet. A level saved before 13 Oct that
+// is not a grade there (or text the sheet does not know) stays selectable,
+// labelled, so opening a row never silently changes it.
+function GradeSelect({ value, onChange, grades }) {
+  return (
+    <select className="inp" value={value || ''} onChange={onChange}>
+      <option value="">— None —</option>
+      {grades.map(g => <option key={g} value={g}>{g}</option>)}
+      {value && !grades.includes(value) && <option value={value}>{value} (not on the Grade and Level sheet)</option>}
+    </select>
   );
 }

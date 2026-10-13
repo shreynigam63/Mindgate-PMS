@@ -405,7 +405,9 @@ function roleAt(ladder, grade, family) {
   return named || grade.generic_role || null;
 }
 
-const levelLabel = (g) => (!g ? '' : [g.grade_label, g.band].filter(Boolean).join(' · '));
+// The grade alone (E3, B8, UGO). The band stays on the Grade and Level
+// sheet and is never written onto the matrix (13 Oct).
+const levelLabel = (g) => (!g ? '' : (g.grade_label || g.grade || ''));
 
 const NO_GRADE = 'PLEASE CHECK — this designation is not on the Grade and Level sheet, so it has no grade and no next rung. Add it to the sheet (or fill this row in by hand) and re-download.';
 
@@ -465,8 +467,8 @@ function suggestFromGrades(rows, ladder) {
         typical_time_months: typical,
         required_competencies: competenciesFor(RANK_FOR_GRADE[to.grade] || 8),
         notes: family
-          ? `${from.grade_label || from.band} → ${to.grade_label || to.band} on the Grade and Level sheet, ${family} column`
-          : `${from.grade_label || from.band} → ${to.grade_label || to.band} on the Grade and Level sheet · no job family for ${department}, so the rung is the sheet's generic column`,
+          ? `${levelLabel(from)} → ${levelLabel(to)} on the Grade and Level sheet, ${family} column`
+          : `${levelLabel(from)} → ${levelLabel(to)} on the Grade and Level sheet · no job family for ${department}, so the rung is the sheet's generic column`,
       });
     }
   }

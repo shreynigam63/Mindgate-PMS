@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 
@@ -13,32 +14,63 @@ export default function PeopleHubPage({ user }) {
             className={`text-sm font-medium px-3 py-1.5 rounded-lg ${tab === k ? 'bg-white shadow-sm' : 'text-navy-500'}`}>{l}</button>
         ))}
       </div>
-      {tab === 'events' && <Events />}
+      {tab === 'events' && <Events manage={canManage(user)} />}
       {tab === 'awards' && <Awards user={user} />}
-      {tab === 'csr' && <Csr />}
+      {tab === 'csr' && <Csr manage={canManage(user)} />}
       {tab === 'queries' && <Queries />}
     </div>
   );
 }
 
-function Events() {
+// HR and Super Admin schedule events and CSR on HR → Events & CSR (13 Oct);
+// this tab links there for them. The same page row that shows them the menu
+// entry decides it.
+const canManage = (user) => (user && user.pages ? user.pages.includes('/admin/events') : ['admin', 'hr'].includes(user && user.role));
+const ManageLink = ({ manage, label }) => (manage
+  ? <div className="flex justify-end"><NavLink to="/admin/events" className="text-xs font-semibold text-brand-600">{label} →</NavLink></div>
+  : null);
+const when = (iso) => new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+
+function Events({ manage }) {
   const [rows, setRows] = useState(null);
-  const load = () => api('/people/events').then(r => setRows(r.events));
+  const [err, setErr] = useState(null);
+  const load = () => api('/people/events').then(r => setRows(r.events)).catch(e => setErr(e.message));
   useEffect(() => { load(); }, []);
-  if (!rows) return <p className="text-sm text-navy-400">Loading…</p>;
-  return (
-    <div className="card divide-y divide-navy-100">
-      {rows.map(e => (
-        <div key={e.id} className="p-3 flex flex-wrap items-center gap-2">
-          <div className="flex-1"><p className="text-sm font-semibold">{e.title}</p>
-            <p className="text-xs text-navy-400">{new Date(e.starts_at).toLocaleString('en-IN')} {e.location && `· ${e.location}`} · {e.yes_count} attending</p></div>
-          {['yes', 'maybe', 'no'].map(r => (
-            <button key={r} className={`btn ${e.my_rsvp === r ? 'btn-pri' : 'btn-sec'}`}
-              onClick={async () => { await api(`/people/events/${e.id}/rsvp`, { method: 'POST', body: JSON.stringify({ response: r }) }); load(); }}>{r}</button>
-          ))}
-        </div>
+  if (!rows) return err ? <p className="text-sm text-rose-600">{err}</p> : <p className="text-sm text-navy-400">Loading…</p>;
+  // Coming up first, soonest at the top; what has happened after it.
+  const now = new Date();
+  const upcoming = rows.filter(e => new Date(e.ends_at || e.starts_at) >= now).reverse();
+  const past = rows.filter(e => new Date(e.ends_at || e.starts_at) < now);
+  const rsvp = async (e, r) => {
+    setErr(null);
+    try { await api(`/people/events/${e.id}/rsvp`, { method: 'POST', body: JSON.stringify({ response: r }) }); load(); }
+    catch (x) { setErr(x.message); load(); }
+  };
+  const row = (e, isPast) => (
+    <div key={e.id} className="p-3 flex flex-wrap items-center gap-2">
+      <div className="flex-1 min-w-[200px]"><p className={`text-sm font-semibold ${isPast ? 'text-navy-500' : ''}`}>{e.title}</p>
+        <p className="text-xs text-navy-400">{when(e.starts_at)}{e.ends_at ? ` – ${when(e.ends_at)}` : ''}{e.location ? ` · ${e.location}` : ''} · {e.yes_count} attending</p>
+        {e.description && <p className="text-xs text-navy-500 mt-0.5 whitespace-pre-line">{e.description}</p>}</div>
+      {!isPast && ['yes', 'maybe', 'no'].map(r => (
+        <button key={r} className={`btn ${e.my_rsvp === r ? 'btn-pri' : 'btn-sec'}`} onClick={() => rsvp(e, r)}>{r}</button>
       ))}
-      {!rows.length && <p className="p-6 text-center text-sm text-navy-400">No events scheduled.</p>}
+      {isPast && e.my_rsvp && <span className="chip bg-navy-50 text-navy-500">you said {e.my_rsvp}</span>}
+    </div>
+  );
+  return (
+    <div className="space-y-2">
+      <ManageLink manage={manage} label="Schedule an event" />
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      <div className="card divide-y divide-navy-100">
+        {upcoming.map(e => row(e, false))}
+        {!upcoming.length && <p className="p-6 text-center text-sm text-navy-400">No events scheduled.</p>}
+      </div>
+      {past.length > 0 && (
+        <div className="card divide-y divide-navy-100">
+          <p className="lbl px-3 pt-3 mb-0">Past events</p>
+          {past.map(e => row(e, true))}
+        </div>
+      )}
     </div>
   );
 }
@@ -69,24 +101,31 @@ function Awards({ user }) {
   );
 }
 
-function Csr() {
+function Csr({ manage }) {
   const [rows, setRows] = useState(null);
   const load = () => api('/people/csr').then(r => setRows(r.csr));
   useEffect(() => { load(); }, []);
   if (!rows) return <p className="text-sm text-navy-400">Loading…</p>;
   return (
+    <div className="space-y-2">
+    <ManageLink manage={manage} label="Add a CSR activity" />
     <div className="card divide-y divide-navy-100">
       {rows.map(c => (
         <div key={c.id} className="p-3 flex flex-wrap items-center gap-2">
-          <div className="flex-1"><p className="text-sm font-semibold">{c.title}</p>
-            <p className="text-xs text-navy-400">{c.event_date || 'date TBD'} · {c.participants} participating {c.my_hours != null && `· you: ${c.my_hours}h`}</p></div>
+          <div className="flex-1 min-w-[200px]"><p className="text-sm font-semibold">{c.title}</p>
+            <p className="text-xs text-navy-400">{c.event_date ? String(c.event_date).slice(0, 10) : 'date TBD'}{Number(c.hours_credit) ? ` · ${Number(c.hours_credit)} hours credit` : ''} · {c.participants} participating {c.my_hours != null && `· you: ${c.my_hours}h`}</p>
+            {c.description && <p className="text-xs text-navy-500 mt-0.5 whitespace-pre-line">{c.description}</p>}</div>
           <button className="btn-sec" onClick={async () => {
             const h = prompt('Hours you contributed (blank = sign up)');
-            await api(`/people/csr/${c.id}/participate`, { method: 'POST', body: JSON.stringify({ hours: h ? Number(h) : null }) }); load();
+            if (h === null) return;
+            try { await api(`/people/csr/${c.id}/participate`, { method: 'POST', body: JSON.stringify({ hours: h.trim() ? Number(h) : null }) }); }
+            catch (e) { alert(e.message); }
+            load();
           }}>{c.my_hours != null ? 'Update hours' : 'Participate'}</button>
         </div>
       ))}
       {!rows.length && <p className="p-6 text-center text-sm text-navy-400">No CSR activities.</p>}
+    </div>
     </div>
   );
 }

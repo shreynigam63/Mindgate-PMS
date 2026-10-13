@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound, MapPin, Search, HelpCircle, ChevronDown, Menu, RefreshCw } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound, MapPin, Search, HelpCircle, ChevronDown, Menu, RefreshCw, CalendarDays } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -30,6 +30,7 @@ import HrbpAdminPage from './pages/HrbpAdminPage';
 import RnrNominatePage from './pages/RnrNominatePage';
 import RnrApprovalsPage from './pages/RnrApprovalsPage';
 import RnrAdminPage from './pages/RnrAdminPage';
+import EventsAdminPage from './pages/EventsAdminPage';
 import RnrDashboardPage from './pages/RnrDashboardPage';
 import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamOverviewPage from './pages/TeamOverviewPage';
@@ -218,6 +219,8 @@ const NAV = [
     { to: '/admin/hrbp', label: 'HR Business Partners', icon: MapPin },
     { to: '/rnr/approvals/hr', label: 'RnR Final Approval', icon: Award },
     { to: '/admin/rnr', label: 'RnR Administration', icon: Award },
+    // People Hub's Events and CSR, scheduled by HR (13 Oct).
+    { to: '/admin/events', label: 'Events & CSR', icon: CalendarDays },
     { to: '/admin/career-transitions', label: 'Career Pathing Matrix', icon: GitBranch },
     { to: '/admin/kra-overview', label: 'KRA Overview', icon: ClipboardList },
     // Next to KRA Overview because the two are easily confused and the
@@ -602,6 +605,7 @@ function Main({ user }) {
               <Route path="/hrbp/rnr-approvals" element={<RnrApprovalsPage />} />
               <Route path="/rnr/approvals/hr" element={<RnrApprovalsPage />} />
               <Route path="/admin/rnr" element={<RnrAdminPage />} />
+              <Route path="/admin/events" element={<EventsAdminPage />} />
               {/* One component for all seven: they differ only in which
                   endpoint they read, and seven near-identical files would
                   drift the way the Timesheet tabs once did. */}

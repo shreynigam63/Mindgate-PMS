@@ -90,6 +90,8 @@ async function main() {
   await require('./migrations/083-onboarding-senders').ensureSenders(db, TENANT_ID);
   // The HOD's Team Competencies page and the manager's Improvement Plans.
   await require('./migrations/084-connects-pip-hod-competencies').ensurePages(db, TENANT_ID);
+  // HR's Events & CSR page, which feeds People Hub.
+  await require('./migrations/087-people-events-admin').ensureEventPages(db, TENANT_ID);
 
   const app = express();
   app.use(cors());
