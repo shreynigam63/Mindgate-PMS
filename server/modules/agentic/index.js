@@ -7,7 +7,7 @@ const express = require('express');
 const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
-const { apiPermissionParity, hasPermission } = require('../../core/permissions');
+const { apiPermissionParity, hasPermission, holdsPermission } = require('../../core/permissions');
 const ai = require('../../core/ai');
 const { requireConsent } = require('../../core/consent');
 // Cross-module read via the other module's EXPORTED interface, per the
@@ -386,15 +386,26 @@ Respond ONLY with JSON:
   } catch (e) { fail(res, e); }
 });
 
-// Stored drafts (provenance): list by kind/ref.
+// Stored drafts (provenance): list by kind/ref. The caller's own drafts;
+// HR's — pms_admin HELD, never the HRBP gateway's lent copy — are all of
+// them. Until 13 Oct this had no check at all, so any signed-in employee
+// could read the company's latest 25 drafts, appraisal summaries about
+// other people included (found by review). No page reads it today.
 router.get('/drafts', async (req, res) => {
   try {
     await ai.ensureTable();
     const { kind } = req.query;
+    const params = [T(req)];
+    let where = 'tenant_id=$1';
+    if (!(await holdsPermission(req.user, 'pms_admin'))) {
+      params.push(req.user.email);
+      where += ` AND LOWER(requested_by)=LOWER($${params.length})`;
+    }
+    if (kind) { params.push(kind); where += ` AND kind=$${params.length}`; }
     const r = await db.query(
       `SELECT id, kind, ref, output, model, requested_by, created_at
-         FROM agentic.drafts WHERE tenant_id=$1 ${kind ? 'AND kind=$2' : ''}
-        ORDER BY created_at DESC LIMIT 25`, kind ? [T(req), kind] : [T(req)]);
+         FROM agentic.drafts WHERE ${where}
+        ORDER BY created_at DESC LIMIT 25`, params);
     res.json({ drafts: r.rows, ai_enabled: ai.aiEnabled() });
   } catch (e) { fail(res, e); }
 });

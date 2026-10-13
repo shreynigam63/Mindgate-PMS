@@ -102,7 +102,7 @@ before(async () => {
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
   if (tenantId) {
-    for (const t of ['people.onboarding_tasks', 'people.onboarding_joiners', 'people.appraisal_query_messages', 'people.appraisal_queries', 'pms.review_meetings',
+    for (const t of ['agentic.drafts', 'people.onboarding_tasks', 'people.onboarding_joiners', 'people.appraisal_query_messages', 'people.appraisal_queries', 'pms.review_meetings',
       'pms.connects', 'pms.top_talent', 'core.notifications', 'pms.audit_log', 'pms.pip_records', 'pms.kras',
       'pms.kra_sheets', 'pms.development_plans', 'pms.rating_adjustments', 'pms.cycles', 'core.audit_log',
       'core.hrbp_scope', 'core.local_credentials', 'core.user_roles', 'core.role_permissions', 'core.employees']) {
@@ -505,6 +505,24 @@ test('A SURVEY\'S RESULTS DOWNLOAD HOLDS THE REMIT: no named answer from outside
     await db.query(`DELETE FROM engagement.questions WHERE survey_id=$1`, [sid]);
     await db.query(`DELETE FROM engagement.surveys WHERE id=$1`, [sid]);
   }
+});
+
+test('AI DRAFTS ARE THEIR AUTHOR\'S: an HRBP lists their own, not HR\'s draft about somebody else', async () => {
+  await require('../core/ai').ensureTable();
+  const draft = (by, text, about) => db.query(
+    `INSERT INTO agentic.drafts (tenant_id, kind, ref, input, output, model, requested_by)
+     VALUES ($1,'appraisal_draft',$2,'{}',$3,'test',$4)`,
+    [tenantId, JSON.stringify(about ? { employee_id: about } : {}), JSON.stringify({ summary: text }), by]);
+  await draft('boss@x.com', 'draft-by-hr-about-mumbai1', id.mumbai1);
+  await draft('boss@x.com', 'draft-by-hr-no-ref', null);
+  await draft('inside@x.com', 'draft-by-the-hrbp', null);
+  const hrbp = await call('inside', '/agentic/drafts');
+  assert.equal(hrbp.status, 200, JSON.stringify(hrbp.body));
+  const text = JSON.stringify(hrbp.body.drafts);
+  assert.match(text, /draft-by-the-hrbp/, 'the HRBP lost their own draft');
+  assert.ok(!/draft-by-hr/.test(text), `somebody else's draft reached the HRBP: ${text}`);
+  const hr = JSON.stringify((await call('boss', '/agentic/drafts')).body.drafts);
+  for (const d of ['draft-by-hr-about-mumbai1', 'draft-by-hr-no-ref', 'draft-by-the-hrbp']) assert.match(hr, new RegExp(d), `HR lost ${d}`);
 });
 
 test('the scope helper keeps every row when no hook narrowed the request, and none that name nobody when one did', () => {
