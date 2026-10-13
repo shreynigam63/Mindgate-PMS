@@ -334,6 +334,13 @@ test('EXPECTED TIMELINE IS WHAT IS LEFT after total experience — the HRMS figu
   assert.equal(lead.remaining_time_months, 54 - 18, 'the whole climb, less experience');
   assert.equal(lt.body.short_term_goal.target_timeline, '6 months');
 
+  // Every other reader shows the same figure as the employee's own tab,
+  // not the text saved on some earlier day (found by review, 13 Oct).
+  await db.query(`UPDATE people.career_paths SET target_timeline='72 months' WHERE tenant_id=$1 AND employee_id=$2 AND horizon='short_term'`, [tenantId, empId]);
+  const { careerPathFor } = require('../modules/people');
+  assert.equal((await careerPathFor(tenantId, empId, 'short_term')).target_timeline, '6 months', 'the review assistant reads a stale figure');
+  assert.equal((await api('GET', '/career/my-path?horizon=long_term')).body.short_term_goal.target_timeline, '6 months');
+
   // Past the figure: due now, never negative.
   await db.query(`UPDATE core.employees SET total_experience_years=12 WHERE id=$1`, [empId]);
   const due = (await api('GET', '/career/my-path?horizon=short_term')).body;

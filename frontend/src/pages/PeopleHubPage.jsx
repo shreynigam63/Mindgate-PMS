@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
+import { endOf } from './EventsAdminPage';
 
 export default function PeopleHubPage({ user }) {
   const [tab, setTab] = useState('events');
@@ -39,8 +40,8 @@ function Events({ manage }) {
   if (!rows) return err ? <p className="text-sm text-rose-600">{err}</p> : <p className="text-sm text-navy-400">Loading…</p>;
   // Coming up first, soonest at the top; what has happened after it.
   const now = new Date();
-  const upcoming = rows.filter(e => new Date(e.ends_at || e.starts_at) >= now).reverse();
-  const past = rows.filter(e => new Date(e.ends_at || e.starts_at) < now);
+  const upcoming = rows.filter(e => endOf(e) >= now).reverse();
+  const past = rows.filter(e => endOf(e) < now);
   const rsvp = async (e, r) => {
     setErr(null);
     try { await api(`/people/events/${e.id}/rsvp`, { method: 'POST', body: JSON.stringify({ response: r }) }); load(); }
@@ -118,7 +119,9 @@ function Csr({ manage }) {
           <button className="btn-sec" onClick={async () => {
             const h = prompt('Hours you contributed (blank = sign up)');
             if (h === null) return;
-            try { await api(`/people/csr/${c.id}/participate`, { method: 'POST', body: JSON.stringify({ hours: h.trim() ? Number(h) : null }) }); }
+            // Sent as typed, so "4 hrs" is refused with a reason instead of
+            // quietly wiping the hours already on record.
+            try { await api(`/people/csr/${c.id}/participate`, { method: 'POST', body: JSON.stringify({ hours: h.trim() === '' ? null : h.trim() }) }); }
             catch (e) { alert(e.message); }
             load();
           }}>{c.my_hours != null ? 'Update hours' : 'Participate'}</button>

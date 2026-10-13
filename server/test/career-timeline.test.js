@@ -34,3 +34,24 @@ test('no figure from HR: nothing to work out', () => {
   assert.equal(remainingTimeline(null, null, experienceFrom(5)).timeline_text, null);
   assert.equal(remainingTimeline(24, null, experienceFrom(1)).remaining_min_months, null, 'no minimum, none left over');
 });
+
+// Found by review, 13 Oct.
+test('A CLIMB OF SEVERAL MOVES: experience comes off the first move only', () => {
+  const tenYears = { months: 120, years: 10, source: 'hrms' };
+  // 72 to the next role, then 72 more: ten years in, the first move is
+  // done and the second has not begun — 72 left, not 24.
+  assert.equal(remainingTimeline(144, null, tenYears, 72).remaining_time_months, 72);
+  assert.equal(remainingTimeline(144, null, { months: 36, years: 3, source: 'hrms' }, 72).remaining_time_months, 36 + 72);
+  assert.equal(remainingTimeline(144, 48, tenYears, 72).remaining_min_months, null, 'a minimum is for one move');
+});
+
+test('CURRENT EXPERIENCE: a dated figure counts up to today', () => {
+  const { monthsSince } = require('../modules/people/career-timeline');
+  assert.equal(monthsSince('2025-10-13', '2026-10-13'), 12);
+  assert.equal(monthsSince('2026-10-13', '2026-11-12'), 0, 'not a whole month yet');
+  assert.equal(monthsSince(null, '2026-10-13'), 0);
+  const e = experienceFrom(5, null, { hrmsAsOf: '2025-10-13', now: '2026-10-13' });
+  assert.deepEqual(e, { months: 72, years: 6, source: 'hrms' });
+  assert.equal(remainingTimeline(72, 48, e).timeline_text, 'Due now', 'a year after the import, the 12 months left have run out');
+  assert.equal(experienceFrom(null, 2, { selfAsOf: '2026-04-13', now: '2026-10-13' }).months, 30);
+});

@@ -670,6 +670,19 @@ function CareerAiPanel({ onUse, horizon, draft, shortTerm }) {
 // not set this up". Saying "nothing is configured" when a transition
 // exists but was excluded on level sent people looking for a row that was
 // already there.
+// The server's remainingTimeline (career-timeline.js), for the screen:
+// experience comes off the FIRST move of a climb only.
+function remainingLeft(o, exp) {
+  const t = o.typical_time_months == null ? null : Number(o.typical_time_months);
+  const m = o.min_time_months == null ? null : Number(o.min_time_months);
+  if (t == null) return { remaining_time_months: null, remaining_min_months: null, timeline_text: null, timeline_basis: 'no_figure' };
+  if (!exp || exp.months == null) return { remaining_time_months: t, remaining_min_months: m, timeline_text: `${t} months`, timeline_basis: 'no_experience' };
+  const f = o.first_step_months == null ? t : Math.min(t, Number(o.first_step_months));
+  const left = Math.max(0, f - exp.months) + (t - f);
+  const leftMin = f !== t || m == null ? null : Math.max(0, m - exp.months);
+  return { remaining_time_months: left, remaining_min_months: leftMin, timeline_text: left > 0 ? `${left} months` : 'Due now', timeline_basis: exp.source };
+}
+
 // What is left of a move's time after the employee's total experience
 // (13 Oct: the Expected timeline is the months REMAINING, not the matrix's
 // whole figure). The server does the sum; this says what it was based on.
@@ -679,13 +692,14 @@ function TimeLeft({ o, experience, months }) {
     return <>Your total experience is not on record yet (HR loads it from the HRMS), so this is the matrix's full figure.</>;
   }
   const from = experience.source === 'hrms' ? 'on your HR record' : 'as you entered it on Long-Term';
+  const climb = o.steps > 1 ? ' Your experience counts against the first of those steps only.' : '';
   return (
     <>With your <b>{experience.years} years</b> of total experience ({from}),{' '}
       {o.remaining_time_months > 0
         ? <>about <b>{months(o.remaining_time_months)}</b> remain{o.steps === 1 && o.remaining_min_months != null
           ? (o.remaining_min_months > 0 ? <>, at least {months(o.remaining_min_months)}</> : <> — you are already past the minimum</>)
           : null}.</>
-        : <>you are past it — this move is <b>due now</b>.</>}
+        : <>you are past it — this move is <b>due now</b>.</>}{climb}
     </>
   );
 }
@@ -875,8 +889,18 @@ function CareerPathCard() {
   const option = (role) => (data.target_options || []).find((o) => o.role === role) || null;
   const months = (m) => (m == null ? '' : `${m} months`);
   // A role's Expected timeline: what is LEFT of the matrix's figure after
-  // the employee's total experience (13 Oct), worked out by the server.
-  const timelineOf = (o) => (!o ? '' : (o.timeline_text ?? months(o.typical_time_months)));
+  // the employee's total experience (13 Oct). The server's rule, mirrored
+  // here so the years typed on Long-Term count before they are saved: the
+  // HR record first, else what is typed, else what was saved.
+  const expNow = () => {
+    if (data.experience && data.experience.source === 'hrms') return data.experience;
+    const typed = horizon === 'long_term' ? String(form.years_experience ?? '').trim() : '';
+    const y = Number(typed);
+    if (typed !== '' && Number.isFinite(y) && y >= 0) return { months: Math.round(y * 12), years: y, source: 'self_reported' };
+    return data.experience;
+  };
+  const leftOf = (o) => (!o ? null : remainingLeft(o, expNow()));
+  const timelineOf = (o) => (!o ? '' : (leftOf(o).timeline_text ?? months(o.typical_time_months)));
   const pickRole = (role) => setForm((f) => {
     if (role === f.target_role) return f;
     const o = option(role);
@@ -1090,7 +1114,7 @@ function CareerPathCard() {
             Career Pathing Matrix: typically <b>{months(chosen.typical_time_months)}</b>
             {chosen.steps > 1 ? ` for the ${chosen.steps} steps` : ' for this move'}
             {chosen.min_time_months != null && chosen.steps === 1 ? `, at least ${months(chosen.min_time_months)}` : ''}.
-            {' '}<TimeLeft o={chosen} experience={data.experience} months={months} />
+            {' '}<TimeLeft o={{ ...chosen, ...leftOf(chosen) }} experience={expNow()} months={months} />
             {horizon === 'long_term' && form.target_timeline !== timelineOf(chosen) && editable && (
               <button type="button" className="ml-1 font-semibold text-brand-600"
                 onClick={() => setForm(f => ({ ...f, target_timeline: timelineOf(chosen) }))}>Use it</button>

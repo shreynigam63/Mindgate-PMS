@@ -19,6 +19,16 @@ const toLocal = (iso) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 const fromLocal = (v) => (v ? new Date(v).toISOString() : null);
+// An event with no end time runs to the end of the day it starts, so it is
+// not filed under "past" (and its RSVPs closed) the moment it begins.
+export const endOf = (e) => {
+  if (e.ends_at) return new Date(e.ends_at);
+  const d = new Date(e.starts_at); d.setHours(23, 59, 59, 999); return d;
+};
+// What HR is told after creating one: the truth about the notice.
+const toldWho = (n, asked) => (!asked ? '' : n == null
+  ? ' The in-app notice could not be sent — tell people another way, or try again later.'
+  : `, and ${n} employee${n === 1 ? ' has' : 's have'} been told in the app`);
 const when = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '');
 const day = (d) => (d ? String(d).slice(0, 10) : '');
 
@@ -46,7 +56,7 @@ export default function EventsAdminPage() {
 
   const act = async (fn, done) => {
     setErr(null); setMsg(null);
-    try { await fn(); setMsg(done); await load(); return true; } catch (x) { setErr(x.message); return false; }
+    try { const r = await fn(); setMsg(typeof done === 'function' ? done(r) : done); await load(); return true; } catch (x) { setErr(x.message); return false; }
   };
 
   const saveEvent = async () => {
@@ -59,7 +69,7 @@ export default function EventsAdminPage() {
         ? api(`/people/events/${evId}`, { method: 'PUT', body: JSON.stringify(body) })
         : api('/people/events', { method: 'POST', body: JSON.stringify({ ...body, notify: ev.notify }) })),
       evId ? 'Event updated. People Hub shows the change.'
-        : `Event scheduled. It is on People Hub → Events${ev.notify ? ', and every employee has been told in the app' : ''}.`);
+        : (r) => `Event scheduled. It is on People Hub → Events${toldWho(r && r.notified, ev.notify)}.`);
     if (ok) { setEv(BLANK_EVENT); setEvId(null); }
   };
   const saveCsr = async () => {
@@ -69,7 +79,7 @@ export default function EventsAdminPage() {
         ? api(`/people/csr/${cId}`, { method: 'PUT', body: JSON.stringify(body) })
         : api('/people/csr', { method: 'POST', body: JSON.stringify({ ...body, notify: c.notify }) })),
       cId ? 'Activity updated. People Hub shows the change.'
-        : `CSR activity added. It is on People Hub → CSR${c.notify ? ', and every employee has been told in the app' : ''}.`);
+        : (r) => `CSR activity added. It is on People Hub → CSR${toldWho(r && r.notified, c.notify)}.`);
     if (ok) { setC(BLANK_CSR); setCId(null); }
   };
   const showWho = async (kind, row) => {
@@ -82,11 +92,22 @@ export default function EventsAdminPage() {
     } catch (x) { setErr(x.message); }
   };
 
+  const editEvent = (e) => {
+    setEvId(e.id);
+    setEv({ title: e.title, starts_at: toLocal(e.starts_at), ends_at: toLocal(e.ends_at), location: e.location || '', description: e.description || '', notify: false });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const deleteEvent = (e) => {
+    const n = e.rsvp_count ?? e.yes_count;
+    if (!window.confirm(`Delete "${e.title}"? Its ${n} RSVP${n === 1 ? '' : 's'} (yes, maybe and no) are deleted with it, and it disappears from People Hub.`)) return;
+    act(() => api(`/people/events/${e.id}`, { method: 'DELETE' }), 'Event deleted.');
+  };
+
   if (!events || !csr) return err ? <div className="card p-4"><p className="text-sm text-rose-600">{err}</p></div>
     : <p className="text-sm text-navy-400">Loading…</p>;
 
-  const upcoming = events.filter((e) => new Date(e.ends_at || e.starts_at) >= new Date()).reverse();
-  const past = events.filter((e) => new Date(e.ends_at || e.starts_at) < new Date());
+  const upcoming = events.filter((e) => endOf(e) >= new Date()).reverse();
+  const past = events.filter((e) => endOf(e) < new Date());
 
   return (
     <div className="space-y-3 max-w-5xl mx-auto">
@@ -140,20 +161,10 @@ export default function EventsAdminPage() {
 
       <div className="card divide-y divide-navy-100">
         <p className="lbl px-4 pt-3 mb-0">Upcoming events · {upcoming.length}</p>
-        {upcoming.map((e) => <EventRow key={e.id} e={e} onEdit={() => {
-          setEvId(e.id);
-          setEv({ title: e.title, starts_at: toLocal(e.starts_at), ends_at: toLocal(e.ends_at), location: e.location || '', description: e.description || '', notify: false });
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }} onWho={() => showWho('event', e)} onDelete={() => {
-          if (!window.confirm(`Delete "${e.title}"? Its ${e.yes_count} RSVP(s) are deleted with it, and it disappears from People Hub.`)) return;
-          act(() => api(`/people/events/${e.id}`, { method: 'DELETE' }), 'Event deleted.');
-        }} />)}
+        {upcoming.map((e) => <EventRow key={e.id} e={e} onEdit={() => editEvent(e)} onWho={() => showWho('event', e)} onDelete={() => deleteEvent(e)} />)}
         {!upcoming.length && <p className="p-4 text-sm text-navy-400">Nothing scheduled. Schedule one above and it appears on People Hub.</p>}
         {past.length > 0 && <p className="lbl px-4 pt-3 mb-0">Past events · {past.length}</p>}
-        {past.map((e) => <EventRow key={e.id} e={e} past onWho={() => showWho('event', e)} onDelete={() => {
-          if (!window.confirm(`Delete "${e.title}"? Its ${e.yes_count} RSVP(s) are deleted with it.`)) return;
-          act(() => api(`/people/events/${e.id}`, { method: 'DELETE' }), 'Event deleted.');
-        }} />)}
+        {past.map((e) => <EventRow key={e.id} e={e} past onEdit={() => editEvent(e)} onWho={() => showWho('event', e)} onDelete={() => deleteEvent(e)} />)}
       </div>
 
       {/* ---- CSR ---- */}
@@ -252,7 +263,7 @@ function EventRow({ e, past, onEdit, onWho, onDelete }) {
         {e.description && <p className="text-xs text-navy-500 mt-0.5 whitespace-pre-line">{e.description}</p>}
       </div>
       <button className="btn-sec !text-xs" onClick={onWho}><Users size={13} className="inline mr-1" />RSVPs</button>
-      {!past && <button className="btn-sec !text-xs" onClick={onEdit}><Pencil size={13} className="inline mr-1" />Edit</button>}
+      <button className="btn-sec !text-xs" onClick={onEdit}><Pencil size={13} className="inline mr-1" />Edit</button>
       <button className="btn-sec !text-xs text-rose-600" onClick={onDelete}><Trash2 size={13} className="inline mr-1" />Delete</button>
     </div>
   );

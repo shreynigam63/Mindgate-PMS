@@ -170,10 +170,16 @@ const isoAt = (v) => {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 };
+// A real calendar day: 2026-02-30 is refused here, not by Postgres as a 500.
 const isoDay = (v) => {
   if (v == null || v === '') return null;
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(v)) && !Number.isNaN(new Date(`${v}T00:00:00Z`).getTime()) ? String(v) : undefined;
+  const s = String(v);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return undefined;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s ? s : undefined;
 };
+// The time zone the company works in, as the rest of the server reads it.
+const APP_TZ = process.env.APP_TIMEZONE || 'Asia/Kolkata';
 const text = (v, max) => { const t = String(v == null ? '' : v).trim(); return t ? t.slice(0, max) : null; };
 // One line per change, so "who cancelled the offsite" has an answer.
 const peopleAudit = (req, action, entity, details) => db.query(
@@ -183,12 +189,15 @@ const peopleAudit = (req, action, entity, details) => db.query(
 // Everyone on the payroll hears about a new one, in the app only — one
 // statement for the whole company rather than a notify() per person, and
 // no email: mailing everybody per event is not a default anyone chose.
+// Returns how many were told, or null when it failed, so HR is told the
+// truth about it rather than a success message regardless.
 const tellEveryone = (req, kind, title, body) => db.query(
   `INSERT INTO core.notifications (tenant_id, employee_id, kind, title, body, link)
    SELECT $1, id, $2, $3, $4, '/people' FROM core.employees
     WHERE tenant_id=$1 AND status='active' AND archived_at IS NULL`,
   [T(req), kind, title, body])
-  .catch((e) => logger.warn('people notify-all failed', { kind, error: e.message }));
+  .then((r) => r.rowCount)
+  .catch((e) => { logger.warn('people notify-all failed', { kind, error: e.message }); return null; });
 // Attendee lists are HR's: pms_admin's sibling people_admin HELD, never the
 // copy the HRBP gateway lends.
 const holdsPeopleAdmin = async (req, res) => {
@@ -217,6 +226,7 @@ router.get('/events', async (req, res) => {
   try {
     const r = await db.query(
       `SELECT e.*, (SELECT COUNT(*)::int FROM people.event_rsvps r WHERE r.event_id=e.id AND r.response='yes') AS yes_count,
+              (SELECT COUNT(*)::int FROM people.event_rsvps r WHERE r.event_id=e.id) AS rsvp_count,
               (SELECT response FROM people.event_rsvps r WHERE r.event_id=e.id AND r.employee_id=$2) AS my_rsvp
          FROM people.events e WHERE e.tenant_id=$1 ORDER BY e.starts_at DESC LIMIT 100`, [T(req), req.user.id]);
     res.json({ events: r.rows });
@@ -233,11 +243,12 @@ router.post('/events', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [T(req), ev.title, ev.description, ev.location, ev.starts_at, ev.ends_at, req.user.email]);
     await peopleAudit(req, 'EVENT_CREATED', 'people_events', { id: r.rows[0].id, title: ev.title, starts_at: ev.starts_at });
+    let notified = 0;
     if (req.body.notify !== false) {
-      const when = new Date(ev.starts_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
-      await tellEveryone(req, 'event_scheduled', `New event: ${ev.title}`, [when, ev.location].filter(Boolean).join(' · '));
+      const when = new Date(ev.starts_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: APP_TZ });
+      notified = await tellEveryone(req, 'event_scheduled', `New event: ${ev.title}`, [when, ev.location].filter(Boolean).join(' · '));
     }
-    res.json({ ok: true, event: r.rows[0] });
+    res.json({ ok: true, event: r.rows[0], notified });
   } catch (e) { logger.error('event create', { error: e.message }); res.status(500).json({ error: 'Could not save the event' }); }
 });
 
@@ -300,6 +311,8 @@ router.post('/events/:id/rsvp', async (req, res) => {
 });
 
 // ---- CSR --------------------------------------------------------------------
+// A CSR row with its date as text — see GET /csr.
+const CSR_COLS = `id, title, description, to_char(event_date, 'YYYY-MM-DD') AS event_date, hours_credit, created_at`;
 /** A CSR activity's fields from a request, merged over what is stored. */
 function csrFrom(b, was = {}) {
   const has = (k) => Object.prototype.hasOwnProperty.call(b, k);
@@ -307,7 +320,7 @@ function csrFrom(b, was = {}) {
   const c = {
     title: has('title') ? text(b.title, 200) : was.title,
     description: has('description') ? text(b.description, 4000) : was.description ?? null,
-    event_date: has('event_date') ? isoDay(b.event_date) : (was.event_date ? new Date(was.event_date).toISOString().slice(0, 10) : null),
+    event_date: has('event_date') ? isoDay(b.event_date) : (was.event_date || null),
     hours_credit: hours,
   };
   if (!c.title) return { error: 'Give the activity a title.' };
@@ -319,7 +332,10 @@ function csrFrom(b, was = {}) {
 router.get('/csr', async (req, res) => {
   try {
     const r = await db.query(
-      `SELECT c.*, (SELECT COUNT(*)::int FROM people.csr_participations p WHERE p.csr_event_id=c.id) AS participants,
+      // The date as written ('2026-11-02'), never a midnight the server's
+      // time zone can move to the day before (13 Oct, found by review).
+      `SELECT c.id, c.title, c.description, to_char(c.event_date, 'YYYY-MM-DD') AS event_date, c.hours_credit, c.created_at,
+              (SELECT COUNT(*)::int FROM people.csr_participations p WHERE p.csr_event_id=c.id) AS participants,
               (SELECT hours FROM people.csr_participations p WHERE p.csr_event_id=c.id AND p.employee_id=$2) AS my_hours
          FROM people.csr_events c WHERE c.tenant_id=$1 ORDER BY c.event_date DESC NULLS LAST LIMIT 100`, [T(req), req.user.id]);
     res.json({ csr: r.rows });
@@ -332,27 +348,29 @@ router.post('/csr', async (req, res) => {
     const { c, error } = csrFrom(req.body || {});
     if (error) return res.status(400).json({ error });
     const r = await db.query(
-      `INSERT INTO people.csr_events (tenant_id, title, description, event_date, hours_credit) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      `INSERT INTO people.csr_events (tenant_id, title, description, event_date, hours_credit) VALUES ($1,$2,$3,$4,$5)
+       RETURNING ${CSR_COLS}`,
       [T(req), c.title, c.description, c.event_date, c.hours_credit]);
     await peopleAudit(req, 'CSR_CREATED', 'people_csr', { id: r.rows[0].id, title: c.title, event_date: c.event_date });
+    let notified = 0;
     if (req.body.notify !== false) {
-      await tellEveryone(req, 'csr_scheduled', `New CSR activity: ${c.title}`,
+      notified = await tellEveryone(req, 'csr_scheduled', `New CSR activity: ${c.title}`,
         [c.event_date, c.hours_credit ? `${c.hours_credit} hours credit` : null].filter(Boolean).join(' · ') || null);
     }
-    res.json({ ok: true, csr: r.rows[0] });
+    res.json({ ok: true, csr: r.rows[0], notified });
   } catch (e) { logger.error('csr create', { error: e.message }); res.status(500).json({ error: 'Could not save the activity' }); }
 });
 
 router.put('/csr/:id', async (req, res) => {
   try {
     if (!(await adminOnly(req, res))) return;
-    const was = (await db.query(`SELECT * FROM people.csr_events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    const was = (await db.query(`SELECT ${CSR_COLS} FROM people.csr_events WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!was) return res.status(404).json({ error: 'That activity no longer exists.' });
     const { c, error } = csrFrom(req.body || {}, was);
     if (error) return res.status(400).json({ error });
     const r = await db.query(
       `UPDATE people.csr_events SET title=$3, description=$4, event_date=$5, hours_credit=$6
-        WHERE id=$1 AND tenant_id=$2 RETURNING *`,
+        WHERE id=$1 AND tenant_id=$2 RETURNING ${CSR_COLS}`,
       [req.params.id, T(req), c.title, c.description, c.event_date, c.hours_credit]);
     await peopleAudit(req, 'CSR_UPDATED', 'people_csr', { id: was.id, title: c.title, from: { title: was.title } });
     res.json({ ok: true, csr: r.rows[0] });
@@ -364,7 +382,7 @@ router.delete('/csr/:id', async (req, res) => {
     if (!(await adminOnly(req, res))) return;
     const r = await db.query(
       `DELETE FROM people.csr_events WHERE id=$1 AND tenant_id=$2
-       RETURNING title, event_date, (SELECT COUNT(*)::int FROM people.csr_participations WHERE csr_event_id=$1) AS participants`,
+       RETURNING title, to_char(event_date, 'YYYY-MM-DD') AS event_date, (SELECT COUNT(*)::int FROM people.csr_participations WHERE csr_event_id=$1) AS participants`,
       [req.params.id, T(req)]);
     if (!r.rows.length) return res.status(404).json({ error: 'That activity no longer exists.' });
     await peopleAudit(req, 'CSR_DELETED', 'people_csr', { id: req.params.id, ...r.rows[0] });
@@ -1128,7 +1146,9 @@ async function careerLadderFor(tenantId, employeeId, maxSteps = 3, start = null)
   const emp = (await db.query(`SELECT designation, department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
   if (!emp || !emp.designation) return [];
   const out = new Map();
-  let frontier = [start || { role: emp.designation, via: [], months: 0, comps: [] }];
+  // `first` is the typical months of the first move out of the employee's
+  // own role — the only one their experience comes off (career-timeline.js).
+  let frontier = [start || { role: emp.designation, via: [], months: 0, comps: [], first: null }];
   const seen = new Set([lc(emp.designation), ...(start ? [lc(start.role)] : [])]);
   const first = start ? start.via.length + 1 : 1;
   const cache = {};
@@ -1148,10 +1168,11 @@ async function careerLadderFor(tenantId, employeeId, maxSteps = 3, start = null)
         seen.add(k);
         const months = t.typical_time_months == null || f.months == null ? null : f.months + Number(t.typical_time_months);
         const comps = [...new Set([...f.comps, ...(t.required_competencies || [])])];
+        const first = f.first != null ? f.first : (t.typical_time_months == null ? null : Number(t.typical_time_months));
         const rung = { to_role: t.to_role, to_level: t.to_level, steps: step, via: f.via,
-          typical_time_months: months, required_competencies: comps, source: t.source || 'matrix' };
+          typical_time_months: months, first_step_months: first, required_competencies: comps, source: t.source || 'matrix' };
         out.set(k, rung);
-        next.push({ role: t.to_role, via: [...f.via, t.to_role], months, comps });
+        next.push({ role: t.to_role, via: [...f.via, t.to_role], months, comps, first });
       }
     }
     frontier = next;
@@ -1186,8 +1207,43 @@ async function targetsFor(tenantId, employeeId, horizon) {
   return (await careerLadderFor(tenantId, employeeId, 3, {
     role: anchor.to_role, via: [anchor.to_role],
     months: anchor.typical_time_months == null ? null : Number(anchor.typical_time_months),
+    first: anchor.typical_time_months == null ? null : Number(anchor.typical_time_months),
     comps: anchor.required_competencies || [],
   })).map((r) => ({ ...r, after_short_term: anchor.to_role }));
+}
+
+// THE EMPLOYEE'S EXPERIENCE FOR A TIMELINE — one rule everywhere (13 Oct,
+// found by review: the screen, the save and the AI each worked it out
+// their own way). The HRMS figure first; else years typed on the form in
+// hand (`typed`, Long-Term only); else the years saved on Long-Term, then
+// on any tab. Each dated, so it counts up to today (career-timeline.js).
+async function experienceOf(tenantId, employeeId, typed) {
+  const me = (await db.query(
+    `SELECT total_experience_years, total_experience_as_of FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+    [employeeId, tenantId])).rows[0] || {};
+  const saved = (await db.query(
+    `SELECT years_experience, years_experience_as_of FROM people.career_paths
+      WHERE tenant_id=$1 AND employee_id=$2 AND years_experience IS NOT NULL
+      ORDER BY (horizon='long_term') DESC LIMIT 1`, [tenantId, employeeId])).rows[0] || {};
+  const hasTyped = typed != null && String(typed).trim() !== '' && Number.isFinite(Number(typed));
+  return experienceFrom(me.total_experience_years, hasTyped ? typed : saved.years_experience,
+    { hrmsAsOf: me.total_experience_as_of, selfAsOf: hasTyped ? null : saved.years_experience_as_of });
+}
+
+// A move's timeline as it stands TODAY: what is left after experience.
+const timelineOfMove = (t, experience) => remainingTimeline(t && t.typical_time_months, t && t.min_time_months,
+  experience, t && t.first_step_months);
+
+// The Short-Term goal's Expected timeline worked out now, for every reader
+// of it (the manager's team view, the review assistant, the AI). The saved
+// text is only the figure on the day it was saved; this is the one the
+// employee's own tab shows. Falls back to the saved text when the goal is
+// not a move the matrix offers (or HR gave it no figure).
+async function shortTermTimelineNow(tenantId, employeeId, role, stored, experience) {
+  if (!role) return stored;
+  const t = (await eligibleTransitionsFor(tenantId, employeeId)).find((x) => lc(x.to_role) === lc(role));
+  if (!t || t.typical_time_months == null) return stored;
+  return timelineOfMove(t, experience || await experienceOf(tenantId, employeeId)).timeline_text;
 }
 
 // Why an employee has no eligible transitions.
@@ -1286,10 +1342,8 @@ router.get('/career/my-path', async (req, res) => {
     // The employee's total experience, for what is LEFT of each move's
     // time (career-timeline.js, 13 Oct): the HRMS figure, else what they
     // entered on their Long-Term tab.
-    const selfYears = (rows.find((r) => r.horizon === 'long_term' && r.years_experience != null)
-      || rows.find((r) => r.years_experience != null) || {}).years_experience;
-    const experience = experienceFrom(me.total_experience_years, selfYears);
-    const left = (t) => remainingTimeline(t && t.typical_time_months, t && t.min_time_months, experience);
+    const experience = await experienceOf(T(req), req.user.id);
+    const left = (t) => timelineOfMove(t, experience);
     // Short-Term's timeline IS what is left of the matrix's figure for the
     // chosen move — shown as such even where an older version stored the
     // whole figure, or something typed.
@@ -1319,7 +1373,7 @@ router.get('/career/my-path', async (req, res) => {
       if (!targetOptions.some((o) => o.role === t.to_role)) {
         targetOptions.push({ role: t.to_role, typical_time_months: t.typical_time_months ?? null,
           min_time_months: t.min_time_months ?? null, steps: t.steps || 1, source: t.source || 'matrix',
-          ...left(t) });
+          first_step_months: t.first_step_months ?? null, ...left(t) });
       }
     }
     const staleTarget = !!(p && p.target_role && eligibleTargetRoles.length && !eligibleTargetRoles.includes(p.target_role));
@@ -1401,15 +1455,7 @@ router.put('/career/my-path', async (req, res) => {
     let timeline = (target_timeline || '').trim() || null;
     if (horizon === 'short_term') {
       const t = transitions.find((x) => x.to_role === target_role);
-      if (t && t.typical_time_months != null) {
-        const me = (await db.query(`SELECT total_experience_years FROM core.employees WHERE id=$1 AND tenant_id=$2`,
-          [req.user.id, T(req)])).rows[0] || {};
-        const self = (await db.query(
-          `SELECT years_experience FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2 AND years_experience IS NOT NULL
-            ORDER BY (horizon='long_term') DESC LIMIT 1`, [T(req), req.user.id])).rows[0] || {};
-        timeline = remainingTimeline(t.typical_time_months, t.min_time_months,
-          experienceFrom(me.total_experience_years, req.body.years_experience ?? self.years_experience)).timeline_text;
-      }
+      if (t && t.typical_time_months != null) timeline = timelineOfMove(t, await experienceOf(T(req), req.user.id)).timeline_text;
     }
     // A field the request does not send is KEPT, not cleared (8 Oct): the
     // Short-Term tab now asks only for the role and its timeline — the
@@ -1419,12 +1465,16 @@ router.put('/career/my-path', async (req, res) => {
     const sent = (k) => Object.prototype.hasOwnProperty.call(body, k);
     await db.query(
       `INSERT INTO people.career_paths
-         (tenant_id, employee_id, horizon, target_role, target_timeline, plan, years_experience, skills_interests)
-       VALUES ($1,$2,$8,$3,$4,$5,$6,$7)
+         (tenant_id, employee_id, horizon, target_role, target_timeline, plan, years_experience, skills_interests, years_experience_as_of)
+       VALUES ($1,$2,$8,$3,$4,$5,$6,$7, CASE WHEN $6::numeric IS NOT NULL THEN now() END)
        ON CONFLICT (tenant_id, employee_id, horizon) DO UPDATE SET
          target_role=EXCLUDED.target_role, target_timeline=EXCLUDED.target_timeline,
          plan=CASE WHEN $9 THEN EXCLUDED.plan ELSE people.career_paths.plan END,
          years_experience=CASE WHEN $10 THEN EXCLUDED.years_experience ELSE people.career_paths.years_experience END,
+         -- Dated when the years CHANGE (migration 088), so they count up
+         -- from the day they were true, not from the last edit of the plan.
+         years_experience_as_of=CASE WHEN $10 AND EXCLUDED.years_experience IS DISTINCT FROM people.career_paths.years_experience
+                                     THEN EXCLUDED.years_experience_as_of ELSE people.career_paths.years_experience_as_of END,
          skills_interests=CASE WHEN $11 THEN EXCLUDED.skills_interests ELSE people.career_paths.skills_interests END,
          updated_at=now()`,
       [T(req), req.user.id, target_role.trim(), timeline, plan || null,
@@ -1620,6 +1670,10 @@ router.get('/career/team', async (req, res) => {
         WHERE e.tenant_id=$1 AND e.manager_id=$2 AND e.status='active'
         GROUP BY e.id, e.name, cp.target_role, cp.target_timeline, cp.plan, cp.updated_at
         ORDER BY e.name`, [T(req), req.user.id]);
+    // Each report's Short-Term timeline as it stands today, as they see it.
+    for (const row of r.rows) {
+      if (row.target_role) row.target_timeline = await shortTermTimelineNow(T(req), row.employee_id, row.target_role, row.target_timeline);
+    }
     res.json({ team: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1652,6 +1706,10 @@ async function careerPathFor(tenantId, employeeId, horizon = 'short_term') {
   // was nothing to read — it could only quote the plan text back. This is
   // what makes that promise true.
   const milestones = await milestonesFor(path.id);
+  // The Short-Term timeline as it stands today, as the employee sees it.
+  if (horizon === 'short_term') {
+    path.target_timeline = await shortTermTimelineNow(tenantId, employeeId, path.target_role, path.target_timeline);
+  }
   return { ...path, milestones, progress_pct: careerProgress(milestones) };
 }
 
@@ -1674,5 +1732,5 @@ router.use('/onboarding', require('./onboarding').router);
 router.use('/', require('./rnr').router);
 
 module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor, targetDepartments,
-                   experienceFrom, remainingTimeline, transitionsWorkbook, suggestedTransitionRows,
+                   experienceFrom, remainingTimeline, experienceOf, timelineOfMove, shortTermTimelineNow, transitionsWorkbook, suggestedTransitionRows,
                    TRANSITION_HEADERS, TRANSITION_BANNER, SUGGESTED_BANNER };

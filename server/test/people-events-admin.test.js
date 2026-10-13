@@ -2,6 +2,10 @@
 // for HR to start Events from HR Admin tab ... linked with People Hub").
 // What HR schedules is what People Hub shows; HR alone schedules it.
 process.env.AUTH_DEV = 'true';
+// The deploy's own zone (docker-compose sets TZ=Asia/Kolkata). A DATE read
+// as local midnight here is the day before in UTC, which is how a CSR
+// date used to slip back a day on every save (found by review, 13 Oct).
+process.env.TZ = 'Asia/Kolkata';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'events-admin-test';
 
 const { test, before, after } = require('node:test');
@@ -82,6 +86,7 @@ test('HR SCHEDULES AN EVENT, PEOPLE HUB SHOWS IT, AND EVERYONE ACTIVE IS TOLD IN
   id.event = made.body.event.id;
   const seen = await call('emp', '/people/events');
   assert.ok(seen.body.events.some((e) => e.id === id.event), 'People Hub does not show it');
+  assert.equal(made.body.notified, 3, 'HR is told how many were told');
   const told = (await db.query(`SELECT employee_id FROM core.notifications WHERE tenant_id=$1 AND kind='event_scheduled'`, [tenantId])).rows.map((r) => r.employee_id);
   assert.deepEqual(told.sort(), [id.hr, id.emp, id.hrbp].sort(), 'every ACTIVE employee once, nobody who has left');
   const audit = (await db.query(`SELECT action FROM core.audit_log WHERE tenant_id=$1 AND entity='people_events'`, [tenantId])).rows;
@@ -144,9 +149,15 @@ test('CSR: HR adds, edits and removes an activity; people take part; HR sees who
   assert.equal((await send('emp', 'POST', `/people/csr/${cid}/participate`, { hours: 'lots' })).status, 400);
   const who = await call('hr', `/people/csr/${cid}/participants`);
   assert.deepEqual(who.body.participants.map((p) => [p.name, Number(p.hours)]), [['emp', 3]]);
+  assert.equal(made.body.csr.event_date, '2026-11-02', 'the date as written');
+  assert.equal((await call('emp', '/people/csr')).body.csr.find((x) => x.id === cid).event_date, '2026-11-02', 'People Hub shows the day HR chose');
   const ed = await send('hr', 'PUT', `/people/csr/${cid}`, { hours_credit: 5 });
   assert.equal(Number(ed.body.csr.hours_credit), 5);
   assert.equal(ed.body.csr.title, 'Tree plantation');
+  assert.equal(ed.body.csr.event_date, '2026-11-02', 'an edit that leaves the date alone keeps it, not the day before');
+  const twice = await send('hr', 'PUT', `/people/csr/${cid}`, { title: 'Tree plantation drive' });
+  assert.equal(twice.body.csr.event_date, '2026-11-02');
+  assert.equal((await send('hr', 'POST', '/people/csr', { title: 'X', event_date: '2026-02-30', notify: false })).status, 400, 'an impossible date is refused with a reason');
   assert.equal((await send('hr', 'DELETE', `/people/csr/${cid}`)).status, 200);
   assert.equal((await send('emp', 'POST', `/people/csr/${cid}/participate`, { hours: 1 })).status, 404);
 });

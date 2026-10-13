@@ -15,7 +15,7 @@ const { requireConsent } = require('../../core/consent');
 // also what guarantees career suggestions stay inside the set the
 // career-path form accepts — both resolve eligibility through it.
 const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor, targetDepartments,
-  experienceFrom, remainingTimeline } = require('../people');
+  experienceOf, timelineOfMove, shortTermTimelineNow } = require('../people');
 // Same house rule, the other direction: the appraisal summary narrates the
 // performance module's own consolidation rather than re-gathering it.
 const { buildAnnualReviewSummary, kraSuggestionCandidates } = require('../performance');
@@ -901,10 +901,17 @@ router.post('/career-plan', async (req, res) => {
       [T(req), req.user.id])).rows[0] || {};
     const typed = b.draft && typeof b.draft === 'object' ? b.draft : {};
     const val = (k, max) => { const v = typed[k] != null && String(typed[k]).trim() !== '' ? typed[k] : lt[k]; return v == null || String(v).trim() === '' ? null : String(v).trim().slice(0, max); };
+    // The experience every timeline here is worked out from — the same rule
+    // as the employee's own tab (people experienceOf), with the years typed
+    // on this form in hand.
+    const exp = await experienceOf(T(req), req.user.id, typed.years_experience);
+    if (st && st.target_role) st.target_timeline = await shortTermTimelineNow(T(req), req.user.id, st.target_role, st.target_timeline, exp);
 
     const input = {
-      employee: { designation: emp.designation, department: emp.department, joined: emp.date_of_joining,
-        hrms_total_experience_years: emp.total_experience_years == null ? null : Number(emp.total_experience_years) },
+      employee: { designation: emp.designation, department: emp.department, joined: emp.date_of_joining },
+      // What the timelines below were worked out from: the HR record's
+      // figure (a fact) or the employee's own (a claim), as of today.
+      experience_used: { years: exp.years, source: exp.source || 'none' },
       target_role: targetRole,
       short_term_goal: st && st.target_role ? st : null,
       self_reported: { years_experience: val('years_experience', 10), skills_and_interests: val('skills_interests', 2000), current_plan: val('plan', 3000) },
@@ -913,8 +920,7 @@ router.post('/career-plan', async (req, res) => {
       organisation_path: onPath
         ? { steps_from_current_role: onPath.steps || 1, via: onPath.via || [], typical_time_months: onPath.typical_time_months,
             // What is left of it after their total experience (13 Oct).
-            remaining_time_months: remainingTimeline(onPath.typical_time_months, onPath.min_time_months,
-              experienceFrom(emp.total_experience_years, val('years_experience', 10))).remaining_time_months,
+            remaining_time_months: timelineOfMove(onPath, exp).remaining_time_months,
             required_competencies: onPath.required_competencies || [], from: onPath.source === 'grade_sheet' ? 'grade_and_level_sheet' : 'career_pathing_matrix' }
         : null,
     };
@@ -934,8 +940,11 @@ Use the facts as given; do not contradict them:
 - organisation_path, when present, is the organisation's own route (its
   Career Pathing Matrix or Grade and Level sheet): use its
   remaining_time_months for the timeline — the time LEFT of the path's
-  typical_time_months after the employee's total experience (0 means due
-  now) — and its required_competencies in the skills. When absent, the role is not on the organisation's path from
+  typical_time_months after experience_used (0 means due now; when
+  experience_used.source is none it is the path's full figure, so say
+  their experience is not on record) — and its required_competencies in
+  the skills. experience_used with source hrms is the HR record, a fact;
+  self_reported is the employee's own claim, so say "you have said". When absent, the role is not on the organisation's path from
   here — say so once, and estimate the timeline as a range, marked as an
   estimate.
 - short_term_goal, when present, is the step already planned; the plan
@@ -1033,7 +1042,9 @@ router.post('/career-suggest', async (req, res) => {
         const ms = (await db.query(
           `SELECT title, to_char(target_date,'YYYY-MM-DD') target_date FROM people.career_milestones
             WHERE career_path_id=$1 ORDER BY sort_order, created_at LIMIT 10`, [stRow.id])).rows;
-        shortTerm = { target_role: stRow.target_role, target_timeline: stRow.target_timeline,
+        shortTerm = { target_role: stRow.target_role,
+          // As the employee's own Short-Term tab shows it today.
+          target_timeline: await shortTermTimelineNow(T(req), req.user.id, stRow.target_role, stRow.target_timeline),
           plan: stRow.plan ? String(stRow.plan).slice(0, 2000) : null, milestones: ms };
         if (current.years_experience == null && stRow.years_experience != null) current.years_experience = Number(stRow.years_experience);
         if (!current.skills_interests && stRow.skills_interests) current.skills_interests = String(stRow.skills_interests).slice(0, 2000);
@@ -1046,9 +1057,14 @@ router.post('/career-suggest', async (req, res) => {
     const beyond = horizon === 'long_term' && shortTerm && !transitions.length
       ? { reason: 'none_beyond_short_term', short_term_role: shortTerm.target_role } : null;
 
+    // One rule for experience everywhere (people experienceOf): the HR
+    // record, else the years typed on this form, else the years saved on
+    // Long-Term. Until review on 13 Oct this route read the tab's own row
+    // first, and could disagree with the screen.
+    const exp = await experienceOf(T(req), req.user.id, typed.years_experience);
     const input = {
-      employee: { name: emp.name, designation: emp.designation, department: emp.department, joined: emp.date_of_joining,
-        hrms_total_experience_years: emp.total_experience_years == null ? null : Number(emp.total_experience_years) },
+      employee: { name: emp.name, designation: emp.designation, department: emp.department, joined: emp.date_of_joining },
+      experience_used: { years: exp.years, source: exp.source || 'none' },
       horizon: horizon === 'long_term' ? 'long_term: three years and beyond' : 'short_term: the next one to two years',
       current_aspiration: anyTyped || current.years_experience != null || current.skills_interests ? current : null,
       // Long-Term only: the plan already made for the next move.
@@ -1071,8 +1087,7 @@ router.post('/career-suggest', async (req, res) => {
         ...(stTarget ? { builds_on_short_term_goal: (t.via || []).some((v) => String(v).trim().toLowerCase() === stTarget) } : {}),
         typical_time_months: t.typical_time_months,
         // The time LEFT of it after their total experience (13 Oct).
-        remaining_time_months: remainingTimeline(t.typical_time_months, t.min_time_months,
-          experienceFrom(emp.total_experience_years, current.years_experience)).remaining_time_months,
+        remaining_time_months: timelineOfMove(t, exp).remaining_time_months,
         required_competencies: t.required_competencies || [],
       })),
       // Present only when configured_transitions is empty. reason is one
@@ -1143,8 +1158,11 @@ you must report THAT reason rather than assuming nothing exists:
   nothing can be matched until HR sets it.
 Use the matrix's own figures rather than estimating your own: give
 typical_time as remaining_time_months — the time LEFT of the matrix's
-typical_time_months after the employee's total experience, 0 meaning due
-now — and use its required_competencies. You never suggest, imply or hint at a
+typical_time_months after experience_used, 0 meaning due now — and use its
+required_competencies. experience_used.source says what that rests on:
+hrms is the HR record (state it as a fact), self_reported is the
+employee's own claim ("you have said N years"), and none means it is the
+matrix's full figure because no experience is on record — say so. You never suggest, imply or hint at a
 performance rating or score, and you never promise a promotion — you are
 describing what an aspiration would require, not what will happen.
 Each suggested_milestone must be a step the employee could actually put a

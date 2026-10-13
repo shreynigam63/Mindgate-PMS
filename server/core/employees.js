@@ -678,8 +678,8 @@ async function loadEmployees(tenantId, rows, opts = {}) {
       // from "onboarding" everyone in it.
       if (!beforeByEmail.has(String(r.email || '').toLowerCase())) newHireEmails.push(r.email);
       await client.query(
-        `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, status, resignation_date, last_working_date, location, hod_name, total_experience_years)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        `INSERT INTO core.employees (tenant_id, emp_code, name, email, department, designation, role_band, date_of_joining, status, resignation_date, last_working_date, location, hod_name, total_experience_years, total_experience_as_of)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, CASE WHEN $14::numeric IS NOT NULL THEN now() END)
          ON CONFLICT (tenant_id, email) DO UPDATE SET
            emp_code=EXCLUDED.emp_code, name=EXCLUDED.name, department=EXCLUDED.department,
            designation=EXCLUDED.designation, role_band=EXCLUDED.role_band,
@@ -693,6 +693,10 @@ async function loadEmployees(tenantId, rows, opts = {}) {
            -- Coalesced, unlike location: a file without the column, or a
            -- blank cell, must not wipe a figure an earlier upload set.
            total_experience_years=COALESCE(EXCLUDED.total_experience_years, core.employees.total_experience_years),
+           -- The day that figure was true (migration 088): today when this
+           -- file brought one, else the day the kept one was recorded.
+           total_experience_as_of=CASE WHEN EXCLUDED.total_experience_years IS NOT NULL THEN now()
+                                       ELSE core.employees.total_experience_as_of END,
            -- BACK ON THE LIST. This is what makes "clear the list, then
            -- upload a fresh sheet" work the way it was asked for on
            -- 25 Sep: archiving takes people off the list and keeps
