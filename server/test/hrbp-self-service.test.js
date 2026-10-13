@@ -103,7 +103,7 @@ after(async () => {
   if (server) await new Promise((r) => server.close(r));
   if (tenantId) {
     for (const t of ['people.onboarding_tasks', 'people.onboarding_joiners', 'people.appraisal_query_messages', 'people.appraisal_queries', 'pms.review_meetings',
-      'pms.connects', 'core.notifications', 'pms.audit_log', 'pms.pip_records', 'pms.kras',
+      'pms.connects', 'pms.top_talent', 'core.notifications', 'pms.audit_log', 'pms.pip_records', 'pms.kras',
       'pms.kra_sheets', 'pms.development_plans', 'pms.rating_adjustments', 'pms.cycles', 'core.audit_log',
       'core.hrbp_scope', 'core.local_credentials', 'core.user_roles', 'core.role_permissions', 'core.employees']) {
       await db.query(`DELETE FROM ${t} WHERE tenant_id=$1`, [tenantId]).catch(() => {});
@@ -433,6 +433,30 @@ test('AN HRBP\'S DOWNLOADS HOLD THEIR REMIT ONLY — not the company, not themse
     assert.equal(hr.status, 200);
     for (const who of ['pune1', 'mumbai1', 'inside']) assert.match(hr.text, new RegExp(`\\b${who}\\b`), `HR's ${path} lost ${who}`);
   }
+});
+
+test('THE 9-BOX HOLDS THE REMIT ONLY, and counts it — a cell names its people by id alone', async () => {
+  const c = (await db.query(`SELECT id FROM pms.cycles WHERE tenant_id=$1`, [tenantId])).rows[0].id;
+  for (const who of ['pune1', 'mumbai1']) {
+    await db.query(`INSERT INTO pms.top_talent (tenant_id, cycle_id, employee_id, potential_rating, nine_box_cell, noted_by)
+      VALUES ($1,$2,$3,5,'high-high','boss@x.com')`, [tenantId, c, id[who]]);
+  }
+  const placed = (r) => r.body.groups.flatMap((g) => Object.values(g.cells).flat()).map((p) => p.id).sort();
+  const hrbp = await call('inside', '/pms/nine-box');
+  assert.equal(hrbp.status, 200, JSON.stringify(hrbp.body));
+  assert.deepEqual(placed(hrbp), [id.pune1], 'the HRBP\'s 9-box is not their remit');
+  assert.equal(hrbp.body.groups[0].total, 1, 'the group count still counts the company');
+  const hr = await call('boss', '/pms/nine-box');
+  assert.deepEqual(placed(hr), [id.pune1, id.mumbai1].sort(), 'HR lost somebody');
+});
+
+test('narrowing drops a list row that names an outsider by id alone, and leaves rows that are not people', () => {
+  const body = { cells: [{ id: ME, name: 'in' }, { id: OTHER, name: 'out' }, { id: 'c0ffee00-0000-4000-8000-000000000000', name: 'a cycle' }] };
+  gw.narrow(body, new Set([ME]), 0, new Set([ME, OTHER]));
+  assert.deepEqual(body.cells.map((r) => r.name), ['in', 'a cycle']);
+  const legacy = { cells: [{ id: OTHER, name: 'out' }] };
+  gw.narrow(legacy, new Set([ME]));
+  assert.equal(legacy.cells.length, 1, 'without the employee list nothing is guessed');
 });
 
 test('the scope helper keeps every row when no hook narrowed the request, and none that name nobody when one did', () => {

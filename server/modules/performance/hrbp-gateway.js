@@ -316,21 +316,29 @@ function outsideRemit(ids, o) {
  * Returns the number of rows removed, so the caller can tell whether
  * anything was scoped at all.
  */
-function narrow(node, ids, depth = 0) {
+function narrow(node, ids, depth = 0, people = null) {
   if (depth > 8 || !node || typeof node !== 'object') return 0;
   let removed = 0;
   if (Array.isArray(node)) {
-    for (const el of node) removed += narrow(el, ids, depth + 1);
+    for (const el of node) removed += narrow(el, ids, depth + 1, people);
     return removed;
   }
   for (const key of Object.keys(node)) {
     const v = node[key];
     if (Array.isArray(v)) {
       const before = v.length;
-      const kept = v.filter((el) => outsideRemit(ids, el) !== true);
+      const kept = v.filter((el) => {
+        const out = outsideRemit(ids, el);
+        if (out !== null) return !out;
+        // A list row that names a person by `id` alone — a 9-box cell is
+        // {id, name}. Known for one because the id is on the employee
+        // master: a uuid names one row in the whole database (13 Oct).
+        const pid = el && typeof el === 'object' && !Array.isArray(el) ? uuidOf(el.id) : null;
+        return !(pid && people && people.has(pid) && !ids.has(pid));
+      });
       removed += before - kept.length;
       node[key] = kept;
-      for (const el of kept) removed += narrow(el, ids, depth + 1);
+      for (const el of kept) removed += narrow(el, ids, depth + 1, people);
       if (kept.length !== before) rewriteTotals(node, key, before, kept);
     } else if (v && typeof v === 'object') {
       // An object that is itself somebody else's record — `report.employee`
@@ -338,7 +346,7 @@ function narrow(node, ids, depth = 0) {
       // rather than emptied, so the page's own "nothing here" state runs
       // instead of it rendering a half-blank record.
       if (outsideRemit(ids, v) === true) { node[key] = null; removed += 1; } else {
-        removed += narrow(v, ids, depth + 1);
+        removed += narrow(v, ids, depth + 1, people);
       }
     }
   }
@@ -645,12 +653,16 @@ function gateway() {
       if (matchesRoute(KEEP_SELF, req, routePath)) visible.add(req.user.id);
       // The same people, for a file download — see core/scope-hooks.
       req.remitVisible = visible;
+      // Everybody on the employee master, so narrowing knows a list row
+      // that names a person by `id` alone (see narrow).
+      const people = new Set((await db.query(
+        `SELECT id FROM core.employees WHERE tenant_id=$1`, [req.user.tenant_id])).rows.map((r) => r.id));
 
       const json = res.json.bind(res);
       res.json = (body) => {
         try {
           if (body && typeof body === 'object') {
-            narrow(body, visible);
+            narrow(body, visible, 0, people);
             if (!Array.isArray(body)) {
               body.remit = { locations: remit.locations, hods: remit.hods, empty: remit.empty };
               body.scoped_to_remit = true;

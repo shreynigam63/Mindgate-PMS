@@ -5065,7 +5065,9 @@ router.get('/nine-box', async (req, res) => {
       placed.push({ ...r, ...p, calibrated_cell: calibratedBy.get(r.id) || null });
     }
 
-    const rows = source === 'derived' ? placed : calibrated;
+    // Cut to an HRBP's remit before grouping, so each group's "N placed"
+    // counts the people in it (13 Oct: an HRBP saw the whole company here).
+    const rows = visibleRows(req, source === 'derived' ? placed : calibrated, 'id');
     const groupKey = (r) => (level === 'department' ? (r.department || 'Unassigned') : level === 'manager' ? (r.manager_name || 'No manager') : 'Organisation');
     const groups = new Map();
     for (const r of rows) {
@@ -5076,7 +5078,7 @@ router.get('/nine-box', async (req, res) => {
       const cellKey = source === 'derived' ? r.cell : r.nine_box_cell;
       if (!g.cells[cellKey]) g.cells[cellKey] = [];
       g.cells[cellKey].push({
-        id: r.id, name: r.name,
+        id: r.id, employee_id: r.id, name: r.name,
         ...(source === 'derived'
           ? { why: r.why, final_rating: r.final_rating, competency_gap: r.competency_gap,
               calibrated_cell: r.calibrated_cell,
