@@ -372,10 +372,13 @@ function NineBoxSettingsModal({ cycle, onClose }) {
   const [errors, setErrors] = useState([]);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
-  useEffect(() => {
-    api(`/pms/nine-box/settings?cycle_id=${cycle.id}`).then((r) => { setD(r); setF(JSON.parse(JSON.stringify(r.settings))); })
-      .catch((e) => setErr(e.message));
-  }, [cycle.id]);
+  const loadSettings = () => api(`/pms/nine-box/settings?cycle_id=${cycle.id}`)
+    .then((r) => { setD(r); setF(JSON.parse(JSON.stringify(r.settings))); })
+    .catch((e) => setErr(e.message));
+  useEffect(() => { loadSettings(); }, [cycle.id]);
+  // An emptied number box is sent as "not given", so the server says it
+  // is needed — Number('') would quietly have saved 0.
+  const numOrNull = (v) => (v === '' || v == null ? null : Number(v));
   const locked = d && d.locked;
   const setBox = (k, field, v) => setF((x) => ({ ...x, boxes: { ...x.boxes, [k]: { ...x.boxes[k], [field]: v } } }));
   const setQ = (i, field, v) => setF((x) => ({ ...x, questions: x.questions.map((q, j) => (j === i ? { ...q, [field]: v } : q)) }));
@@ -383,7 +386,8 @@ function NineBoxSettingsModal({ cycle, onClose }) {
     setBusy(true); setErr(null); setErrors([]); setDone(null);
     try {
       const r = await api(`/pms/nine-box/settings/${cycle.id}`, { method: 'PUT', body: JSON.stringify({
-        ...f, mid_from: Number(f.mid_from), high_from: Number(f.high_from), competency_weight: Number(f.competency_weight) }) });
+        ...f, mid_from: numOrNull(f.mid_from), high_from: numOrNull(f.high_from), competency_weight: numOrNull(f.competency_weight) }) });
+      await loadSettings();
       setDone(`Saved. ${r.moved ? `${r.moved} ${r.moved === 1 ? 'person moves' : 'people move'} box.` : 'Nobody changes box.'}`);
     } catch (e) { setErr(e.message); if (e.data && e.data.errors) setErrors(e.data.errors); }
     setBusy(false);

@@ -7,9 +7,13 @@
 //   Under   2.8 / 2.5   (0,0) Underperformer, PIP at publish
 //   Rough   2.0 / 4.5   (0,2) Rough Diamond — a 30-day action, NO PIP
 //   Core    3.5 / 3.5   (1,1) Core Player
-//   Joiner  4.5 / —     joined after the cut-off: Not placed
+//   Joiner  4.5 / —     joined 1 Jan, the day after the cut-off: Not placed
 //   NoPot   2.4 / —     no potential input: Not placed, still gets a PIP
 //   Other   3.5 / 3.5   (1,1), in another manager's team and department
+// India time, as the client's servers run: a DATE read as a local Date
+// lands on the previous day in UTC, which once let a 1 January joiner
+// past the 31 December cut-off.
+process.env.TZ = 'Asia/Kolkata';
 const { test, after, before } = require('node:test');
 const assert = require('node:assert');
 
@@ -62,7 +66,7 @@ before(async () => {
   await mk('under', 'NB Under', 'Engineering', id.mgr);
   await mk('rough', 'NB Rough', 'Sales', id.mgr);
   await mk('core', 'NB Core', 'Engineering', id.mgr);
-  await mk('joiner', 'NB Joiner', 'Engineering', id.mgr, '2027-02-01');
+  await mk('joiner', 'NB Joiner', 'Engineering', id.mgr, '2027-01-01');
   await mk('nopot', 'NB NoPot', 'Engineering', id.mgr);
   await mk('other', 'NB Other', 'Sales', id.mgr2);
   await db.query(`INSERT INTO core.department_heads (tenant_id, department, employee_id) VALUES ($1,'Engineering',$2)`, [t.id, id.hod]);
@@ -128,6 +132,7 @@ async function seed(cycle, key, rating, comp, mgrId = id.mgr) {
   }
 }
 const answers = (a, b) => ({ learning_agility: a, leadership: b, ownership: a, readiness: b });
+const phase = (cycle, to, rollback = false) => call('POST', `/pms/cycles/${cycle}/phase`, 'hr', { to, rollback });
 const boxOf = (body, key) => Object.values(body.boxes).find((b) => b.people.some((p) => p.employee_id === id[key]));
 const everyone = (body) => [...Object.values(body.boxes).flatMap((b) => b.people), ...body.not_placed.people].map((p) => p.employee_id);
 
@@ -449,6 +454,84 @@ test('next cycle: two cycles in (0,0) escalate to HR; a (2,2) who drops alerts H
   assert.match(alerts[0].body, /Super 50/);
   assert.ok((await db.query(`SELECT 1 FROM core.notifications WHERE tenant_id=$1 AND kind='nine_box_escalation' AND employee_id=$2`,
     [tenantId, id.hr])).rows.length);
+
+  // The escalation is HR's to decide: the manager sees it, cannot close it.
+  const acts = await get('/pms/nine-box/actions?view=team', 'mgr');
+  const e = acts.body.actions.find((a) => a.action_key === 'escalation');
+  assert.equal(e.can_close, false);
+  assert.equal(acts.body.actions.find((a) => a.action_key === 'box:0,0').can_close, true);
+  const refused = await call('PUT', `/pms/nine-box/actions/${e.id}`, 'mgr', { status: 'done', note: 'no need' });
+  assert.equal(refused.status, 403);
+  assert.match(refused.body.error, /with HR/);
+  const hrActs = await get('/pms/nine-box/actions?view=company', 'hr');
+  assert.equal(hrActs.body.actions.find((a) => a.id === e.id).can_close, true);
+});
+
+test('nobody sees their own box: calibration, override, activity feed, HR\'s own export', { skip }, async () => {
+  // HR is evaluated in this cycle too, by the manager.
+  await seed(cycle2Id, 'hr', 3.5, null);
+  const cal = await get('/pms/calibration', 'hr');
+  const own = cal.body.rows.find((r) => r.employee_id === id.hr);
+  assert.ok(own, 'HR is a calibration row like anybody');
+  assert.equal(own.nine_box, null);
+  assert.equal(own.nine_box_hidden, true);
+  assert.ok(cal.body.rows.find((r) => r.employee_id === id.top).nine_box, 'everybody else still has theirs');
+
+  await phase(cycle2Id, 'calibration', true);
+  const self = await call('POST', '/pms/nine-box/override', 'hr', { employee_id: id.hr, axis: 'potential', band: 2, reason: 'me' });
+  assert.equal(self.status, 403);
+  await phase(cycle2Id, 'publish');
+  assert.equal((await call('POST', '/pms/publish', 'hr')).status, 200);
+
+  const feed = await get(`/pms/cycles/${cycle2Id}/activity`, 'hr');
+  assert.equal(feed.status, 200);
+  assert.ok(!feed.body.events.some((e) => e.employee_id === id.hr && /^NINE_BOX_/.test(e.action)), 'HR\'s own placement is not in their feed');
+  assert.ok(feed.body.events.some((e) => e.employee_id === id.top && e.action === 'NINE_BOX_PLACED'), 'other people\'s are');
+
+  const exp = await get(`/gdpr/export/${id.hr}`, 'hr');
+  assert.equal(exp.status, 200);
+  assert.equal(exp.body.hr_only.nine_box_current, undefined);
+  assert.equal(exp.body.hr_only.nine_box_placements, undefined);
+});
+
+test('a re-publish that moves somebody out of (0,0) withdraws the untouched PIP and the escalation; moving back reopens them', { skip }, async () => {
+  const pipOf = async () => (await db.query(`SELECT status FROM pms.pip_records WHERE cycle_id=$1 AND employee_id=$2`, [cycle2Id, id.under])).rows[0];
+  const actsOf = async () => Object.fromEntries((await db.query(
+    `SELECT action_key, status FROM pms.nine_box_actions WHERE cycle_id=$1 AND employee_id=$2`, [cycle2Id, id.under])).rows
+    .map((a) => [a.action_key, a.status]));
+  assert.equal((await pipOf()).status, 'open');
+
+  assert.equal((await phase(cycle2Id, 'calibration', true)).status, 200);
+  const live = await get('/pms/nine-box?view=company', 'hr');
+  assert.equal(live.body.status, 'provisional', 'rolled back: worked out live again');
+  const ov = await call('POST', '/pms/nine-box/override', 'hr', { employee_id: id.under, axis: 'potential', band: 1, reason: 'New evidence from the client review' });
+  assert.equal(ov.body.placement.box_key, '0,1');
+  await phase(cycle2Id, 'publish');
+  const before = await get('/pms/nine-box?view=company', 'hr');
+  assert.equal(before.body.status, 'provisional', 'at publish but not yet published again: no stale boxes');
+  assert.equal(boxOf(before.body, 'under').key, '0,1');
+  const s = await get(`/pms/nine-box/settings?cycle_id=${cycle2Id}`, 'hr');
+  assert.equal(s.body.locked, null, 'and its settings are not locked yet');
+
+  const r = await call('POST', '/pms/publish', 'hr');
+  assert.equal(r.body.nine_box.pips_withdrawn, 1);
+  assert.equal((await pipOf()).status, 'closed_withdrawn');
+  let a = await actsOf();
+  assert.equal(a.escalation, 'superseded');
+  assert.equal(a['box:0,0'], 'superseded');
+  assert.equal(a['box:0,1'], 'open');
+  assert.ok((await db.query(`SELECT 1 FROM core.notifications WHERE employee_id=$1 AND kind='pip_withdrawn'`, [id.under])).rows.length);
+
+  await phase(cycle2Id, 'calibration', true);
+  await call('POST', '/pms/nine-box/override', 'hr', { employee_id: id.under, axis: 'potential', band: null, reason: 'Back to the scores' });
+  await phase(cycle2Id, 'publish');
+  const again = await call('POST', '/pms/publish', 'hr');
+  assert.equal(again.body.pips_opened, 1, 'the withdrawn plan is opened again');
+  assert.equal((await pipOf()).status, 'open');
+  a = await actsOf();
+  assert.equal(a.escalation, 'open');
+  assert.equal(a['box:0,0'], 'open', 'the box action comes back rather than leaving nothing open');
+  assert.equal(a['box:0,1'], 'superseded');
 });
 
 test('movement: each person\'s box over the cycles, with the direction', { skip }, async () => {
@@ -473,4 +556,26 @@ test('movement: each person\'s box over the cycles, with the direction', { skip 
   const old = await get(`/pms/nine-box?view=company&cycle_id=${cycleId}`, 'hr');
   assert.equal(old.status, 200);
   assert.equal(boxOf(old.body, 'top').key, '2,2');
+});
+
+test('a cycle somebody was not evaluated in breaks the streak: no escalation across a gap', { skip }, async () => {
+  await db.query(`UPDATE pms.cycles SET phase='closed' WHERE id=$1`, [cycle2Id]);
+  const c3 = (await db.query(
+    `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase, created_at)
+     VALUES ($1,'NB FY28-29','FY28-29','annual','publish', now() + interval '2 seconds') RETURNING id`, [tenantId])).rows[0].id;
+  await seed(c3, 'core', 3.5, [3, 4]);
+  assert.equal((await call('POST', '/pms/publish', 'hr')).status, 200);
+  await db.query(`UPDATE pms.cycles SET phase='closed' WHERE id=$1`, [c3]);
+  const c4 = (await db.query(
+    `INSERT INTO pms.cycles (tenant_id, name, fiscal_year, cycle_type, phase, created_at)
+     VALUES ($1,'NB FY29-30','FY29-30','annual','publish', now() + interval '3 seconds') RETURNING id`, [tenantId])).rows[0].id;
+  await seed(c4, 'under', 2.0, [2, 2]);
+  await db.query(`INSERT INTO pms.potential_answers (tenant_id, cycle_id, employee_id, answers) VALUES ($1,$2,$3,$4)`,
+    [tenantId, c4, id.under, JSON.stringify(answers(2, 2))]);
+  const r = await call('POST', '/pms/publish', 'hr');
+  assert.equal(r.body.nine_box.by_box['0,0'], 1);
+  assert.equal(r.body.nine_box.escalations, 0, 'FY28-29 had no row for them, so this is not two in a row');
+  const pl = (await db.query(`SELECT prev_box_key, movement FROM pms.nine_box_placements WHERE cycle_id=$1 AND employee_id=$2`, [c4, id.under])).rows[0];
+  assert.equal(pl.prev_box_key, null);
+  assert.equal(pl.movement, 'new');
 });

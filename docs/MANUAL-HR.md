@@ -54,7 +54,7 @@ not bundled with general HR administration. A manager must never see it.
 | **Timesheet** | Compliance, KRA coverage, closing periods, the year-end rollup. |
 | **PMS Completion Report** | Who has completed what. |
 | **Calibration** | Grade bands, distribution, the increment kitty. |
-| **9-Box Grid** | Performance against potential. |
+| **9-Box Grid** | Performance against potential, placed from the scores; succession, movement and reports. |
 | **Closure Letters** | Generated letters at cycle close. |
 | **Increment Simulation** | Model increments against the kitty. *Separate permission.* |
 | **Super 50** | The high-performer watchlist. |
@@ -210,8 +210,19 @@ unnoticed with a manager who has stopped looking.
 organisation stands against it. Employees and managers both rate against this;
 the dashboard shows where the two views differ.
 
-**9-Box Grid** — performance against potential. Visible to HR and Delivery
-Head only.
+**9-Box Grid** — every annual cycle places each person on two scores, each
+Low (below 3.0), Medium (3.0–3.9) or High (4.0 and above): **performance**
+(the final rating) left to right, and **potential** bottom to top. Potential
+is half the manager's competency ratings and half the manager's four
+Potential questions; if one half is missing the other is used alone. The box
+is worked out live through Calibration — override one band there, with a
+reason, to move someone — and fixed at publish, which opens a PIP for
+Underperformer (0,0), adds Top Performers (2,2) to the succession pool and
+gives managers their actions. Filters, Movement, Reports and an Excel export
+are on the page. The limits, box names, actions and questions are set per
+cycle under **Cycles → 9-Box settings**. Delivery Heads see their own
+departments (HOD → 9-Box Grid) and managers their own team; nobody, HR
+included, is shown their own box.
 
 **Super 50** — the high-performer watchlist. The rule is scale-aware and
 configurable, and the page explains how each person got on the list.

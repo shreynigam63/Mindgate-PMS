@@ -158,6 +158,10 @@ async function alertHrOfRetentionRisk(tenantId, employee) {
   return hrAndAdmin.length;
 }
 
+const NINE_BOX_OUTCOMES = new Set(['NINE_BOX_PLACED', 'NINE_BOX_NOT_PLACED', 'NINE_BOX_OVERRIDDEN',
+  'NINE_BOX_ACTION_CREATED', 'NINE_BOX_ACTION_REOPENED', 'NINE_BOX_ACTION_DONE', 'NINE_BOX_ACTION_SUPERSEDED',
+  'NINE_BOX_ESCALATED', 'SUCCESSION_POOL_ADDED', 'SUCCESSION_POOL_REMOVED', 'PIP_AUTO_WITHDRAWN', 'PIP_KEPT_FOR_REVIEW']);
+
 // ---------------- Cycles -----------------------------------------------------
 router.get('/cycles', async (req, res) => {
   const r = await db.query(`SELECT * FROM pms.cycles WHERE tenant_id=$1 ORDER BY created_at DESC`, [T(req)]);
@@ -183,7 +187,15 @@ router.get('/cycles/:id/activity', async (req, res) => {
          LEFT JOIN core.employees e ON e.id=al.employee_id
         WHERE al.tenant_id=$1 AND al.cycle_id=$2
         ORDER BY al.at DESC`, [T(req), c.id])).rows;
-    res.json({ cycle: cycleForClient(c), events: rows });
+    // The 9-box rows about the viewer carry their own box, so they are
+    // left out: nobody sees their own box, HR included. What the viewer
+    // DID themselves (a self_action) stays, as every self action does.
+    const me = req.user.id;
+    const aboutMyBox = (e) => e.employee_id === me && (NINE_BOX_OUTCOMES.has(e.action)
+      || (e.action === 'POTENTIAL_ANSWERED' && String(e.actor_email).toLowerCase() !== String(req.user.email).toLowerCase())
+      || (e.action === 'PIP_AUTO_OPENED' && e.details && /nine_box|not_placed/.test(String(e.details.rule || '')))
+      || (e.action === 'RETENTION_ALERT_SENT' && e.details && e.details.trigger === 'nine_box_drop'));
+    res.json({ cycle: cycleForClient(c), events: rows.filter((e) => !aboutMyBox(e)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -325,7 +337,12 @@ router.post('/cycles/:id/phase', async (req, res) => {
     else if (rollback) check = pm.canRollback(c.phase, to);
     else check = pm.canAdvance(c.phase, to);
     if (!check.ok) return res.status(409).json({ error: check.reason });
-    await db.query(`UPDATE pms.cycles SET phase=$1, updated_at=now() WHERE id=$2`, [target, c.id]);
+    // Rolled back before publish, a cycle's 9-box is no longer published:
+    // the boxes are worked out live again until the next publish.
+    await db.query(
+      `UPDATE pms.cycles SET phase=$1, updated_at=now(),
+              nine_box_published_at = CASE WHEN $3 AND $1 NOT IN ('publish','closed') THEN NULL ELSE nine_box_published_at END
+        WHERE id=$2`, [target, c.id, !!rollback]);
     await audit(req, cancel ? 'CYCLE_CANCELLED' : rollback ? 'PHASE_ROLLBACK' : 'PHASE_ADVANCE', c.id, null, { from: c.phase, to: target });
     if (cancel) {
       await notifyAudience(T(req), 'all', 'phase_change', `${c.name} has been cancelled`, 'This performance cycle has been cancelled by HR.', '/pms/my/kras');
@@ -4544,7 +4561,11 @@ router.get('/calibration', async (req, res) => {
       const nb = await nineBox.cycleRows(T(req), c);
       nineBoxSettings = { ...nb.settings, published: nb.published };
       const byId = new Map(nb.people.map((p) => [p.employee_id, nineBox.personOut(p, 'company')]));
-      for (const r of rows) r.nine_box = byId.get(r.employee_id) || null;
+      // Nobody sees their own box — HR on their own calibration row
+      // included. The row says so rather than showing a blank.
+      for (const r of rows) {
+        if (r.employee_id === req.user.id) { r.nine_box = null; r.nine_box_hidden = true; } else r.nine_box = byId.get(r.employee_id) || null;
+      }
     }
     const dist = {};
     for (const r of rows) { const k = r.proposed == null ? 'unrated' : String(Math.round(r.proposed)); dist[k] = (dist[k] || 0) + 1; }
@@ -5130,6 +5151,7 @@ router.post('/publish', async (req, res) => {
     const nineSummary = nine && {
       placed: nine.placed, not_placed: nine.not_placed, by_box: nine.by_box, not_placed_by_reason: nine.not_placed_by_reason,
       actions_created: nine.actions_created, actions_superseded: nine.actions_superseded,
+      pips_withdrawn: nine.pips_withdrawn, pips_to_review: nine.pips_to_review,
       succession_added: nine.succession_added, retention_alerts: nine.retention_alerts, escalations: nine.escalations,
     };
     await audit(req, 'CYCLE_PUBLISHED', c.id, null, { published, failed: failures.length, pips_opened: pipsOpened, super50_flagged: super50Flagged,
@@ -6326,7 +6348,11 @@ router.get('/meetings/:id/transcript', async (req, res) => {
 });
 
 // ---------------- PIP (Performance Improvement Plan) — BR-7.1/BR-7.2 -------
-// Auto-opened at /publish (above) when final_rating < cycle.pip_threshold.
+// Auto-opened at /publish (above): on an annual cycle for 9-box (0,0)
+// Underperformer and for anybody below the Low limit who cannot be placed
+// (nine-box.js); on a mid-year cycle when final_rating < cycle.pip_threshold.
+// A re-publish that moves somebody out of (0,0) withdraws an untouched
+// automatic plan (status closed_withdrawn) and hands a started one to HR.
 // Writers are the employee's manager or HR (BRD Owner/Approver column);
 // the employee has read-only visibility into their own PIP and its weekly
 // entries — matching "visible to the employee, manager, and HR."

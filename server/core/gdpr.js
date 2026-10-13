@@ -140,6 +140,13 @@ router.get('/export/:employeeId', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'" });
     const data = await buildExport(req.user.tenant_id, req.params.employeeId, { includeRestricted: true });
     if (!data) return res.status(404).json({ error: 'employee not found' });
+    // HR exporting their OWN record gets what any employee gets of their
+    // box, which is nothing: nobody sees their own 9-box.
+    if (String(req.params.employeeId).toLowerCase() === String(req.user.id).toLowerCase() && data.hr_only) {
+      delete data.hr_only.nine_box_current;
+      delete data.hr_only.nine_box_placements;
+      delete data.hr_only.potential_answers;
+    }
     res.setHeader('Content-Disposition', `attachment; filename="data-export-${req.params.employeeId}.json"`);
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }

@@ -100,7 +100,7 @@ Open a report and you get their annual review beside your evaluation form.
 - **Their write-up**, and their **self-rating**, per KRA — so you are rating the same thing they wrote about, not your memory of the year.
 - **Rate each KRA.** The **overall rating is computed from these**, not typed.
 - **Strengths** and **Improvement areas**.
-- **Potential** — a separate judgement from performance. It feeds the 9-Box grid HR uses, so it is not a second performance score.
+- **Potential** (annual cycles) — four questions, each 1 to 5: learning agility, leadership, ownership, readiness for a bigger role. With your Team Competencies ratings they make the potential axis of the 9-box. It is not a second performance score.
 - **Submit evaluation** when it is finished.
 
 **The AI drafting button — "Copy into fields (then edit)".** The system can
@@ -210,7 +210,7 @@ Worth knowing so you do not go looking:
 
 - **Salary and increments.** Increment Simulation sits behind its own permission, held by HR. You will not see it, and that is deliberate.
 - **Publishing ratings.** HR publishes; until then your report's *My Rating* stays greyed out.
-- **The 9-Box grid** is visible to HR and HOD only. Your *Potential* rating feeds it; you do not see the grid.
+- **The 9-Box grid** of your own team is under **Manager → 9-Box Grid** (a Delivery Head's departments under **HOD → 9-Box Grid**). Your reports never see their box, and you never see your own. The actions publish creates for your team — a development plan, coaching within 30 days, 60-day goals — are on its **Actions** tab; close each with a note.
 - **Closing a timesheet period.** HR does that. You override afterwards if you must.
 - **The KRA Library.** HR publishes the shelves; your reports pick from them.
 

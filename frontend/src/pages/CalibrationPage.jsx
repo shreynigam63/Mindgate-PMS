@@ -177,7 +177,7 @@ export default function CalibrationPage() {
       </div>
       <p className="text-[11px] text-navy-400">Every adjustment requires a reason — it is the permanent answer to "why did my rating change".
         {data.nine_box && <> The 9-box moves with the Final Rating; to move a box otherwise, override one band — that needs a reason too.</>}</p>
-      {overriding && <OverrideModal r={overriding}
+      {overriding && <OverrideModal r={overriding} scale={data.cycle.rating_scale}
         onClose={() => setOverriding(null)} onSaved={() => { setOverriding(null); load(); }} />}
       {/* Verbatim from the server, so the screen cannot soften it. */}
       {data.timesheet_note && (
@@ -301,7 +301,8 @@ function CalRow({ r, reload, scale, ts, nineBox, onOverride }) {
           )}
         </td>
         <td className="px-3 py-2">
-          <NineBoxCell b={r.nine_box} on={!!nineBox} onOverride={onOverride ? () => onOverride(r) : null} />
+          {r.nine_box_hidden ? <span className="text-[10.5px] text-navy-400">Yours — not shown to you</span>
+            : <NineBoxCell b={r.nine_box} on={!!nineBox} onOverride={onOverride ? () => onOverride(r) : null} />}
         </td>
         <td className="px-3 py-2">
           <span className="inline-flex items-center gap-1">
@@ -357,7 +358,7 @@ function NineBoxCell({ b, on, onOverride }) {
 
 // One band, one reason. The reason is required by the server too, and it
 // is what anybody asking "why is this person in that box" will be shown.
-function OverrideModal({ r, onClose, onSaved }) {
+function OverrideModal({ r, scale, onClose, onSaved }) {
   const b = r.nine_box || {};
   const [axis, setAxis] = useState('potential');
   const current = axis === 'performance' ? b.perf_band : b.pot_band;
@@ -383,7 +384,7 @@ function OverrideModal({ r, onClose, onSaved }) {
         </div>
         <div className="p-5 space-y-3 text-xs">
           <p className="text-navy-600">
-            Now: {b.box_key ? <b>{b.box_name} ({b.box_key})</b> : <b>Not placed</b>}. Performance {b.performance_score ?? '—'}
+            Now: {b.box_key ? <b>{b.box_name} ({b.box_key})</b> : <b>Not placed</b>}. Performance <Grade value={b.performance_score} scale={scale} />
             {' '}({b.perf_band == null ? '—' : BAND[b.perf_band]}), potential {b.potential_score ?? '—'} ({b.pot_band == null ? '—' : BAND[b.pot_band]}).
           </p>
           <div>

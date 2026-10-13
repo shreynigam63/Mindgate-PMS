@@ -257,7 +257,7 @@ is public, so typing the URL must *not* answer with the access-denied
 screen — that would tell somebody they had lost a right they never lost. It
 says "No published ratings yet" and what will change that.
 
-## 2.2 Manager — 10 pages, `pms_team_eval`
+## 2.2 Manager — 11 pages, `pms_team_eval`
 
 | Page | Route | What governs it |
 |---|---|---|
@@ -267,8 +267,9 @@ says "No published ratings yet" and what will change that.
 | Team KRA Sheets | `/team/kra-sheets` | Each KRA shows the report's timesheet hours and rating, §3.7. Approve or return. A return **must** carry a comment — refused 422, *"the employee must know why"* (`approvals.js`) |
 | Team Target Achievements | `/team/growth` | Growth-plan decisions |
 | Team Mid-Year | `/team/midyear` | Manager half of the checkpoint |
-| Team Evaluation | `/team/eval` | Opens at `manager_eval`. Each KRA shows its timesheet rating beside the manager's buttons, §3.7. KRA, KPI and weightage editable here, §3.1 |
+| Team Evaluation | `/team/eval` | Opens at `manager_eval`. Each KRA shows its timesheet rating beside the manager's buttons, §3.7. KRA, KPI and weightage editable here, §3.1. On annual cycles the **Potential** step: four questions, 1–5, §3.15 |
 | Team Competencies | `/team/competencies` | Manager assessment per report |
+| 9-Box Grid | `/team/nine-box` | The manager's direct reports on the 9-box, §3.15. Never the manager themselves |
 | Improvement Plans | `/team/pip` | Open and run a report's Performance Improvement Plan, §3.14. Team Evaluation links here for the person open |
 | Timesheet | `/team/timesheet` | Where the mapping is done, §3.7 |
 
@@ -276,12 +277,13 @@ Scope is the reporting line. When a reporting manager changes, open records
 move with the employee (`manager-handover.js`) — otherwise a submitted sheet
 sits in the queue of somebody who no longer manages them.
 
-## 2.3 HOD — 3 pages, `pms_hod`
+## 2.3 HOD — 4 pages, `pms_hod`
 
 | Page | Route | What governs it |
 |---|---|---|
 | HOD Review | `/hod` | Opens at `hod_eval`. Shows employee, manager and timesheet ratings per KRA |
 | Team Competencies | `/hod/competencies` | **Every** active employee in the departments this person heads — not only direct reports — with a department dropdown, a by-department table (people, assessed, average level, required, gap, below required), the by-area summary, and each person's ratings read-only. HR sees every department. Rating stays the manager's |
+| 9-Box Grid | `/hod/nine-box` | Everyone in the departments this person heads (`core.department_heads`), §3.15 |
 | RnR Approvals | `/rnr/approvals/delivery-head` | Stage 2 of §3.10 |
 
 The `hod` role grants access to the *screen*; `core.department_heads` decides
@@ -752,10 +754,8 @@ self-assessment and a manager assessment. Technical skills are captured by
 tier — Primary, Secondary, Tertiary, Basic — rather than one proficiency
 per competency.
 
-Competency mapping also supplies the potential axis the 9-box needs
-(`nine-box-derive.js`): before it, the grid showed only cells HR typed,
-because a derived placement needs performance bands and this repo keeps
-thresholds in tables rather than inventing cut-offs in a query.
+The manager's ratings, averaged from a **submitted** assessment, are one half
+of the 9-box's potential score, §3.15.
 
 ## 3.9 Super 50
 
@@ -1028,7 +1028,13 @@ from the phase opening (the latest `PHASE_ADVANCE` in `pms.audit_log`).
 
 ## 3.14 Performance Improvement Plan
 
-Publish still opens one automatically below the cycle's `pip_threshold`.
+Publish opens one automatically. On an **annual** cycle the rule is the
+9-box's (§3.15): Underperformer (0,0), and anybody below the Low limit who
+cannot be placed — not (0,1) or (0,2). On a **mid-year** cycle it is still a
+final rating below the cycle's `pip_threshold`. A later publish of the same
+cycle that moves somebody out of (0,0) withdraws an untouched automatic plan
+(status `closed_withdrawn`, the employee is told) and hands one already
+started to HR.
 Since 7 Oct the **manager** (or HR) can also open one, from
 **Improvement Plans** (`/team/pip`) or the link on Team Evaluation. One plan
 per person per cycle (409 otherwise). The plan has three parts, all
@@ -1045,6 +1051,70 @@ required. A reviewed gate cannot be dropped from the plan. Weekly notes and
 a closure with a reason continue as before. A closed plan is a record and
 cannot be edited. The employee reads their plan on `/pip` and cannot edit
 it. Opening, editing, gate reviews and closing are audited and notified.
+
+
+## 3.15 9-Box Grid
+
+Built to the client's *9-Box Grid – PMS Build Specification* (13 Oct).
+Rules in `nine-box-rules.js` (pure), everything else in `nine-box.js`.
+Annual cycles only.
+
+**Axes.** Written (Performance, Potential); performance runs left to right,
+potential bottom to top, so (0,0) is bottom-left and (2,2) top-right. Both
+are on the 1–5 scale and banded the same way: Low below 3.0, Medium 3.0–3.9,
+High 4.0 and above. A score is rounded to two places before banding.
+
+- **Performance** is the final rating: calibration adjustment, else the
+  submitted HOD rating, else the submitted manager rating — publish's order.
+- **Potential** is 50/50 the **competency score** (the manager's ratings,
+  averaged, from a submitted assessment, §3.8) and the **questions score**
+  (the manager's four Potential questions, 1–5, all four answered). One half
+  missing: the other alone, marked *one half*.
+
+**Not placed:** a new joiner (joined after the cycle's cut-off,
+`eligibility.js`; no joining date counts as placeable), no rating, or no
+potential input at all.
+
+**Settings per cycle** (`pms.nine_box_settings`, Cycles → 9-Box settings):
+the two limits, the competency weight, the nine names and actions, the
+questions. No row means the latest earlier cycle's, else the defaults.
+Locked once the cycle's 9-box is published; questions can be reworded but
+not added or removed once a manager has answered.
+
+**Live until publish.** Calibration, the grid and the reports work the box
+out from the inputs on every read, so a changed limit or an override moves
+people at once. HR overrides **one band** in calibration with a mandatory
+reason (`pms.nine_box_overrides`, append-only, audited); a null band goes
+back to the worked-out one. Nobody overrides their own.
+
+**At publish** each person's placement is stored (`pms.nine_box_placements`,
+with scores, bands, overrides, previous box, movement and the settings
+used), `cycles.nine_box_published_at` is stamped (a rollback before publish
+clears it), and:
+
+| Box | What publish does |
+|---|---|
+| (0,0) | Automatic PIP (§3.14) and its action |
+| (2,2) | Succession pool for the department; Super 50 recorded |
+| (1,2), (2,1), (0,2), (0,1) | Development action for the manager; (0,2) due in 30 days, (0,1) in 60 |
+| (1,1), (2,0), (1,0) | The box's action for the manager |
+| Not placed, below Low | Automatic PIP |
+| (0,0) after (0,0) in the previous cycle | Escalation to HR (HR closes it, not the manager) |
+| Left (2,2) | Retention alert to HR and the manager |
+
+The **previous cycle** is the one immediately before by appraisal year whose
+9-box was published; no row there means no previous box, so a gap breaks a
+streak. A re-publish supersedes what no longer applies and reopens what
+applies again. Managers and HR get one digest each; nothing an employee is
+sent names a box.
+
+**Who sees what.** `/admin/nine-box` (pms_admin) the whole company;
+`/hod/nine-box` (pms_hod) their departments; `/team/nine-box`
+(pms_team_eval) their direct reports. Nobody sees their own box — not on the
+grid, Calibration, the cycle activity feed, or either data export. An HRBP's
+company view is cut to their remit before it is counted.
+
+---
 
 # Part 4 — Changing behaviour without code
 

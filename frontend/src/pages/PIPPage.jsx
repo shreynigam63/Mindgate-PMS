@@ -5,12 +5,16 @@ import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 
-const STATUS_LABEL = { open: 'Open', in_progress: 'In Progress', closed_successful: 'Closed — Successful', closed_unsuccessful: 'Closed — Unsuccessful' };
+const STATUS_LABEL = { open: 'Open', in_progress: 'In Progress', closed_successful: 'Closed — Successful', closed_unsuccessful: 'Closed — Unsuccessful',
+  // Opened automatically at publish, withdrawn when a later publish of the
+  // same cycle no longer called for it (9-box, 13 Oct).
+  closed_withdrawn: 'Withdrawn' };
 const STATUS_COLOR = {
   open: 'bg-rose-100 text-rose-700',
   in_progress: 'bg-amber-100 text-amber-700',
   closed_successful: 'bg-emerald-100 text-emerald-700',
   closed_unsuccessful: 'bg-slate-200 text-navy-600',
+  closed_withdrawn: 'bg-slate-100 text-navy-500',
 };
 const GATE_LABEL = { pending: 'Pending', met: 'Met', not_met: 'Not met' };
 const GATE_COLOR = { pending: 'bg-navy-50 text-navy-600', met: 'bg-emerald-100 text-emerald-700', not_met: 'bg-rose-100 text-rose-700' };

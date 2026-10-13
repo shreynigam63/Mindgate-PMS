@@ -32,6 +32,7 @@ const { activeCycle } = require('./active-cycle');
 const { eligibleForCycle, appraisalYearOf } = require('./eligibility');
 const pm = require('./phase-machine');
 const rules = require('./nine-box-rules');
+const { grade } = require('./grade');
 
 const T = (req) => req.user.tenant_id;
 
@@ -93,7 +94,11 @@ async function loadInputs(t, cycle, { employeeIds = null } = {}) {
   if (employeeIds) params.push(employeeIds);
   const rows = (await db.query(
     `SELECT e.id AS employee_id, e.name, e.email, e.emp_code, e.department, e.location, e.designation,
-            e.manager_id, m.name AS manager_name, e.date_of_joining, e.super50_flag,
+            e.manager_id, m.name AS manager_name, e.super50_flag,
+            -- As text: a DATE read into a JS Date lands on local midnight,
+            -- and on a server in IST that is the previous day in UTC, which
+            -- is what eligibility.js compares. 1 January joiners counted.
+            to_char(e.date_of_joining, 'YYYY-MM-DD') AS date_of_joining,
             dg.grade,
             adj.to_rating AS adjustment, he.overall_rating AS hod, me.overall_rating AS manager,
             ca.manager_status AS competency_status,
@@ -123,19 +128,37 @@ async function loadInputs(t, cycle, { employeeIds = null } = {}) {
   return { rows, overrides };
 }
 
-// Each person's previous box: their latest placement in an EARLIER cycle,
-// placed or not. A cycle in which they were not placed breaks a streak,
-// so "two cycles in (0,0)" means two in a row.
+// The annual cycles published before this one, latest first. "Before" is
+// by appraisal year (the year in the fiscal-year label, as Super 50 reads
+// it), then by when the cycle was created — so a back-filled earlier year
+// does not count as the year after the one already published. Only cycles
+// whose 9-box was actually published count: a cancelled cycle, or one
+// rolled back before publishing again, is not anybody's previous box.
+async function publishedEarlier(t, cycle, limit = 1) {
+  const rows = (await db.query(
+    `SELECT * FROM pms.cycles WHERE tenant_id=$1 AND cycle_type='annual' AND id<>$2
+        AND phase <> 'cancelled' AND nine_box_published_at IS NOT NULL`, [t, cycle.id])).rows;
+  const key = (c) => [appraisalYearOf(c.fiscal_year, c.created_at), new Date(c.created_at).getTime()];
+  const me = key(cycle);
+  return rows
+    .filter((c) => { const k = key(c); return k[0] < me[0] || (k[0] === me[0] && k[1] < me[1]); })
+    .sort((a, b) => { const x = key(a); const y = key(b); return (y[0] - x[0]) || (y[1] - x[1]); })
+    .slice(0, limit);
+}
+
+// Each person's box in the ONE immediately previous published cycle.
+// No row there means no previous box: a cycle in which somebody was not
+// evaluated breaks a streak, so "two cycles in (0,0)" means two in a row,
+// and the grid's movement agrees with the movement view.
 async function previousPlacements(t, cycle, employeeIds = null) {
-  const params = [t, cycle.created_at, cycle.id];
+  const [prev] = await publishedEarlier(t, cycle, 1);
+  if (!prev) return new Map();
+  const params = [t, prev.id];
   if (employeeIds) params.push(employeeIds);
   const rows = (await db.query(
-    `SELECT DISTINCT ON (p.employee_id) p.employee_id, p.cycle_id, c.name AS cycle_name, p.box_key, p.status
-       FROM pms.nine_box_placements p JOIN pms.cycles c ON c.id = p.cycle_id
-      WHERE p.tenant_id=$1 AND c.created_at < $2 AND p.cycle_id <> $3
-        ${employeeIds ? 'AND p.employee_id = ANY($4::uuid[])' : ''}
-      ORDER BY p.employee_id, c.created_at DESC`, params)).rows;
-  return new Map(rows.map((r) => [r.employee_id, r]));
+    `SELECT employee_id, cycle_id, box_key, status FROM pms.nine_box_placements
+      WHERE tenant_id=$1 AND cycle_id=$2 ${employeeIds ? 'AND employee_id = ANY($3::uuid[])' : ''}`, params)).rows;
+  return new Map(rows.map((r) => [r.employee_id, { ...r, cycle_name: prev.name }]));
 }
 
 // The cycle's appraisal year, for the new-joiner rule (eligibility.js:
@@ -175,13 +198,13 @@ async function computePlacements(t, cycle, { employeeIds = null, settings = null
   return { settings: s, people };
 }
 
-// Has this cycle's grid been published? Placements exist and the cycle is
-// at publish or past it. A cycle rolled back to calibration is live again
-// until it is published once more.
+// Has this cycle's grid been published? Publish stamps the cycle and a
+// rollback before publish clears the stamp (migration 090), so a cycle
+// rolled back to calibration is live again until it is published once
+// more — and moving it forward to publish does not, by itself, bring the
+// old boxes back.
 async function isPublished(t, cycle) {
-  if (!['publish', 'closed'].includes(cycle.phase)) return false;
-  return !!(await db.query(`SELECT 1 FROM pms.nine_box_placements WHERE tenant_id=$1 AND cycle_id=$2 LIMIT 1`,
-    [t, cycle.id])).rows[0];
+  return !!cycle.nine_box_published_at;
 }
 
 // Stored placements of a published cycle, in the live shape. Names,
@@ -289,8 +312,8 @@ async function cycleFor(req) {
   const live = await activeCycle(t, 'annual');
   if (live) return { cycle: live };
   const last = (await db.query(
-    `SELECT c.* FROM pms.cycles c WHERE c.tenant_id=$1 AND c.cycle_type='annual'
-        AND EXISTS (SELECT 1 FROM pms.nine_box_placements p WHERE p.cycle_id=c.id)
+    `SELECT c.* FROM pms.cycles c WHERE c.tenant_id=$1 AND c.cycle_type='annual' AND c.phase <> 'cancelled'
+        AND c.nine_box_published_at IS NOT NULL
       ORDER BY c.created_at DESC LIMIT 1`, [t])).rows[0];
   if (last) return { cycle: last };
   return { status: 409, error: 'There is no annual cycle yet, so there is no 9-box to show.' };
@@ -298,9 +321,7 @@ async function cycleFor(req) {
 
 async function annualCycles(t) {
   return (await db.query(
-    `SELECT c.id, c.name, c.phase, c.fiscal_year,
-            EXISTS (SELECT 1 FROM pms.nine_box_placements p WHERE p.cycle_id=c.id)
-              AND c.phase IN ('publish','closed') AS published
+    `SELECT c.id, c.name, c.phase, c.fiscal_year, c.nine_box_published_at IS NOT NULL AS published
        FROM pms.cycles c WHERE c.tenant_id=$1 AND c.cycle_type='annual' AND c.phase <> 'cancelled'
       ORDER BY c.created_at DESC`, [t])).rows;
 }
@@ -361,10 +382,7 @@ function grid(rows, settings, view) {
 // ------------------------------------------------------------------ reports
 
 async function previousCycleWithPlacements(t, cycle) {
-  return (await db.query(
-    `SELECT c.* FROM pms.cycles c WHERE c.tenant_id=$1 AND c.cycle_type='annual' AND c.created_at < $2
-        AND EXISTS (SELECT 1 FROM pms.nine_box_placements p WHERE p.cycle_id=c.id)
-      ORDER BY c.created_at DESC LIMIT 1`, [t, cycle.created_at])).rows[0] || null;
+  return (await publishedEarlier(t, cycle, 1))[0] || null;
 }
 
 async function reportsFor(req, d) {
@@ -424,10 +442,7 @@ async function reportsFor(req, d) {
 // Each person's box over the last three annual cycles, oldest first.
 async function movementFor(req, d) {
   const t = T(req);
-  const earlier = (await db.query(
-    `SELECT c.* FROM pms.cycles c WHERE c.tenant_id=$1 AND c.cycle_type='annual' AND c.created_at < $2
-        AND EXISTS (SELECT 1 FROM pms.nine_box_placements p WHERE p.cycle_id=c.id)
-      ORDER BY c.created_at DESC LIMIT 2`, [t, d.cycle.created_at])).rows.reverse();
+  const earlier = (await publishedEarlier(t, d.cycle, 2)).reverse();
   const history = [];
   for (const c of earlier) {
     const rows = await storedPlacements(t, c.id);
@@ -467,7 +482,8 @@ router.get('/', async (req, res) => {
     const d = await viewData(req);
     if (d.error) return refuse(res, d);
     res.json({
-      cycle: { id: d.cycle.id, name: d.cycle.name, phase: d.cycle.phase, fiscal_year: d.cycle.fiscal_year },
+      cycle: { id: d.cycle.id, name: d.cycle.name, phase: d.cycle.phase, fiscal_year: d.cycle.fiscal_year,
+        rating_scale: d.cycle.rating_scale },
       cycles: await annualCycles(T(req)),
       view: d.view, status: d.published ? 'published' : 'provisional',
       settings: publicSettings(d.settings),
@@ -490,7 +506,7 @@ router.get('/reports', async (req, res) => {
   try {
     const d = await viewData(req);
     if (d.error) return refuse(res, d);
-    res.json({ cycle: { id: d.cycle.id, name: d.cycle.name }, view: d.view,
+    res.json({ cycle: { id: d.cycle.id, name: d.cycle.name, rating_scale: d.cycle.rating_scale }, view: d.view,
       status: d.published ? 'published' : 'provisional', settings: publicSettings(d.settings),
       ...(await reportsFor(req, d)) });
   } catch (e) { logger.error('nine-box reports', { error: e.message }); res.status(500).json({ error: 'Could not load the 9-box reports.' }); }
@@ -513,7 +529,8 @@ router.get('/export.xlsx', async (req, res) => {
       { header: 'Department', key: 'department', width: 20 }, { header: 'Location', key: 'location', width: 14 },
       { header: 'Grade', key: 'grade', width: 8 }, { header: 'Manager', key: 'manager_name', width: 22 },
       { header: 'Box', key: 'box', width: 8 }, { header: 'Box name', key: 'box_name', width: 20 },
-      { header: 'Performance score', key: 'performance_score', width: 12 }, { header: 'Performance band', key: 'perf', width: 12 },
+      // The grade, as every rating is shown (24 Sep: letters, not numbers).
+      { header: 'Performance grade', key: 'perf_grade', width: 12 }, { header: 'Performance band', key: 'perf', width: 12 },
       { header: 'Competency score', key: 'competency_score', width: 12 }, { header: 'Questions score', key: 'questions_score', width: 12 },
       { header: 'Potential score', key: 'potential_score', width: 12 }, { header: 'Potential band', key: 'pot', width: 12 },
       { header: 'Potential from', key: 'partial', width: 18 },
@@ -530,6 +547,7 @@ router.get('/export.xlsx', async (req, res) => {
       ws.addRow({
         ...p, box: p.box_key ? `(${p.box_key})` : 'Not placed', box_name: p.box_name || '',
         perf: bandWord(p.perf_band), pot: bandWord(p.pot_band),
+        perf_grade: p.performance_score == null ? '' : grade(p.performance_score, d.cycle.rating_scale),
         partial: p.potential_score == null ? '' : (p.potential_partial ? 'one half only' : 'both halves'),
         overridden: ov, prev: p.prev_box_key ? `(${p.prev_box_key})` : '', movement: MOVE_WORD[p.movement] || '',
         why: p.not_placed_text || '', super50: p.super50 ? 'yes' : '',
@@ -558,12 +576,16 @@ router.get('/export.xlsx', async (req, res) => {
     const ss = wb.addWorksheet('Succession pool');
     ss.columns = [{ header: 'Department', key: 'department', width: 24 }, { header: 'Readiness', key: 'ready', width: 18 },
       { header: 'Name', key: 'name', width: 26 }, { header: 'Box', key: 'box', width: 20 },
-      { header: 'Performance', key: 'performance_score', width: 12 }, { header: 'Potential', key: 'potential_score', width: 12 },
+      { header: 'Performance', key: 'perf_grade', width: 12 }, { header: 'Potential', key: 'potential_score', width: 12 },
       ...(hr ? [{ header: 'Super 50', key: 'super50', width: 9 }] : [])];
     head(ss);
     for (const g of rep.succession) {
-      for (const p of g.ready_now) ss.addRow({ ...p, department: g.department, ready: 'Ready now', box: `${p.box_name} (${p.box_key})`, super50: p.super50 ? 'yes' : '' });
-      for (const p of g.ready_1_2_years) ss.addRow({ ...p, department: g.department, ready: 'Ready in 1–2 years', box: `${p.box_name} (${p.box_key})`, super50: p.super50 ? 'yes' : '' });
+      for (const [list, ready] of [[g.ready_now, 'Ready now'], [g.ready_1_2_years, 'Ready in 1–2 years']]) {
+        for (const p of list) {
+          ss.addRow({ ...p, department: g.department, ready, box: `${p.box_name} (${p.box_key})`, super50: p.super50 ? 'yes' : '',
+            perf_grade: grade(p.performance_score, d.cycle.rating_scale) });
+        }
+      }
     }
 
     const mv = await movementFor(req, d);
@@ -680,8 +702,13 @@ router.post('/override', async (req, res) => {
     const reason = String(b.reason || '').trim();
     if (!reason) return res.status(422).json({ error: 'A reason is required. It is kept with the override and shown in the audit trail.' });
     if (reason.length > 500) return res.status(422).json({ error: 'The reason is longer than 500 characters.' });
-    const id = String(b.employee_id || '');
+    const id = String(b.employee_id || '').toLowerCase();
     if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(422).json({ error: 'employee_id is required' });
+    // Nobody sees their own box, so nobody moves it either: a band of
+    // HR's own is overridden by somebody else in HR.
+    if (id === String(req.user.id).toLowerCase()) {
+      return res.status(403).json({ error: 'Your own 9-box placement is not shown to you, so another member of HR overrides it.' });
+    }
     const cur = (await computePlacements(t, c, { employeeIds: [id] })).people[0];
     if (!cur) return res.status(404).json({ error: 'That person is not in this cycle\'s calibration (no submitted manager evaluation).' });
     const key = axis === 'performance' ? 'perf_band' : 'pot_band';
@@ -710,7 +737,7 @@ router.get('/actions', async (req, res) => {
     if (d.error) return refuse(res, d);
     const ids = d.rows.map((r) => r.employee_id);
     const rows = ids.length ? (await db.query(
-      `SELECT a.id, a.employee_id, e.name, e.department, a.box_key, a.action_key, a.kind, a.title,
+      `SELECT a.id, a.employee_id, e.name, e.department, e.manager_id, a.box_key, a.action_key, a.kind, a.title,
               a.assignee_id, asg.name AS assignee_name, to_char(a.due_date,'YYYY-MM-DD') AS due_date,
               a.status, a.pip_id, a.created_at, a.closed_by, a.closed_at, a.close_note
          FROM pms.nine_box_actions a
@@ -719,14 +746,27 @@ router.get('/actions', async (req, res) => {
         WHERE a.tenant_id=$1 AND a.cycle_id=$2 AND a.employee_id = ANY($3::uuid[])
         ORDER BY (a.status='open') DESC, a.due_date NULLS LAST, e.name`, [T(req), d.cycle.id, ids])).rows : [];
     const named = new Map(Object.entries(d.settings.boxes).map(([k, v]) => [k, v.name]));
+    const who = { admin: await hasPermission(req.user, 'pms_admin'), team: await hasPermission(req.user, 'pms_team_eval'), me: req.user.id };
     res.json({ cycle: { id: d.cycle.id, name: d.cycle.name }, view: d.view,
-      actions: rows.map((a) => ({ ...a, box_name: a.box_key ? named.get(a.box_key) : null })),
+      actions: rows.map(({ manager_id, ...a }) => ({ ...a, box_name: a.box_key ? named.get(a.box_key) : null,
+        can_close: mayClose(who, { ...a, manager_id }) })),
       open: rows.filter((a) => a.status === 'open').length });
   } catch (e) { logger.error('nine-box actions', { error: e.message }); res.status(500).json({ error: 'Could not load the 9-box actions.' }); }
 });
 
-// Closing an action: the person it is assigned to (the manager), the
-// employee's current manager, or HR. A note says what was done.
+// Who may close or reopen an action. HR, always. The manager it is
+// assigned to, or the employee's current manager — but not an action that
+// is HR's to decide (the two-cycles escalation has no assignee), and never
+// one about themselves.
+function mayClose(who, a) {
+  if (a.status === 'superseded' || a.employee_id === who.me) return false;
+  if (who.admin) return true;
+  if (!who.team) return false;
+  if (a.kind === 'escalation' || a.assignee_id == null) return false;
+  return a.assignee_id === who.me || a.manager_id === who.me;
+}
+
+// Closing an action, with a note of what was done.
 router.put('/actions/:id', async (req, res) => {
   try {
     const t = T(req);
@@ -734,10 +774,11 @@ router.put('/actions/:id', async (req, res) => {
       `SELECT a.*, e.manager_id FROM pms.nine_box_actions a JOIN core.employees e ON e.id=a.employee_id
         WHERE a.tenant_id=$1 AND a.id=$2`, [t, req.params.id])).rows[0];
     if (!a) return res.status(404).json({ error: 'action not found' });
-    const admin = await hasPermission(req.user, 'pms_admin');
-    const mine = a.assignee_id === req.user.id || a.manager_id === req.user.id;
-    if (!admin && !(mine && await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: 'Not an action for you to close.' });
-    if (a.employee_id === req.user.id && !admin) return res.status(403).json({ error: 'Not an action for you to close.' });
+    const who = { admin: await hasPermission(req.user, 'pms_admin'), team: await hasPermission(req.user, 'pms_team_eval'), me: req.user.id };
+    if (a.status !== 'superseded' && !mayClose(who, a)) {
+      return res.status(403).json({ error: a.kind === 'escalation' || a.assignee_id == null
+        ? 'This one is with HR to decide.' : 'Not an action for you to close.' });
+    }
     const b = req.body || {};
     const status = String(b.status || '');
     if (!['done', 'open'].includes(status)) return res.status(422).json({ error: "status must be 'done' or 'open'" });
@@ -872,13 +913,13 @@ async function publishPlacements(req, cycle, { ids, wasFlagged = new Map() }) {
   const t = T(req);
   const out = { placed: 0, not_placed: 0, by_box: Object.fromEntries(rules.BOX_KEYS.map((k) => [k, 0])),
     not_placed_by_reason: {}, actions_created: 0, actions_superseded: 0, succession_added: 0,
-    retention_alerts: 0, escalations: 0, pips_opened: 0, failures: [] };
+    retention_alerts: 0, escalations: 0, pips_opened: 0, pips_withdrawn: 0, pips_to_review: 0, failures: [] };
   if (!ids.length) return out;
   const { settings, people } = await computePlacements(t, cycle, { employeeIds: ids });
   const snapshot = { mid_from: settings.mid_from, high_from: settings.high_from, competency_weight: settings.competency_weight,
     boxes: settings.boxes, questions: settings.questions };
   const by = `system:publish (${req.user.email})`;
-  const later = { pips: [], retention: [], escalation: [], managers: new Map() };
+  const later = { pips: [], withdrawn: [], kept: [], retention: [], escalation: [], managers: new Map() };
 
   for (const p of people) {
     try {
@@ -919,50 +960,97 @@ async function publishPlacements(req, cycle, { ids, wasFlagged = new Map() }) {
         await client.query(`UPDATE core.employees SET nine_box_cell=$2, potential_rating=$3, updated_at=now() WHERE id=$1`,
           [p.employee_id, p.legacy_cell, p.pot_band == null ? null : rules.LEGACY[p.pot_band]]);
 
-        // A re-publish that moved somebody: the old box's open action is
-        // replaced by the new one, and says so.
+        // What this placement calls for. Publishing again after a rollback
+        // or a late input must leave exactly these open: what no longer
+        // applies is superseded (and said so), and what applies again is
+        // reopened rather than silently skipped.
+        const boxKey = p.box_key ? `box:${p.box_key}` : null;
+        const escalate = p.box_key === '0,0' && p.prev_box_key === '0,0';
+        const retain = p.prev_box_key === '2,2' && p.status === 'placed' && p.box_key !== '2,2';
+        const pipDue = p.box_key === '0,0' || (p.status !== 'placed' && p.perf_band === 0);
+        const keep = [boxKey, escalate ? 'escalation' : null, retain ? 'retention_alert' : null].filter(Boolean);
+
         const sup = await client.query(
           `UPDATE pms.nine_box_actions SET status='superseded', closed_by=$4, closed_at=now(),
-                  close_note='Replaced: the person was placed in a different box when the cycle was published again.'
+                  close_note='Replaced: when the cycle was published again this no longer applied.'
             WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND status='open'
-              AND action_key LIKE 'box:%' AND action_key <> $5 RETURNING id, action_key`,
-          [t, cycle.id, p.employee_id, by, p.box_key ? `box:${p.box_key}` : '']);
-        for (const s of sup.rows) {
-          await auditTx(client, req, 'NINE_BOX_ACTION_SUPERSEDED', cycle.id, p.employee_id, { action_id: s.id, action_key: s.action_key, now_box: p.box_key });
+              AND NOT (action_key = ANY($5::text[])) RETURNING id, action_key`,
+          [t, cycle.id, p.employee_id, by, keep]);
+        for (const x of sup.rows) {
+          await auditTx(client, req, 'NINE_BOX_ACTION_SUPERSEDED', cycle.id, p.employee_id, { action_id: x.id, action_key: x.action_key, now_box: p.box_key });
         }
         r.superseded = sup.rows.length;
 
+        // One action row per (person, cycle, key): created the first time,
+        // reopened if an earlier publish superseded it, left alone if it is
+        // open or done.
+        const upsertAction = (key, kind, title, assignee, dueDays, pipId) => client.query(
+          `INSERT INTO pms.nine_box_actions (tenant_id, cycle_id, employee_id, box_key, action_key, kind, title, assignee_id, due_date, pip_id, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $9::int IS NULL THEN NULL ELSE (now() + make_interval(days => $9::int))::date END, $10, $11)
+           ON CONFLICT (tenant_id, cycle_id, employee_id, action_key) DO UPDATE SET
+             status='open', closed_by=NULL, closed_at=NULL, close_note=NULL, box_key=EXCLUDED.box_key, kind=EXCLUDED.kind,
+             title=EXCLUDED.title, assignee_id=EXCLUDED.assignee_id, due_date=EXCLUDED.due_date, pip_id=EXCLUDED.pip_id
+           WHERE pms.nine_box_actions.status='superseded'
+           RETURNING id, (xmax = 0) AS inserted`,
+          [t, cycle.id, p.employee_id, p.box_key, key, kind, title, assignee, dueDays, pipId, by]);
+        const logAction = async (row, details) => {
+          r.created += row.inserted ? 1 : 0;
+          await auditTx(client, req, row.inserted ? 'NINE_BOX_ACTION_CREATED' : 'NINE_BOX_ACTION_REOPENED', cycle.id, p.employee_id,
+            { action_id: row.id, ...details, ...(row.inserted ? {} : { note: 'Applies again after the cycle was published again.' }) });
+        };
+
         // The PIP: (0,0), and anybody below the Low limit who could not
         // be placed (the client's answer to open question 2). Never
-        // re-opened or duplicated by a second publish.
-        const pipDue = p.box_key === '0,0' || (p.status !== 'placed' && p.perf_band === 0);
+        // duplicated by a second publish; one this publish withdrew is
+        // opened again.
         if (pipDue) {
           const pip = await client.query(
             `INSERT INTO pms.pip_records (tenant_id, employee_id, cycle_id, status, opened_by)
-             VALUES ($1,$2,$3,'open',$4) ON CONFLICT (tenant_id, employee_id, cycle_id) DO NOTHING RETURNING id`,
-            [t, p.employee_id, cycle.id, by]);
+             VALUES ($1,$2,$3,'open',$4)
+             ON CONFLICT (tenant_id, employee_id, cycle_id) DO UPDATE SET status='open', closed_at=NULL, closed_reason=NULL,
+               opened_at=now(), opened_by=EXCLUDED.opened_by
+             WHERE pms.pip_records.status='closed_withdrawn'
+             RETURNING id`, [t, p.employee_id, cycle.id, by]);
           if (pip.rows[0]) {
             r.pip = pip.rows[0].id;
             await auditTx(client, req, 'PIP_AUTO_OPENED', cycle.id, p.employee_id, {
               final_rating: p.performance_score, rule: p.box_key === '0,0' ? 'nine_box_underperformer' : 'below_low_limit_not_placed',
               box: p.box_key, not_placed_reason: p.not_placed_reason, low_limit: settings.mid_from });
           }
+        } else {
+          // A PIP an EARLIER publish of this cycle opened, for somebody the
+          // scores no longer put there. Withdrawn only while nobody has
+          // started on it; once a plan, a gate or a weekly entry exists it
+          // is a manager's live process, kept open and handed to HR.
+          const auto = (await client.query(
+            `SELECT p.id,
+                    (COALESCE(btrim(p.plan),'') <> '' OR COALESCE(btrim(p.performance_description),'') <> ''
+                      OR COALESCE(jsonb_array_length(p.target_areas),0) > 0
+                      OR EXISTS (SELECT 1 FROM pms.pip_gates g WHERE g.pip_id=p.id)
+                      OR EXISTS (SELECT 1 FROM pms.pip_weekly_entries w WHERE w.pip_id=p.id)) AS started
+               FROM pms.pip_records p
+              WHERE p.tenant_id=$1 AND p.employee_id=$2 AND p.cycle_id=$3 AND p.status='open'
+                AND p.opened_by LIKE 'system:publish%' FOR UPDATE`, [t, p.employee_id, cycle.id])).rows[0];
+          if (auto && !auto.started) {
+            await client.query(
+              `UPDATE pms.pip_records SET status='closed_withdrawn', closed_at=now(),
+                      closed_reason='Withdrawn automatically: when the cycle was published again the 9-box no longer called for it.'
+                WHERE id=$1`, [auto.id]);
+            r.pipWithdrawn = auto.id;
+            await auditTx(client, req, 'PIP_AUTO_WITHDRAWN', cycle.id, p.employee_id, { pip_id: auto.id, now_box: p.box_key });
+          } else if (auto) {
+            r.pipKept = auto.id;
+            await auditTx(client, req, 'PIP_KEPT_FOR_REVIEW', cycle.id, p.employee_id, { pip_id: auto.id, now_box: p.box_key,
+              note: 'Opened automatically by an earlier publish; work has started on it, so HR decides whether it continues.' });
+          }
         }
 
         if (p.status === 'placed') {
           const act = rules.actionFor(p.box_key, settings);
-          const pipId = r.pip || (p.box_key === '0,0' ? ((await client.query(
-            `SELECT id FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id=$3`, [t, p.employee_id, cycle.id])).rows[0] || {}).id || null : null);
-          const ins = await client.query(
-            `INSERT INTO pms.nine_box_actions (tenant_id, cycle_id, employee_id, box_key, action_key, kind, title, assignee_id, due_date, pip_id, created_by)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $9::int IS NULL THEN NULL ELSE (now() + make_interval(days => $9::int))::date END, $10, $11)
-             ON CONFLICT (tenant_id, cycle_id, employee_id, action_key) DO NOTHING RETURNING id`,
-            [t, cycle.id, p.employee_id, p.box_key, act.action_key, act.kind, act.title, p.manager_id, act.due_days, pipId, by]);
-          if (ins.rows[0]) {
-            r.created += 1;
-            await auditTx(client, req, 'NINE_BOX_ACTION_CREATED', cycle.id, p.employee_id,
-              { action_id: ins.rows[0].id, box: p.box_key, kind: act.kind, title: act.title, due_days: act.due_days, assignee_id: p.manager_id });
-          }
+          const pipId = p.box_key === '0,0' ? (r.pip || ((await client.query(
+            `SELECT id FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id=$3`, [t, p.employee_id, cycle.id])).rows[0] || {}).id || null) : null;
+          const ins = await upsertAction(act.action_key, act.kind, act.title, p.manager_id, act.due_days, pipId);
+          if (ins.rows[0]) await logAction(ins.rows[0], { box: p.box_key, kind: act.kind, title: act.title, due_days: act.due_days, assignee_id: p.manager_id });
         }
 
         // The succession pool: everybody in (2,2), by department, checked
@@ -984,33 +1072,32 @@ async function publishPlacements(req, cycle, { ids, wasFlagged = new Map() }) {
 
         // Two cycles running in (0,0): HR decides on separation or a
         // role change.
-        if (p.box_key === '0,0' && p.prev_box_key === '0,0') {
-          const esc = await client.query(
-            `INSERT INTO pms.nine_box_actions (tenant_id, cycle_id, employee_id, box_key, action_key, kind, title, assignee_id, created_by)
-             VALUES ($1,$2,$3,'0,0','escalation','escalation',$4,NULL,$5)
-             ON CONFLICT (tenant_id, cycle_id, employee_id, action_key) DO NOTHING RETURNING id`,
-            [t, cycle.id, p.employee_id, 'Two cycles in a row as Underperformer (0,0): HR to decide on separation or a role change', by]);
+        if (escalate) {
+          const esc = await upsertAction('escalation', 'escalation',
+            'Two cycles in a row as Underperformer (0,0): HR to decide on separation or a role change', null, null, null);
           if (esc.rows[0]) {
-            r.escalated = true; r.created += 1;
-            await auditTx(client, req, 'NINE_BOX_ESCALATED', cycle.id, p.employee_id, { previous_cycle_id: p.prev_cycle_id });
+            await logAction(esc.rows[0], { kind: 'escalation', previous_cycle_id: p.prev_cycle_id });
+            if (esc.rows[0].inserted) {
+              r.escalated = true;
+              await auditTx(client, req, 'NINE_BOX_ESCALATED', cycle.id, p.employee_id, { previous_cycle_id: p.prev_cycle_id });
+            }
           }
         }
 
         // A (2,2) who drops a box — or a Super 50 employee who leaves
         // (2,2) — alerts HR and the manager.
-        if (p.prev_box_key === '2,2' && p.status === 'placed' && p.box_key !== '2,2') {
+        if (retain) {
           const s50 = !!(wasFlagged.get(p.employee_id) || p.super50);
-          const ra = await client.query(
-            `INSERT INTO pms.nine_box_actions (tenant_id, cycle_id, employee_id, box_key, action_key, kind, title, assignee_id, created_by)
-             VALUES ($1,$2,$3,$4,'retention_alert','retention',$5,$6,$7)
-             ON CONFLICT (tenant_id, cycle_id, employee_id, action_key) DO NOTHING RETURNING id`,
-            [t, cycle.id, p.employee_id, p.box_key,
-              `Retention review: moved out of Top Performer (2,2) to ${p.box_name} (${p.box_key})${s50 ? ' — on the Super 50 watchlist' : ''}`,
-              p.manager_id, by]);
+          const ra = await upsertAction('retention_alert', 'retention',
+            `Retention review: moved out of Top Performer (2,2) to ${p.box_name} (${p.box_key})${s50 ? ' — on the Super 50 watchlist' : ''}`,
+            p.manager_id, null, null);
           if (ra.rows[0]) {
-            r.retention = { super50: s50 }; r.created += 1;
-            await auditTx(client, req, 'RETENTION_ALERT_SENT', cycle.id, p.employee_id,
-              { trigger: 'nine_box_drop', from: '2,2', to: p.box_key, super50: s50 });
+            await logAction(ra.rows[0], { kind: 'retention', from: '2,2', to: p.box_key });
+            if (ra.rows[0].inserted) {
+              r.retention = { super50: s50 };
+              await auditTx(client, req, 'RETENTION_ALERT_SENT', cycle.id, p.employee_id,
+                { trigger: 'nine_box_drop', from: '2,2', to: p.box_key, super50: s50 });
+            }
           }
         }
         return r;
@@ -1023,6 +1110,8 @@ async function publishPlacements(req, cycle, { ids, wasFlagged = new Map() }) {
       out.actions_superseded += done.superseded || 0;
       if (done.succession) out.succession_added += 1;
       if (done.pip) { out.pips_opened += 1; later.pips.push(p); }
+      if (done.pipWithdrawn) { out.pips_withdrawn += 1; later.withdrawn.push(p); }
+      if (done.pipKept) { out.pips_to_review += 1; later.kept.push(p); }
       if (done.escalated) { out.escalations += 1; later.escalation.push(p); }
       if (done.retention) { out.retention_alerts += 1; later.retention.push({ ...p, s50: done.retention.super50 }); }
       if (p.manager_id) {
@@ -1036,13 +1125,29 @@ async function publishPlacements(req, cycle, { ids, wasFlagged = new Map() }) {
     }
   }
 
+  // The cycle's 9-box is now published: screens read the stored boxes,
+  // and its settings are locked, until a rollback before publish.
+  await db.query(`UPDATE pms.cycles SET nine_box_published_at=now() WHERE id=$1 AND tenant_id=$2`, [cycle.id, t]);
+  cycle.nine_box_published_at = new Date();
+
   // Notifications, after every placement is committed. The employee is
   // told about a PIP exactly as before — nothing an employee receives
   // names a box. Managers and HR get one digest each, not one per person.
   for (const p of later.pips) {
     await quietly(notify(t, p.employee_id, 'pip_opened', `A Performance Improvement Plan has been opened for ${cycle.name}`, null, '/pip'));
   }
+  for (const p of later.withdrawn) {
+    await quietly(notify(t, p.employee_id, 'pip_withdrawn', `The Performance Improvement Plan opened for ${cycle.name} has been withdrawn`,
+      'It no longer applies after the final ratings were published again.', '/pip'));
+  }
   const hr = await hrRecipients(t);
+  for (const p of later.kept) {
+    for (const id of hr) {
+      if (id === p.employee_id) continue;
+      await quietly(notify(t, id, 'nine_box_pip_review', `${p.name}: improvement plan kept open for your decision`,
+        `${p.name}'s improvement plan was opened automatically at an earlier publish of ${cycle.name}. After publishing again they are ${p.box_name ? `${p.box_name} (${p.box_key})` : 'not placed'}, which does not call for one, but work has already started on the plan, so it was left open. Decide whether it continues.`, '/team/pip'));
+    }
+  }
   for (const p of later.retention) {
     const title = `Retention alert: ${p.name} has moved out of Top Performer`;
     const body = `${p.name} was Top Performer (2,2) last cycle and is now ${p.box_name} (${p.box_key}) in ${cycle.name}${p.s50 ? '. They are on the Super 50 watchlist' : ''}. Consider a retention conversation.`;

@@ -31,6 +31,8 @@ const SRC = new URL('../src/', import.meta.url).pathname;
 const RATING_FIELDS = [
   'self_rating', 'manager_rating', 'overall_rating', 'final_rating', 'hod_rating',
   'self_overall', 'manager_overall', 'partial_overall',
+  // The 9-box's performance axis is the final rating (13 Oct).
+  'performance_score',
 ];
 
 // Lines that name a rating field but are not rendering one. Each needs

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import Grade from '../grade';
 import { Info, Download, ArrowUp, ArrowDown, Minus, MoveHorizontal, Sparkles, Star, PenLine, CheckCircle2, X } from 'lucide-react';
 
 // The 9-box, to the client's build specification (13 Oct).
@@ -40,6 +41,7 @@ const remembered = (key, fallback) => { try { return localStorage.getItem(key) |
 const remember = (key, v) => { try { localStorage.setItem(key, v); } catch { /* not kept */ } };
 
 const fmt = (n) => (n == null ? '—' : Number(n).toFixed(2).replace(/0$/, ''));
+const NO_FILTERS = { department: '', location: '', manager_id: '', grade: '' };
 
 export function Move({ m }) {
   if (!m) return null;
@@ -55,7 +57,7 @@ export function Move({ m }) {
 
 export default function NineBoxPage({ view = 'company' }) {
   const [cycleId, setCycleId] = useState('');
-  const [filters, setFilters] = useState({ department: '', location: '', manager_id: '', grade: '' });
+  const [filters, setFilters] = useState(NO_FILTERS);
   const [tab, setTabState] = useState(() => remembered(`ninebox.tab.${view}`, 'grid'));
   const setTab = (t) => { setTabState(t); remember(`ninebox.tab.${view}`, t); };
   const [data, setData] = useState(null);
@@ -70,10 +72,17 @@ export default function NineBoxPage({ view = 'company' }) {
     return p.toString();
   }, [view, cycleId, filters]);
 
+  // Only the answer to the LATEST request is shown: a slow answer to an
+  // earlier filter must not land on top of the one the controls show.
+  // A failed load keeps the last good grid and its controls on screen,
+  // so the user can pick another cycle or clear a filter.
   useEffect(() => {
+    let live = true;
     setErr(null);
-    api(`/pms/nine-box?${query}`).then((d) => { setData(d); if (!cycleId && d.cycle) setCycleId(d.cycle.id); })
-      .catch((e) => { setErr(e.message); setData(null); });
+    api(`/pms/nine-box?${query}`)
+      .then((d) => { if (!live) return; setData(d); if (!cycleId && d.cycle) setCycleId(d.cycle.id); })
+      .catch((e) => { if (live) setErr(e.message); });
+    return () => { live = false; };
   }, [query]);
 
   const v = VIEW[view] || VIEW.company;
@@ -92,7 +101,10 @@ export default function NineBoxPage({ view = 'company' }) {
           <div className="card p-3 space-y-2">
             <div className="flex flex-wrap items-end gap-2">
               <label className="text-[11px] text-navy-500">Cycle
-                <select className="inp !py-1 !text-xs mt-0.5" value={cycleId} onChange={(e) => { setCycleId(e.target.value); setOpen(null); }}>
+                {/* A new cycle starts unfiltered: a department or manager
+                    from the last one may not exist in it, and a filter the
+                    dropdown cannot show is a filter nobody can see. */}
+                <select className="inp !py-1 !text-xs mt-0.5" value={cycleId} onChange={(e) => { setCycleId(e.target.value); setFilters(NO_FILTERS); setOpen(null); }}>
                   {data.cycles.map((c) => <option key={c.id} value={c.id}>{c.name}{c.published ? ' · published' : ''}</option>)}
                 </select>
               </label>
@@ -103,7 +115,7 @@ export default function NineBoxPage({ view = 'company' }) {
                   options={data.filters.managers.map((m) => [m.manager_id, m.name])} />
               )}
               <Pick label="Grade" value={filters.grade} onChange={(x) => setFilter('grade', x)} options={data.filters.grades} />
-              {anyFilter && <button className="text-[11px] text-navy-500 hover:underline pb-1.5" onClick={() => { setFilters({ department: '', location: '', manager_id: '', grade: '' }); setOpen(null); }}>Clear filters</button>}
+              {anyFilter && <button className="text-[11px] text-navy-500 hover:underline pb-1.5" onClick={() => { setFilters(NO_FILTERS); setOpen(null); }}>Clear filters</button>}
             </div>
             <p className="text-[11px] text-navy-500 flex flex-wrap items-center gap-x-3 gap-y-1">
               <span className={`chip ${data.status === 'published' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>
@@ -161,7 +173,7 @@ function GridTab({ data, view, open, setOpen, q, setQ }) {
             <span className="text-[10px] uppercase tracking-wide text-navy-400 [writing-mode:vertical-rl] rotate-180">Potential →</span>
           </div>
           <div className="flex-1 min-w-0">
-            <div className="grid grid-cols-[auto_1fr_1fr_1fr] gap-1.5 sm:gap-2">
+            <div className="grid grid-cols-[auto_repeat(3,minmax(0,1fr))] gap-1 sm:gap-2">
               {ROWS.map((pot) => (
                 <Row key={pot} pot={pot} data={data} open={open} setOpen={setOpen} />
               ))}
@@ -201,7 +213,7 @@ function GridTab({ data, view, open, setOpen, q, setQ }) {
             <button className="text-navy-400 hover:text-navy-600" onClick={() => setOpen(null)} aria-label="Close"><X size={16} /></button>
           </div>
           {list.length > 6 && <SearchBox value={q} onChange={setQ} placeholder="Find a person…" shown={shown.length} total={list.length} />}
-          <PeopleTable people={shown} view={view} notPlaced={open === 'none'} />
+          <PeopleTable people={shown} view={view} notPlaced={open === 'none'} scale={data.cycle.rating_scale} />
         </div>
       )}
     </div>
@@ -211,15 +223,17 @@ function GridTab({ data, view, open, setOpen, q, setQ }) {
 function Row({ pot, data, open, setOpen }) {
   return (
     <>
-      <span className="text-[10px] text-navy-400 self-center text-right pr-1">{BAND[pot]}</span>
+      <span className="text-[10px] text-navy-400 self-center text-right pr-0.5 sm:pr-1">
+        <span className="sm:hidden">{['Low', 'Med', 'High'][pot]}</span><span className="hidden sm:inline">{BAND[pot]}</span>
+      </span>
       {COLS.map((perf) => {
         const k = `${perf},${pot}`;
         const b = data.boxes[k];
         return (
           <button key={k} onClick={() => setOpen(open === k ? null : k)}
-            className={`text-left rounded-xl border p-2 sm:p-3 min-h-[76px] transition ${TONE[k]} ${open === k ? 'ring-2 ring-navy-600' : 'hover:ring-1 hover:ring-navy-300'}`}>
+            className={`min-w-0 text-left rounded-xl border p-1.5 sm:p-3 min-h-[76px] transition ${TONE[k]} ${open === k ? 'ring-2 ring-navy-600' : 'hover:ring-1 hover:ring-navy-300'}`}>
             <span className="block text-[10px] text-navy-400">({k})</span>
-            <span className="block text-[11.5px] sm:text-xs font-semibold text-navy-800 leading-tight">{b.name}</span>
+            <span className="block text-[10.5px] sm:text-xs font-semibold text-navy-800 leading-tight break-words hyphens-auto" lang="en">{b.name}</span>
             <span className="block mt-1 text-lg sm:text-xl font-bold text-navy-900 leading-none">{b.count}</span>
             <span className="block text-[10px] text-navy-500">{b.pct}%</span>
           </button>
@@ -229,11 +243,11 @@ function Row({ pot, data, open, setOpen }) {
   );
 }
 
-function Scores({ p }) {
+function Scores({ p, scale }) {
   return (
     <>
       <td className="px-2 py-1.5 whitespace-nowrap" title={p.performance_source ? `From the ${SOURCE[p.performance_source]}` : ''}>
-        {fmt(p.performance_score)} <span className="text-navy-400">· {p.perf_band == null ? '—' : BAND[p.perf_band]}</span>
+        <Grade value={p.performance_score} scale={scale} /> <span className="text-navy-400">· {p.perf_band == null ? '—' : BAND[p.perf_band]}</span>
         {p.overridden?.performance && <Overridden o={p.overridden.performance} />}
       </td>
       <td className="px-2 py-1.5 whitespace-nowrap"
@@ -251,7 +265,7 @@ function Overridden({ o }) {
   return <span className="ml-1 inline-flex items-center text-violet-600" title={said}><PenLine size={11} /><span className="sr-only">{said}</span></span>;
 }
 
-function PeopleTable({ people, view, notPlaced }) {
+function PeopleTable({ people, view, notPlaced, scale }) {
   if (!people.length) return <p className="text-xs text-navy-400">Nobody here.</p>;
   return (
     <div className="overflow-x-auto">
@@ -277,7 +291,7 @@ function PeopleTable({ people, view, notPlaced }) {
               <td className="px-2 py-1.5">{p.department || '—'}</td>
               {view !== 'team' && <td className="px-2 py-1.5">{p.manager_name || '—'}</td>}
               <td className="px-2 py-1.5">{p.grade || '—'}</td>
-              <Scores p={p} />
+              <Scores p={p} scale={scale} />
               {notPlaced ? <td className="px-2 py-1.5 text-navy-600">{p.not_placed_text}</td> : (
                 <td className="px-2 py-1.5 whitespace-nowrap">
                   {p.prev_box_key ? <>({p.prev_box_key}) </> : <span className="text-navy-400">— </span>}<Move m={p.movement} />
@@ -295,7 +309,12 @@ function useTab(path) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
   const [n, setN] = useState(0);
-  useEffect(() => { setD(null); setErr(null); api(path).then(setD).catch((e) => setErr(e.message)); }, [path, n]);
+  useEffect(() => {
+    let live = true;
+    setErr(null);
+    api(path).then((x) => { if (live) setD(x); }).catch((e) => { if (live) setErr(e.message); });
+    return () => { live = false; };
+  }, [path, n]);
   return [d, err, () => setN((x) => x + 1)];
 }
 
@@ -495,10 +514,10 @@ function ActionsTab({ query, view }) {
                   {a.status === 'superseded' && ' · replaced at a later publish'}
                 </p>
               </div>
-              {a.status === 'open' && closing !== a.id && (
+              {a.can_close && a.status === 'open' && closing !== a.id && (
                 <button className="btn-sec !py-1" onClick={() => { setClosing(a.id); setNote(''); }}><CheckCircle2 size={12} className="inline mr-1" />Mark done</button>
               )}
-              {a.status === 'done' && <button className="text-[11px] text-navy-500 hover:underline" onClick={() => save(a, 'open')}>Reopen</button>}
+              {a.can_close && a.status === 'done' && <button className="text-[11px] text-navy-500 hover:underline" onClick={() => save(a, 'open')}>Reopen</button>}
             </div>
             {closing === a.id && (
               <div className="flex flex-wrap gap-2 items-center">

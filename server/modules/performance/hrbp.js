@@ -32,7 +32,10 @@ const router = express.Router();
 const T = (req) => req.user.tenant_id;
 
 const EMP = `e.id, e.name, e.email, e.department, e.designation, e.location, e.hod_name,
-             e.status, e.nine_box_cell, e.potential_rating, e.last_appraisal_rating`;
+             e.status, e.last_appraisal_rating`;
+// No 9-box cell or potential here since 13 Oct: the HRBP 9-box route that
+// read them is gone, and an HRBP inside their own remit was handed their
+// own box with every other row.
 
 /**
  * Everything a scoped route needs, resolved once. Returns null after
