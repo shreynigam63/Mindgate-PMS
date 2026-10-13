@@ -35,6 +35,7 @@ const db = require('./db');
 const logger = require('./logger');
 const { authenticate } = require('./auth');
 const { guardUuidParams, UUID_RE } = require('./http');
+const { visibleRows } = require('./scope-hooks');
 const { apiPermissionParity, hasPermission, holdsPermission } = require('./permissions');
 // Roles and passwords are HR's and Super Admin's alone — never an HRBP
 // acting through the gateway's lent permission. See holdsPermission.
@@ -1044,7 +1045,7 @@ const EXPORT_COLUMNS = [
 
 async function exportRows(tenantId) {
   const r = await db.query(
-    `SELECT e.emp_code, e.name, e.email, e.department, e.designation, e.role_band,
+    `SELECT e.id AS employee_id, e.emp_code, e.name, e.email, e.department, e.designation, e.role_band,
             e.location, e.hod_name, e.total_experience_years,
             e.status, e.date_of_joining, m.name AS manager_name, m.email AS manager_email,
             (lc.email IS NOT NULL) AS has_login, COALESCE(ur.role, 'employee') AS role
@@ -1062,7 +1063,7 @@ async function exportRows(tenantId) {
 router.get('/export.xlsx', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
-    const rows = await exportRows(req.user.tenant_id);
+    const rows = visibleRows(req, await exportRows(req.user.tenant_id));
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Employees');
     const header = ws.addRow(EXPORT_COLUMNS.map(([label]) => label));
@@ -1084,7 +1085,7 @@ router.get('/export.xlsx', async (req, res) => {
 router.get('/export.csv', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'people_admin'))) return res.status(403).json({ error: "Requires 'people_admin'" });
-    const rows = await exportRows(req.user.tenant_id);
+    const rows = visibleRows(req, await exportRows(req.user.tenant_id));
     const cell = (v) => {
       const t = String(v == null ? '' : v).replace(/\s*\n\s*/g, ' ');
       return /[",]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;

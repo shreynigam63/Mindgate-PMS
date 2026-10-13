@@ -643,6 +643,8 @@ function gateway() {
       const visible = new Set(ids);
       visible.delete(req.user.id);
       if (matchesRoute(KEEP_SELF, req, routePath)) visible.add(req.user.id);
+      // The same people, for a file download — see core/scope-hooks.
+      req.remitVisible = visible;
 
       const json = res.json.bind(res);
       res.json = (body) => {

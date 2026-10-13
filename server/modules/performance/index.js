@@ -16,6 +16,7 @@ const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
 const { guardUuidParams } = require('../../core/http');
+const { visibleRows } = require('../../core/scope-hooks');
 const { apiPermissionParity, hasPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const { requireConsent } = require('../../core/consent');
@@ -4889,6 +4890,7 @@ router.get('/calibration/export', async (req, res) => {
     if (!c) return res.status(409).json({ error: 'No active cycle' });
     const bracket = kitty.BRACKETS.includes(req.query.bracket) ? req.query.bracket : 'all';
     const view = await kittyView(T(req), c.id, bracket, c);
+    const lines = visibleRows(req, view.lines);
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Calibration');
@@ -4917,7 +4919,7 @@ router.get('/calibration/export', async (req, res) => {
       { header: 'Reasons', key: 'reasons', width: 50 },
     ];
     ws.getRow(1).font = { bold: true };
-    for (const l of view.lines) {
+    for (const l of lines) {
       ws.addRow({
         ...l,
         bracket: l.current_ctc == null ? 'not on record'
@@ -4949,9 +4951,14 @@ router.get('/calibration/export', async (req, res) => {
     bs.addRow({ p: 'Employees included', a: view.counts.employees });
     bs.addRow({ p: 'No CTC on record', a: view.counts.ctc_missing });
     bs.addRow({ p: 'Frozen (leaving, not retained)', a: view.counts.frozen });
+    if (lines.length !== view.lines.length) {
+      bs.addRow({});
+      bs.addRow({ p: 'The pools and totals above are company-wide, as on the Calibration page. '
+        + 'The Calibration sheet lists only the people in your remit.' });
+    }
 
     const buf = await wb.xlsx.writeBuffer();
-    await audit(req, 'CALIBRATION_EXPORTED', c.id, null, { bracket, rows: view.lines.length });
+    await audit(req, 'CALIBRATION_EXPORTED', c.id, null, { bracket, rows: lines.length });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="calibration_${bracket}.xlsx"`);
     res.send(Buffer.from(buf));
@@ -7054,7 +7061,7 @@ router.get('/reports/completion/export.xlsx', async (req, res) => {
     const built = await completionRows(req);
     if (built.error) return res.status(built.status).json({ error: built.error });
     if (!built.cycle) return res.status(409).json({ error: 'No cycle to report on' });
-    const rows = built.rows.map((r) => ({ ...r, overall: r.complete ? 'Complete' : 'Pending' }));
+    const rows = visibleRows(req, built.rows).map((r) => ({ ...r, overall: r.complete ? 'Complete' : 'Pending' }));
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Completion');
     ws.addRow([`${built.cycle.name} · ${rows.filter((r) => r.complete).length} of ${rows.length} complete`]).font = { italic: true };
@@ -7082,7 +7089,7 @@ router.get('/reports/completion/export.csv', async (req, res) => {
       return /[",]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
     };
     const csv = [COMPLETION_COLUMNS.map(([label]) => label),
-      ...built.rows.map((r) => COMPLETION_COLUMNS.map(([, k]) =>
+      ...visibleRows(req, built.rows).map((r) => COMPLETION_COLUMNS.map(([, k]) =>
         (k === 'overall' ? (r.complete ? 'Complete' : 'Pending') : r[k])))]
       .map((r) => r.map(cell).join(',')).join('\n') + '\n';
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

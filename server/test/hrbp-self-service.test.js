@@ -87,6 +87,7 @@ before(async () => {
   app.use('/api/v1/people', require('../modules/people').router);
   app.use('/api/v1/agentic', require('../modules/agentic').router);
   app.use('/api/v1/engagement', require('../modules/engagement').router);
+  app.use('/api/v1/employees', require('../core/employees').router);
   await new Promise((r) => { server = app.listen(0, r); });
   base = `http://127.0.0.1:${server.address().port}`;
   for (const who of ['outside', 'inside', 'unset', 'boss']) {
@@ -397,6 +398,49 @@ test('the First-Week Journey: an HRBP edits a joiner in their remit, not one out
   assert.ok(!refusedByGateway(ok), `an in-remit joiner edit was refused: ${ok.status} ${JSON.stringify(ok.body)}`);
   const no = await call('inside', `/people/onboarding/joiners/${mj}`, { method: 'PATCH', body: JSON.stringify({ personal_email: 'j@home.com' }) });
   assert.ok(refusedByGateway(no), `an outsider joiner edit got past the gateway: ${no.status}`);
+});
+
+// ---- downloads cut to the remit (13 Oct) ----------------------------------
+//
+// A JSON page is narrowed after the handler builds it; a spreadsheet is
+// bytes by then, so until 13 Oct an HRBP's Employees, Completion Report
+// and Calibration downloads covered the whole company — salaries included.
+
+const download = async (who, path) => {
+  const r = await fetch(`${base}/api/v1${path}`, { headers: { Authorization: `Bearer ${tok[who]}` } });
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (!/spreadsheetml/.test(r.headers.get('content-type') || '')) return { status: r.status, text: buf.toString('utf8') };
+  const ExcelJS = require('exceljs');
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf);
+  const cells = [];
+  wb.eachSheet((ws) => ws.eachRow((row) => row.eachCell((c) => cells.push(String(c.value)))));
+  return { status: r.status, text: cells.join('\n') };
+};
+
+test('AN HRBP\'S DOWNLOADS HOLD THEIR REMIT ONLY — not the company, not themselves; HR\'s hold everyone', async () => {
+  await db.query(`UPDATE core.employees SET designation='Engineer' WHERE tenant_id=$1`, [tenantId]);
+  for (const path of ['/employees/export.csv', '/employees/export.xlsx', '/pms/reports/completion/export.csv',
+    '/pms/reports/completion/export.xlsx', '/pms/calibration/export']) {
+    const r = await download('inside', path);
+    assert.equal(r.status, 200, `${path}: ${r.text.slice(0, 200)}`);
+    assert.match(r.text, /\bpune1\b/, `${path} lost the remit`);
+    // 'boss' stays: everyone's manager, named in the Manager column.
+    for (const who of ['mumbai1', 'm1@x.com', 'inside']) {
+      assert.ok(!new RegExp(`\\b${who}\\b`).test(r.text), `${path} carries ${who}`);
+    }
+    const hr = await download('boss', path);
+    assert.equal(hr.status, 200);
+    for (const who of ['pune1', 'mumbai1', 'inside']) assert.match(hr.text, new RegExp(`\\b${who}\\b`), `HR's ${path} lost ${who}`);
+  }
+});
+
+test('the scope helper keeps every row when no hook narrowed the request, and none that name nobody when one did', () => {
+  const { visibleRows } = require('../core/scope-hooks');
+  const rows = [{ employee_id: ME }, { employee_id: OTHER }, { name: 'a total' }];
+  assert.deepEqual(visibleRows({}, rows), rows);
+  assert.deepEqual(visibleRows({ remitVisible: new Set([OTHER]) }, rows), [{ employee_id: OTHER }]);
+  assert.deepEqual(visibleRows({ remitVisible: new Set([ME]) }, rows, 'id'), []);
 });
 
 // ---- the pure half -------------------------------------------------------

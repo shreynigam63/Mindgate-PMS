@@ -34,4 +34,19 @@ function run() {
   };
 }
 
-module.exports = { register, run, hooks };
+/**
+ * The rows of a file download this request may see. A hook narrows a JSON
+ * body after the handler has built it, but a spreadsheet is bytes by
+ * then, so a handler that builds one passes its rows through here first.
+ * A hook that narrows a request says whom it may see in req.remitVisible
+ * (a Set of employee ids); rows that name nobody are left out with the
+ * rest. Until 13 Oct an HRBP's Employees, Completion and Calibration
+ * downloads covered the whole company, salaries included.
+ */
+function visibleRows(req, rows, key = 'employee_id') {
+  const visible = req && req.remitVisible;
+  if (!visible) return rows;
+  return rows.filter((r) => r && visible.has(r[key]));
+}
+
+module.exports = { register, run, hooks, visibleRows };

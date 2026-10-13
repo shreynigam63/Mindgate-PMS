@@ -27,6 +27,7 @@ const ExcelJS = require('exceljs');
 const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { hasPermission } = require('../../core/permissions');
+const { visibleRows } = require('../../core/scope-hooks');
 const { notify } = require('../../core/notifications');
 const { activeCycle } = require('./active-cycle');
 const { validRating, requiredLevelFor, competenciesFor, summarise, divergences } = require('./competency-rules');
@@ -778,7 +779,7 @@ router.get('/dashboard/gaps.xlsx', async (req, res) => {
     const c = await activeCycle(t);
     if (!c) return res.status(409).json({ error: 'No cycle is open' });
     const department = String(req.query.department || '').trim() || null;
-    const rows = (await dashboardRows(t, c.id, department))
+    const rows = visibleRows(req, await dashboardRows(t, c.id, department))
       .filter((r) => r.manager_rating != null && r.manager_rating < r.required_level)
       .sort((a, b) => (a.manager_rating - a.required_level) - (b.manager_rating - b.required_level)
         || String(a.employee_name).localeCompare(String(b.employee_name)));
