@@ -248,3 +248,15 @@ test('BAND NEVER REACHES THE MATRIX: a level is stored and shown as the grade al
   assert.equal(count.body.count, 1);
   await api(`/people/career/transitions/${made.body.transition.id}`, token, { method: 'DELETE' });
 });
+
+test('THE FORM REFUSES A MOVE FROM A ROLE TO ITSELF, as the importer does', { skip }, async () => {
+  const { token } = await login('ct-admin@x.com');
+  const same = await api('/people/career/transitions', token, { method: 'POST', body: JSON.stringify({
+    from_role: 'Software Engineer II', from_level: 'E2', to_role: 'software engineer ii', to_level: 'E3' }) });
+  assert.equal(same.status, 400);
+  assert.match(same.body.error, /different To Role/);
+  const ok = await api('/people/career/transitions', token, { method: 'POST', body: JSON.stringify({ from_role: 'Software Engineer II', to_role: 'Staff Engineer' }) });
+  const edit = await api(`/people/career/transitions/${ok.body.transition.id}`, token, { method: 'PUT', body: JSON.stringify({ to_role: 'Software Engineer II' }) });
+  assert.equal(edit.status, 400, 'nor may an edit turn a move into one');
+  await api(`/people/career/transitions/${ok.body.transition.id}`, token, { method: 'DELETE' });
+});

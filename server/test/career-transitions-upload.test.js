@@ -14,7 +14,7 @@
 const { test, after, before } = require('node:test');
 const assert = require('node:assert');
 const ExcelJS = require('exceljs');
-const { validateCareerTransitionRows } = require('../modules/people/career-transitions-import');
+const { validateCareerTransitionRows, rowKey } = require('../modules/people/career-transitions-import');
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const skip = !HAS_DB && 'DATABASE_URL not set — see file header';
@@ -222,6 +222,26 @@ test('RE-UPLOADING UPDATES, IT DOES NOT DUPLICATE', { skip }, async () => {
   assert.equal(row.notes, 'revised');
 });
 
+// 13 Oct, found by review: level is no part of a move. Copies of one move
+// written per band before then are one move: a re-upload updates the
+// latest and switches the others off, and never adds a third.
+test('A RE-UPLOAD WITH A NEW GRADE UPDATES, AND SWITCHES OFF OLDER PER-BAND COPIES', { skip }, async () => {
+  for (const [lvl, at] of [['Band 6', '2026-01-01'], ['E3 · Band 6', '2026-02-01']]) {
+    await db.query(`INSERT INTO people.career_transitions (tenant_id, from_role, from_level, to_role, active, updated_at)
+      VALUES ($1,'Analyst',$2,'Senior Analyst',true,$3)`, [tenantId, lvl, at]);
+  }
+  const before = await count();
+  const dry = await upload(await xlsx([HEADERS, ['Analyst', 'E3', 'Senior Analyst', '', 1, 12, 18, '', 're-upload']]));
+  assert.equal(dry.body.summary.create, 0);
+  assert.equal(dry.body.summary.retire, 1, 'the dry run says one older copy goes off');
+  const out = await upload(await xlsx([HEADERS, ['Analyst', 'E3', 'Senior Analyst', '', 1, 12, 18, '', 're-upload']]), { commit: true });
+  assert.deepEqual([out.body.created, out.body.updated, out.body.retired], [0, 1, 1]);
+  assert.equal(await count(), before, 'no new row');
+  const rows = (await db.query(`SELECT from_level, active, notes FROM people.career_transitions
+    WHERE tenant_id=$1 AND from_role='Analyst' ORDER BY active DESC`, [tenantId])).rows;
+  assert.deepEqual(rows.map((r) => [r.from_level, r.active, r.notes]), [['E3', true, 're-upload'], ['Band 6', false, null]]);
+});
+
 test('A FILE WITH ONE BAD ROW WRITES NOTHING AT ALL', { skip }, async () => {
   const before = await count();
   const out = await upload(await xlsx([
@@ -272,4 +292,16 @@ test('the bulk change is audited', { skip }, async () => {
   assert.ok(rows.length >= 1, 'a matrix change decides which moves the product accepts');
   assert.equal(rows[0].actor_email, 'ctu-hr@x.com');
   assert.ok(Number.isInteger(rows[0].details.created));
+});
+
+// 13 Oct, found by review: the level is no part of a move's identity.
+test('ONE MOVE AT TWO GRADES IS ONE MOVE: a second row for it is a duplicate, and a re-upload with a new grade updates', () => {
+  const r = validateCareerTransitionRows([
+    HEADERS,
+    ['Executive', 'E2', 'Senior Executive', '', '', '', '', '', ''],
+    ['Executive', 'E1', 'Senior Executive', '', '', '', '', '', ''],
+  ]);
+  assert.match(r.errors.map((e) => e.error).join(' | '), /duplicate of line 2/);
+  assert.equal(rowKey({ from_role: 'Office Boy', from_level: 'Band 8', to_role: 'Trainee' }),
+    rowKey({ from_role: 'office boy', from_level: 'B8', to_role: 'Trainee' }), 'an old "Band 8" row and its "B8" re-upload are one move');
 });

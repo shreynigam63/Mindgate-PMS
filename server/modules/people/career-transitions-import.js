@@ -88,9 +88,12 @@ function wholeNumber(cell, label, line, errors) {
 // manager" are the same rung and publishing both would put two identical
 // arrows on the matrix.
 const norm = (v) => txt(v).toLowerCase().replace(/\s+/g, ' ');
-// The level counts by its grade only, so a row stored as "E3 · Band 6"
-// and its re-upload as "E3" are the same rung, not two.
-const rung = (role, level) => `${norm(role)}@${norm(gradeOnly(level))}`;
+// The level is no part of a move's identity any more (13 Oct): no move is
+// matched on level, so one move at two grades would be two rows for the
+// same step, and a re-upload that corrects a grade, or turns an old
+// "Band 8" into "B8", would add a second row instead of updating the first
+// (found by review). Kept as a parameter so callers need not change.
+const rung = (role) => norm(role);
 // The department is PART OF the identity. "Executive → Senior Executive"
 // in Sales and the same pair in Infrastructure are two different rungs
 // with different competencies, so re-uploading one must not overwrite

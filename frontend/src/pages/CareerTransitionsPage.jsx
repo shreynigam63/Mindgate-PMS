@@ -184,7 +184,7 @@ export default function CareerTransitionsPage() {
           <div className="text-xs space-y-1">
             <p className="font-semibold">
               {report.committed ? 'PUBLISHED' : report.ok ? 'VALID — publish to go live' : 'REJECTED'}
-              {report.summary && ` · ${report.summary.total_rows} transitions · ${report.summary.create} new · ${report.summary.update} updated · ${report.summary.errors} errors · ${report.summary.warnings} warnings`}
+              {report.summary && ` · ${report.summary.total_rows} transitions · ${report.summary.create} new · ${report.summary.update} updated${report.summary.retire ? ` · ${report.summary.retire} older cop${report.summary.retire === 1 ? 'y' : 'ies'} of the same move switched off` : ''} · ${report.summary.errors} errors · ${report.summary.warnings} warnings`}
             </p>
             {(report.errors || []).map((e, i) => <p key={i} className="text-rose-600">row {e.line}: {e.error}</p>)}
             {(report.warnings || []).map((w, i) => <p key={i} className="text-amber-700">row {w.line}: {w.warning}</p>)}

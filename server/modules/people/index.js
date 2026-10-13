@@ -622,6 +622,7 @@ router.post('/career/transitions', async (req, res) => {
     if (!(await adminOnly(req, res))) return;
     const b = req.body || {};
     if (!b.from_role || !b.to_role) return res.status(400).json({ error: 'from_role and to_role are required' });
+    if (lc(b.from_role) === lc(b.to_role)) return res.status(400).json({ error: SELF_MOVE });
     const competencies = Array.isArray(b.required_competencies) ? b.required_competencies
       : (typeof b.required_competencies === 'string' ? b.required_competencies.split('\n').map((s) => s.trim()).filter(Boolean) : []);
     const r = await db.query(
@@ -634,6 +635,11 @@ router.post('/career/transitions', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// The importer's rule, in the form too (found by review, 13 Oct): moves are
+// matched on role alone, so a row from a role to itself would never be
+// offered to anyone.
+const SELF_MOVE = 'A transition needs a different To Role — a move from a role to itself is never offered (level and band play no part in a move).';
+
 // Only the fields the request sends are changed. Until 13 Oct every field
 // left out was written as NULL, so Deactivate / Reactivate (which sends
 // only `active`) turned a department's rung company-wide and wiped its
@@ -643,6 +649,11 @@ router.put('/career/transitions/:id', async (req, res) => {
     if (!(await adminOnly(req, res))) return;
     const b = req.body || {};
     const has = (k) => Object.prototype.hasOwnProperty.call(b, k);
+    if (b.from_role || b.to_role) {
+      const was = (await db.query(`SELECT from_role, to_role FROM people.career_transitions WHERE id=$1 AND tenant_id=$2`,
+        [req.params.id, T(req)])).rows[0];
+      if (was && lc(b.from_role || was.from_role) === lc(b.to_role || was.to_role)) return res.status(400).json({ error: SELF_MOVE });
+    }
     const sets = [];
     const params = [req.params.id, T(req)];
     const set = (col, v) => { params.push(v); sets.push(`${col}=$${params.length}`); };
@@ -926,10 +937,25 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
     // Which of these already exist, so the dry run can say "12 new, 4
     // updated" rather than leaving HR to guess whether Publish will
     // duplicate the matrix they already built.
-    const existing = new Map((await db.query(
-      `SELECT id, department, from_role, from_level, to_role, to_level FROM people.career_transitions WHERE tenant_id=$1`,
-      [T(req)])).rows.map((r) => [ctRowKey(r), r.id]));
-    for (const r of report.rows) r.existing_id = existing.get(ctRowKey(r)) || null;
+    // Several stored rows can be the same move now that level is no part
+    // of it (rows written once per band before 13 Oct). The latest edited
+    // is the one updated; the others are switched off on publish, and the
+    // dry run says so.
+    const existing = new Map();
+    const stored = (await db.query(
+      `SELECT id, department, from_role, from_level, to_role, to_level, active FROM people.career_transitions
+        WHERE tenant_id=$1 ORDER BY updated_at DESC NULLS LAST, created_at DESC, id`, [T(req)])).rows;
+    for (const s of stored) {
+      const k = ctRowKey(s);
+      if (!existing.has(k)) existing.set(k, { id: s.id, others: [] });
+      else if (s.active) existing.get(k).others.push(s.id);
+    }
+    for (const r of report.rows) {
+      const hit = existing.get(ctRowKey(r));
+      r.existing_id = hit ? hit.id : null;
+      r.retire_ids = hit ? hit.others : [];
+    }
+    report.summary.retire = report.rows.reduce((n, r) => n + r.retire_ids.length, 0);
     const willUpdate = report.rows.filter((r) => r.existing_id).length;
     report.summary.create = report.rows.length - willUpdate;
     report.summary.update = willUpdate;
@@ -942,7 +968,7 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
       return res.json({ ok: report.ok, committed: false, ...report });
     }
 
-    let created = 0; let updated = 0;
+    let created = 0; let updated = 0; let retired = 0;
     const client = await db.getClient();
     try {
       await client.query('BEGIN');
@@ -962,6 +988,13 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
           // department is NOT in the SET list on purpose: it is part of
           // the key that found this row, so it already matches.
           updated += 1;
+          // Other copies of the same move (one per band, before 13 Oct)
+          // are switched off, not deleted, so nothing is lost.
+          if (r.retire_ids && r.retire_ids.length) {
+            retired += (await client.query(
+              `UPDATE people.career_transitions SET active=false, updated_at=now()
+                WHERE tenant_id=$1 AND id = ANY($2::uuid[]) AND active`, [T(req), r.retire_ids])).rowCount;
+          }
         } else {
           await client.query(
             `INSERT INTO people.career_transitions
@@ -984,8 +1017,8 @@ router.post('/career/transitions/upload', (req, res, next) => transitionUpload.s
        VALUES ($1,$2,'CAREER_TRANSITIONS_UPLOADED','career_transitions',$3)`,
       [T(req), req.user.email, JSON.stringify({ created, updated, warnings: report.warnings.length })]);
 
-    res.json({ ok: true, committed: true, created, updated,
-      warnings: report.warnings, summary: { ...report.summary, create: created, update: updated } });
+    res.json({ ok: true, committed: true, created, updated, retired,
+      warnings: report.warnings, summary: { ...report.summary, create: created, update: updated, retire: retired } });
   } catch (e) { logger.error('career transitions upload', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
@@ -1057,7 +1090,7 @@ async function transitionsFrom(tenantId, role, department) {
   // department's row over a company-wide one (its competencies and
   // time-in-role are why the column exists), then the latest edited.
   const rank = (t) => [lc(t.department) ? 0 : 1, -new Date(t.updated_at || t.created_at || 0).getTime()];
-  const better = (a, b) => { const x = rank(a); const y = rank(b); return x[0] - y[0] || x[1] - y[1]; };
+  const better = (a, b) => { const x = rank(a); const y = rank(b); return x[0] - y[0] || x[1] - y[1] || String(a.id).localeCompare(String(b.id)); };
   const best = new Map();
   for (const t of rows) {
     const k = lc(t.to_role);
