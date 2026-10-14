@@ -213,6 +213,12 @@ async function main() {
     .catch((e) => logger.warn('lifecycle survey sweep failed', { error: e.message }));
   runSurveySweep();
   setInterval(runSurveySweep, ONE_DAY_MS);
+
+  // The MoM tab's clock (modules/performance/mom.js): the day's Daily
+  // Connects, the 15-minute reminder, Missing at 6 pm and the action-item
+  // reminders. Every five minutes, because the reminder is minute-bound;
+  // each step is guarded by its own column, so a re-run sends nothing twice.
+  require('./modules/performance/mom').startScheduler(TENANT_ID);
 }
 
 main().catch(e => { logger.error('boot failed', { error: e.message }); process.exit(1); });

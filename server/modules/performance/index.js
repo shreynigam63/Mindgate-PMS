@@ -5032,6 +5032,10 @@ router.post('/calibration/adjust', async (req, res) => {
 router.use('/nine-box', nineBox.router);
 router.use('/team/evaluations', nineBox.teamRouter);
 
+// The MoM tab (14 Oct build specification, part 1): daily connects on the
+// team's Google Meet link, the minutes and their action items. mom.js.
+router.use('/mom', require('./mom').router);
+
 // The cell HR typed by hand. A placement now comes from the scores, and
 // HR moves it only by overriding one band with a reason (POST
 // /nine-box/override); a typed cell had neither a reason nor an audit

@@ -1,12 +1,31 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, CheckCircle2, Clock, Sparkles } from 'lucide-react';
 import { api, Bullets } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import MeetingPanel from './MeetingPanel';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import MomTab from './MomTab';
 
+// Two tabs on one page (14 Oct): the connects log as it was, and the MoM
+// tab — daily connects, their minutes and action items (MomTab.jsx). The
+// tab is in the address (?tab=mom) so a notification can open it.
 export default function ConnectsPage() {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'mom' ? 'mom' : 'connects';
+  const pick = (k) => setParams(k === 'mom' ? { tab: 'mom' } : {});
+  const tabs = (
+    <div className="tabbar">
+      {[['connects', 'Connects'], ['mom', 'MoM']].map(([k, label]) => (
+        <button key={k} type="button" className={tab === k ? 'on' : ''} onClick={() => pick(k)}>{label}</button>
+      ))}
+    </div>
+  );
+  return tab === 'mom' ? <MomTab tabs={tabs} /> : <ConnectsLog tabs={tabs} />;
+}
+
+function ConnectsLog({ tabs }) {
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   const [err, setErr] = useState(null);
@@ -24,8 +43,14 @@ export default function ConnectsPage() {
     api('/pms/team/evaluations').then(r => setTeam(r.team || [])).catch(() => setTeam([]));
   }, []);
 
-  if (err) return <p className="text-sm text-rose-600">{err}</p>;
-  if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
+  if (err || !data) {
+    return (
+      <div className="space-y-4 max-w-3xl mx-auto">
+        {tabs}
+        {err ? <p className="text-sm text-rose-600">{err}</p> : <p className="text-sm text-navy-400">Loading…</p>}
+      </div>
+    );
+  }
 
   // Fix guide item #8: the sign-off action already existed, but nothing
   // called out how many connects were still awaiting it — this makes that
@@ -40,6 +65,7 @@ export default function ConnectsPage() {
         {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting sign-off</span>}
         <button className="btn-pri" onClick={() => setShowNew(v => !v)}><Plus size={13} className="inline mr-1" />Log a connect</button>
       </PageHead>
+      {tabs}
       {showNew && <NewConnectForm me={me} team={team} onSaved={() => { setShowNew(false); load(filterEmployeeId); }} />}
       {team && team.length > 0 && (
         <div className="flex items-center gap-2">

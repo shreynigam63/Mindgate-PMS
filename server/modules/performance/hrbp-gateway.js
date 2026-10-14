@@ -140,6 +140,15 @@ const SELF_SERVICE = {
     ['GET', '/nine-box', ownNineBox], ['GET', '/nine-box/movement', ownNineBox], ['GET', '/nine-box/reports', ownNineBox],
     ['GET', '/nine-box/export.xlsx', ownNineBox], ['GET', '/nine-box/actions', ownNineBox],
     ['PUT', '/nine-box/actions/:id'],
+    // The MoM tab (mom.js): the HRBP's own daily connects, minutes and
+    // action items, on what they hold. Nothing is lent here, so an HRBP
+    // without pms_admin sees their own team, not every team.
+    ['GET', '/mom/teams'], ['GET', '/mom/teams/:id/reports'], ['PUT', '/mom/teams/:id'],
+    ['GET', '/mom/today'], ['GET', '/mom/meetings'], ['GET', '/mom/meetings/:id'],
+    ['GET', '/mom/meetings/:id/versions/:v'], ['PUT', '/mom/meetings/:id/minutes'],
+    ['POST', '/mom/meetings/:id/publish'], ['POST', '/mom/meetings/:id/revise'],
+    ['POST', '/mom/meetings/:id/cancel'], ['POST', '/mom/meetings/:id/acknowledge'],
+    ['GET', '/mom/action-items'], ['PUT', '/mom/action-items/:id'], ['GET', '/mom/compliance'],
   ],
   '/api/v1/agentic': [
     ['POST', '/kra-suggest'], ['POST', '/devplan-suggest'], ['POST', '/career-suggest'], ['POST', '/career-plan'],

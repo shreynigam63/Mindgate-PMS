@@ -1116,6 +1116,23 @@ company view is cut to their remit before it is counted.
 
 ---
 
+## 3.16 MoM tab — daily connects and minutes (part 1)
+
+Built to the client's "MoM Tab – PMS Build Specification" (14 Oct). Connects page → **MoM** tab. Code: `server/modules/performance/mom.js`, `frontend/src/pages/MomTab.jsx`; tables in migration 091.
+
+- **A team** is a manager and their direct reports. The manager (or HR) saves one Google Meet link, the daily time and length, and optionally a subset of reports as attendees. Only a `https://meet.google.com/xxx-xxxx-xxx` link is accepted ("Enter a valid Google Meet link"); anything after the code is dropped.
+- **Switching on** is HR's alone, and needs a saved link. Teams are off by default (pilot first).
+- **Daily connects** are created for switched-on teams on working days only: Monday to Friday, minus the holidays on HR's timesheet calendar. One per team per day.
+- **Reminders** (in-app): 15 minutes before, with the Meet link, to the organiser and attendees. At 6 pm a connect with no published MoM becomes **Missing** and the organiser is told; it can still be written up and published afterwards, or marked as not held with a reason.
+- **Writing the MoM**: the organiser or HR. Sections: attendance, summary, discussion points, decisions, action items (task, owner, due date, priority), blockers, carried forward. A draft is seen only by the organiser and HR.
+- **Publishing** needs at least one discussion point, and every action item needs an owner and a due date (every problem is listed at once). Attendees are told and acknowledge, with an optional comment that goes to the organiser. Owners are told about their items.
+- **After publishing** a change is a new version (v2, v3…) recording who changed which sections; earlier versions stay readable; attendees are asked to acknowledge the new version. An action item removed in a revision is cancelled, not deleted.
+- **Action items** are tasks for their owners. The owner, the team's manager or HR can mark them done, cancel or reopen them. Reminders: due today and overdue go to the owner; three days overdue goes to the owner's manager. Each is sent once.
+- **Carried forward**: the team's open items from earlier published MoMs appear in the next MoM until done. The list is frozen into each MoM when it is published, and each item counts how many times it was carried.
+- **Who sees what**: attendees see the MoMs of the connects they were in, once published; the manager sees their team's; HR sees and edits all. HR's **Report** shows each switched-on team's MoM status for a day, with open items.
+- **Audit**: team settings, publish, revise, not held and action-item changes are written to the audit log.
+- **Not yet**: recording with consent (part 2), and transcription with the AI draft (part 3).
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |
