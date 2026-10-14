@@ -435,7 +435,7 @@ test('a connect not held, the lists, and HR\'s daily report', { skip }, async ()
   assert.strictEqual(r.status, 403);
   r = await get('/pms/mom/compliance?date=2027-03-04', 'hr');
   assert.strictEqual(r.body.working_day, true);
-  assert.deepStrictEqual(r.body.totals, { teams: 1, published: 0, missing: 0, scheduled: 0, cancelled: 1 });
+  assert.deepStrictEqual(r.body.totals, { teams: 1, published: 0, missing: 0, scheduled: 0, cancelled: 1, draft_ready: 0, processing: 0 });
   r = await get('/pms/mom/compliance?date=2027-03-02', 'hr');
   assert.strictEqual(r.body.totals.published, 1);
   assert.strictEqual(r.body.teams[0].open_items, 1);

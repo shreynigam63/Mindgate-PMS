@@ -149,6 +149,10 @@ const SELF_SERVICE = {
     ['POST', '/mom/meetings/:id/publish'], ['POST', '/mom/meetings/:id/revise'],
     ['POST', '/mom/meetings/:id/cancel'], ['POST', '/mom/meetings/:id/acknowledge'],
     ['GET', '/mom/action-items'], ['PUT', '/mom/action-items/:id'], ['GET', '/mom/compliance'],
+    ['GET', '/mom/consent'], ['POST', '/mom/consent'], ['GET', '/mom/settings'], ['PUT', '/mom/settings'],
+    ['POST', '/mom/meetings/:id/recording/start'], ['PUT', '/mom/meetings/:id/recording/:u/chunks/:n'],
+    ['POST', '/mom/meetings/:id/recording/:u/finish'], ['DELETE', '/mom/meetings/:id/recording/:u'],
+    ['GET', '/mom/meetings/:id/recording'], ['POST', '/mom/meetings/:id/transcript'], ['POST', '/mom/meetings/:id/redraft'],
   ],
   '/api/v1/agentic': [
     ['POST', '/kra-suggest'], ['POST', '/devplan-suggest'], ['POST', '/career-suggest'], ['POST', '/career-plan'],

@@ -9,8 +9,15 @@
 // open ones appear in the team's next MoM under Carried forward.
 //
 // No Google API: the PMS never creates a Meet link, it reuses the one the
-// manager saved. Recording and the AI draft (parts 2 and 3) fill the
-// statuses and columns this file leaves alone.
+// manager saved.
+//
+// Part 2: the manager records the call's audio from the PMS in their
+// browser, once everyone on the call has accepted the recording notice;
+// the pieces arrive while the call runs and are kept encrypted
+// (mom-store.js) until the retention rule deletes them.
+// Part 3: Google Meet transcribes the call; the manager uploads that
+// transcript, and the PMS's AI service drafts the MoM from it
+// (mom-transcript.js). Nothing is transcribed on the server.
 //
 // WHO SEES WHAT (the spec's table): an attendee sees the MoMs of the
 // meetings they were in, once published; the organiser (the team's
@@ -23,6 +30,11 @@ const logger = require('../../core/logger');
 const { guardUuidParams } = require('../../core/http');
 const { hasPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
+const { narrate } = require('../../core/ai');
+const { setConsent } = require('../../core/consent');
+const multer = require('multer');
+const store = require('./mom-store');
+const tx = require('./mom-transcript');
 
 const T = (req) => req.user.tenant_id;
 const APP_TZ = process.env.APP_TIMEZONE || 'Asia/Kolkata';
@@ -90,11 +102,12 @@ function changedSections(before, after) {
 
 // ------------------------------------------------------------------ data helpers
 
-async function audit(client, req, action, employeeId, details) {
+async function auditAs(client, t, email, action, employeeId, details) {
   await (client || db).query(
     `INSERT INTO pms.audit_log (tenant_id, actor_email, action, cycle_id, employee_id, details) VALUES ($1,$2,$3,NULL,$4,$5)`,
-    [T(req), req.user.email, action, employeeId || null, details ? JSON.stringify(details) : null]);
+    [t, email, action, employeeId || null, details ? JSON.stringify(details) : null]);
 }
+const audit = (client, req, action, employeeId, details) => auditAs(client, T(req), req.user.email, action, employeeId, details);
 
 async function inTransaction(fn) {
   const client = await db.getClient();
@@ -104,6 +117,59 @@ async function inTransaction(fn) {
 }
 
 const quietly = (p) => p.catch((e) => logger.warn('mom notify failed', { error: e.message }));
+
+// HR's MoM settings (core.admin_settings 'mom'): how long recordings and
+// transcripts are kept, and which notices are emailed as well as shown in
+// the bell. Everything is emailed unless HR turns a group off.
+const EMAIL_GROUPS = {
+  reminder: ['mom_reminder'],
+  published: ['mom_published', 'mom_revised', 'mom_ack_comment'],
+  action_items: ['mom_action_assigned', 'mom_action_due', 'mom_action_overdue', 'mom_action_overdue_manager'],
+  missing: ['mom_missing'],
+  draft: ['mom_draft_ready', 'mom_draft_failed', 'mom_recording_saved'],
+};
+function normaliseSettings(v) {
+  const x = v && typeof v === 'object' ? v : {};
+  const days = (n, d) => (Number.isInteger(Number(n)) && Number(n) >= 1 && Number(n) <= 3650 ? Number(n) : d);
+  return { recording_days: days(x.recording_days, 60), transcript_days: days(x.transcript_days, 365),
+    email: Object.fromEntries(Object.keys(EMAIL_GROUPS).map((k) => [k, !(x.email && x.email[k] === false)])) };
+}
+async function settingsFor(t) {
+  const row = (await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='mom'`, [t])).rows[0];
+  return normaliseSettings(row && row.value);
+}
+const emailOn = (s, kind) => Object.entries(EMAIL_GROUPS).some(([k, kinds]) => kinds.includes(kind) && s.email[k]);
+// A MoM notice: the bell always, an email too unless HR turned its group off.
+const tell = (t, s, id, kind, title, body, link) => quietly(notify(t, id, kind, title, body, link, { email: emailOn(s, kind) }));
+
+// ------------------------------------------------------------------ consent
+// "Before the first recording, each attendee accepts a recording notice in
+// the PMS once; the acceptance is stored with date and time." A new wording
+// is a new version, accepted again.
+const NOTICE_VERSION = 'v1';
+const noticeText = (s) => 'Daily connects may be recorded by the PMS (audio only) and transcribed by Google Meet. '
+  + 'The recording and the transcript are used to draft the minutes with AI; the organiser checks and edits the draft before anyone else sees it. '
+  + `Recordings are stored encrypted and deleted after ${s.recording_days} days, and transcripts after ${s.transcript_days} days. `
+  + 'Only the attendees of the meeting, their manager and HR can play a recording, and every play is logged. '
+  + 'You can withdraw at any time: your connects are then not recorded, and their minutes are written by hand.';
+
+async function consentOf(t, ids) {
+  const list = [...new Set((ids || []).filter(Boolean))];
+  if (!list.length) return {};
+  const rows = (await db.query(
+    `SELECT employee_id, granted, notice_version FROM core.employee_consents
+      WHERE tenant_id=$1 AND consent_type='mom_recording' AND employee_id = ANY($2::uuid[])`, [t, list])).rows;
+  const by = Object.fromEntries(rows.map((r) => [r.employee_id, r]));
+  return Object.fromEntries(list.map((id) => [id, !!(by[id] && by[id].granted && by[id].notice_version === NOTICE_VERSION)]));
+}
+// Everyone on the call: the organiser and the attendees.
+const onCall = (m) => [...new Set([m.organiser_id, ...(m.attendee_ids || [])].filter(Boolean))];
+async function missingConsent(t, m) {
+  const c = await consentOf(t, onCall(m));
+  const ids = Object.keys(c).filter((id) => !c[id]);
+  const names = await namesOf(t, ids);
+  return ids.map((id) => ({ id, name: names[id] || 'Former employee' }));
+}
 
 async function holidaysFor(t) {
   const row = (await db.query(`SELECT value FROM core.admin_settings WHERE tenant_id=$1 AND key='timesheet'`, [t])).rows[0];
@@ -150,8 +216,9 @@ async function ensureMeetings(t, now = new Date()) {
 // Everything time-driven, run every few minutes and at boot. Each step is
 // guarded by its own column, so running it twice sends nothing twice.
 async function tick(t, now = new Date()) {
-  const out = { created: 0, reminded: 0, missing: 0, due: 0, overdue: 0, escalated: 0 };
+  const out = { created: 0, reminded: 0, missing: 0, due: 0, overdue: 0, escalated: 0, autosaved: 0, abandoned: 0, expired: 0, redrafted: 0 };
   const L = localNow(now);
+  const s = await settingsFor(t);
   out.created = await ensureMeetings(t, now);
 
   // 15 minutes before: the Meet link, to the organiser and the attendees.
@@ -162,21 +229,25 @@ async function tick(t, now = new Date()) {
     const claimed = await db.query(`UPDATE pms.mom_meetings SET reminded_at=now() WHERE id=$1 AND reminded_at IS NULL`, [m.id]);
     if (!claimed.rowCount) continue;
     for (const id of new Set([m.organiser_id, ...(m.attendee_ids || [])].filter(Boolean))) {
-      await quietly(notify(t, id, 'mom_reminder', `${m.title} at ${m.start_time}`, `Join on Google Meet: ${m.meet_link}`, LINK));
+      await tell(t, s, id, 'mom_reminder', `${m.title} at ${m.start_time}`, `Join on Google Meet: ${m.meet_link}`, LINK);
     }
     out.reminded += 1;
   }
 
-  // 6 pm: a connect with no published MoM is Missing, and its organiser is
-  // told once. Earlier days still scheduled are caught up the same way.
+  // 6 pm: a connect with no recording, no transcript and no published MoM
+  // is Missing, and its organiser is told once. Earlier days still
+  // scheduled are caught up the same way.
   const late = (await db.query(
-    `SELECT *, to_char(meeting_date,'YYYY-MM-DD') AS date FROM pms.mom_meetings WHERE tenant_id=$1 AND status='scheduled'
-        AND (meeting_date < $2 OR (meeting_date = $2 AND $3::int >= 18*60))`, [t, L.date, L.minutes])).rows;
+    `SELECT mm.*, to_char(mm.meeting_date,'YYYY-MM-DD') AS date FROM pms.mom_meetings mm
+      WHERE mm.tenant_id=$1 AND mm.status='scheduled'
+        AND (mm.meeting_date < $2 OR (mm.meeting_date = $2 AND $3::int >= 18*60))
+        AND NOT EXISTS (SELECT 1 FROM pms.mom_recordings r WHERE r.meeting_id=mm.id)
+        AND NOT EXISTS (SELECT 1 FROM pms.mom_transcripts x WHERE x.meeting_id=mm.id)`, [t, L.date, L.minutes])).rows;
   for (const m of late) {
     await db.query(`UPDATE pms.mom_meetings SET status='missing', missing_notified_at=now() WHERE id=$1 AND status='scheduled'`, [m.id]);
     if (m.organiser_id) {
-      await quietly(notify(t, m.organiser_id, 'mom_missing', `MoM missing: ${m.title} (${m.date})`,
-        'No MoM was published for this connect. Write it by hand, or mark the connect as not held.', LINK));
+      await tell(t, s, m.organiser_id, 'mom_missing', `MoM missing: ${m.title} (${m.date})`,
+        'No MoM was published for this connect. Write it by hand, or mark the connect as not held.', LINK);
     }
     out.missing += 1;
   }
@@ -192,22 +263,184 @@ async function tick(t, now = new Date()) {
     for (const a of items) {
       if (a.due === L.date && !a.due_reminded_on) {
         await db.query(`UPDATE pms.mom_action_items SET due_reminded_on=$2 WHERE id=$1`, [a.id, L.date]);
-        await quietly(notify(t, a.owner_id, 'mom_action_due', 'Action item due today', a.task, `${LINK}&sub=actions`));
+        await tell(t, s, a.owner_id, 'mom_action_due', 'Action item due today', a.task, `${LINK}&sub=actions`);
         out.due += 1;
       } else if (a.due < L.date && !a.overdue_reminded_on) {
         await db.query(`UPDATE pms.mom_action_items SET overdue_reminded_on=$2 WHERE id=$1`, [a.id, L.date]);
-        await quietly(notify(t, a.owner_id, 'mom_action_overdue', 'Action item overdue', `${a.task} (due ${a.due})`, `${LINK}&sub=actions`));
+        await tell(t, s, a.owner_id, 'mom_action_overdue', 'Action item overdue', `${a.task} (due ${a.due})`, `${LINK}&sub=actions`);
         out.overdue += 1;
       }
       if (daysBetween(a.due, L.date) >= 3 && !a.manager_alerted_on && a.owner_manager) {
         await db.query(`UPDATE pms.mom_action_items SET manager_alerted_on=$2 WHERE id=$1`, [a.id, L.date]);
-        await quietly(notify(t, a.owner_manager, 'mom_action_overdue_manager', `${a.owner_name}: action item 3 days overdue`,
-          `${a.task} (due ${a.due})`, `${LINK}&sub=actions`));
+        await tell(t, s, a.owner_manager, 'mom_action_overdue_manager', `${a.owner_name}: action item 3 days overdue`,
+          `${a.task} (due ${a.due})`, `${LINK}&sub=actions`);
         out.escalated += 1;
       }
     }
   }
+
+  // A recording whose pieces stopped arriving (the tab was closed, the
+  // laptop slept) is kept as far as it got, if it is the connect's only
+  // one; an abandoned file upload or a broken one is cleared away.
+  const orphans = (await db.query(
+    `SELECT u.*, mm.organiser_id, mm.title, mm.status AS meeting_status, to_char(mm.meeting_date,'YYYY-MM-DD') AS date
+       FROM pms.mom_uploads u JOIN pms.mom_meetings mm ON mm.id=u.meeting_id
+      WHERE u.tenant_id=$1 AND u.status='open' AND COALESCE(u.last_chunk_at, u.started_at) < now() - interval '15 minutes'`, [t])).rows;
+  for (const u of orphans) {
+    const segs = await store.segments(u.id);
+    const has = (await db.query(`SELECT 1 FROM pms.mom_recordings WHERE meeting_id=$1 AND deleted_at IS NULL`, [u.meeting_id])).rowCount;
+    if (u.source === 'browser' && segs.length && segs.every((x, i) => x === i) && !has && !['published', 'cancelled'].includes(u.meeting_status)) {
+      await saveRecording(t, { id: u.meeting_id, date: u.date }, u, null, u.started_by);
+      if (u.organiser_id) {
+        await tell(t, s, u.organiser_id, 'mom_recording_saved', `Recording saved: ${u.title}, ${u.date}`,
+          'The recording stopped before Stop was pressed. What reached the PMS has been kept.', `${LINK}&mom=${u.meeting_id}`);
+      }
+      out.autosaved += 1;
+    } else {
+      await db.query(`UPDATE pms.mom_uploads SET status='abandoned' WHERE id=$1 AND status='open'`, [u.id]);
+      await store.remove(u.id).catch((e) => logger.warn('mom upload cleanup', { error: e.message }));
+      out.abandoned += 1;
+    }
+  }
+
+  // An AI draft that never came back (the server restarted mid-way) is
+  // tried again, three times in all.
+  const stuck = (await db.query(
+    `SELECT id, draft_attempts FROM pms.mom_meetings WHERE tenant_id=$1 AND status='processing'
+        AND (processing_since IS NULL OR processing_since < now() - interval '20 minutes')`, [t])).rows;
+  for (const m of stuck) {
+    if (m.draft_attempts >= 3) {
+      await db.query(`UPDATE pms.mom_meetings SET status='scheduled', processing_since=NULL,
+                        draft_error='The AI draft did not finish. Try again, or write the MoM by hand.' WHERE id=$1 AND status='processing'`, [m.id]);
+    } else {
+      await runDraft(t, m.id, 'system');
+      out.redrafted += 1;
+    }
+  }
+
+  // Retention: recordings after HR's number of days (60 unless changed),
+  // transcripts after theirs (a year). The MoM and its items stay. By the
+  // database's date, not the sweep's clock: files age in real days.
+  const expired = (await db.query(
+    `SELECT id, upload_id, meeting_id FROM pms.mom_recordings WHERE tenant_id=$1 AND deleted_at IS NULL AND delete_after <= CURRENT_DATE`,
+    [t])).rows;
+  for (const r of expired) {
+    await store.remove(r.upload_id);
+    await db.query(`UPDATE pms.mom_recordings SET deleted_at=now() WHERE id=$1`, [r.id]);
+    await auditAs(null, t, 'system', 'MOM_RECORDING_DELETED', null, { meeting_id: r.meeting_id, reason: 'retention' });
+    out.expired += 1;
+  }
+  const oldTranscripts = (await db.query(
+    `UPDATE pms.mom_transcripts SET text=NULL, speakers='{}', deleted_at=now()
+      WHERE tenant_id=$1 AND deleted_at IS NULL AND delete_after <= CURRENT_DATE RETURNING meeting_id`, [t])).rows;
+  if (oldTranscripts.length) {
+    // The AI's stored input held the transcript too.
+    if ((await db.query(`SELECT to_regclass('agentic.drafts') AS t`)).rows[0].t) {
+      await db.query(
+        `UPDATE agentic.drafts SET input = jsonb_set(input, '{transcript}', '"(deleted under the retention rule)"')
+          WHERE tenant_id=$1 AND kind='mom_draft' AND input ? 'transcript' AND ref->>'meeting_id' = ANY($2::text[])`,
+        [t, oldTranscripts.map((x) => x.meeting_id)]);
+    }
+    for (const x of oldTranscripts) await auditAs(null, t, 'system', 'MOM_TRANSCRIPT_DELETED', null, { meeting_id: x.meeting_id, reason: 'retention' });
+    out.expired += oldTranscripts.length;
+  }
   return out;
+}
+
+// ------------------------------------------------------------------ recordings
+
+const MAX_RECORDING_BYTES = 300 * 1024 * 1024;
+const CHUNK_BYTES = 5 * 1024 * 1024;
+const MIME_OK = /^(audio|video)\/(webm|ogg|mp4|mpeg|x-m4a|m4a|wav|x-wav|aac)$/;
+const EXT = { webm: 'webm', ogg: 'ogg', mp4: 'mp4', mpeg: 'mp3', 'x-m4a': 'm4a', m4a: 'm4a', wav: 'wav', 'x-wav': 'wav', aac: 'aac' };
+
+// The connect's recording, once its pieces are all in. Replaces an earlier
+// one (the organiser confirmed that when they started).
+async function saveRecording(t, m, u, duration, by) {
+  const s = await settingsFor(t);
+  const segs = await store.segments(u.id);
+  const size = await store.plainSize(u.id);
+  const old = (await db.query(`SELECT upload_id FROM pms.mom_recordings WHERE meeting_id=$1`, [m.id])).rows[0];
+  await inTransaction(async (client) => {
+    await client.query(`UPDATE pms.mom_uploads SET status='done' WHERE id=$1`, [u.id]);
+    await client.query(
+      `INSERT INTO pms.mom_recordings (tenant_id, meeting_id, upload_id, mime, size_bytes, duration_sec, key_id, source, uploaded_by, delete_after)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, CURRENT_DATE + $10::int)
+       ON CONFLICT (meeting_id) DO UPDATE SET upload_id=EXCLUDED.upload_id, mime=EXCLUDED.mime, size_bytes=EXCLUDED.size_bytes,
+         duration_sec=EXCLUDED.duration_sec, key_id=EXCLUDED.key_id, source=EXCLUDED.source, uploaded_by=EXCLUDED.uploaded_by,
+         uploaded_at=now(), delete_after=EXCLUDED.delete_after, deleted_at=NULL`,
+      [t, m.id, u.id, u.mime, size, duration, u.key_id, u.source, by, s.recording_days]);
+    await auditAs(client, t, by, 'MOM_RECORDING_SAVED', null, { meeting_id: m.id, date: m.date, bytes: size, pieces: segs.length, source: u.source, replaced: !!old });
+  });
+  if (old && old.upload_id !== u.id) await store.remove(old.upload_id).catch((e) => logger.warn('mom old recording cleanup', { error: e.message }));
+}
+
+// ------------------------------------------------------------------ the AI draft
+
+// Draft the MoM from the connect's transcript, in the background: the
+// upload answers at once and the editor shows Processing until this is
+// done. Failure is reported to the organiser and on the MoM, never silent.
+const drafting = new Set();
+async function runDraft(t, meetingId, requestedBy) {
+  if (drafting.has(meetingId)) return;
+  drafting.add(meetingId);
+  let m = null;
+  try {
+    const claim = (await db.query(
+      `UPDATE pms.mom_meetings SET draft_attempts=draft_attempts+1, processing_since=now()
+        WHERE id=$1 AND tenant_id=$2 AND status='processing' RETURNING draft_attempts`, [meetingId, t])).rows[0];
+    if (!claim) return;
+    m = await meetingWithTeam(t, meetingId);
+    const s = await settingsFor(t);
+    try {
+      const tr = (await db.query(`SELECT id, text FROM pms.mom_transcripts WHERE meeting_id=$1 AND deleted_at IS NULL`, [m.id])).rows[0];
+      if (!tr || !tr.text) throw new Error('The transcript is no longer stored. Upload it again.');
+      const names = await namesOf(t, onCall(m));
+      const attendees = (m.attendee_ids || []).filter((id) => names[id]).map((id) => ({ id, name: names[id] }));
+      const people = (await db.query(
+        `SELECT id, name FROM core.employees WHERE tenant_id=$1 AND status='active' AND (id = ANY($2::uuid[]) OR manager_id=$3)`,
+        [t, onCall(m), m.manager_id])).rows;
+      const mi = (await db.query(`SELECT id, status FROM pms.mom_minutes WHERE meeting_id=$1`, [m.id])).rows[0];
+      const carried = (await carriedForward(t, m.team_id, mi && mi.id)).map((a, i) => ({ ref: `C${i + 1}`, id: a.id, task: a.task, owner: a.owner_name, due_date: a.due_date }));
+      const out = await narrate({
+        tenantId: t, kind: 'mom_draft', ref: { meeting_id: m.id, transcript_id: tr.id }, requestedBy, maxTokens: 4000, system: tx.SYSTEM,
+        input: {
+          meeting: { title: m.title, date: m.date, start_time: m.start_time, end_time: m.end_time, organiser: names[m.organiser_id] || null },
+          attendees: attendees.map((a) => a.name),
+          open_items_from_previous: carried.map(({ id, ...c }) => c),
+          transcript: tr.text,
+        },
+      });
+      if (!out.draft || out.draft._unparsed) throw new Error('The AI reply could not be read. Try again.');
+      const d = tx.draftToMinutes(out.draft, { people, attendees, carried, words: tr.text.split(/\s+/).filter(Boolean).length });
+      const done = await inTransaction(async (client) => {
+        const still = (await client.query(`SELECT status FROM pms.mom_meetings WHERE id=$1 FOR UPDATE`, [m.id])).rows[0];
+        if (!still || still.status !== 'processing') return false; // published by hand or cancelled meanwhile
+        const row = await writeMinutes(client, { user: { tenant_id: t, email: requestedBy } }, m, d.value, { published: false });
+        await client.query(`UPDATE pms.mom_minutes SET source='ai', ai_confidence=$2, ai_notes=$3, transcript_id=$4, ai_draft_id=$5 WHERE id=$1`,
+          [row.id, d.confidence, JSON.stringify(d.notes), tr.id, out.id]);
+        await client.query(`UPDATE pms.mom_meetings SET status='draft_ready', draft_error=NULL, processing_since=NULL WHERE id=$1`, [m.id]);
+        await auditAs(client, t, requestedBy, 'MOM_AI_DRAFTED', null,
+          { meeting_id: m.id, date: m.date, confidence: d.confidence, draft_id: out.id, action_items: d.value.action_items.length });
+        return true;
+      });
+      if (done && m.organiser_id) {
+        await tell(t, s, m.organiser_id, 'mom_draft_ready', `AI draft ready: ${m.title}, ${m.date}`,
+          d.confidence === 'low' ? `Low confidence: ${d.notes.confidence_reason} Review it closely before publishing.` : 'Review it, correct anything that is wrong, and publish.',
+          `${LINK}&mom=${m.id}`);
+      }
+    } catch (e) {
+      const msg = e.status === 503 ? 'AI is not set up on this server, so the MoM cannot be drafted. Write it by hand.' : String(e.message || 'The AI draft failed.');
+      logger.warn('mom draft failed', { meeting_id: meetingId, error: e.message, reason: e.reason });
+      const r = await db.query(`UPDATE pms.mom_meetings SET status='scheduled', draft_error=$2, processing_since=NULL WHERE id=$1 AND status='processing'`,
+        [meetingId, msg.slice(0, 300)]);
+      if (r.rowCount && m && m.organiser_id) {
+        await tell(t, s, m.organiser_id, 'mom_draft_failed', `AI draft failed: ${m.title}, ${m.date}`, `${msg} Try again from the MoM, or write it by hand.`, `${LINK}&mom=${m.id}`);
+      }
+    }
+  } catch (e) {
+    logger.error('mom draft run', { meeting_id: meetingId, error: e.message });
+  } finally { drafting.delete(meetingId); }
 }
 
 // Who the caller is to a meeting.
@@ -372,7 +605,9 @@ router.get('/teams/:managerId/reports', async (req, res) => {
     const id = String(req.params.managerId);
     if (!UUID.test(id)) return res.status(400).json({ error: 'Not a valid id.' });
     if (id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: 'Not your team.' });
-    res.json({ reports: await directReports(T(req), id) });
+    const reports = await directReports(T(req), id);
+    const consent = await consentOf(T(req), reports.map((r) => r.id));
+    res.json({ reports: reports.map((r) => ({ ...r, notice_accepted: consent[r.id] })) });
   } catch (e) { res.status(500).json({ error: 'Could not load the team.' }); }
 });
 
@@ -450,12 +685,22 @@ router.get('/today', async (req, res) => {
     const { date } = localNow();
     const rows = (await db.query(
       `SELECT mm.id, mm.title, mm.type, to_char(mm.meeting_date,'YYYY-MM-DD') AS date, mm.start_time, mm.end_time, mm.meet_link,
-              mm.status, mm.organiser_id, o.name AS organiser_name, mi.status AS mom_status, mi.version
+              mm.status, mm.organiser_id, o.name AS organiser_name, mi.status AS mom_status, mi.version, mm.attendee_ids, mm.draft_error,
+              EXISTS (SELECT 1 FROM pms.mom_recordings r WHERE r.meeting_id=mm.id AND r.deleted_at IS NULL) AS recorded,
+              EXISTS (SELECT 1 FROM pms.mom_transcripts x WHERE x.meeting_id=mm.id AND x.deleted_at IS NULL) AS has_transcript
          FROM pms.mom_meetings mm LEFT JOIN core.employees o ON o.id=mm.organiser_id
          LEFT JOIN pms.mom_minutes mi ON mi.meeting_id=mm.id
         WHERE mm.tenant_id=$1 AND mm.meeting_date=$2 AND ($3 = mm.organiser_id OR $3 = ANY(mm.attendee_ids))
         ORDER BY mm.start_time`, [t, date, req.user.id])).rows;
-    res.json({ date, meetings: rows.map((m) => ({ ...m, can_edit: m.organiser_id === req.user.id })) });
+    const meetings = [];
+    for (const { attendee_ids: attendees, ...m } of rows) {
+      const mine = m.organiser_id === req.user.id;
+      // The organiser sees who has not accepted the recording notice yet:
+      // until everyone has, Record stays off for this connect.
+      meetings.push({ ...m, can_edit: mine,
+        consent_missing: mine ? await missingConsent(t, { organiser_id: m.organiser_id, attendee_ids: attendees }) : undefined });
+    }
+    res.json({ date, meetings });
   } catch (e) { logger.error('mom today', { error: e.message }); res.status(500).json({ error: 'Could not load today\'s connects.' }); }
 });
 
@@ -477,7 +722,8 @@ router.get('/meetings', async (req, res) => {
               mm.organiser_id, o.name AS organiser_name, mt.manager_id, mi.status AS mom_status, mi.version,
               (SELECT count(*)::int FROM pms.mom_action_items a WHERE a.minutes_id=mi.id AND a.status='open') AS open_items,
               EXISTS (SELECT 1 FROM pms.mom_acks k WHERE k.minutes_id=mi.id AND k.employee_id=$2 AND k.version=mi.version) AS acknowledged,
-              ($2 = ANY(mm.attendee_ids)) AS attended
+              ($2 = ANY(mm.attendee_ids)) AS attended,
+              EXISTS (SELECT 1 FROM pms.mom_recordings r WHERE r.meeting_id=mm.id AND r.deleted_at IS NULL) AS recorded
          FROM pms.mom_meetings mm JOIN pms.mom_teams mt ON mt.id=mm.team_id
          LEFT JOIN core.employees o ON o.id=mm.organiser_id
          LEFT JOIN pms.mom_minutes mi ON mi.meeting_id=mm.id
@@ -509,6 +755,14 @@ router.get('/meetings/:id', async (req, res) => {
     const versions = mi ? (await db.query(
       `SELECT version, changed, changed_by, changed_at FROM pms.mom_versions WHERE minutes_id=$1 ORDER BY version`, [mi.id])).rows : [];
     const myAck = acks.find((a) => a.employee_id === req.user.id && mi && a.version === mi.version) || null;
+    const recording = (await db.query(
+      `SELECT mime, size_bytes, duration_sec, source, uploaded_by, uploaded_at, to_char(delete_after,'YYYY-MM-DD') AS delete_after, deleted_at
+         FROM pms.mom_recordings WHERE meeting_id=$1`, [m.id])).rows[0] || null;
+    // The transcript is for whoever writes the MoM — the editor's side panel.
+    const transcript = role.edit ? (await db.query(
+      `SELECT text, language, speakers, source, file_name, uploaded_by, created_at, to_char(delete_after,'YYYY-MM-DD') AS delete_after, deleted_at
+         FROM pms.mom_transcripts WHERE meeting_id=$1`, [m.id])).rows[0] || null : null;
+    const consent = role.edit ? await consentOf(t, onCall(m)) : null;
     const people = await (async () => {
       if (!role.edit) return [];
       const extra = (await db.query(
@@ -524,7 +778,8 @@ router.get('/meetings/:id', async (req, res) => {
       minutes: showContent && mi ? { id: mi.id, version: mi.version, status: mi.status, summary: mi.summary, discussion: mi.discussion,
         decisions: mi.decisions, blockers: mi.blockers, attendance: mi.attendance,
         carried_forward_snapshot: published ? mi.carried_forward : null,
-        published_by: mi.published_by, published_at: mi.published_at, updated_by: mi.updated_by, updated_at: mi.updated_at } : null,
+        published_by: mi.published_by, published_at: mi.published_at, updated_by: mi.updated_by, updated_at: mi.updated_at,
+        source: mi.source, ai_confidence: mi.ai_confidence, ai_notes: role.edit ? mi.ai_notes : null } : null,
       draft_exists: !!mi && !published,
       action_items: showContent && mi ? await itemsOf(t, mi.id) : [],
       // Live for the editor: what this MoM will carry forward if published now.
@@ -534,6 +789,10 @@ router.get('/meetings/:id', async (req, res) => {
       pending_acks: role.edit && published ? (m.attendee_ids || []).filter((id) => !acks.some((a) => a.employee_id === id && a.version === mi.version))
         .map((id) => ({ id, name: names[id] || 'Former employee' })) : [],
       can_edit: role.edit && m.status !== 'cancelled',
+      recording, transcript,
+      consent: consent ? onCall(m).map((id) => ({ id, name: names[id] || 'Former employee', accepted: consent[id] })) : null,
+      can_record: role.edit && !published && m.status !== 'cancelled',
+      draft_error: role.edit ? m.draft_error : null,
       can_ack: published && role.attendee && !myAck,
       my_ack: myAck,
     });
@@ -613,19 +872,20 @@ async function publishVersion(req, m, value, { revise }) {
 
 async function notifyPublished(req, m, out, { revise }) {
   const t = T(req);
+  const s = await settingsFor(t);
   const link = `${LINK}&mom=${m.id}`;
   for (const id of new Set((m.attendee_ids || []).filter((x) => x && x !== req.user.id))) {
-    await quietly(notify(t, id, revise ? 'mom_revised' : 'mom_published',
+    await tell(t, s, id, revise ? 'mom_revised' : 'mom_published',
       revise ? `MoM updated (v${out.version}): ${m.title}, ${m.date}` : `MoM published: ${m.title}, ${m.date}`,
-      revise ? `Changed: ${out.changed.join(', ')}. Please read and acknowledge.` : 'Please read and acknowledge.', link));
+      revise ? `Changed: ${out.changed.join(', ')}. Please read and acknowledge.` : 'Please read and acknowledge.', link);
   }
   if (!revise) {
     const owners = (await db.query(
       `SELECT owner_id, count(*)::int AS n FROM pms.mom_action_items WHERE minutes_id=$1 AND status='open' AND owner_id IS NOT NULL GROUP BY owner_id`,
       [out.minutesId])).rows;
     for (const o of owners) {
-      await quietly(notify(t, o.owner_id, 'mom_action_assigned', `${o.n} action item${o.n === 1 ? '' : 's'} for you from ${m.title}`,
-        `From the ${m.date} MoM.`, `${LINK}&sub=actions`));
+      await tell(t, s, o.owner_id, 'mom_action_assigned', `${o.n} action item${o.n === 1 ? '' : 's'} for you from ${m.title}`,
+        `From the ${m.date} MoM.`, `${LINK}&sub=actions`);
     }
   }
 }
@@ -688,10 +948,290 @@ router.post('/meetings/:id/acknowledge', async (req, res) => {
        ON CONFLICT (minutes_id, employee_id, version) DO UPDATE SET comment=EXCLUDED.comment, acknowledged_at=now()`,
       [t, mi.id, req.user.id, mi.version, comment]);
     if (comment && m.organiser_id && m.organiser_id !== req.user.id) {
-      await quietly(notify(t, m.organiser_id, 'mom_ack_comment', `${req.user.name} commented on the ${m.date} MoM`, comment, `${LINK}&mom=${m.id}`));
+      const s = await settingsFor(t);
+      await tell(t, s, m.organiser_id, 'mom_ack_comment', `${req.user.name} commented on the ${m.date} MoM`, comment, `${LINK}&mom=${m.id}`);
     }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Could not save the acknowledgement.' }); }
+});
+
+// -------- recording notice (consent)
+
+router.get('/consent', async (req, res) => {
+  try {
+    const t = T(req);
+    const s = await settingsFor(t);
+    const row = (await db.query(
+      `SELECT granted, granted_at, revoked_at, notice_version FROM core.employee_consents
+        WHERE tenant_id=$1 AND employee_id=$2 AND consent_type='mom_recording'`, [t, req.user.id])).rows[0];
+    res.json({ notice: { version: NOTICE_VERSION, text: noticeText(s) },
+      accepted: !!(row && row.granted && row.notice_version === NOTICE_VERSION),
+      accepted_at: row && row.granted ? row.granted_at : null, withdrawn_at: row ? row.revoked_at : null });
+  } catch (e) { logger.error('mom consent read', { error: e.message }); res.status(500).json({ error: 'Could not load the recording notice.' }); }
+});
+
+// Only for oneself: nobody accepts the notice on someone else's behalf.
+router.post('/consent', async (req, res) => {
+  try {
+    const accept = (req.body || {}).accept;
+    if (typeof accept !== 'boolean') return res.status(422).json({ error: 'accept must be true or false.' });
+    await setConsent(T(req), req.user, 'mom_recording', accept, NOTICE_VERSION);
+    res.json({ ok: true, accepted: accept });
+  } catch (e) { logger.error('mom consent save', { error: e.message }); res.status(500).json({ error: 'Could not save your answer.' }); }
+});
+
+// -------- HR: retention and email
+
+router.get('/settings', async (req, res) => {
+  try {
+    const hr = await hasPermission(req.user, 'pms_admin');
+    res.json({ settings: await settingsFor(T(req)), storage: hr ? await store.ready() : undefined });
+  } catch (e) { res.status(500).json({ error: 'Could not load the MoM settings.' }); }
+});
+
+router.put('/settings', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    const t = T(req);
+    const b = req.body || {};
+    const errors = [];
+    const days = (k, lo, hi, label) => {
+      const n = Number(b[k]);
+      if (!Number.isInteger(n) || n < lo || n > hi) errors.push(`${label} is ${lo} to ${hi} days.`);
+      return n;
+    };
+    const before = await settingsFor(t);
+    const next = {
+      recording_days: b.recording_days === undefined ? before.recording_days : days('recording_days', 1, 3650, 'Recordings are kept'),
+      transcript_days: b.transcript_days === undefined ? before.transcript_days : days('transcript_days', 1, 3650, 'Transcripts are kept'),
+      email: { ...before.email },
+    };
+    for (const [k, v] of Object.entries(b.email && typeof b.email === 'object' ? b.email : {})) {
+      if (!(k in EMAIL_GROUPS) || typeof v !== 'boolean') errors.push(`email.${k} is not a setting.`);
+      else next.email[k] = v;
+    }
+    if (errors.length) return res.status(422).json({ error: errors[0], errors });
+    await inTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO core.admin_settings (tenant_id, key, value, updated_at) VALUES ($1,'mom',$2,now())
+         ON CONFLICT (tenant_id, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`, [t, JSON.stringify(next)]);
+      // A new period applies to what is already stored, counted from when
+      // each file arrived.
+      if (next.recording_days !== before.recording_days) {
+        await client.query(`UPDATE pms.mom_recordings SET delete_after = uploaded_at::date + $2::int WHERE tenant_id=$1 AND deleted_at IS NULL`, [t, next.recording_days]);
+      }
+      if (next.transcript_days !== before.transcript_days) {
+        await client.query(`UPDATE pms.mom_transcripts SET delete_after = created_at::date + $2::int WHERE tenant_id=$1 AND deleted_at IS NULL`, [t, next.transcript_days]);
+      }
+      await audit(client, req, 'MOM_SETTINGS_UPDATED', null, { before, after: next });
+    });
+    res.json({ ok: true, settings: next });
+  } catch (e) { logger.error('mom settings save', { error: e.message }); res.status(500).json({ error: 'Could not save the MoM settings.' }); }
+});
+
+// -------- recording (part 2)
+
+// The organiser (or HR) of a connect that is not yet published.
+async function openConnect(req, res) {
+  const m = await editable(req, res);
+  if (!m) return null;
+  if (m.status === 'published') { res.status(409).json({ error: 'This MoM is published.' }); return null; }
+  return m;
+}
+
+async function consentBlock(res, t, m, what) {
+  const missing = await missingConsent(t, m);
+  if (!missing.length) return false;
+  res.status(409).json({
+    error: `${missing.map((x) => x.name).join(', ')} ${missing.length === 1 ? 'has' : 'have'} not accepted the recording notice, so ${what}. Write the MoM by hand.`,
+    missing_consent: missing,
+  });
+  return true;
+}
+
+router.post('/meetings/:id/recording/start', async (req, res) => {
+  try {
+    const t = T(req);
+    const m = await openConnect(req, res); if (!m) return;
+    const b = req.body || {};
+    const source = b.source === 'file' ? 'file' : 'browser';
+    const mime = String(b.mime || '').toLowerCase().split(';')[0].trim();
+    if (!MIME_OK.test(mime)) return res.status(422).json({ error: 'That is not an audio or video recording.' });
+    if (b.size != null && !(Number(b.size) > 0 && Number(b.size) <= MAX_RECORDING_BYTES)) return res.status(422).json({ error: 'A recording can be at most 300 MB.' });
+    if (await consentBlock(res, t, m, 'this connect cannot be recorded')) return;
+    const ready = await store.ready();
+    if (!ready.ok) {
+      logger.error('mom recording storage not ready', { error: ready.error });
+      return res.status(503).json({ error: 'Recording storage is not set up on this server. Ask your administrator.' });
+    }
+    const cur = (await db.query(`SELECT 1 FROM pms.mom_recordings WHERE meeting_id=$1 AND deleted_at IS NULL`, [m.id])).rowCount;
+    if (cur && b.replace !== true) return res.status(409).json({ error: 'This connect already has a recording. Recording again replaces it.', needs_replace: true });
+    // One recording on its way in per connect: an earlier one still open
+    // (another tab, an earlier try) is dropped.
+    const open = (await db.query(`UPDATE pms.mom_uploads SET status='abandoned' WHERE meeting_id=$1 AND status='open' RETURNING id`, [m.id])).rows;
+    for (const o of open) await store.remove(o.id).catch(() => {});
+    const u = (await db.query(
+      `INSERT INTO pms.mom_uploads (tenant_id, meeting_id, source, mime, file_name, key_id, started_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [t, m.id, source, mime, b.file_name ? String(b.file_name).slice(0, 200) : null, store.currentKeyId(), req.user.email])).rows[0];
+    await audit(null, req, 'MOM_RECORDING_STARTED', null, { meeting_id: m.id, date: m.date, source, replace: !!cur });
+    res.json({ ok: true, upload_id: u.id, chunk_bytes: CHUNK_BYTES });
+  } catch (e) { logger.error('mom recording start', { error: e.message }); res.status(500).json({ error: 'Could not start the recording.' }); }
+});
+
+async function openUpload(req, res) {
+  const t = T(req);
+  const uploadId = String(req.params.uploadId);
+  if (!UUID.test(uploadId)) { res.status(400).json({ error: 'Not a valid id.' }); return null; }
+  const u = (await db.query(`SELECT * FROM pms.mom_uploads WHERE tenant_id=$1 AND id=$2 AND meeting_id=$3`, [t, uploadId, req.params.id])).rows[0];
+  if (!u) { res.status(404).json({ error: 'Recording upload not found.' }); return null; }
+  if (u.started_by !== req.user.email) { res.status(403).json({ error: 'Only the person recording sends the recording.' }); return null; }
+  if (u.status !== 'open') { res.status(409).json({ error: 'This recording upload is closed. Send the recording again.', upload_status: u.status }); return null; }
+  return u;
+}
+
+// One piece of the recording, as raw bytes, in order from 0. Sending a
+// piece again replaces it.
+router.put('/meetings/:id/recording/:uploadId/chunks/:seq', express.raw({ type: () => true, limit: 8 * 1024 * 1024 }), async (req, res) => {
+  try {
+    const seq = Number(req.params.seq);
+    if (!Number.isInteger(seq) || seq < 0 || seq > 99999) return res.status(400).json({ error: 'Not a valid piece number.' });
+    const u = await openUpload(req, res); if (!u) return;
+    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (!buf.length) return res.status(422).json({ error: 'That piece is empty.' });
+    if (Number(u.bytes) + buf.length > MAX_RECORDING_BYTES) return res.status(413).json({ error: 'A recording can be at most 300 MB.' });
+    await store.writeSegment(u.id, seq, buf, u.key_id);
+    await db.query(`UPDATE pms.mom_uploads SET chunks=GREATEST(chunks,$2), bytes=bytes+$3, last_chunk_at=now() WHERE id=$1`, [u.id, seq + 1, buf.length]);
+    res.json({ ok: true, seq });
+  } catch (e) { logger.error('mom recording piece', { error: e.message }); res.status(500).json({ error: 'Could not store that piece of the recording.' }); }
+});
+
+router.post('/meetings/:id/recording/:uploadId/finish', async (req, res) => {
+  try {
+    const t = T(req);
+    const u = await openUpload(req, res); if (!u) return;
+    const m = await meetingWithTeam(t, req.params.id);
+    const segs = await store.segments(u.id);
+    const b = req.body || {};
+    if (!segs.length) return res.status(422).json({ error: 'Nothing was recorded.' });
+    const want = Number(b.chunks);
+    if (segs.some((x, i) => x !== i) || (Number.isInteger(want) && want !== segs.length)) {
+      return res.status(422).json({ error: 'Some pieces of the recording have not arrived. Send them again.', received: segs.length });
+    }
+    const duration = Number.isFinite(Number(b.duration_sec)) ? Math.max(0, Math.min(4 * 3600, Math.round(Number(b.duration_sec)))) : null;
+    await saveRecording(t, m, u, duration, req.user.email);
+    res.json({ ok: true });
+  } catch (e) { logger.error('mom recording finish', { error: e.message }); res.status(500).json({ error: 'Could not save the recording.' }); }
+});
+
+router.delete('/meetings/:id/recording/:uploadId', async (req, res) => {
+  try {
+    const u = await openUpload(req, res); if (!u) return;
+    await db.query(`UPDATE pms.mom_uploads SET status='abandoned' WHERE id=$1`, [u.id]);
+    await store.remove(u.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Could not discard the recording.' }); }
+});
+
+// Play (or ?download=1) the connect's recording. Every play and download
+// is logged — the specification asks for it.
+router.get('/meetings/:id/recording', async (req, res) => {
+  try {
+    const t = T(req);
+    const m = await meetingWithTeam(t, req.params.id);
+    if (!m) return res.status(404).json({ error: 'Meeting not found.' });
+    const role = await roleIn(req, m, { manager_id: m.manager_id });
+    if (!role.view) return res.status(403).json({ error: 'You were not in this meeting.' });
+    const r = (await db.query(`SELECT * FROM pms.mom_recordings WHERE meeting_id=$1`, [m.id])).rows[0];
+    if (!r) return res.status(404).json({ error: 'This connect has no recording.' });
+    if (r.deleted_at) return res.status(410).json({ error: 'This recording was deleted under the retention rule.' });
+    const parts = store.readAll(r.upload_id, r.key_id);
+    let first;
+    try { first = await parts.next(); } catch (e) {
+      logger.error('mom recording unreadable', { meeting_id: m.id, error: e.message });
+      return res.status(500).json({ error: 'This recording cannot be read on this server (its key has changed).' });
+    }
+    const download = req.query.download === '1';
+    await audit(null, req, download ? 'MOM_RECORDING_DOWNLOADED' : 'MOM_RECORDING_PLAYED', null, { meeting_id: m.id, date: m.date });
+    const ext = EXT[r.mime.split('/')[1]] || 'webm';
+    res.setHeader('Content-Type', r.mime);
+    res.setHeader('Content-Length', String(r.size_bytes));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="connect-${m.date}.${ext}"`);
+    const write = (buf) => new Promise((ok) => { if (res.write(buf)) ok(); else res.once('drain', ok); });
+    try {
+      if (!first.done) await write(first.value);
+      for await (const part of parts) await write(part);
+      res.end();
+    } catch (e) { logger.error('mom recording stream', { meeting_id: m.id, error: e.message }); res.destroy(e); }
+  } catch (e) { logger.error('mom recording play', { error: e.message }); if (!res.headersSent) res.status(500).json({ error: 'Could not play the recording.' }); }
+});
+
+// -------- Google Meet transcript and the AI draft (part 3)
+
+const transcriptUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const oneFile = (req, res, next) => transcriptUpload.single('file')(req, res, (err) => {
+  if (!err) return next();
+  res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'The file is larger than 5 MB.' : 'The upload could not be read.' });
+});
+
+// Before the AI writes over a draft the organiser typed, they confirm.
+async function guardDraft(res, m, b) {
+  if (m.status === 'processing') { res.status(409).json({ error: 'The AI is already drafting this MoM.' }); return true; }
+  const mi = (await db.query(`SELECT summary, discussion, source FROM pms.mom_minutes WHERE meeting_id=$1`, [m.id])).rows[0];
+  const typed = mi && (mi.summary || (mi.discussion || []).length);
+  if (typed && !(b.replace === true || b.replace === 'true')) {
+    res.status(409).json({ error: 'This connect already has a draft MoM. The AI draft will replace it.', needs_replace: true });
+    return true;
+  }
+  return false;
+}
+
+async function startDraft(req, m) {
+  await db.query(`UPDATE pms.mom_meetings SET status='processing', processing_since=now(), draft_attempts=0, draft_error=NULL WHERE id=$1`, [m.id]);
+  runDraft(T(req), m.id, req.user.email);
+}
+
+router.post('/meetings/:id/transcript', oneFile, async (req, res) => {
+  try {
+    const t = T(req);
+    const m = await openConnect(req, res); if (!m) return;
+    const b = req.body || {};
+    if (await consentBlock(res, t, m, 'what was said cannot be sent to the AI')) return;
+    if (await guardDraft(res, m, b)) return;
+    let parsed;
+    try {
+      if (req.file) parsed = await tx.parseTranscript(req.file.buffer, req.file.originalname || 'transcript.txt');
+      else if (typeof b.text === 'string' && b.text.trim()) parsed = await tx.parseTranscript(Buffer.from(b.text, 'utf8'), null);
+      else return res.status(422).json({ error: 'Choose the transcript file from Google Meet, or paste its text.' });
+    } catch (e) { if (e.status === 422) return res.status(422).json({ error: e.message }); throw e; }
+    const s = await settingsFor(t);
+    await db.query(
+      `INSERT INTO pms.mom_transcripts (tenant_id, meeting_id, text, language, speakers, source, file_name, uploaded_by, delete_after)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CURRENT_DATE + $9::int)
+       ON CONFLICT (meeting_id) DO UPDATE SET text=EXCLUDED.text, language=EXCLUDED.language, speakers=EXCLUDED.speakers,
+         source=EXCLUDED.source, file_name=EXCLUDED.file_name, uploaded_by=EXCLUDED.uploaded_by, created_at=now(),
+         delete_after=EXCLUDED.delete_after, deleted_at=NULL`,
+      [t, m.id, parsed.text, parsed.language, parsed.speakers, req.file ? 'google_meet' : 'paste',
+        req.file ? String(req.file.originalname || '').slice(0, 200) : null, req.user.email, s.transcript_days]);
+    await audit(null, req, 'MOM_TRANSCRIPT_UPLOADED', null, { meeting_id: m.id, date: m.date, chars: parsed.text.length, source: req.file ? 'google_meet' : 'paste' });
+    await startDraft(req, m);
+    res.status(202).json({ ok: true, status: 'processing', speakers: parsed.speakers });
+  } catch (e) { logger.error('mom transcript', { error: e.message }); res.status(500).json({ error: 'Could not take the transcript.' }); }
+});
+
+// Draft again from the stored transcript (after a failure, or to start over).
+router.post('/meetings/:id/redraft', async (req, res) => {
+  try {
+    const t = T(req);
+    const m = await openConnect(req, res); if (!m) return;
+    const tr = (await db.query(`SELECT 1 FROM pms.mom_transcripts WHERE meeting_id=$1 AND deleted_at IS NULL AND text IS NOT NULL`, [m.id])).rowCount;
+    if (!tr) return res.status(409).json({ error: 'Upload the Google Meet transcript first.' });
+    if (await consentBlock(res, t, m, 'what was said cannot be sent to the AI')) return;
+    if (await guardDraft(res, m, req.body || {})) return;
+    await startDraft(req, m);
+    res.status(202).json({ ok: true, status: 'processing' });
+  } catch (e) { logger.error('mom redraft', { error: e.message }); res.status(500).json({ error: 'Could not start the AI draft.' }); }
 });
 
 // -------- action items
@@ -759,7 +1299,8 @@ router.get('/compliance', async (req, res) => {
     const holidays = await holidaysFor(t);
     const rows = (await db.query(
       `SELECT mt.id AS team_id, m.name AS manager_name, m.department, mt.enabled, mt.meet_link,
-              mm.id AS meeting_id, mm.status, mi.published_at,
+              mm.id AS meeting_id, mm.status, mi.published_at, mi.source,
+              EXISTS (SELECT 1 FROM pms.mom_recordings r WHERE r.meeting_id=mm.id AND r.deleted_at IS NULL) AS recorded,
               (SELECT count(*)::int FROM pms.mom_action_items a WHERE a.team_id=mt.id AND a.status='open') AS open_items
          FROM pms.mom_teams mt JOIN core.employees m ON m.id=mt.manager_id
          LEFT JOIN pms.mom_meetings mm ON mm.team_id=mt.id AND mm.meeting_date=$2 AND mm.type='daily_connect'
@@ -767,15 +1308,17 @@ router.get('/compliance', async (req, res) => {
         WHERE mt.tenant_id=$1 AND mt.enabled ORDER BY m.name`, [t, date])).rows;
     const count = (s) => rows.filter((r) => r.status === s).length;
     res.json({ date, working_day: isWorkingDay(date, holidays), teams: rows,
-      totals: { teams: rows.length, published: count('published'), missing: count('missing'), scheduled: count('scheduled'), cancelled: count('cancelled') } });
+      totals: { teams: rows.length, published: count('published'), missing: count('missing'), scheduled: count('scheduled'), cancelled: count('cancelled'),
+        draft_ready: count('draft_ready'), processing: count('processing') } });
   } catch (e) { logger.error('mom compliance', { error: e.message }); res.status(500).json({ error: 'Could not load the report.' }); }
 });
 
 // Started by server/index.js: every five minutes, and once at boot so a
 // sleeping instance catches up.
 function startScheduler(tenantId) {
+  store.ready().then((r) => { if (!r.ok) logger.warn('mom recording storage is not ready — recordings will be refused', { dir: store.root(), error: r.error }); });
   const run = () => tick(tenantId).then((r) => {
-    if (r.created || r.reminded || r.missing || r.due || r.overdue || r.escalated) logger.info('mom sweep', r);
+    if (Object.values(r).some(Boolean)) logger.info('mom sweep', r);
   }).catch((e) => logger.warn('mom sweep failed', { error: e.message }));
   run();
   const h = setInterval(run, 5 * 60 * 1000);
@@ -783,4 +1326,4 @@ function startScheduler(tenantId) {
   return h;
 }
 
-module.exports = { router, tick, ensureMeetings, startScheduler, meetLink, localNow, isWorkingDay, publishProblems, changedSections };
+module.exports = { router, tick, ensureMeetings, startScheduler, runDraft, meetLink, localNow, isWorkingDay, publishProblems, changedSections, normaliseSettings, NOTICE_VERSION };

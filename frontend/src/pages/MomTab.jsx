@@ -1,14 +1,17 @@
 // The MoM tab of the Connects page ("MoM Tab – PMS Build Specification",
-// 14 Oct, part 1). Today's daily connect with its Google Meet link, the
+// 14 Oct). Today's daily connect with its Google Meet link and Record, the
 // list of MoMs, the action items, the team's settings and HR's daily
-// report. A MoM opens on its own view (?mom=<id>): the editor while it is
-// a draft, read-only once published, with its versions and who has
-// acknowledged it. The server is server/modules/performance/mom.js.
-import { useEffect, useState } from 'react';
+// report. A MoM opens on its own view (?mom=<id>): the recording and the
+// Google Meet transcript, the editor while it is a draft (the AI's draft
+// when a transcript was uploaded), read-only once published, with its
+// versions and who has acknowledged it. The server is
+// server/modules/performance/mom.js; the recorder is momRecorder.js.
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Video, ArrowLeft, Plus, Trash2, CheckCircle2, AlertTriangle, History, RotateCcw } from 'lucide-react';
-import { api } from '../utils/api';
+import { Video, ArrowLeft, Plus, Trash2, CheckCircle2, AlertTriangle, History, RotateCcw, Mic, Square, Download, Play, Sparkles, FileText } from 'lucide-react';
+import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
+import * as recorder from './momRecorder';
 
 const STATUS = {
   scheduled: ['Scheduled', 'bg-navy-50 text-navy-600'],
@@ -35,6 +38,18 @@ function MomStatus({ status, momStatus, version }) {
 const Loading = () => <p className="text-sm text-navy-400">Loading…</p>;
 const Failed = ({ msg }) => <p className="text-sm text-rose-600">{msg}</p>;
 const Empty = ({ children }) => <div className="card p-8 text-center text-sm text-navy-400">{children}</div>;
+const clock = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(t / 3600) ? `${Math.floor(t / 3600)}:` : ''}${String(Math.floor(t / 60) % 60).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+const listNames = (xs) => xs.map((x) => x.name).join(', ');
+
+function useRecorder() {
+  const [st, setSt] = useState(recorder.current());
+  useEffect(() => recorder.subscribe(setSt), []);
+  return st;
+}
+function useTick(on) {
+  const [, setN] = useState(0);
+  useEffect(() => { if (!on) return undefined; const h = setInterval(() => setN((n) => n + 1), 1000); return () => clearInterval(h); }, [on]);
+}
 
 export default function MomTab({ tabs }) {
   const [params, setParams] = useSearchParams();
@@ -58,9 +73,11 @@ export default function MomTab({ tabs }) {
   const open = (id) => set({ mom: id });
 
   return (
-    <div className="space-y-4 max-w-4xl mx-auto">
+    <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title="Connects" hue="azure" sub="Daily connects, their minutes and action items" />
       {tabs}
+      <RecorderBar open={open} />
+      <ConsentBanner />
       {momId ? <MomView id={momId} onBack={() => set({ mom: null })} /> : (
         <>
           <div className="flex flex-wrap gap-1.5">
@@ -85,7 +102,8 @@ export default function MomTab({ tabs }) {
 function Today({ ctx, open, goSettings }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
-  useEffect(() => { api('/pms/mom/today').then(setD).catch((e) => setErr(e.message)); }, []);
+  const load = () => api('/pms/mom/today').then(setD).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
   if (err) return <Failed msg={err} />;
   if (!d) return <Loading />;
   const own = ctx && ctx.teams.find((t) => t.manager_id === ctx.me);
@@ -108,6 +126,8 @@ function Today({ ctx, open, goSettings }) {
             <div className="text-sm font-semibold text-navy-800">{m.title}</div>
             <div className="text-xs text-navy-400">{m.start_time}{m.end_time ? `–${m.end_time}` : ''} · Organiser {m.organiser_name || '—'}</div>
           </div>
+          {m.recorded && <span className="chip bg-rose-50 text-rose-700">Recorded</span>}
+          {m.draft_error && <span className="chip bg-rose-100 text-rose-700">AI draft failed</span>}
           <MomStatus status={m.status} momStatus={m.mom_status} version={m.version} />
           {m.meet_link && m.status === 'scheduled' && (
             <a className="btn-pri" href={m.meet_link} target="_blank" rel="noreferrer"><Video size={13} className="inline mr-1" />Join Google Meet</a>
@@ -115,10 +135,140 @@ function Today({ ctx, open, goSettings }) {
           <button type="button" className="btn-sec" onClick={() => open(m.id)}>
             {m.can_edit && m.mom_status !== 'published' && m.status !== 'cancelled' ? 'Write MoM' : 'Open MoM'}
           </button>
+          {m.can_edit && ['scheduled', 'missing', 'draft_ready'].includes(m.status) && (
+            <div className="w-full"><RecordControl meeting={m} recorded={m.recorded} missing={m.consent_missing || []} onDone={load} /></div>
+          )}
         </div>
       ))}
+      <NoticeLine />
     </div>
   );
+}
+
+// ---------------------------------------------------------------- recording
+
+// Record / Stop for one connect. Record stays off until everyone on the
+// call has accepted the recording notice.
+function RecordControl({ meeting, recorded, missing, onDone }) {
+  const rs = useRecorder();
+  const mine = rs.meetingId === meeting.id;
+  const [err, setErr] = useState(null);
+  const last = useRef(rs.phase);
+  useEffect(() => { if (mine && last.current !== 'done' && rs.phase === 'done' && onDone) onDone(); last.current = rs.phase; }, [rs.phase]);
+  useTick(mine && rs.phase === 'recording');
+  if (missing.length) {
+    return <p className="text-xs text-amber-700">Record is off for this connect: {listNames(missing)} {missing.length === 1 ? 'has' : 'have'} not accepted the recording notice. They accept it in the MoM tab; until then, write the MoM by hand.</p>;
+  }
+  if (!recorder.canRecord()) return <p className="text-xs text-navy-400">Recording needs Chrome or Edge on a laptop or desktop.</p>;
+  if (mine && rs.phase === 'recording') {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="chip bg-rose-600 text-white animate-pulse">● REC {clock(Date.now() - rs.startedAt)}</span>
+        <button type="button" className="btn bg-rose-600 text-white hover:bg-rose-700" onClick={recorder.stop}><Square size={12} className="inline mr-1" />Stop</button>
+        <span className="text-[11px] text-navy-400">{rs.sent} of {rs.total} pieces sent. You can switch tabs; closing this tab stops the recording.</span>
+      </div>
+    );
+  }
+  if (mine && rs.phase === 'saving') return <p className="text-xs text-navy-500">Saving the recording…</p>;
+  if (mine && rs.phase === 'starting') return <p className="text-xs text-navy-500">Pick the Google Meet tab and tick “Share tab audio”…</p>;
+  if (session(rs) && !mine) return <p className="text-xs text-navy-400">Another connect is being recorded.</p>;
+  const go = async () => {
+    setErr(null);
+    let replace = false;
+    if (recorded) {
+      if (!window.confirm('This connect already has a recording. Recording again replaces it. Continue?')) return;
+      replace = true;
+    }
+    try { await recorder.start(meeting, { replace }); } catch (e) {
+      if (e.data && e.data.needs_replace && window.confirm('This connect already has a recording. Recording again replaces it. Continue?')) {
+        try { await recorder.start(meeting, { replace: true }); } catch (e2) { setErr(e2.message); }
+      } else setErr(e.message);
+    }
+  };
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className="btn bg-rose-600 text-white hover:bg-rose-700" onClick={go}><Mic size={13} className="inline mr-1" />{recorded ? 'Record again' : 'Record'}</button>
+        <span className="text-[11px] text-navy-400">Join the call first. Tell everyone it is being recorded. When the browser asks, pick the Google Meet tab and tick “Share tab audio”.</span>
+      </div>
+      {(err || (mine && rs.error)) && <p className="text-xs text-rose-600">{err || rs.error}</p>}
+    </div>
+  );
+}
+const session = (rs) => ['starting', 'recording', 'saving'].includes(rs.phase);
+
+// Across the tab: the running recording, and any recording this browser
+// kept because it never reached the PMS whole.
+function RecorderBar({ open }) {
+  const rs = useRecorder();
+  const [kept, setKept] = useState([]);
+  const [busy, setBusy] = useState(null);
+  const [err, setErr] = useState(null);
+  const loadKept = () => recorder.unsent().then(setKept).catch(() => setKept([]));
+  useEffect(() => { loadKept(); }, [rs.phase]);
+  useTick(rs.phase === 'recording');
+  const act = async (fn, id) => { setBusy(id); setErr(null); try { await fn(id); await loadKept(); } catch (e) { setErr(e.message); } finally { setBusy(null); } };
+  return (
+    <>
+      {rs.phase === 'recording' && (
+        <div className="card p-3 flex flex-wrap items-center gap-2 border-rose-200 bg-rose-50/80">
+          <span className="chip bg-rose-600 text-white animate-pulse">● REC {clock(Date.now() - rs.startedAt)}</span>
+          <button type="button" className="text-sm font-semibold text-navy-800 underline" onClick={() => open(rs.meetingId)}>{rs.title}</button>
+          <span className="text-xs text-navy-500 flex-1">{rs.sent} of {rs.total} pieces sent</span>
+          <button type="button" className="btn bg-rose-600 text-white hover:bg-rose-700" onClick={recorder.stop}><Square size={12} className="inline mr-1" />Stop</button>
+        </div>
+      )}
+      {rs.phase === 'done' && rs.meetingId && <p className="text-xs text-emerald-700">The recording of {rs.title} is saved in the PMS.</p>}
+      {kept.map((k) => (
+        <div key={k.meetingId} className="card p-3 flex flex-wrap items-center gap-2 border-amber-200 bg-amber-50/70">
+          <AlertTriangle size={14} className="text-amber-600" />
+          <span className="text-sm flex-1 min-w-[12rem]">The recording of <b>{k.title}</b> did not reach the PMS whole. It is kept in this browser ({Math.round(k.bytes / 1024)} KB).
+            {rs.phase === 'unsent' && rs.meetingId === k.meetingId && rs.error ? ` ${rs.error}` : ''}</span>
+          <button type="button" className="btn-pri" disabled={!!busy} onClick={() => act(recorder.resend, k.meetingId)}>{busy === k.meetingId ? 'Sending…' : 'Send again'}</button>
+          <button type="button" className="btn-sec" disabled={!!busy} onClick={() => recorder.saveToLaptop(k.meetingId)}><Download size={13} className="inline mr-1" />Save to laptop</button>
+          <button type="button" className="text-xs text-navy-500 underline" disabled={!!busy} onClick={() => window.confirm('Discard this recording from the browser?') && act(recorder.discard, k.meetingId)}>Discard</button>
+        </div>
+      ))}
+      {err && <Failed msg={err} />}
+    </>
+  );
+}
+
+// "Before the first recording, each attendee accepts a recording notice."
+function ConsentBanner() {
+  const [c, setC] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  useEffect(() => { api('/pms/mom/consent').then(setC).catch(() => setC(null)); }, []);
+  if (!c || c.accepted) return null;
+  const accept = async () => {
+    setBusy(true); setErr(null);
+    try { await api('/pms/mom/consent', { method: 'POST', body: JSON.stringify({ accept: true }) }); setC({ ...c, accepted: true }); } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="card p-4 space-y-2 border-amber-200 bg-amber-50/60">
+      <div className="text-sm font-semibold text-navy-800">Recording notice</div>
+      <p className="text-sm text-navy-700">{c.notice.text}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className="btn-pri" disabled={busy} onClick={accept}>I accept</button>
+        <span className="text-xs text-navy-500">Until you accept, the connects you are in are not recorded and their minutes are written by hand.</span>
+        {err && <span className="text-xs text-rose-600">{err}</span>}
+      </div>
+    </div>
+  );
+}
+
+function NoticeLine() {
+  const [c, setC] = useState(null);
+  const load = () => api('/pms/mom/consent').then(setC).catch(() => setC(null));
+  useEffect(() => { load(); }, []);
+  if (!c || !c.accepted) return null;
+  const withdraw = async () => {
+    if (!window.confirm('Withdraw your acceptance? Connects you are in will not be recorded or sent to the AI.')) return;
+    await api('/pms/mom/consent', { method: 'POST', body: JSON.stringify({ accept: false }) }).catch(() => {});
+    window.location.reload();
+  };
+  return <p className="text-[11px] text-navy-400">You accepted the recording notice on {when(c.accepted_at)}. <button type="button" className="underline" onClick={withdraw}>Withdraw</button></p>;
 }
 
 // ---------------------------------------------------------------- MoMs list
@@ -171,6 +321,7 @@ function MomList({ open }) {
               className="w-full text-left px-4 py-3 flex flex-wrap items-center gap-2 hover:bg-navy-50/60">
               <span className="text-xs font-mono text-navy-500 w-24 shrink-0">{m.date}</span>
               <span className="flex-1 min-w-[10rem] text-sm text-navy-800">{m.title}</span>
+              {m.recorded && <span className="chip bg-rose-50 text-rose-700">Recorded</span>}
               {m.open_items > 0 && <span className="chip bg-amber-50 text-amber-700">{m.open_items} open item{m.open_items === 1 ? '' : 's'}</span>}
               {m.attended && m.mom_status === 'published' && !m.acknowledged && <span className="chip bg-blue-100 text-blue-700">To acknowledge</span>}
               <MomStatus status={m.status} momStatus={m.mom_status} version={m.version} />
@@ -251,9 +402,10 @@ function ActionItems({ ctx, open }) {
 function TeamSettings({ ctx, onSaved }) {
   const teams = ctx.hr ? ctx.teams : ctx.teams.filter((t) => t.manager_id === ctx.me);
   const noLink = teams.filter((t) => !t.meet_link).length;
-  if (!teams.length) return <Empty>No teams yet — a team is a manager with direct reports.</Empty>;
+  if (!teams.length && !ctx.hr) return <Empty>No teams yet — a team is a manager with direct reports.</Empty>;
   return (
     <div className="space-y-3">
+      {ctx.hr && <MomSettings />}
       {ctx.hr && (
         <p className="text-xs text-navy-500">
           {teams.length} team{teams.length === 1 ? '' : 's'} · {teams.filter((t) => t.enabled).length} with daily connects on
@@ -328,6 +480,12 @@ function TeamRow({ team, hr, startOpen, onSaved }) {
                 ))}
               </div>
             )}
+            {reports && reports.length > 0 && (
+              <p className="text-[11px] text-navy-400 mt-1">
+                Recording notice accepted by {reports.filter((r) => r.notice_accepted).length} of {reports.length}
+                {reports.some((r) => !r.notice_accepted) && <> · not yet: {reports.filter((r) => !r.notice_accepted).map((r) => r.name).join(', ')}</>}
+              </p>
+            )}
           </div>
           {hr ? (
             <label className="flex items-center gap-2 text-sm">
@@ -343,6 +501,61 @@ function TeamRow({ team, hr, startOpen, onSaved }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const EMAIL_LABELS = [
+  ['reminder', 'The 15-minute reminder with the Meet link'],
+  ['published', 'MoM published or revised, and comments on it'],
+  ['action_items', 'Action items: assigned, due today, overdue, and 3 days overdue to the manager'],
+  ['missing', 'Missing MoM at 6 pm'],
+  ['draft', 'AI draft ready or failed, and a recording saved after a closed tab'],
+];
+
+// HR: how long recordings and transcripts are kept, and which notices are
+// emailed as well as shown in the bell.
+function MomSettings() {
+  const [d, setD] = useState(null);
+  const [f, setF] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api('/pms/mom/settings').then((r) => { setD(r); setF({ ...r.settings, recording_days: String(r.settings.recording_days), transcript_days: String(r.settings.transcript_days) }); })
+      .catch((e) => setMsg({ ok: false, text: e.message }));
+  }, []);
+  if (!f) return msg ? <Failed msg={msg.text} /> : null;
+  const save = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      await api('/pms/mom/settings', { method: 'PUT', body: JSON.stringify({ recording_days: Number(f.recording_days), transcript_days: Number(f.transcript_days), email: f.email }) });
+      setMsg({ ok: true, text: 'Saved.' });
+    } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setBusy(false); }
+  };
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="text-sm font-semibold text-navy-800">MoM settings</div>
+      {d.storage && !d.storage.ok && <p className="text-xs text-rose-600">Recordings cannot be stored on this server: {d.storage.error}</p>}
+      <div className="grid grid-cols-2 gap-2 max-w-md">
+        <div><label className="lbl">Keep recordings (days)</label><input type="number" min="1" max="3650" className="inp" value={f.recording_days} onChange={(e) => setF({ ...f, recording_days: e.target.value })} /></div>
+        <div><label className="lbl">Keep transcripts (days)</label><input type="number" min="1" max="3650" className="inp" value={f.transcript_days} onChange={(e) => setF({ ...f, transcript_days: e.target.value })} /></div>
+      </div>
+      <p className="text-[11px] text-navy-400">A change applies to what is already stored, counted from when each file arrived. MoMs and action items are kept permanently.</p>
+      <div>
+        <label className="lbl">Also send by email</label>
+        <div className="space-y-1">
+          {EMAIL_LABELS.map(([k, label]) => (
+            <label key={k} className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!f.email[k]} onChange={(e) => setF({ ...f, email: { ...f.email, [k]: e.target.checked } })} />{label}
+            </label>
+          ))}
+        </div>
+        <p className="text-[11px] text-navy-400 mt-1">Every notice always appears in the bell.</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button type="button" className="btn-pri" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>
+        {msg && <span className={`text-xs ${msg.ok ? 'text-emerald-700' : 'text-rose-600'}`}>{msg.text}</span>}
+      </div>
     </div>
   );
 }
@@ -370,6 +583,7 @@ function Report({ open }) {
             <span className="chip bg-rose-100 text-rose-700">{d.totals.missing} missing</span>
             <span className="chip bg-navy-50 text-navy-600">{d.totals.scheduled} pending</span>
             <span className="chip bg-navy-100 text-navy-500">{d.totals.cancelled} not held</span>
+            {d.totals.draft_ready > 0 && <span className="chip bg-amber-100 text-amber-700">{d.totals.draft_ready} draft ready</span>}
           </div>
         )}
       </div>
@@ -391,7 +605,11 @@ function Report({ open }) {
                     {t.meeting_id ? <button type="button" className="underline text-left" onClick={() => open(t.meeting_id)}>{t.manager_name}</button> : t.manager_name}
                   </td>
                   <td className="px-2 py-2 text-navy-500">{t.department || '—'}</td>
-                  <td className="px-2 py-2"><MomStatus status={t.status} /></td>
+                  <td className="px-2 py-2">
+                    <span className="inline-flex flex-wrap gap-1"><MomStatus status={t.status} />
+                      {t.recorded && <span className="chip bg-rose-50 text-rose-700">Recorded</span>}
+                      {t.source === 'ai' && <span className="chip bg-violet-100 text-violet-700">AI draft</span>}</span>
+                  </td>
                   <td className="px-2 py-2 text-navy-500">{when(t.published_at) || '—'}</td>
                   <td className="px-2 py-2 text-right">{t.open_items}</td>
                 </tr>
@@ -412,6 +630,9 @@ function MomView({ id, onBack }) {
   const [revising, setRevising] = useState(false);
   const load = () => api(`/pms/mom/meetings/${id}`).then((r) => { setD(r); setErr(null); }).catch((e) => setErr(e.message));
   useEffect(() => { setD(null); setRevising(false); load(); }, [id]);
+  // While the AI drafts, look again every few seconds.
+  const processing = d && d.meeting.status === 'processing';
+  useEffect(() => { if (!processing) return undefined; const h = setTimeout(load, 4000); return () => clearTimeout(h); }, [d]);
   const back = <button type="button" className="text-xs text-navy-500 flex items-center gap-1" onClick={onBack}><ArrowLeft size={13} />Back</button>;
   if (err && !d) return <div className="space-y-3">{back}<Failed msg={err} /></div>;
   if (!d) return <div className="space-y-3">{back}<Loading /></div>;
@@ -435,7 +656,13 @@ function MomView({ id, onBack }) {
         {published && <div className="text-xs text-navy-400">Published by {mi.published_by} · {when(mi.published_at)}</div>}
         {m.status === 'cancelled' && <div className="text-sm text-navy-600 pt-1">Not held: {m.cancel_reason}</div>}
       </div>
-      {editing && <Editor key={revising ? 'revise' : 'draft'} d={d} revise={published} onDone={() => { setRevising(false); load(); }} onCancel={published ? () => setRevising(false) : null} />}
+      <MediaCard d={d} reload={load} />
+      {editing && !processing && (
+        <div className={d.transcript && d.transcript.text ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] items-start' : ''}>
+          <Editor key={`${revising ? 'revise' : 'draft'}-${mi ? mi.updated_at : ''}`} d={d} revise={published} onDone={() => { setRevising(false); load(); }} onCancel={published ? () => setRevising(false) : null} />
+          {d.transcript && d.transcript.text && <TranscriptPanel t={d.transcript} />}
+        </div>
+      )}
       {!editing && mi && (
         <div className="card p-4 space-y-4">
           {d.can_edit && published && (
@@ -446,9 +673,172 @@ function MomView({ id, onBack }) {
         </div>
       )}
       {!editing && !mi && m.status !== 'cancelled' && <Empty>The MoM for this connect is not published yet.</Empty>}
+      {editing && processing && <Empty><Sparkles size={14} className="inline mr-1 text-violet-600" />The AI is drafting the MoM from the transcript. This page updates by itself.</Empty>}
       {published && <Acks d={d} reload={load} />}
       {d.versions.length > 0 && <Versions id={id} versions={d.versions} names={namesOf(m)} />}
     </div>
+  );
+}
+
+// The connect's recording (play, download, record, upload a file) and,
+// for whoever writes the MoM, the Google Meet transcript and the AI draft.
+function MediaCard({ d, reload }) {
+  const m = d.meeting;
+  const rec = d.recording;
+  const editor = d.can_record || !!d.transcript;
+  if (!rec && !editor) return null;
+  const missing = (d.consent || []).filter((c) => !c.accepted);
+  return (
+    <div className="card p-4 space-y-4">
+      <div className="space-y-2">
+        <div className="lbl">Recording</div>
+        {rec && !rec.deleted_at && <RecordingPlayer meetingId={m.id} rec={rec} />}
+        {rec && rec.deleted_at && <p className="text-sm text-navy-500">The recording was deleted on {when(rec.deleted_at)} under the retention rule.</p>}
+        {!rec && !d.can_record && <p className="text-sm text-navy-400">Not recorded.</p>}
+        {d.can_record && (
+          <>
+            <RecordControl meeting={m} recorded={!!(rec && !rec.deleted_at)} missing={missing} onDone={reload} />
+            {!missing.length && <FileUpload meetingId={m.id} recorded={!!(rec && !rec.deleted_at)} onDone={reload} />}
+          </>
+        )}
+      </div>
+      {d.can_record && <TranscriptUpload d={d} missing={missing} reload={reload} />}
+      {!d.can_record && d.transcript && d.transcript.text && (
+        <p className="text-xs text-navy-500">Transcript uploaded by {d.transcript.uploaded_by} on {when(d.transcript.created_at)}.</p>
+      )}
+    </div>
+  );
+}
+
+async function fetchRecording(meetingId, download) {
+  const token = localStorage.getItem('apms_token');
+  const r = await fetch(`${API_BASE}/pms/mom/meetings/${meetingId}/recording${download ? '?download=1' : ''}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || r.statusText); }
+  return r.blob();
+}
+
+function RecordingPlayer({ meetingId, rec }) {
+  const [url, setUrl] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  const play = async () => {
+    setBusy(true); setErr(null);
+    try { setUrl(URL.createObjectURL(await fetchRecording(meetingId, false))); } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const download = async () => {
+    setErr(null);
+    try {
+      const u = URL.createObjectURL(await fetchRecording(meetingId, true));
+      const a = document.createElement('a'); a.href = u; a.download = `connect-recording.${(rec.mime.split('/')[1] || 'webm').replace('mpeg', 'mp3')}`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 10000);
+    } catch (e) { setErr(e.message); }
+  };
+  const mins = rec.duration_sec ? `${Math.round(rec.duration_sec / 60)} min · ` : '';
+  return (
+    <div className="space-y-1">
+      {url ? <audio controls autoPlay src={url} className="w-full max-w-lg" /> : (
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="btn-sec" disabled={busy} onClick={play}><Play size={13} className="inline mr-1" />{busy ? 'Loading…' : 'Play recording'}</button>
+          <button type="button" className="btn-sec" onClick={download}><Download size={13} className="inline mr-1" />Download</button>
+        </div>
+      )}
+      <p className="text-[11px] text-navy-400">{mins}{Math.max(1, Math.round(rec.size_bytes / 1024))} KB · recorded by {rec.uploaded_by} · deleted after {rec.delete_after}. Every play is logged.</p>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+    </div>
+  );
+}
+
+// A recording saved to the laptop earlier, sent from here.
+function FileUpload({ meetingId, recorded, onDone }) {
+  const [p, setP] = useState(null);
+  const [err, setErr] = useState(null);
+  const pick = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (recorded && !window.confirm('This connect already has a recording. The file replaces it. Continue?')) return;
+    setErr(null); setP(0);
+    try { await recorder.uploadFile(meetingId, file, { replace: recorded, onProgress: setP }); setP(null); onDone(); } catch (x) { setErr(x.message); setP(null); }
+  };
+  return (
+    <div className="text-xs text-navy-500">
+      {p === null ? (
+        <label className="underline cursor-pointer">Or send a recording file saved on this laptop
+          <input type="file" accept="audio/*,video/webm,video/mp4,.webm,.m4a,.mp3,.wav,.ogg" className="hidden" onChange={pick} /></label>
+      ) : <span>Sending… {Math.round(p * 100)}%</span>}
+      {err && <span className="text-rose-600"> {err}</span>}
+    </div>
+  );
+}
+
+// Part 3: the transcript Google Meet made of the call, uploaded here; the
+// PMS's AI service drafts the MoM from it.
+function TranscriptUpload({ d, missing, reload }) {
+  const m = d.meeting;
+  const t = d.transcript && d.transcript.text ? d.transcript : null;
+  const [paste, setPaste] = useState(false);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const fileRef = useRef(null);
+  const send = async (build, again) => {
+    setBusy(true); setErr(null);
+    try {
+      await api(`/pms/mom/meetings/${m.id}/${again ? 'redraft' : 'transcript'}`, { method: 'POST', body: build(false) });
+      setPaste(false); setText(''); reload();
+    } catch (e) {
+      if (e.data && e.data.needs_replace && window.confirm('This connect already has a draft MoM. The AI draft will replace it. Continue?')) {
+        try { await api(`/pms/mom/meetings/${m.id}/${again ? 'redraft' : 'transcript'}`, { method: 'POST', body: build(true) }); setPaste(false); setText(''); reload(); } catch (e2) { setErr(e2.message); }
+      } else setErr(e.message);
+    } finally { setBusy(false); }
+  };
+  const sendFile = (file) => send((replace) => { const fd = new FormData(); fd.append('file', file); if (replace) fd.append('replace', 'true'); return fd; });
+  const sendText = () => send((replace) => JSON.stringify({ text, replace }));
+  const redraft = () => send((replace) => JSON.stringify({ replace }), true);
+  return (
+    <div className="space-y-2 border-t border-navy-50 pt-3">
+      <div className="lbl flex items-center gap-1"><FileText size={12} />Google Meet transcript → AI draft</div>
+      {m.status === 'processing' && <p className="text-sm text-violet-700"><Sparkles size={13} className="inline mr-1" />Drafting the MoM from the transcript…</p>}
+      {d.draft_error && m.status !== 'processing' && (
+        <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700 flex flex-wrap items-center gap-2">
+          <span className="flex-1">{d.draft_error}</span>
+          {t && !missing.length && <button type="button" className="btn-sec" disabled={busy} onClick={redraft}>Try again</button>}
+        </div>
+      )}
+      {t && <p className="text-xs text-navy-500">Uploaded by {t.uploaded_by} on {when(t.created_at)}{t.file_name ? ` (${t.file_name})` : ''}{t.speakers.length ? ` · speakers: ${t.speakers.join(', ')}` : ''} · deleted after {t.delete_after}.</p>}
+      {missing.length > 0 ? (
+        <p className="text-xs text-amber-700">The transcript cannot be sent to the AI until everyone on the call has accepted the recording notice ({listNames(missing)}). Write the MoM by hand.</p>
+      ) : m.status !== 'processing' && (
+        <>
+          <p className="text-xs text-navy-500">After the call, Google Meet saves the transcript to the organiser's Google Drive (Meet Recordings folder) and emails a link to it.
+            Open it, choose File → Download → Microsoft Word (.docx) or Plain text (.txt), and upload it here — or paste its text.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className="btn-pri" disabled={busy} onClick={() => fileRef.current && fileRef.current.click()}>{busy ? 'Sending…' : t ? 'Upload a new transcript' : 'Upload transcript'}</button>
+            <input ref={fileRef} type="file" accept=".docx,.txt,.vtt,.srt,.sbv,.md" className="hidden"
+              onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) sendFile(f); }} />
+            <button type="button" className="text-xs text-navy-500 underline" onClick={() => setPaste((v) => !v)}>{paste ? 'Hide' : 'Paste the text instead'}</button>
+            {t && !d.draft_error && <button type="button" className="text-xs text-navy-500 underline" disabled={busy} onClick={redraft}>Draft again from this transcript</button>}
+          </div>
+          {paste && (
+            <div className="space-y-2">
+              <textarea className="inp font-mono text-xs" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste the Google Meet transcript here" aria-label="Transcript text" />
+              <button type="button" className="btn-pri" disabled={busy || !text.trim()} onClick={sendText}>Send to the AI</button>
+            </div>
+          )}
+        </>
+      )}
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+    </div>
+  );
+}
+
+function TranscriptPanel({ t }) {
+  return (
+    <details open className="card p-3 lg:sticky lg:top-4">
+      <summary className="lbl cursor-pointer">Transcript</summary>
+      <pre className="mt-2 text-xs whitespace-pre-wrap font-sans text-navy-700 max-h-[70vh] overflow-auto">{t.text}</pre>
+    </details>
   );
 }
 
@@ -562,9 +952,23 @@ function Editor({ d, revise, onDone, onCancel }) {
     try { await api(`/pms/mom/action-items/${a.id}`, { method: 'PUT', body: JSON.stringify({ status: 'done' }) }); setCarried((xs) => xs.filter((x) => x.id !== a.id)); } catch (e) { setErrors([e.message]); }
   };
   const people = d.people || [];
+  const ai = mi.source === 'ai' && !revise;
+  const notes = mi.ai_notes || {};
+  const hints = Object.fromEntries((notes.carried_hints || []).map((h) => [h.id, h]));
   return (
     <div className="card p-4 space-y-4">
       {revise && <p className="text-xs text-navy-500">You are editing v{mi.version}. Publishing makes v{mi.version + 1}; attendees are told what changed.</p>}
+      {ai && (
+        <div className="space-y-2">
+          <span className="chip bg-violet-100 text-violet-700"><Sparkles size={11} className="inline mr-1" />AI DRAFT from the Google Meet transcript — check every section before publishing</span>
+          {mi.ai_confidence === 'low' && (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800"><b>Low confidence.</b> {notes.confidence_reason} Review this draft closely.</div>
+          )}
+          {(notes.unmatched_owners || []).length > 0 && (
+            <p className="text-xs text-amber-700">The AI heard these owners but could not match them to a person: {notes.unmatched_owners.join(', ')}. Choose the owner for those items.</p>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2 max-w-sm">
         <div><label className="lbl">Started</label><input type="time" className="inp" value={f.start_time} onChange={(e) => set('start_time', e.target.value)} /></div>
         <div><label className="lbl">Ended</label><input type="time" className="inp" value={f.end_time} onChange={(e) => set('end_time', e.target.value)} /></div>
@@ -633,6 +1037,11 @@ function Editor({ d, revise, onDone, onCancel }) {
                 <div key={a.id} className="px-3 py-2 flex flex-wrap items-center gap-2 text-sm">
                   <span className="flex-1 min-w-[10rem]">{a.task}</span>
                   <span className="text-xs text-navy-500">{a.owner_name || '—'} · due {a.due_date || '—'} · from {a.from_date}</span>
+                  {hints[a.id] && (
+                    <span className={`chip ${hints[a.id].status === 'done' ? 'bg-emerald-100 text-emerald-700' : 'bg-navy-50 text-navy-600'}`} title={hints[a.id].note}>
+                      AI: {hints[a.id].status === 'done' ? 'said done in the call' : 'still open'}
+                    </span>
+                  )}
                   <button type="button" className="btn-sec" onClick={() => closeCarried(a)}><CheckCircle2 size={13} className="inline mr-1" />Mark done</button>
                 </div>
               ))}

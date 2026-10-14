@@ -46,6 +46,22 @@ async function requireConsent(tenantId, employeeId, consentType = DEFAULT_TYPE) 
   }
 }
 
+// Grant or withdraw one's OWN consent, audited. noticeVersion records which
+// wording was accepted (the MoM recording notice has one; older types none).
+async function setConsent(tenantId, user, consentType, granted, noticeVersion = null) {
+  await db.query(
+    `INSERT INTO core.employee_consents (tenant_id, employee_id, consent_type, granted, granted_at, revoked_at, updated_by, notice_version)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (tenant_id, employee_id, consent_type) DO UPDATE SET
+       granted=EXCLUDED.granted, granted_at=EXCLUDED.granted_at, revoked_at=EXCLUDED.revoked_at,
+       updated_by=EXCLUDED.updated_by, notice_version=EXCLUDED.notice_version, updated_at=now()`,
+    [tenantId, user.id, consentType, granted, granted ? new Date() : null, granted ? null : new Date(), user.email, noticeVersion]);
+  await db.query(
+    `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
+     VALUES ($1,$2,$3,'employee_consent',$4,$5)`,
+    [tenantId, user.email, granted ? 'CONSENT_GRANTED' : 'CONSENT_REVOKED', user.id, JSON.stringify({ consent_type: consentType, notice_version: noticeVersion })]);
+}
+
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
 // Malformed uuid path params are rejected with 400 here, before any
@@ -71,17 +87,7 @@ router.put('/me', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_self'))) return res.status(403).json({ error: "Requires 'pms_self'" });
     const { consent_type = DEFAULT_TYPE, granted } = req.body || {};
     if (typeof granted !== 'boolean') return res.status(400).json({ error: 'granted (boolean) required' });
-    await db.query(
-      `INSERT INTO core.employee_consents (tenant_id, employee_id, consent_type, granted, granted_at, revoked_at, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (tenant_id, employee_id, consent_type) DO UPDATE SET
-         granted=EXCLUDED.granted, granted_at=EXCLUDED.granted_at, revoked_at=EXCLUDED.revoked_at,
-         updated_by=EXCLUDED.updated_by, updated_at=now()`,
-      [T(req), req.user.id, consent_type, granted, granted ? new Date() : null, granted ? null : new Date(), req.user.email]);
-    await db.query(
-      `INSERT INTO core.audit_log (tenant_id, actor_email, action, entity, entity_id, details)
-       VALUES ($1,$2,$3,'employee_consent',$4,$5)`,
-      [T(req), req.user.email, granted ? 'CONSENT_GRANTED' : 'CONSENT_REVOKED', req.user.id, JSON.stringify({ consent_type })]);
+    await setConsent(T(req), req.user, consent_type, granted);
     res.json({ ok: true, consent_type, granted });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -101,4 +107,4 @@ router.get('/:employeeId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-module.exports = { router, hasConsent, requireConsent, DEFAULT_TYPE };
+module.exports = { router, hasConsent, requireConsent, setConsent, DEFAULT_TYPE };

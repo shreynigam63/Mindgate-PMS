@@ -138,6 +138,7 @@ never regenerates a secret that already exists, never overwrites
 | Service | `agentic-pms-api.service`, running as the unprivileged `apms` user |
 | nginx site | `sites-available/agentic-pms` (Debian) or `conf.d/agentic-pms.conf` (RHEL) |
 | Backups | `/var/backups/agentic-pms`, nightly 02:15, 14-day retention |
+| MoM recordings | `/var/lib/agentic-pms/mom` (`MOM_STORAGE_DIR` to move it) — encrypted, deleted after 60 days unless HR changes it, **not** in the nightly backup. The key is `MOM_RECORDING_KEY` (32 bytes, hex) if set in `api.env`, otherwise derived from `JWT_SECRET`: changing `JWT_SECRET` without setting `MOM_RECORDING_KEY` first makes the stored recordings unreadable. |
 | Logs | `journalctl -u agentic-pms-api` |
 
 ### Day-to-day

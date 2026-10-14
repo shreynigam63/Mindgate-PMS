@@ -41,9 +41,12 @@ SyslogIdentifier=agentic-pms-api
 
 # --- Hardening -------------------------------------------------------------
 # This process needs: a TCP socket, a Postgres connection, and outbound
-# HTTPS to Anthropic if AI is on. It writes NOTHING to disk — evidence
-# files and closure letters are stored as bytes in Postgres (migration
-# 013), not on the filesystem — so almost everything can be taken away.
+# HTTPS to Anthropic if AI is on. Evidence files and closure letters are
+# stored as bytes in Postgres (migration 013), not on the filesystem. The
+# one thing it writes to disk is MoM recordings, encrypted, under
+# /var/lib/agentic-pms/mom (MOM_STORAGE_DIR) — writable under
+# ProtectSystem=full, which protects /usr, /boot and /etc only. Almost
+# everything else can be taken away.
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
