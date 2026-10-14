@@ -41,4 +41,7 @@ function gradeFor(value, scale) {
 
 const grade = (value, scale) => gradeFor(value, scale) || '—';
 
-module.exports = { grade, gradeFor };
+// The scale's grade labels, best first — for a distribution in order.
+const gradeLabels = (scale) => [...rows(scale)].sort((a, b) => Number(b.value) - Number(a.value)).map((r) => r.label);
+
+module.exports = { grade, gradeFor, gradeLabels };

@@ -94,6 +94,8 @@ async function main() {
   await require('./migrations/087-people-events-admin').ensureEventPages(db, TENANT_ID);
   // The manager's and Delivery Head's own 9-box grids.
   await require('./migrations/089-nine-box').ensureNineBoxPages(db, TENANT_ID);
+  // Team Connects in the Manager, HOD, HRBP and HR tabs.
+  await require('./migrations/093-team-connects').ensureTeamConnectPages(db, TENANT_ID);
 
   const app = express();
   app.use(cors());
@@ -111,6 +113,10 @@ async function main() {
   // the account is locked to this one action — see OPEN_WHILE_LOCKED in
   // core/auth.js, which is the list this path has to stay in step with.
   app.post('/api/v1/auth/password', authenticate, changePassword);
+  // Forgot password: a one-time code by email (core/password-reset.js).
+  const { forgotPassword, resetPassword } = require('./core/password-reset');
+  app.post('/api/v1/auth/forgot-password', forgotPassword);
+  app.post('/api/v1/auth/reset-password', resetPassword);
   // /me carries the pages this person may open. One row in
   // core.page_permission drives both the sidebar and the direct-URL guard,
   // so a hidden menu item and a typed URL can never disagree.

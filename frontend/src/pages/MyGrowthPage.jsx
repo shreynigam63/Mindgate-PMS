@@ -671,15 +671,14 @@ function CareerAiPanel({ onUse, horizon, draft, shortTerm }) {
 // exists but was excluded on level sent people looking for a row that was
 // already there.
 // The server's remainingTimeline (career-timeline.js), for the screen:
-// experience comes off the FIRST move of a climb only.
+// total experience comes off the WHOLE path (15 Oct).
 function remainingLeft(o, exp) {
   const t = o.typical_time_months == null ? null : Number(o.typical_time_months);
   const m = o.min_time_months == null ? null : Number(o.min_time_months);
   if (t == null) return { remaining_time_months: null, remaining_min_months: null, timeline_text: null, timeline_basis: 'no_figure' };
   if (!exp || exp.months == null) return { remaining_time_months: t, remaining_min_months: m, timeline_text: `${t} months`, timeline_basis: 'no_experience' };
-  const f = o.first_step_months == null ? t : Math.min(t, Number(o.first_step_months));
-  const left = Math.max(0, f - exp.months) + (t - f);
-  const leftMin = f !== t || m == null ? null : Math.max(0, m - exp.months);
+  const left = Math.max(0, t - exp.months);
+  const leftMin = m == null ? null : Math.max(0, m - exp.months);
   return { remaining_time_months: left, remaining_min_months: leftMin, timeline_text: left > 0 ? `${left} months` : 'Due now', timeline_basis: exp.source };
 }
 
@@ -691,8 +690,10 @@ function TimeLeft({ o, experience, months }) {
   if (o.timeline_basis === 'no_experience' || !experience || experience.years == null) {
     return <>Your total experience is not on record yet (HR loads it from the HRMS), so this is the matrix's full figure.</>;
   }
-  const from = experience.source === 'hrms' ? 'on your HR record' : 'as you entered it on Long-Term';
-  const climb = o.steps > 1 ? ' Your experience counts against the first of those steps only.' : '';
+  const from = experience.source === 'hrms' ? 'on your HR record'
+    : experience.source === 'joining_date' ? 'counted from your joining date — HR has no total experience for you yet, so enter yours on Long-Term'
+    : 'as you entered it on Long-Term';
+  const climb = o.steps > 1 ? ' Your experience counts against the whole climb.' : '';
   return (
     <>With your <b>{experience.years} years</b> of total experience ({from}),{' '}
       {o.remaining_time_months > 0
@@ -836,7 +837,11 @@ function CareerPathCard() {
     // Long-Term: experience and skills are the same person as on
     // Short-Term, so a blank one starts from there (unsaved until Save).
     const st = r.short_term_goal || {};
-    setForm({ target_role: r.path?.target_role || '', target_timeline: r.path?.target_timeline || '',
+    // Long-Term with no role yet starts from the one the employee's total
+    // experience points to on the ladder (15 Oct).
+    const sug = h === 'long_term' && !r.path?.target_role && r.suggested_role ? r.suggested_role : null;
+    setForm({ target_role: r.path?.target_role || (sug ? sug.role : ''),
+      target_timeline: r.path?.target_timeline || (sug ? (sug.timeline_text || '') : ''),
       plan: r.path?.plan || '',
       years_experience: r.path?.years_experience ?? st.years_experience ?? '',
       skills_interests: r.path?.skills_interests || st.skills_interests || '' });
@@ -1074,6 +1079,16 @@ function CareerPathCard() {
               ? `Type any role. Suggested: the next level after your short-term goal (${data.short_term_goal.target_role}), from the Career Pathing Matrix or the Grade and Level sheet.`
               : 'Type any role. Suggested: roles the Career Pathing Matrix leads to from your current role.')
             : 'Limited to transitions HR has configured from your current role in the Career Pathing Matrix.'}</p>}
+        {horizon === 'long_term' && data.suggested_role && (
+          <p className="text-[11px] text-navy-500 mt-1">
+            Suggested from your total experience{data.experience && data.experience.years != null ? ` (${data.experience.years} years)` : ''}:{' '}
+            <b>{data.suggested_role.role}</b>{data.suggested_role.steps > 1 ? `, ${data.suggested_role.steps} levels up` : ''}
+            {data.suggested_role.timeline_text ? ` — ${data.suggested_role.timeline_text === 'Due now' ? 'due now' : `about ${data.suggested_role.timeline_text}`}` : ''}.
+            {form.target_role !== data.suggested_role.role && editable && (
+              <button type="button" className="ml-1 font-semibold text-brand-600" onClick={() => pickRole(data.suggested_role.role)}>Use it</button>
+            )}
+          </p>
+        )}
         {horizon === 'long_term' && <CrossDeptBadge role={form.target_role} />}
       </div>
       {horizon === 'long_term' && editable && (

@@ -49,7 +49,7 @@ guardUuidParams(router);
 const T = (req) => req.user.tenant_id;
 // A matrix level is the grade alone (see career-level.js, 13 Oct).
 const { gradeOnly } = require('./career-level');
-const { experienceFrom, remainingTimeline } = require('./career-timeline');
+const { experienceFrom, remainingTimeline, rungByExperience } = require('./career-timeline');
 const levelsAsGrades = (t) => (t ? { ...t, from_level: gradeOnly(t.from_level) || null, to_level: gradeOnly(t.to_level) || null } : t);
 const adminOnly = async (req, res) => {
   if (await hasPermission(req.user, 'people_admin')) return true;
@@ -1251,8 +1251,10 @@ async function shortTermAnchor(tenantId, employeeId) {
 async function targetsFor(tenantId, employeeId, horizon) {
   if (horizon !== 'long_term') return eligibleTransitionsFor(tenantId, employeeId);
   const anchor = await shortTermAnchor(tenantId, employeeId);
-  if (!anchor) return careerLadderFor(tenantId, employeeId, 3);
-  return (await careerLadderFor(tenantId, employeeId, 3, {
+  // Up to five rungs ahead: a long career can point past the next two
+  // (rungByExperience), and the list is suggestions, not a limit.
+  if (!anchor) return careerLadderFor(tenantId, employeeId, 5);
+  return (await careerLadderFor(tenantId, employeeId, 5, {
     role: anchor.to_role, via: [anchor.to_role],
     months: anchor.typical_time_months == null ? null : Number(anchor.typical_time_months),
     first: anchor.typical_time_months == null ? null : Number(anchor.typical_time_months),
@@ -1264,10 +1266,12 @@ async function targetsFor(tenantId, employeeId, horizon) {
 // found by review: the screen, the save and the AI each worked it out
 // their own way). The HRMS figure first; else years typed on the form in
 // hand (`typed`, Long-Term only); else the years saved on Long-Term, then
-// on any tab. Each dated, so it counts up to today (career-timeline.js).
+// on any tab; else the time since joining (15 Oct: never from zero). Each
+// dated, so it counts up to today (career-timeline.js).
 async function experienceOf(tenantId, employeeId, typed) {
   const me = (await db.query(
-    `SELECT total_experience_years, total_experience_as_of FROM core.employees WHERE id=$1 AND tenant_id=$2`,
+    `SELECT total_experience_years, total_experience_as_of, to_char(date_of_joining,'YYYY-MM-DD') AS joined
+       FROM core.employees WHERE id=$1 AND tenant_id=$2`,
     [employeeId, tenantId])).rows[0] || {};
   const saved = (await db.query(
     `SELECT years_experience, years_experience_as_of FROM people.career_paths
@@ -1279,12 +1283,11 @@ async function experienceOf(tenantId, employeeId, typed) {
   let hasTyped = typed != null && String(typed).trim() !== '' && Number.isFinite(Number(typed));
   if (hasTyped && saved.years_experience != null && Number(typed) === Number(saved.years_experience)) hasTyped = false;
   return experienceFrom(me.total_experience_years, hasTyped ? typed : saved.years_experience,
-    { hrmsAsOf: me.total_experience_as_of, selfAsOf: hasTyped ? null : saved.years_experience_as_of });
+    { hrmsAsOf: me.total_experience_as_of, selfAsOf: hasTyped ? null : saved.years_experience_as_of, joined: me.joined });
 }
 
 // A move's timeline as it stands TODAY: what is left after experience.
-const timelineOfMove = (t, experience) => remainingTimeline(t && t.typical_time_months, t && t.min_time_months,
-  experience, t && t.first_step_months);
+const timelineOfMove = (t, experience) => remainingTimeline(t && t.typical_time_months, t && t.min_time_months, experience);
 
 // The Short-Term goal's Expected timeline worked out now, for every reader
 // of it (the manager's team view, the review assistant, the AI). The saved
@@ -1428,6 +1431,11 @@ router.get('/career/my-path', async (req, res) => {
           first_step_months: t.first_step_months ?? null, ...left(t) });
       }
     }
+    // Long-Term: the role the employee's total experience points to on the
+    // ladder (15 Oct) — offered first, and the one the form starts with.
+    const byExp = horizon === 'long_term' ? rungByExperience(transitions, experience) : null;
+    for (const o of targetOptions) o.by_experience = !!(byExp && o.role === byExp.to_role);
+    targetOptions.sort((a, b) => Number(b.by_experience) - Number(a.by_experience));
     const staleTarget = !!(p && p.target_role && eligibleTargetRoles.length && !eligibleTargetRoles.includes(p.target_role));
     const crossDept = horizon === 'long_term' && p && p.target_role ? await targetDepartments(T(req), req.user.id, p.target_role) : null;
     res.json({ path: p || null, horizon, short_term_goal: shortTermGoal, target_departments: crossDept,
@@ -1435,7 +1443,9 @@ router.get('/career/my-path', async (req, res) => {
       current: { designation: me.designation || null, department: me.department || null,
                  date_of_joining: me.date_of_joining || null },
       experience,
-      eligible_target_roles: eligibleTargetRoles, cycle_phase: phase,
+      suggested_role: byExp ? targetOptions.find((o) => o.role === byExp.to_role) || null : null,
+      eligible_target_roles: byExp ? [byExp.to_role, ...eligibleTargetRoles.filter((r) => r !== byExp.to_role)] : eligibleTargetRoles,
+      cycle_phase: phase,
       editable: gw.window.ok, editable_via: gw.window.via || null,
       shut_because: gw.window.ok ? null : gw.window.reason,
       path_diagnostics: diagnostics });
@@ -1787,5 +1797,5 @@ router.use('/onboarding', require('./onboarding').router);
 router.use('/', require('./rnr').router);
 
 module.exports = { router, hrbpScope, eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor, targetDepartments,
-                   experienceFrom, remainingTimeline, experienceOf, timelineOfMove, shortTermTimelineNow, transitionsWorkbook, suggestedTransitionRows,
+                   experienceFrom, remainingTimeline, rungByExperience, experienceOf, timelineOfMove, shortTermTimelineNow, transitionsWorkbook, suggestedTransitionRows,
                    TRANSITION_HEADERS, TRANSITION_BANNER, SUGGESTED_BANNER };

@@ -15,7 +15,7 @@ const { requireConsent } = require('../../core/consent');
 // also what guarantees career suggestions stay inside the set the
 // career-path form accepts — both resolve eligibility through it.
 const { eligibleTransitionsFor, careerPathDiagnostics, careerPathFor, targetsFor, targetDepartments,
-  experienceOf, timelineOfMove, shortTermTimelineNow } = require('../people');
+  experienceOf, timelineOfMove, shortTermTimelineNow, rungByExperience } = require('../people');
 // Same house rule, the other direction: the appraisal summary narrates the
 // performance module's own consolidation rather than re-gathering it.
 const { buildAnnualReviewSummary, kraSuggestionCandidates } = require('../performance');
@@ -945,7 +945,10 @@ Use the facts as given; do not contradict them:
   experience_used.source is none it is the path's full figure, so say
   their experience is not on record) — and its required_competencies in
   the skills. experience_used with source hrms is the HR record, a fact;
-  self_reported is the employee's own claim, so say "you have said". When absent, the role is not on the organisation's path from
+  self_reported is the employee's own claim, so say "you have said";
+  joining_date means only the time since joining is known (at least that
+  much). Write the growth plan for someone with that much experience,
+  never as if they were starting out. When absent, the role is not on the organisation's path from
   here — say so once, and estimate the timeline as a range, marked as an
   estimate.
 - short_term_goal, when present, is the step already planned; the plan
@@ -1100,6 +1103,11 @@ router.post('/career-suggest', async (req, res) => {
       // Present only when configured_transitions is empty. reason is one
       // of: none_configured | department_mismatch | all_inactive | no_designation
       why_no_transitions: beyond || diagnostics,
+      // Long-Term: the rung total experience points to (15 Oct).
+      ...(horizon === 'long_term' ? { suggested_by_experience: (() => {
+        const r = rungByExperience(transitions, exp);
+        return r ? { to_role: r.to_role, steps_up: r.steps || 1, remaining_time_months: timelineOfMove(r, exp).remaining_time_months } : null;
+      })() } : {}),
     };
     const out = await ai.narrate({
       tenantId: T(req), kind: 'career_suggest', ref: { employee_id: req.user.id },
@@ -1168,8 +1176,15 @@ typical_time as remaining_time_months — the time LEFT of the matrix's
 typical_time_months after experience_used, 0 meaning due now — and use its
 required_competencies. experience_used.source says what that rests on:
 hrms is the HR record (state it as a fact), self_reported is the
-employee's own claim ("you have said N years"), and none means it is the
-matrix's full figure because no experience is on record — say so. You never suggest, imply or hint at a
+employee's own claim ("you have said N years"), joining_date means only
+the time since they joined is known, so it is at least that — say so —
+and none means it is the matrix's full figure because no experience is on
+record — say so.
+LONG-TERM BY EXPERIENCE: when suggested_by_experience is present, propose
+that role. It is where the employee's total experience points on the
+organisation's ladder (the first rung their experience does not already
+cover, which can skip a level). Propose another only if what they have
+said clearly points elsewhere, and then say why. You never suggest, imply or hint at a
 performance rating or score, and you never promise a promotion — you are
 describing what an aspiration would require, not what will happen.
 Each suggested_milestone must be a step the employee could actually put a

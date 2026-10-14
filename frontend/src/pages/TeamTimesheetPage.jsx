@@ -51,7 +51,7 @@ export function TimesheetRoster({ rows, onOpen, q, setQ, showDepartment }) {
               <th className="px-3 py-2">Filled</th>
               <th className="px-3 py-2">Missing</th>
               <th className="px-3 py-2">Hours</th>
-              <th className="px-3 py-2">Overall</th>
+              <th className="px-3 py-2" title="Hours logged ÷ (8 h × working days)">Login hours</th>
               <th className="px-3 py-2">Rating</th>
             </tr>
           </thead>

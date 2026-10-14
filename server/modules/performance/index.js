@@ -32,6 +32,8 @@ const homeData = require('./home');
 const { super50Roster, super50Scale, super50Rule, super50History, gradeOf } = require('./super50');
 const { parsePriorRatings } = require('./prior-ratings-import');
 const nineBox = require('./nine-box');
+const connectAi = require('./connect-ai');
+const { teamScope, mayRead: mayReadTeam } = require('./team-scope');
 const { grade } = require('./grade');
 
 const router = express.Router();
@@ -5036,6 +5038,9 @@ router.use('/team/evaluations', nineBox.teamRouter);
 // team's Google Meet link, the minutes and their action items. mom.js.
 router.use('/mom', require('./mom').router);
 
+// HOD Review → Team analysis: the Delivery Head's reporting line (15 Oct).
+router.use('/hod/team', require('./hod-team').router);
+
 // The cell HR typed by hand. A placement now comes from the scores, and
 // HR moves it only by overriding one band with a reason (POST
 // /nine-box/override); a typed cell had neither a reason nor an audit
@@ -5888,17 +5893,21 @@ router.post('/connects', async (req, res) => {
 
     if (meeting_based) await requireConsent(T(req), employee_id);
     const items = Array.isArray(action_items) ? action_items.filter((i) => i && String(i.description || '').trim()) : [];
+    // 15 Oct: nobody sorts the discussion by hand — the AI does it after
+    // the save (connect-ai.js). A caller that sends the three parts itself
+    // keeps them.
+    const toSort = !!String(discussion_notes || notes || '').trim() && ![achievements, blockers, feedback].some((x) => String(x || '').trim());
 
     const client = await db.getClient();
     let connectId;
     try {
       await client.query('BEGIN');
       const cn = (await client.query(
-        `INSERT INTO pms.connects (tenant_id, manager_id, employee_id, held_at, duration_min, topic, discussion_notes, notes, achievements, blockers, feedback, kra_ids, meeting_based, logged_by_id, include_hr, hr_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12::uuid[],'{}'::uuid[]),$13,$14,$15,$16) RETURNING id`,
+        `INSERT INTO pms.connects (tenant_id, manager_id, employee_id, held_at, duration_min, topic, discussion_notes, notes, achievements, blockers, feedback, kra_ids, meeting_based, logged_by_id, include_hr, hr_id, ai_status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12::uuid[],'{}'::uuid[]),$13,$14,$15,$16,$17) RETURNING id`,
         [T(req), managerId, employee_id, held_at, duration_min != null ? Number(duration_min) : null, topic || null, discussion_notes || null,
           notes || null, achievements || null, blockers || null, feedback || null,
-          Array.isArray(kra_ids) ? kra_ids : null, !!meeting_based, req.user.id, !!hrId, hrId])).rows[0];
+          Array.isArray(kra_ids) ? kra_ids : null, !!meeting_based, req.user.id, !!hrId, hrId, toSort ? 'pending' : null])).rows[0];
       connectId = cn.id;
       // The index IS the order. created_at cannot carry it: every item
       // here is inserted in one transaction and now() is the
@@ -5915,7 +5924,13 @@ router.post('/connects', async (req, res) => {
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
 
     await audit(req, 'CONNECT_LOGGED', null, employee_id, { held_at, action_items: items.length, self_logged: isSelf, with_id: managerId, hr_id: hrId });
-    if (isSelf) await notify(T(req), managerId, 'connect_logged_by_report', `${req.user.name} logged a connect with you for your sign-off`, null, '/team/connects');
+    if (toSort) connectAi.categorise(T(req), connectId, req.user.email);
+    if (isSelf) {
+      // Their manager finds it under Team Connects; anyone else under Connects.
+      const mgr = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employee_id, T(req)])).rows[0];
+      await notify(T(req), managerId, 'connect_logged_by_report', `${req.user.name} logged a connect with you for your sign-off`, null,
+        mgr && mgr.manager_id === managerId ? '/team/team-connects' : '/team/connects');
+    }
     if (hrId && hrId !== req.user.id && hrId !== managerId) {
       await notify(T(req), hrId, 'connect_hr_included', `${req.user.name} asked for HR to be part of a connect`,
         topic ? `Topic: ${topic}` : null, '/team/connects');
@@ -5924,8 +5939,42 @@ router.post('/connects', async (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
+// SELF AND TEAM (15 Oct: "remove reports from self tab and move under
+// manager tab with new tab name as Team Connects").
+//   ?view=self  the caller's own connects, and connects others had WITH the
+//               caller (to sign off) — except their own reports', which are
+//               on Team Connects
+//   ?view=team&scope=manager|hod|hrbp|hr  the connects of the people that
+//               tab looks after (team-scope.js), any party
+// No view: the old two-sided list, for anything still asking for it.
+const CONNECT_COLS = `cn.*, e.name AS employee_name, e.designation AS employee_designation, m.name AS manager_name, hr.name AS hr_name,
+              COALESCE((SELECT json_agg(json_build_object('id', ai.id, 'description', ai.description, 'due_date', ai.due_date, 'done', ai.done) ORDER BY ai.sort_order, ai.created_at, ai.id)
+                        FROM pms.connect_action_items ai WHERE ai.connect_id=cn.id), '[]') AS action_items,
+              COALESCE((SELECT json_agg(json_build_object('id', k.id, 'title', k.title))
+                        FROM pms.kras k WHERE k.id = ANY(cn.kra_ids)), '[]') AS linked_kras`;
+const CONNECT_FROM = `FROM pms.connects cn JOIN core.employees e ON e.id=cn.employee_id JOIN core.employees m ON m.id=cn.manager_id
+         LEFT JOIN core.employees hr ON hr.id=cn.hr_id`;
+
 router.get('/connects', async (req, res) => {
   try {
+    const view = req.query.view;
+    if (view === 'self' || view === 'team') {
+      const params = [T(req), req.user.id];
+      const where = ['cn.tenant_id=$1'];
+      if (view === 'self') {
+        where.push('(cn.employee_id=$2 OR ((cn.manager_id=$2 OR cn.hr_id=$2) AND e.manager_id IS DISTINCT FROM $2))');
+      } else {
+        const s = await teamScope(req, String(req.query.scope || 'manager'));
+        if (s.error) return res.status(s.status).json({ error: s.error, needs: s.needs });
+        if (!s.all) { params.push([...s.ids]); where.push(`cn.employee_id = ANY($${params.length}::uuid[])`); }
+        where.push('cn.employee_id<>$2');
+      }
+      if (req.query.employee_id && /^[0-9a-f-]{36}$/i.test(req.query.employee_id)) { params.push(req.query.employee_id); where.push(`cn.employee_id=$${params.length}`); }
+      const r = await db.query(
+        `SELECT ${CONNECT_COLS}, (e.manager_id = $2) AS my_report ${CONNECT_FROM}
+          WHERE ${where.join(' AND ')} ORDER BY cn.held_at DESC, cn.created_at DESC LIMIT 500`, params);
+      return res.json({ connects: r.rows, view });
+    }
     const mine = req.query.employee_id;
     const r = await db.query(
       `SELECT cn.*, e.name AS employee_name, m.name AS manager_name, hr.name AS hr_name,
@@ -6149,6 +6198,35 @@ router.get('/connects/kra-options/:employeeId', async (req, res) => {
 // existed at CREATE time, but nothing let anyone change the links on an
 // already-saved connect. Kept deliberately narrow (kra_ids only, not a
 // full edit-everything route) — that's all this feature needs.
+// Sort a connect's discussion again — after a failure, or one left
+// half-done by a restart. Whoever may edit the connect.
+router.post('/connects/:id/categorise', async (req, res) => {
+  try {
+    const cn = (await db.query(`SELECT * FROM pms.connects WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
+    if (!cn) return res.status(404).json({ error: 'connect not found' });
+    if (cn.manager_id !== req.user.id && cn.employee_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) {
+      return res.status(403).json({ error: 'Not your connect' });
+    }
+    if (!String(cn.discussion_notes || cn.notes || '').trim()) return res.status(422).json({ error: 'Nothing was written about what was discussed.' });
+    await db.query(`UPDATE pms.connects SET ai_status='pending', ai_error=NULL WHERE id=$1`, [cn.id]);
+    await connectAi.categorise(T(req), cn.id, req.user.email);
+    const after = (await db.query(`SELECT achievements, blockers, feedback, ai_status, ai_error FROM pms.connects WHERE id=$1`, [cn.id])).rows[0];
+    res.json({ ok: after.ai_status === 'done', ...after });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Training suggestions for one employee from their connects (15 Oct).
+// The employee themself, or anyone whose Team tab holds them.
+router.post('/connects/training-suggestions', async (req, res) => {
+  try {
+    const id = String((req.body || {}).employee_id || req.user.id);
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(400).json({ error: 'Not a valid employee id.' });
+    if (!(await mayReadTeam(req, id))) return res.status(403).json({ error: 'Not in your team.' });
+    const out = await connectAi.trainingFor(T(req), id, req.user.email);
+    res.json({ ok: true, ...out, note: 'Suggestions only — a draft to discuss, not a plan anyone has agreed to.' });
+  } catch (e) { res.status(e.status && e.status < 600 ? e.status : 500).json({ error: e.message, reason: e.reason }); }
+});
+
 router.put('/connects/:id', async (req, res) => {
   try {
     const cn = (await db.query(`SELECT * FROM pms.connects WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];

@@ -31,6 +31,7 @@ const VIEW = {
   company: { sub: 'The whole company. You are not shown on your own grid.', hue: 'violet' },
   departments: { sub: 'The departments you head. You are not shown on your own grid.', hue: 'leaf' },
   team: { sub: 'Your direct reports. Their box is for you and HR — it is never shown to them.', hue: 'lagoon' },
+  reporting: { sub: 'Everyone on your reporting line. You are not shown on your own grid.', hue: 'leaf' },
 };
 const TABS = [['grid', 'Grid'], ['movement', 'Movement'], ['reports', 'Reports'], ['actions', 'Actions']];
 const SOURCE = { adjustment: 'calibration adjustment', hod: 'Delivery Head rating', manager: 'manager rating' };
@@ -55,7 +56,7 @@ export function Move({ m }) {
   return <span className={`inline-flex items-center gap-0.5 ${cls}`} title={label}><Icon size={12} /><span className="sr-only">{label}</span></span>;
 }
 
-export default function NineBoxPage({ view = 'company' }) {
+export default function NineBoxPage({ view = 'company', embedded = false }) {
   const [cycleId, setCycleId] = useState('');
   const [filters, setFilters] = useState(NO_FILTERS);
   const [tab, setTabState] = useState(() => remembered(`ninebox.tab.${view}`, 'grid'));
@@ -95,9 +96,13 @@ export default function NineBoxPage({ view = 'company' }) {
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
-      <PageHead title="9-Box Grid" hue={v.hue} sub={v.sub}>
-        {data && !stale && <a className="btn-sec" href={dl(`/pms/nine-box/export.xlsx?${query}`)}><Download size={13} className="inline mr-1" />Export to Excel</a>}
-      </PageHead>
+      {embedded ? (
+        data && !stale && <div className="flex justify-end"><a className="btn-sec" href={dl(`/pms/nine-box/export.xlsx?${query}`)}><Download size={13} className="inline mr-1" />Export to Excel</a></div>
+      ) : (
+        <PageHead title="9-Box Grid" hue={v.hue} sub={v.sub}>
+          {data && !stale && <a className="btn-sec" href={dl(`/pms/nine-box/export.xlsx?${query}`)}><Download size={13} className="inline mr-1" />Export to Excel</a>}
+        </PageHead>
+      )}
       {err && <p className="text-sm text-rose-600">{err}{stale ? ' Still showing the previous selection; this one could not be loaded.' : ''}</p>}
       {!data && !err && <p className="text-sm text-navy-400">Loading…</p>}
       {data && (

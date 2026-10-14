@@ -1137,6 +1137,31 @@ Built to the client's "MoM Tab – PMS Build Specification" (14 Oct). Connects p
 - **Who sees what**: attendees see the MoMs of the connects they were in, once published; the manager sees their team's; HR sees and edits all. HR's **Report** shows each switched-on team's MoM status for a day, with open items.
 - **Audit**: team settings, MoM settings, publish, revise, not held, action-item changes, recordings (started, saved, played, downloaded, deleted), transcripts (uploaded, deleted) and AI drafts are written to the audit log; consent changes to the core audit log.
 
+## 3.17 Changes of 15 Oct — My Growth, Connects, sign-in, Timesheet, HOD Review
+
+**My Growth — Expected timeline (both tabs).** The Career Pathing Matrix's months are a career clock that started on the employee's first working day. What is shown is the matrix's figure for the whole path **less total experience**, never below "Due now". Example: 5 years' experience, 72 months to the short-term role and 48 more to the next — Short-Term **12 months**, Long-Term **(72 + 48) − 60 = 60 months**. (Until 15 Oct experience came off the first step only.) Total experience is the HRMS figure; else the years the employee entered; else **the time since joining** — never zero. The screen says which was used.
+
+**My Growth — Long-Term role by experience.** Long-Term looks up to five rungs ahead and suggests the rung the employee's total experience points to: the first one their experience does not already cover, so a long career can skip a level. It is listed first, pre-filled when the tab is empty, and given to the AI as the role to propose.
+
+**Connects — sorted by AI.** The connect form asks only what was discussed (and the topic). After the save, AI sorts it into Achievements, Blockers and Feedback — nobody types those. The save never waits on the AI; the connect shows "Sorting…", then "Sorted by AI from the discussion". If the AI fails, the connect says why and offers Try again; the discussion is always kept as written.
+
+**Connects — Team Connects.** Self → Connects shows your own connects and the ones others had with you to sign off. Your reports' connects are on **Team Connects**:
+
+| Tab | Shows the connects of |
+|---|---|
+| Manager | your direct reports — and you log a connect with a report here |
+| HOD | everyone on your reporting line, through their managers |
+| HRBP | the employees in your remit |
+| HR | everyone |
+
+**Connects — training suggestions.** On Team Connects (pick a person) and on your own Connects page, *Suggest training* asks the AI for 3–6 trainings from that person's last 12 connects (blockers, feedback, recurring themes) and their KRAs. Each names the need and the connect dates it comes from. It is a draft, stored with its input; it never rates the person.
+
+**Sign-in — Forgot password.** *Forgot password?* emails a one-time 8-character code. It works for 30 minutes and once; five wrong tries spend it; a new request replaces it; at most three requests an hour per address. The answer is the same whether or not the address has an account. It needs email switched on (Settings → mail mode *live*); otherwise the page says to ask HR. A code rather than a link, so a forged request cannot point the email at another site.
+
+**Timesheet — Login hours %.** Hours logged ÷ (hours a working day × working days), working days being Monday–Friday less HR's holidays, up to today. 8 hours a day unless HR changes it (Timesheet → Settings → *Login hours a working day*). 207 hours over 23 working days is 207 ÷ 184 = **112.5%** (until 15 Oct it was the share of days with any log: 22 of 23, 95.7%). Green / Amber / Red use the same thresholds. Days filled and missing are still shown.
+
+**HOD Review — three tabs.** *Review queue* as before. *Team analysis*: the Delivery Head's reporting line — the whole team, the direct reportees, then each manager's team — with KRAs approved, self-appraisals, manager evaluations and the HOD's own reviews submitted, and the ratings (the HOD's where submitted, else the manager's submitted one) as an average and a distribution by grade; open any group for the people. *9-Box Grid (my team)*: the 9-box of that reporting line only, not every employee of the departments they head. The HOD menu's 9-Box Grid opens this tab.
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |

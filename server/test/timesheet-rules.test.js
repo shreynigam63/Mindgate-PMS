@@ -194,6 +194,36 @@ test('filled % counts working days only, and the rating follows the thresholds',
   assert.equal(c.hours, 24);
 });
 
+// 15 Oct: "Login hour as per 8 hrs per day based on number of working days
+// … 207 hours shows 95.7%". The % is hours against 8 × working days.
+test('LOGIN HOURS: 207 hours over 22 working days is 117.6% (8 h a day), not the 95.5% of days filled', () => {
+  // 21 Sep – 21 Oct 2026, cycle from the 21st, Mon–Fri: 23 working days to
+  // 21 Oct (the 20th is the cycle end, so take the full 21 Sep – 20 Oct).
+  const days = [];
+  for (let d = new Date(2026, 8, 21); d <= new Date(2026, 9, 20); d.setDate(d.getDate() + 1)) {
+    if (d.getDay() !== 0 && d.getDay() !== 6) days.push(key(new Date(d)));
+  }
+  assert.equal(days.length, 22);
+  // 207 hours over 21 of the 22 days: one day missed.
+  const logs = days.slice(0, 21).map((x, i) => ({ log_date: x, hours: i < 18 ? 10 : 9 }));
+  assert.equal(logs.reduce((t, l) => t + l.hours, 0), 207);
+  const c = compliance(logs, { cycle_start_day: 21, green_pct: 90, amber_pct: 75 }, '2026-10-20').cycles[0];
+  assert.equal(c.work, 22);
+  assert.equal(c.expected_hours, 176, '8 h × 22 working days');
+  assert.equal(c.pct, 117.6, '207 ÷ 176');
+  assert.equal(c.filled_pct, 95.5, 'the old day-based figure, kept as filled_pct');
+  assert.equal(c.rating, 'Green');
+  // Half days on every working day: every day filled, half the hours.
+  const half = compliance(days.map((x) => ({ log_date: x, hours: 4 })), { cycle_start_day: 21, green_pct: 90, amber_pct: 75 }, '2026-10-20').cycles[0];
+  assert.equal(half.filled_pct, 100);
+  assert.equal(half.pct, 50);
+  assert.equal(half.rating, 'Red');
+  // A holiday is not asked for; HR's own hours a day are used.
+  const hol = compliance(logs, { cycle_start_day: 21, green_pct: 90, amber_pct: 75, holidays: ['2026-10-02'], hours_per_day: 9 }, '2026-10-20').cycles[0];
+  assert.equal(hol.work, 21);
+  assert.equal(hol.expected_hours, 189);
+});
+
 test('a weekend log is counted as extra, never as a working day', () => {
   // 26 Sep 2026 is a Saturday.
   const r = compliance([{ log_date: '2026-09-26', hours: 4 }],

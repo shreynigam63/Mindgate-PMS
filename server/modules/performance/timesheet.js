@@ -63,6 +63,10 @@ async function settingsFor(tenantId) {
     cycle_start_day: Number(v.cycle_start_day) || DEFAULTS.cycle_start_day,
     green_pct: v.green_pct == null ? DEFAULTS.green_pct : Number(v.green_pct),
     amber_pct: v.amber_pct == null ? DEFAULTS.amber_pct : Number(v.amber_pct),
+    // Login hours ask this many a working day (15 Oct). The KRA scoring's
+    // own figure stands in when HR set only that one.
+    hours_per_day: Number(v.hours_per_day) > 0 ? Number(v.hours_per_day)
+      : (v.scoring && Number(v.scoring.hours_per_day) > 0 ? Number(v.scoring.hours_per_day) : DEFAULTS.hours_per_day),
     holidays: Array.isArray(v.holidays) ? v.holidays : [],
     // Read-only here, and owned by their own routes — 064's value-add
     // words and 065's scoring configuration. They are returned so the
@@ -95,11 +99,13 @@ router.put('/settings', async (req, res) => {
     // Named rather than silently swapped: a Green threshold below Amber
     // makes every rating Green, which looks like the feature working.
     if (amber > green) return res.status(422).json({ error: 'the Amber threshold cannot be higher than the Green one' });
+    const perDay = b.hours_per_day == null || b.hours_per_day === '' ? DEFAULTS.hours_per_day : Number(b.hours_per_day);
+    if (!(perDay > 0 && perDay <= 24)) return res.status(422).json({ error: 'hours_per_day must be more than 0 and at most 24' });
     const holidays = (Array.isArray(b.holidays) ? b.holidays : String(b.holidays || '').split(/[,\s]+/))
       .map((s) => String(s).trim()).filter(Boolean);
     const bad = holidays.find((h) => !/^\d{4}-\d{2}-\d{2}$/.test(h));
     if (bad) return res.status(422).json({ error: `holiday "${bad}" is not a date — use YYYY-MM-DD` });
-    const value = { cycle_start_day: day, green_pct: green, amber_pct: amber, holidays: [...new Set(holidays)].sort() };
+    const value = { cycle_start_day: day, green_pct: green, amber_pct: amber, hours_per_day: perDay, holidays: [...new Set(holidays)].sort() };
     // MERGED, NOT REPLACED, and this is a fix rather than a nicety.
     //
     // This blob is shared: it has always held the compliance thresholds

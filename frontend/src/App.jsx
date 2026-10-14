@@ -44,7 +44,7 @@ import KraOrgOverviewPage from './pages/KraOrgOverviewPage';
 import KraLibraryPage from './pages/KraLibraryPage';
 import AnnualReviewPage from './pages/AnnualReviewPage';
 import MidYearReviewPage, { TeamMidYearPage } from './pages/MidYearReviewPage';
-import ConnectsPage from './pages/ConnectsPage';
+import ConnectsPage, { TeamConnectsPage } from './pages/ConnectsPage';
 import ClosureLettersPage from './pages/ClosureLettersPage';
 import IncrementSimulationPage from './pages/IncrementSimulationPage';
 import SettingsPage from './pages/SettingsPage';
@@ -152,6 +152,8 @@ const NAV = [
     { to: '/team/midyear', label: 'Team Mid-Year', icon: Clock },
     { to: '/team/eval', label: 'Team Evaluation', icon: Users },
     { to: '/team/competencies', label: 'Team Competencies', icon: Gauge },
+    // Their reports' connects, moved out of Self → Connects (15 Oct).
+    { to: '/team/team-connects', label: 'Team Connects', icon: MessageCircle },
     // The manager's own team on the 9-box (13 Oct build specification).
     { to: '/team/nine-box', label: '9-Box Grid', icon: Grid3x3 },
     // Opened by the manager from here or from Team Evaluation (7 Oct).
@@ -177,8 +179,10 @@ const NAV = [
     { to: '/hod', label: 'HOD Review', icon: Landmark },
     // Every employee in the HOD's departments, by department (7 Oct).
     { to: '/hod/competencies', label: 'Team Competencies', icon: Gauge },
-    // The departments this person heads, on the 9-box (13 Oct).
-    { to: '/hod/nine-box', label: '9-Box Grid', icon: Grid3x3 },
+    // Everyone on their reporting line (15 Oct).
+    { to: '/hod/team-connects', label: 'Team Connects', icon: MessageCircle },
+    // The HOD's 9-box is a tab of HOD Review now, for their reporting line
+    // only (15 Oct) — /hod/nine-box leads there.
     { to: '/rnr/approvals/delivery-head', label: 'RnR Approvals', icon: Award },
   ]},
   // HRBP — HR for a slice of the company rather than all of it. Between
@@ -206,6 +210,7 @@ const NAV = [
     { to: '/hrbp/approvals', label: 'All Approvals', icon: CheckCircle2 },
     { to: '/hrbp/rnr-approvals', label: 'RnR Approvals', icon: Award },
     { to: '/hrbp/directory', label: 'Employees', icon: Upload },
+    { to: '/hrbp/team-connects', label: 'Team Connects', icon: MessageCircle },
     { to: '/hrbp/kra-overview', label: 'KRA Overview', icon: ClipboardList },
     { to: '/hrbp/kra-library', label: 'KRA Library', icon: Library },
     { to: '/hrbp/competencies', label: 'Competency Framework', icon: Layers },
@@ -237,6 +242,7 @@ const NAV = [
     { to: '/admin/completion-report', label: 'PMS Completion Report', icon: FileText },
     { to: '/admin/calibration', label: 'Calibration', icon: Sparkles },
     { to: '/admin/nine-box', label: '9-Box Grid', icon: Grid3x3 },
+    { to: '/admin/team-connects', label: 'Team Connects', icon: MessageCircle },
     { to: '/admin/closure-letters', label: 'Closure Letters', icon: FileText },
     // Salary sits behind its own permission, so this link is HR/admin only
     // — a manager must never see it, let alone open it.
@@ -631,6 +637,10 @@ function Main({ user }) {
               <Route path="/team/kra-sheets" element={<TeamKraSheetsPage />} />
               <Route path="/team/eval" element={<TeamEvalPage user={user} />} />
               <Route path="/team/connects" element={<ConnectsPage />} />
+              <Route path="/team/team-connects" element={<TeamConnectsPage key="manager" scope="manager" />} />
+              <Route path="/hod/team-connects" element={<TeamConnectsPage key="hod" scope="hod" />} />
+              <Route path="/hrbp/team-connects" element={<TeamConnectsPage key="hrbp" scope="hrbp" />} />
+              <Route path="/admin/team-connects" element={<TeamConnectsPage key="hr" scope="hr" />} />
               <Route path="/hod" element={<HodQueuePage />} />
               <Route path="/hod/competencies" element={<HodCompetenciesPage />} />
               <Route path="/pip" element={<PIPPage />} />
@@ -646,7 +656,7 @@ function Main({ user }) {
               <Route path="/admin/closure-letters" element={<ClosureLettersPage />} />
               <Route path="/admin/watchlist" element={<WatchlistPage />} />
               <Route path="/admin/nine-box" element={<NineBoxPage key="company" view="company" />} />
-              <Route path="/hod/nine-box" element={<NineBoxPage key="departments" view="departments" />} />
+              <Route path="/hod/nine-box" element={<Navigate to="/hod?tab=nine-box" replace />} />
               <Route path="/team/nine-box" element={<NineBoxPage key="team" view="team" />} />
               <Route path="/engagement" element={<MySurveysPage />} />
               <Route path="/admin/engagement" element={<EngagementAdminPage />} />
@@ -888,6 +898,9 @@ function FirstTimeSetup({ onUser }) {
 
 function SignIn({ onUser }) {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [err, setErr] = useState(null);
+  const [forgot, setForgot] = useState(false);
+  const [done, setDone] = useState(null);
+  if (forgot) return <ForgotPassword email={email} onBack={(msg) => { setForgot(false); setDone(msg || null); setErr(null); }} />;
   const go = async () => {
     setErr(null);
     try {
@@ -906,9 +919,58 @@ function SignIn({ onUser }) {
       </h1>
       <input className="inp" placeholder="email" value={email} onChange={e => setEmail(e.target.value)} />
       <input className="inp" type="password" placeholder="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} />
+      {done && <p className="text-xs text-emerald-700">{done}</p>}
       {err && <p className="text-xs text-rose-600">{err}</p>}
       <button className="btn-pri" onClick={go}>Sign in</button>
-      <p className="text-[11px] text-navy-400">Production instances sign in with your organisation's identity provider.</p>
+      <button type="button" className="text-xs text-navy-500 underline self-center" onClick={() => setForgot(true)}>Forgot password?</button>
+    </div>
+  );
+}
+
+// Forgot password (15 Oct): a one-time code by email, then a new password.
+// The server's answer is the same whether or not the email has an account.
+function ForgotPassword({ email: start, onBack }) {
+  const [email, setEmail] = useState(start || '');
+  const [step, setStep] = useState('ask');
+  const [code, setCode] = useState('');
+  const [password, setPassword] = useState(''); const [confirm, setConfirm] = useState('');
+  const [msg, setMsg] = useState(null); const [err, setErr] = useState(null); const [busy, setBusy] = useState(false);
+  const ask = async () => {
+    setErr(null); setBusy(true);
+    try { const r = await api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }); setMsg(r.message); setStep('reset'); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const reset = async () => {
+    setErr(null);
+    if (password !== confirm) { setErr('The two passwords do not match.'); return; }
+    setBusy(true);
+    try { const r = await api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ email, code, new_password: password }) }); onBack(r.message); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  return (
+    <div className="max-w-xs mx-auto mt-[14vh] flex flex-col gap-3 glass rounded-2xl p-6">
+      <h1 className="text-lg font-bold text-navy-900">Reset your password</h1>
+      {step === 'ask' ? (
+        <>
+          <p className="text-xs text-navy-500">Enter your work email. We will email you a one-time code.</p>
+          <input className="inp" placeholder="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && ask()} />
+          {err && <p className="text-xs text-rose-600">{err}</p>}
+          <button className="btn-pri" disabled={busy || !email.trim()} onClick={ask}>{busy ? 'Sending…' : 'Email me a code'}</button>
+        </>
+      ) : (
+        <>
+          {msg && <p className="text-xs text-navy-600">{msg}</p>}
+          <input className="inp tracking-widest uppercase" placeholder="code from the email" value={code} onChange={e => setCode(e.target.value)} autoComplete="one-time-code" />
+          <input className="inp" type="password" placeholder="new password (8+ characters)" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
+          <input className="inp" type="password" placeholder="new password again" value={confirm} onChange={e => setConfirm(e.target.value)} onKeyDown={e => e.key === 'Enter' && reset()} autoComplete="new-password" />
+          {err && <p className="text-xs text-rose-600">{err}</p>}
+          <button className="btn-pri" disabled={busy || !code.trim() || !password} onClick={reset}>{busy ? 'Saving…' : 'Set new password'}</button>
+          <button type="button" className="text-xs text-navy-500 underline self-center" disabled={busy} onClick={ask}>Send a new code</button>
+        </>
+      )}
+      <button type="button" className="text-xs text-navy-500 underline self-center" onClick={() => onBack(null)}>Back to sign in</button>
     </div>
   );
 }

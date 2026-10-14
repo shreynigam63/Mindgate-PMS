@@ -71,7 +71,7 @@ function CycleChart({ cycles, green, amber, selected, onSelect }) {
       ))}
       {cycles.map((c, i) => {
         const cx = m.l + (iw / n) * (i + 0.5);
-        const top = y(c.pct);
+        const top = y(Math.min(100, c.pct));
         return (
           <g key={c.start} onClick={() => onSelect(i)} style={{ cursor: 'pointer' }}>
             <rect x={m.l + (iw / n) * i} y={m.t} width={iw / n} height={ih} fill="transparent" />
@@ -161,14 +161,14 @@ export default function TimesheetDashboard({ report, compact }) {
   return (
     <div className="space-y-4">
       <div className="kpirow">
-        <Stat icon={Gauge} hue="navy" n={`${t.pct}%`} label="Overall filled"
-          sub={t.rating} />
+        <Stat icon={Gauge} hue="navy" n={`${t.pct}%`} label="Login hours"
+          sub={t.expected_hours != null ? `${t.hours} of ${t.expected_hours} h · ${t.rating}` : t.rating} />
         <Stat icon={CalendarCheck} hue="lagoon" n={t.filled} label="Days filled"
           sub={`of ${t.work} working days`} />
         <Stat icon={CalendarX} hue="red" n={t.missing} label="Days missing"
           sub="weekdays with no log" />
         <Stat icon={Clock} hue="leaf" n={t.hours} label="Hours logged"
-          sub={t.filled ? `${(t.hours / t.filled).toFixed(1)} h per filled day` : '—'} />
+          sub={`${t.hours_per_day || s.hours_per_day || 8} h × ${t.work} working days asked`} />
         <Stat icon={CheckCircle2} hue="violet" n={cycles.length} label="Cycles"
           sub={`start day ${s.cycle_start_day}`} />
       </div>
@@ -177,7 +177,8 @@ export default function TimesheetDashboard({ report, compact }) {
         A cycle runs from the {s.cycle_start_day}
         {['th', 'st', 'nd', 'rd'][(s.cycle_start_day % 10 > 3 || [11, 12, 13].includes(s.cycle_start_day)) ? 0 : s.cycle_start_day % 10]} to
         the day before the next. Working days are Monday–Friday minus the holidays HR has set
-        ({(s.holidays || []).length} set). A day counts as filled when it carries at least one log.
+        ({(s.holidays || []).length} set). Login hours are the hours logged against {s.hours_per_day || 8} h for every
+        working day so far; a day counts as filled when it carries at least one log.
         {' '}<b className="text-emerald-700">Green ≥ {s.green_pct}%</b>,{' '}
         <b className="text-amber-700">Amber ≥ {s.amber_pct}%</b>,{' '}
         <b className="text-rose-700">Red below {s.amber_pct}%</b>.
@@ -203,7 +204,7 @@ export default function TimesheetDashboard({ report, compact }) {
                 <th className="px-3 py-2">Missing</th>
                 <th className="px-3 py-2" title="Logs on a weekend or a holiday — not counted as working days">Weekend / holiday</th>
                 <th className="px-3 py-2">Hours</th>
-                <th className="px-3 py-2">Filled %</th>
+                <th className="px-3 py-2" title="Hours logged ÷ (hours a day × working days)">Login hours %</th>
                 <th className="px-3 py-2">Rating</th>
               </tr>
             </thead>
@@ -223,7 +224,7 @@ export default function TimesheetDashboard({ report, compact }) {
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-1.5 rounded bg-navy-100 min-w-[60px]">
-                        <div className="h-1.5 rounded" style={{ width: `${x.pct}%`, background: RATING_BAR[x.rating] }} />
+                        <div className="h-1.5 rounded" style={{ width: `${Math.min(100, x.pct)}%`, background: RATING_BAR[x.rating] }} />
                       </div>
                       <span className="w-10 text-right">{x.pct}%</span>
                     </div>

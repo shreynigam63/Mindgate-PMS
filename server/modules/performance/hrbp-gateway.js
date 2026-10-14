@@ -108,7 +108,7 @@ const HR_DECIDES = ['/approvals/bulk'];
 // so an HRBP named on a remit employee's connect could add a link and
 // not take it down again).
 const partyToMeeting = (req) => req._hrbpMeetingParty === true;
-const ownNineBox = (req) => !!req.query && ['team', 'departments'].includes(String(req.query.view));
+const ownNineBox = (req) => !!req.query && ['team', 'departments', 'reporting'].includes(String(req.query.view));
 
 const SELF_SERVICE = {
   '/api/v1/pms': [
@@ -131,6 +131,7 @@ const SELF_SERVICE = {
     ['GET', '/connects'], ['GET', '/connects/questions'], ['GET', '/connects/people'],
     ['GET', '/connects/kra-options/:me'], ['GET', '/connects/cadence/:me'],
     ['POST', '/connects'], ['PUT', '/connects/:id'], ['POST', '/connects/:id/sign-off'],
+    ['POST', '/connects/:id/categorise'], ['POST', '/connects/training-suggestions'],
     ['GET', '/meetings/providers'],
     ['GET', '/meetings', partyToMeeting], ['POST', '/meetings', partyToMeeting],
     ['DELETE', '/meetings/:id', partyToMeeting], ['PUT', '/meetings/:id/transcript', partyToMeeting],
@@ -140,6 +141,8 @@ const SELF_SERVICE = {
     ['GET', '/nine-box', ownNineBox], ['GET', '/nine-box/movement', ownNineBox], ['GET', '/nine-box/reports', ownNineBox],
     ['GET', '/nine-box/export.xlsx', ownNineBox], ['GET', '/nine-box/actions', ownNineBox],
     ['PUT', '/nine-box/actions/:id'],
+    // HOD Review → Team analysis: the HRBP's own reporting line as a HOD.
+    ['GET', '/hod/team/analysis'],
     // The MoM tab (mom.js): the HRBP's own daily connects, minutes and
     // action items, on what they hold. Nothing is lent here, so an HRBP
     // without pms_admin sees their own team, not every team.

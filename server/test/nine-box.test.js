@@ -202,6 +202,24 @@ test('ACCEPTANCE: box counts match the lists behind them and add up to everyone 
   assert.equal(r.body.totals.not_placed, 2);
 });
 
+// 15 Oct: the HOD's 9-box "only for his team" — the reporting line, not
+// every employee of the departments they head.
+test('THE HOD\'S OWN TEAM: the reporting view is their reporting line, across departments, and nobody else', { skip }, async () => {
+  await db.query(`UPDATE core.employees SET manager_id=$1 WHERE id=$2`, [id.hod, id.mgr]);
+  try {
+    const r = await get('/pms/nine-box?view=reporting', 'hod');
+    assert.equal(r.status, 200);
+    const seen = new Set(everyone(r.body));
+    for (const k of ['top', 'under', 'rough', 'core', 'joiner', 'nopot']) assert.ok(seen.has(id[k]), `${k} reports to the HOD through the manager`);
+    assert.ok(seen.has(id.rough), 'Sales, but on his reporting line');
+    assert.ok(!seen.has(id.other), 'another manager\'s team is not his, whatever its department');
+    assert.ok(!seen.has(id.hod), 'never himself');
+    assert.equal((await get('/pms/nine-box?view=reporting', 'mgr')).status, 403, 'a Delivery Head view');
+  } finally {
+    await db.query(`UPDATE core.employees SET manager_id=NULL WHERE id=$1`, [id.mgr]);
+  }
+});
+
 test('ACCEPTANCE: a manager sees only their own team; a Delivery Head only their departments', { skip }, async () => {
   const mine = await get('/pms/nine-box?view=team', 'mgr');
   assert.equal(mine.status, 200);

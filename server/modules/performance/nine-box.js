@@ -29,6 +29,7 @@ const { visibleRows } = require('../../core/scope-hooks');
 const { hasPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const { activeCycle } = require('./active-cycle');
+const { reportingTree } = require('./reporting-tree');
 const { eligibleForCycle, appraisalYearOf } = require('./eligibility');
 const pm = require('./phase-machine');
 const rules = require('./nine-box-rules');
@@ -252,17 +253,24 @@ async function cycleRows(t, cycle) {
 
 // ------------------------------------------------------------------ scope
 
-const VIEWS = { company: 'pms_admin', departments: 'pms_hod', team: 'pms_team_eval' };
+// reporting (15 Oct: the HOD's 9-box "only for his team"): everyone on
+// the caller's reporting line, any depth — not every employee of the
+// departments they head.
+const VIEWS = { company: 'pms_admin', departments: 'pms_hod', team: 'pms_team_eval', reporting: 'pms_hod' };
 
 // Who this caller may see in a view, as a filter over rows. Returns
 // { error } with the permission named when the view is not theirs.
 async function scopeFor(req, view) {
   const need = VIEWS[view];
-  if (!need) return { status: 400, error: "view must be 'company', 'departments' or 'team'" };
+  if (!need) return { status: 400, error: "view must be 'company', 'departments', 'reporting' or 'team'" };
   if (!(await hasPermission(req.user, need))) return { status: 403, error: `Requires '${need}'`, needs: need };
   const me = req.user.id;
   if (view === 'company') return { view, keep: (r) => r.employee_id !== me };
   if (view === 'team') return { view, keep: (r) => r.employee_id !== me && r.manager_id === me };
+  if (view === 'reporting') {
+    const tree = await reportingTree(T(req), me);
+    return { view, note: tree.size ? null : 'Nobody reports to you yet, so there is nobody to show.', keep: (r) => tree.has(r.employee_id) };
+  }
   // Departments: the ones this person heads. pms_admin heads them all.
   if (await hasPermission(req.user, 'pms_admin')) return { view, all: true, keep: (r) => r.employee_id !== me };
   const mine = (await db.query(

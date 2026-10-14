@@ -394,6 +394,7 @@ function Settings({ settings, onSaved }) {
     cycle_start_day: settings.cycle_start_day,
     green_pct: settings.green_pct,
     amber_pct: settings.amber_pct,
+    hours_per_day: settings.hours_per_day || 8,
     holidays: (settings.holidays || []).join(', '),
   });
   const [msg, setMsg] = useState(null);
@@ -421,6 +422,10 @@ function Settings({ settings, onSaved }) {
         <label className="text-[11px] text-navy-500">Amber at or above (%)
           <input type="number" min="0" max="100" className="inp !py-1 !px-2 w-20 mt-0.5"
             value={s.amber_pct} onChange={(e) => setS({ ...s, amber_pct: Number(e.target.value) })} />
+        </label>
+        <label className="text-[11px] text-navy-500">Login hours a working day
+          <input type="number" min="1" max="24" step="0.5" className="inp !py-1 !px-2 w-20 mt-0.5"
+            value={s.hours_per_day} onChange={(e) => setS({ ...s, hours_per_day: Number(e.target.value) })} />
         </label>
         <label className="text-[11px] text-navy-500 flex-1 min-w-[260px]">Holidays — YYYY-MM-DD, comma separated
           <input className="inp !py-1 !px-2 mt-0.5" value={s.holidays}

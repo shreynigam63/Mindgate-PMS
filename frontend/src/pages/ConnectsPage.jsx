@@ -25,22 +25,19 @@ export default function ConnectsPage() {
   return tab === 'mom' ? <MomTab tabs={tabs} /> : <ConnectsLog tabs={tabs} />;
 }
 
+// SELF → CONNECTS (15 Oct): your own connects, and the ones others had
+// with you to sign off. Your reports' connects are on Team Connects, in the
+// Manager tab.
 function ConnectsLog({ tabs }) {
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   const [err, setErr] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [me, setMe] = useState(null);
-  const [team, setTeam] = useState(null);
-  // Manager-side "select report" filter, per a direct request — lets a
-  // manager narrow the list to one report's connects to review/sign off,
-  // instead of scrolling the whole flat list. Empty = show everyone's.
-  const [filterEmployeeId, setFilterEmployeeId] = useState('');
-  const load = (employeeId) => api(`/pms/connects${employeeId ? `?employee_id=${employeeId}` : ''}`).then(r => setData(r.connects)).catch(e => setErr(e.message));
+  const load = () => api('/pms/connects?view=self').then(r => setData(r.connects)).catch(e => setErr(e.message));
   useEffect(() => {
     load();
     api('/me').then(r => setMe(r.user)).catch(() => setMe(null));
-    api('/pms/team/evaluations').then(r => setTeam(r.team || [])).catch(() => setTeam([]));
   }, []);
 
   if (err || !data) {
@@ -52,53 +49,142 @@ function ConnectsLog({ tabs }) {
     );
   }
 
-  // Fix guide item #8: the sign-off action already existed, but nothing
-  // called out how many connects were still awaiting it — this makes that
-  // visible at a glance instead of requiring a scroll through the whole list.
-  const pendingCount = data.filter(cn => !cn.signed_off).length;
-
-
+  // Waiting on YOU: connects others had with you that you have not signed off.
+  const pendingCount = data.filter(cn => !cn.signed_off && me && cn.manager_id === me.id).length;
   const shown = (data || []).filter((cn) => matches(q, cn.employee_name, cn.manager_name, cn.topic, cn.notes, cn.discussion_notes, cn.achievements, cn.blockers));
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
       <PageHead title="Connects" hue="azure">
-        {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting sign-off</span>}
+        {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting your sign-off</span>}
         <button className="btn-pri" onClick={() => setShowNew(v => !v)}><Plus size={13} className="inline mr-1" />Log a connect</button>
       </PageHead>
       {tabs}
-      {showNew && <NewConnectForm me={me} team={team} onSaved={() => { setShowNew(false); load(filterEmployeeId); }} />}
-      {team && team.length > 0 && (
-        <div className="flex items-center gap-2">
-          <label className="lbl mb-0">Select report</label>
-          <select className="inp w-auto" value={filterEmployeeId} onChange={e => { setFilterEmployeeId(e.target.value); load(e.target.value); }}>
-            <option value="">All reports</option>
-            {team.map(t => <option key={t.employee_id} value={t.employee_id}>{t.name}</option>)}
-          </select>
-        </div>
-      )}
+      {showNew && <NewConnectForm me={me} mode="self" onSaved={() => { setShowNew(false); load(); }} />}
+      {me && data.some((cn) => cn.employee_id === me.id) && <TrainingPanel employeeId={me.id} label="Training ideas from my connects" />}
       {!data.length && <div className="card p-8 text-center text-sm text-navy-400">No connects logged yet.</div>}
-      {/* The log grows all year and a manager's covers their whole team,
-          so the "select report" dropdown above is not enough on its own —
-          it cannot find a connect by what was discussed. */}
       <SearchBox value={q} onChange={setQ} placeholder="Search by person, topic or notes…"
         shown={shown.length} total={data.length} />
       <div className="space-y-2">
-        {shown.map(cn => <ConnectRow key={cn.id} cn={cn} me={me} reload={() => load(filterEmployeeId)} />)}
+        {shown.map(cn => <ConnectRow key={cn.id} cn={cn} me={me} reload={load} />)}
       </div>
     </div>
   );
 }
 
-function NewConnectForm({ me, team, onSaved }) {
+// TEAM CONNECTS (15 Oct) — in the Manager, HOD, HRBP and HR tabs. The
+// connects of the people that tab looks after (the server's team-scope.js):
+// a manager's direct reports, a Delivery Head's whole reporting line, an
+// HRBP's remit, everyone for HR. Managers log a connect with a report here.
+const SCOPE_SUB = {
+  manager: 'Connects of your direct reports',
+  hod: 'Connects of everyone reporting to you, through their managers',
+  hrbp: 'Connects of the employees in your remit',
+  hr: 'Connects across the company',
+};
+export function TeamConnectsPage({ scope = 'manager' }) {
+  const [data, setData] = useState(null);
+  const [q, setQ] = useState('');
+  const [err, setErr] = useState(null);
+  const [showNew, setShowNew] = useState(false);
+  const [me, setMe] = useState(null);
+  const [team, setTeam] = useState(null);
+  const [person, setPerson] = useState('');
+  const load = () => api(`/pms/connects?view=team&scope=${scope}`).then(r => setData(r.connects)).catch(e => setErr(e.message));
+  useEffect(() => {
+    setData(null); setErr(null); setPerson('');
+    load();
+    api('/me').then(r => setMe(r.user)).catch(() => setMe(null));
+    if (scope === 'manager') api('/pms/team/evaluations').then(r => setTeam(r.team || [])).catch(() => setTeam([]));
+  }, [scope]);
+
+  if (err) return <p className="text-sm text-rose-600">{err}</p>;
+  if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
+
+  const people = [...new Map(data.map((cn) => [cn.employee_id, cn.employee_name])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  const pendingCount = data.filter(cn => !cn.signed_off && me && cn.manager_id === me.id).length;
+  const shown = data.filter((cn) => (!person || cn.employee_id === person)
+    && matches(q, cn.employee_name, cn.manager_name, cn.topic, cn.notes, cn.discussion_notes, cn.achievements, cn.blockers, cn.feedback));
+  const personName = person ? (people.find(([id]) => id === person) || [])[1] : null;
+  return (
+    <div className="space-y-4 max-w-3xl mx-auto">
+      <PageHead title="Team Connects" hue="lagoon" sub={SCOPE_SUB[scope]}>
+        {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting your sign-off</span>}
+        {scope === 'manager' && team && team.length > 0 && (
+          <button className="btn-pri" onClick={() => setShowNew(v => !v)}><Plus size={13} className="inline mr-1" />Log a connect</button>
+        )}
+      </PageHead>
+      {showNew && <NewConnectForm me={me} team={team} mode="team" onSaved={() => { setShowNew(false); load(); }} />}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="lbl mb-0">Person</label>
+        <select className="inp w-auto" value={person} onChange={(e) => setPerson(e.target.value)}>
+          <option value="">Everyone ({people.length})</option>
+          {people.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+        </select>
+      </div>
+      {person && <TrainingPanel key={person} employeeId={person} label={`Training suggestions for ${personName}`} />}
+      {!person && data.length > 0 && <p className="text-[11px] text-navy-400">Pick a person for AI training suggestions from their connects.</p>}
+      {!data.length && <div className="card p-8 text-center text-sm text-navy-400">No connects logged for your team yet.</div>}
+      <SearchBox value={q} onChange={setQ} placeholder="Search by person, topic or notes…" shown={shown.length} total={data.length} />
+      <div className="space-y-2">
+        {shown.map(cn => <ConnectRow key={cn.id} cn={cn} me={me} reload={load} anyMeeting={scope === 'hr'} />)}
+      </div>
+    </div>
+  );
+}
+
+// AI training suggestions from one person's connects (15 Oct).
+const TRAINING_TYPE = { course: 'Course', certification: 'Certification', workshop: 'Workshop', mentoring: 'Mentoring', on_the_job: 'On the job' };
+const PRIORITY_CHIP = { high: 'bg-rose-100 text-rose-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-navy-50 text-navy-600' };
+function TrainingPanel({ employeeId, label }) {
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const ask = async () => {
+    setBusy(true); setErr(null);
+    try { setD(await api('/pms/connects/training-suggestions', { method: 'POST', body: JSON.stringify({ employee_id: employeeId }) })); } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  return (
+    <div className="card p-4 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm font-semibold text-navy-800 flex-1">{label}</p>
+        <button className="btn-sec" disabled={busy} onClick={ask}>
+          <Sparkles size={12} className="inline mr-1 text-amber-500" />{busy ? 'Thinking…' : d ? 'Refresh' : 'Suggest training'}
+        </button>
+      </div>
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      {d && (
+        <div className="space-y-2">
+          <span className="chip bg-amber-100 text-amber-700">AI DRAFT — from {d.connects_used} connect{d.connects_used === 1 ? '' : 's'}; discuss before acting on it</span>
+          {d.themes.length > 0 && <p className="text-xs text-navy-500">Needs seen: {d.themes.join(' · ')}</p>}
+          {!d.trainings.length && <p className="text-xs text-navy-400">The connects show no training need yet.</p>}
+          {d.trainings.map((t, i) => (
+            <div key={i} className="border border-navy-50 rounded-xl px-3 py-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-navy-800 flex-1 min-w-[10rem]">{t.title}</span>
+                <span className="chip bg-violet-50 text-violet-700">{TRAINING_TYPE[t.type] || t.type}</span>
+                <span className={`chip ${PRIORITY_CHIP[t.priority]}`}>{t.priority}</span>
+              </div>
+              {t.why && <p className="text-xs text-navy-600 mt-0.5">{t.why}</p>}
+              {t.from.length > 0 && <p className="text-[11px] text-navy-400">From the connects of {t.from.join(', ')}</p>}
+            </div>
+          ))}
+          {d.notes.length > 0 && <p className="text-[11px] text-navy-400">{d.notes.join(' · ')}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewConnectForm({ me, team, mode = 'self', onSaved }) {
   const [employeeId, setEmployeeId] = useState('');
   const [heldAt, setHeldAt] = useState(new Date().toISOString().slice(0, 10));
   const [durationMin, setDurationMin] = useState('30');
   const [topic, setTopic] = useState('');
   const [discussionNotes, setDiscussionNotes] = useState('');
-  // Achievements/Blockers/Feedback are plain open boxes, typed directly —
-  // per a direct follow-up request, reverted from the AI-draft-first flow
-  // (the /connect-extract endpoint that used to fill these still exists
-  // and works, just isn't called from this form anymore).
+  // Achievements/Blockers/Feedback are no longer typed (15 Oct: "should be
+  // categorized automatically based on topic and what was discussed and no
+  // manual intervention needed"): the AI sorts the discussion after save.
   // The wording comes from HR, not from this file. Asked for: "Make the
   // quarterly connect/discussion forms fully editable for HR admins to
   // update questions." Falls back to the shipped wording if the fetch
@@ -112,9 +198,6 @@ function NewConnectForm({ me, team, onSaved }) {
     if (q && q.active === false) return null;
     return { label: q ? q.label : fallbackLabel, hint: q ? (q.hint || '') : fallbackHint };
   };
-  const [achievements, setAchievements] = useState('');
-  const [blockers, setBlockers] = useState('');
-  const [feedback, setFeedback] = useState('');
   const [kraOptions, setKraOptions] = useState([]);
   const [kraIds, setKraIds] = useState([]);
   // "Connect Cadence / Progress this cycle / Next due" header, per the
@@ -151,8 +234,8 @@ function NewConnectForm({ me, team, onSaved }) {
   // choose from a list of one.
   useEffect(() => {
     if (!me) return;
-    if (!team || !team.length) setEmployeeId(me.id);
-  }, [me, team]);
+    if (mode === 'self') setEmployeeId(me.id);
+  }, [me, mode]);
 
   useEffect(() => {
     setKraIds([]); setCadence(null);
@@ -166,6 +249,7 @@ function NewConnectForm({ me, team, onSaved }) {
   const save = async () => {
     setErr(null);
     if (!employeeId || !heldAt) { setErr('Employee and date are required.'); return; }
+    if (!discussionNotes.trim()) { setErr('Write what was discussed — the AI sorts it into achievements, blockers and feedback.'); return; }
     const isSelf = me && employeeId === me.id;
     if (isSelf && !withId) { setErr('Pick who the connect was with.'); return; }
     if (needHr === null) { setErr('Answer "Do you need HR as part of this connect?"'); return; }
@@ -175,7 +259,7 @@ function NewConnectForm({ me, team, onSaved }) {
         method: 'POST',
         body: JSON.stringify({
           employee_id: employeeId, held_at: heldAt, duration_min: durationMin || null, topic, discussion_notes: discussionNotes,
-          achievements, blockers, feedback, kra_ids: kraIds,
+          kra_ids: kraIds,
           ...(isSelf ? { with_id: withId } : {}),
           include_hr: !!needHr, ...(needHr ? { hr_id: hrId } : {}),
         }),
@@ -189,11 +273,14 @@ function NewConnectForm({ me, team, onSaved }) {
       <div className="grid sm:grid-cols-3 gap-2">
         <div>
           <label className="lbl">Whose connect</label>
-          <select className="inp" value={employeeId} onChange={e => setEmployeeId(e.target.value)}>
-            <option value="">Select…</option>
-            {me && <option value={me.id}>Myself ({me.name})</option>}
-            {(team || []).map(t => <option key={t.employee_id} value={t.employee_id}>{t.name}</option>)}
-          </select>
+          {mode === 'self' ? (
+            <p className="inp bg-navy-50 text-navy-500">Myself{me ? ` (${me.name})` : ''}</p>
+          ) : (
+            <select className="inp" value={employeeId} onChange={e => setEmployeeId(e.target.value)}>
+              <option value="">Select a report…</option>
+              {(team || []).map(t => <option key={t.employee_id} value={t.employee_id}>{t.name}</option>)}
+            </select>
+          )}
         </div>
         <div>
           <label className="lbl">Date</label>
@@ -294,24 +381,9 @@ function NewConnectForm({ me, team, onSaved }) {
       )}
       <div>
         <label className="lbl">What was discussed?</label>
-        <textarea className="inp" rows={4} placeholder="Catch-all narrative — what came up in the conversation"
+        <textarea className="inp" rows={6} placeholder="Everything that came up — what went well, what is stuck, the feedback given"
           value={discussionNotes} onChange={e => setDiscussionNotes(e.target.value)} />
-      </div>
-      <div className="grid sm:grid-cols-3 gap-2">
-        {[['achievements', 'Achievements', 'What went well…', 'emerald', achievements, setAchievements],
-          ['blockers', 'Blockers', "What's stuck…", 'amber', blockers, setBlockers],
-          ['feedback', 'Feedback', 'Coaching / direction…', 'blue', feedback, setFeedback],
-        ].map(([key, fallback, hint, hue, value, set]) => {
-          const q = ask(key, fallback, hint);
-          if (!q) return null;   // HR switched this one off
-          return (
-            <div key={key}>
-              <label className={`lbl text-${hue}-600`}>{q.label}</label>
-              <textarea className={`inp border-${hue}-200`} rows={3} placeholder={q.hint}
-                value={value} onChange={(e) => set(e.target.value)} />
-            </div>
-          );
-        })}
+        <p className="text-[11px] text-navy-400 mt-0.5"><Sparkles size={11} className="inline mr-1 text-violet-500" />After you save, AI sorts this into Achievements, Blockers and Feedback — nothing to fill in by hand.</p>
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       <button className="btn-pri" onClick={save}>Save connect</button>
@@ -319,7 +391,7 @@ function NewConnectForm({ me, team, onSaved }) {
   );
 }
 
-function ConnectRow({ cn, me, reload }) {
+function ConnectRow({ cn, me, reload, anyMeeting = false }) {
   const [insight, setInsight] = useState(null);
   const [insightOpen, setInsightOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -341,6 +413,15 @@ function ConnectRow({ cn, me, reload }) {
     setErr(null);
     try { await api(`/pms/connects/${cn.id}/sign-off`, { method: 'POST' }); reload(); }
     catch (e) { setErr(e.message); }
+  };
+  // The AI sorts the discussion just after the save; look again until done.
+  const sorting = cn.ai_status === 'pending' || cn.ai_status === 'working';
+  useEffect(() => { if (!sorting) return undefined; const h = setTimeout(reload, 4000); return () => clearTimeout(h); }, [sorting, cn.id]);
+  const [resorting, setResorting] = useState(false);
+  const resort = async () => {
+    setResorting(true); setErr(null);
+    try { await api(`/pms/connects/${cn.id}/categorise`, { method: 'POST' }); } catch (e) { setErr(e.message); }
+    setResorting(false); reload();
   };
   const askInsights = async () => {
     setBusy(true); setErr(null);
@@ -392,12 +473,20 @@ function ConnectRow({ cn, me, reload }) {
         </span>
       </div>
       {cn.discussion_notes && <p className="text-xs text-navy-500 italic">"{cn.discussion_notes}"</p>}
-      <div className="text-xs text-navy-600 space-y-1">
-        {cn.achievements && <p><b className="text-navy-500">Achievements:</b> {cn.achievements}</p>}
-        {cn.blockers && <p><b className="text-navy-500">Blockers:</b> {cn.blockers}</p>}
-        {cn.feedback && <p><b className="text-navy-500">Feedback:</b> {cn.feedback}</p>}
-        {!cn.achievements && !cn.blockers && !cn.feedback && cn.notes && <p>{cn.notes}</p>}
+      {sorting && <p className="text-[11px] text-violet-600"><Sparkles size={11} className="inline mr-1" />Sorting into achievements, blockers and feedback…</p>}
+      {cn.ai_status === 'failed' && (
+        <p className="text-[11px] text-rose-600">{cn.ai_error || 'The AI could not sort this connect.'}{' '}
+          {(!me || me.id === cn.manager_id || me.id === cn.employee_id) && <button type="button" className="underline" disabled={resorting} onClick={resort}>{resorting ? 'Trying…' : 'Try again'}</button>}
+        </p>
+      )}
+      <div className="grid sm:grid-cols-3 gap-2 text-xs text-navy-600">
+        {[['Achievements', cn.achievements, 'text-emerald-700'], ['Blockers', cn.blockers, 'text-amber-700'], ['Feedback', cn.feedback, 'text-blue-700']]
+          .filter(([, v]) => v).map(([label, v, hue]) => (
+            <div key={label}><b className={hue}>{label}</b><p className="whitespace-pre-line">{v}</p></div>
+          ))}
       </div>
+      {cn.ai_status === 'done' && <span className="chip bg-violet-50 text-violet-700 self-start">Sorted by AI from the discussion</span>}
+      {!cn.achievements && !cn.blockers && !cn.feedback && cn.notes && <p className="text-xs text-navy-600">{cn.notes}</p>}
       <div className="border-t border-navy-100 pt-2 space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[11px] font-semibold text-navy-400 uppercase tracking-wide">
@@ -462,8 +551,12 @@ function ConnectRow({ cn, me, reload }) {
           <AiInsightsPanel insight={insight} />
         </AiModal>
       )}
-      <MeetingPanel employeeId={cn.employee_id} context="connect" refId={cn.id}
-        title="Meeting for this connect" />
+      {/* The meetings on record are for the two people and the employee's
+          own manager (and HR) — not for a Delivery Head or HRBP further up. */}
+      {(anyMeeting || (me && (me.id === cn.employee_id || me.id === cn.manager_id || cn.my_report))) && (
+        <MeetingPanel employeeId={cn.employee_id} context="connect" refId={cn.id}
+          title="Meeting for this connect" />
+      )}
       {err && <p className="text-xs text-rose-600">{err}</p>}
     </div>
   );

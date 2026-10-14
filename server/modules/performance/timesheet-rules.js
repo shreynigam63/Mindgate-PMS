@@ -213,6 +213,7 @@ const DEFAULTS = {
   cycle_start_day: 21,   // the client's dashboard defaults to the 21st
   green_pct: 90,
   amber_pct: 75,
+  hours_per_day: 8,
   holidays: [],
 };
 
@@ -230,9 +231,17 @@ function ratingOf(pct, green, amber) {
   return pct >= green ? 'Green' : pct >= amber ? 'Amber' : 'Red';
 }
 
+// LOGIN HOURS (15 Oct: "Login hour as per 8 hrs per day based on number of
+// working days, excluding Saturday, Sunday and holidays … logic seems wrong
+// as 207 hours shows 95.7%"). The % is the HOURS logged against what the
+// working days ask for — hours_per_day (8) × working days, Monday to Friday
+// less HR's holidays, up to today. Until 15 Oct it was the share of working
+// days with any log at all, so 207 hours over 23 days read as 22 of 23
+// days, 95.7%; as hours it is 207 ÷ 184 = 112.5%. Days filled are still
+// counted, as filled / missing, and their share is filled_pct.
 /**
  * @param {{log_date:string, hours:number}[]} entries  one person's logs
- * @param {object} settings  cycle_start_day, green_pct, amber_pct, holidays[]
+ * @param {object} settings  cycle_start_day, green_pct, amber_pct, hours_per_day, holidays[]
  * @param {string} asOf  yyyy-mm-dd; days after it are not counted missing
  */
 function compliance(entries, settings = {}, asOf = null) {
@@ -240,13 +249,16 @@ function compliance(entries, settings = {}, asOf = null) {
   const sd = Math.min(28, Math.max(1, Number(s.cycle_start_day) || DEFAULTS.cycle_start_day));
   const green = Number(s.green_pct);
   const amber = Number(s.amber_pct);
+  const perDay = Number(s.hours_per_day) > 0 && Number(s.hours_per_day) <= 24 ? Number(s.hours_per_day) : DEFAULTS.hours_per_day;
   const hol = new Set(s.holidays || []);
+  const loginPct = (h, work) => (work ? (h / (perDay * work)) * 100 : 0);
+  const r1 = (x) => Math.round(x * 10) / 10;
   const today = parseDate(asOf) || new Date();
   const asOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
   const rows = entries.map((e) => ({ ...e, d: parseDate(e.log_date) })).filter((e) => e.d);
   if (!rows.length) {
-    return { cycles: [], total: { work: 0, filled: 0, missing: 0, extra: 0, hours: 0, pct: 0, rating: 'Red', no_data: true } };
+    return { cycles: [], total: { work: 0, filled: 0, missing: 0, extra: 0, hours: 0, expected_hours: 0, hours_per_day: perDay, pct: 0, filled_pct: 0, rating: 'Red', no_data: true } };
   }
   const byDay = new Map();
   for (const e of rows) {
@@ -282,7 +294,7 @@ function compliance(entries, settings = {}, asOf = null) {
       }
       days.push({ date: k, weekday: d.getDay(), state, hours: Math.round(h * 100) / 100, logs: logs.length });
     }
-    const pct = work ? (filled / work) * 100 : 0;
+    const pct = loginPct(hours, work);
     cycles.push({
       start: key(c.start),
       end: key(c.end),
@@ -291,7 +303,9 @@ function compliance(entries, settings = {}, asOf = null) {
       missing: work - filled,
       extra,
       hours: Math.round(hours * 100) / 100,
-      pct: Math.round(pct * 10) / 10,
+      expected_hours: perDay * work,
+      pct: r1(pct),
+      filled_pct: r1(work ? (filled / work) * 100 : 0),
       rating: ratingOf(pct, green, amber),
       in_progress: c.end > asOfDay,
       days,
@@ -302,7 +316,7 @@ function compliance(entries, settings = {}, asOf = null) {
   const work = cycles.reduce((t, x) => t + x.work, 0);
   const filled = cycles.reduce((t, x) => t + x.filled, 0);
   const hours = cycles.reduce((t, x) => t + x.hours, 0);
-  const pct = work ? (filled / work) * 100 : 0;
+  const pct = loginPct(hours, work);
   return {
     cycles,
     total: {
@@ -311,7 +325,10 @@ function compliance(entries, settings = {}, asOf = null) {
       missing: work - filled,
       extra: cycles.reduce((t, x) => t + x.extra, 0),
       hours: Math.round(hours * 100) / 100,
-      pct: Math.round(pct * 10) / 10,
+      expected_hours: perDay * work,
+      hours_per_day: perDay,
+      pct: r1(pct),
+      filled_pct: r1(work ? (filled / work) * 100 : 0),
       rating: ratingOf(pct, green, amber),
     },
   };
