@@ -51,7 +51,7 @@ function useTick(on) {
   useEffect(() => { if (!on) return undefined; const h = setInterval(() => setN((n) => n + 1), 1000); return () => clearInterval(h); }, [on]);
 }
 
-export default function MomTab({ tabs }) {
+export default function MomTab({ tabs, title = 'Connects', hue = 'azure' }) {
   const [params, setParams] = useSearchParams();
   const [ctx, setCtx] = useState(null);
   const loadCtx = () => api('/pms/mom/teams')
@@ -74,7 +74,7 @@ export default function MomTab({ tabs }) {
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
-      <PageHead title="Connects" hue="azure" sub="Daily connects, their minutes and action items" />
+      <PageHead title={title} hue={hue} sub="Daily connects, their minutes and action items" />
       {tabs}
       <RecorderBar open={open} />
       <ConsentBanner />

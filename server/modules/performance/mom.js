@@ -39,6 +39,8 @@ const tx = require('./mom-transcript');
 const T = (req) => req.user.tenant_id;
 const APP_TZ = process.env.APP_TIMEZONE || 'Asia/Kolkata';
 const LINK = '/team/connects?tab=mom';
+// What a notice to the organiser or a manager opens: their Team Connects.
+const TEAM_LINK = '/team/team-connects?tab=mom';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -247,7 +249,7 @@ async function tick(t, now = new Date()) {
     await db.query(`UPDATE pms.mom_meetings SET status='missing', missing_notified_at=now() WHERE id=$1 AND status='scheduled'`, [m.id]);
     if (m.organiser_id) {
       await tell(t, s, m.organiser_id, 'mom_missing', `MoM missing: ${m.title} (${m.date})`,
-        'No MoM was published for this connect. Write it by hand, or mark the connect as not held.', LINK);
+        'No MoM was published for this connect. Write it by hand, or mark the connect as not held.', `${TEAM_LINK}&mom=${m.id}`);
     }
     out.missing += 1;
   }
@@ -273,7 +275,7 @@ async function tick(t, now = new Date()) {
       if (daysBetween(a.due, L.date) >= 3 && !a.manager_alerted_on && a.owner_manager) {
         await db.query(`UPDATE pms.mom_action_items SET manager_alerted_on=$2 WHERE id=$1`, [a.id, L.date]);
         await tell(t, s, a.owner_manager, 'mom_action_overdue_manager', `${a.owner_name}: action item 3 days overdue`,
-          `${a.task} (due ${a.due})`, `${LINK}&sub=actions`);
+          `${a.task} (due ${a.due})`, `${TEAM_LINK}&sub=actions`);
         out.escalated += 1;
       }
     }
@@ -293,7 +295,7 @@ async function tick(t, now = new Date()) {
       await saveRecording(t, { id: u.meeting_id, date: u.date }, u, null, u.started_by);
       if (u.organiser_id) {
         await tell(t, s, u.organiser_id, 'mom_recording_saved', `Recording saved: ${u.title}, ${u.date}`,
-          'The recording stopped before Stop was pressed. What reached the PMS has been kept.', `${LINK}&mom=${u.meeting_id}`);
+          'The recording stopped before Stop was pressed. What reached the PMS has been kept.', `${TEAM_LINK}&mom=${u.meeting_id}`);
       }
       out.autosaved += 1;
     } else {
@@ -427,7 +429,7 @@ async function runDraft(t, meetingId, requestedBy) {
       if (done && m.organiser_id) {
         await tell(t, s, m.organiser_id, 'mom_draft_ready', `AI draft ready: ${m.title}, ${m.date}`,
           d.confidence === 'low' ? `Low confidence: ${d.notes.confidence_reason} Review it closely before publishing.` : 'Review it, correct anything that is wrong, and publish.',
-          `${LINK}&mom=${m.id}`);
+          `${TEAM_LINK}&mom=${m.id}`);
       }
     } catch (e) {
       const msg = e.status === 503 ? 'AI is not set up on this server, so the MoM cannot be drafted. Write it by hand.' : String(e.message || 'The AI draft failed.');
@@ -435,7 +437,7 @@ async function runDraft(t, meetingId, requestedBy) {
       const r = await db.query(`UPDATE pms.mom_meetings SET status='scheduled', draft_error=$2, processing_since=NULL WHERE id=$1 AND status='processing'`,
         [meetingId, msg.slice(0, 300)]);
       if (r.rowCount && m && m.organiser_id) {
-        await tell(t, s, m.organiser_id, 'mom_draft_failed', `AI draft failed: ${m.title}, ${m.date}`, `${msg} Try again from the MoM, or write it by hand.`, `${LINK}&mom=${m.id}`);
+        await tell(t, s, m.organiser_id, 'mom_draft_failed', `AI draft failed: ${m.title}, ${m.date}`, `${msg} Try again from the MoM, or write it by hand.`, `${TEAM_LINK}&mom=${m.id}`);
       }
     }
   } catch (e) {
@@ -949,7 +951,7 @@ router.post('/meetings/:id/acknowledge', async (req, res) => {
       [t, mi.id, req.user.id, mi.version, comment]);
     if (comment && m.organiser_id && m.organiser_id !== req.user.id) {
       const s = await settingsFor(t);
-      await tell(t, s, m.organiser_id, 'mom_ack_comment', `${req.user.name} commented on the ${m.date} MoM`, comment, `${LINK}&mom=${m.id}`);
+      await tell(t, s, m.organiser_id, 'mom_ack_comment', `${req.user.name} commented on the ${m.date} MoM`, comment, `${TEAM_LINK}&mom=${m.id}`);
     }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Could not save the acknowledgement.' }); }

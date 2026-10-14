@@ -81,7 +81,20 @@ const SCOPE_SUB = {
   hrbp: 'Connects of the employees in your remit',
   hr: 'Connects across the company',
 };
+// The MoM tab sits here too for managers (their team's daily connects) and
+// HR (every team's, with Team settings and the daily report) — 15 Oct.
+const MOM_SCOPES = ['manager', 'hr'];
 export function TeamConnectsPage({ scope = 'manager' }) {
+  const [params, setParams] = useSearchParams();
+  const withMom = MOM_SCOPES.includes(scope);
+  const tab = withMom && params.get('tab') === 'mom' ? 'mom' : 'connects';
+  const tabs = withMom ? (
+    <div className="tabbar">
+      {[['connects', 'Connects'], ['mom', 'MoM']].map(([k, label]) => (
+        <button key={k} type="button" className={tab === k ? 'on' : ''} onClick={() => setParams(k === 'mom' ? { tab: 'mom' } : {})}>{label}</button>
+      ))}
+    </div>
+  ) : null;
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   const [err, setErr] = useState(null);
@@ -97,8 +110,15 @@ export function TeamConnectsPage({ scope = 'manager' }) {
     if (scope === 'manager') api('/pms/team/evaluations').then(r => setTeam(r.team || [])).catch(() => setTeam([]));
   }, [scope]);
 
-  if (err) return <p className="text-sm text-rose-600">{err}</p>;
-  if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
+  if (tab === 'mom') return <MomTab tabs={tabs} title="Team Connects" hue="lagoon" />;
+  if (err || !data) {
+    return (
+      <div className="space-y-4 max-w-3xl mx-auto">
+        {tabs}
+        {err ? <p className="text-sm text-rose-600">{err}</p> : <p className="text-sm text-navy-400">Loading…</p>}
+      </div>
+    );
+  }
 
   const people = [...new Map(data.map((cn) => [cn.employee_id, cn.employee_name])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
   const pendingCount = data.filter(cn => !cn.signed_off && me && cn.manager_id === me.id).length;
@@ -113,6 +133,7 @@ export function TeamConnectsPage({ scope = 'manager' }) {
           <button className="btn-pri" onClick={() => setShowNew(v => !v)}><Plus size={13} className="inline mr-1" />Log a connect</button>
         )}
       </PageHead>
+      {tabs}
       {showNew && <NewConnectForm me={me} team={team} mode="team" onSaved={() => { setShowNew(false); load(); }} />}
       <div className="flex flex-wrap items-center gap-2">
         <label className="lbl mb-0">Person</label>
