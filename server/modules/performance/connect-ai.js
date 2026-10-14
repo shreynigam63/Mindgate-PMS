@@ -15,6 +15,7 @@
 const db = require('../../core/db');
 const logger = require('../../core/logger');
 const { narrate } = require('../../core/ai');
+const { activeCycle } = require('./active-cycle');
 
 const SORT = `You sort the notes of a 1-on-1 connect (a conversation between an employee
 and their manager or a colleague) into three parts:
@@ -89,10 +90,12 @@ async function trainingFor(tenantId, employeeId, requestedBy) {
   if (!connects.length) {
     throw Object.assign(new Error(`No connects are logged for ${emp.name} yet. Training suggestions come from what was discussed in them.`), { status: 422 });
   }
-  const kras = (await db.query(
-    `SELECT k.title FROM pms.kras k JOIN pms.kra_sheets s ON s.id=k.sheet_id JOIN pms.cycles c ON c.id=s.cycle_id
-      WHERE s.tenant_id=$1 AND s.employee_id=$2 AND c.phase NOT IN ('closed','cancelled')
-      ORDER BY c.created_at DESC, k.sort_order LIMIT 12`, [tenantId, employeeId])).rows.map((r) => r.title);
+  // Their KRAs in the cycle that is live — the shared rule for which that is.
+  const cycle = await activeCycle(tenantId);
+  const kras = cycle ? (await db.query(
+    `SELECT k.title FROM pms.kras k JOIN pms.kra_sheets s ON s.id=k.sheet_id
+      WHERE s.tenant_id=$1 AND s.employee_id=$2 AND s.cycle_id=$3 ORDER BY k.sort_order LIMIT 12`,
+    [tenantId, employeeId, cycle.id])).rows.map((r) => r.title) : [];
   const out = await narrate({
     tenantId, kind: 'connect_training', ref: { employee_id: employeeId }, requestedBy, maxTokens: 1500, system: TRAINING,
     input: {
