@@ -272,7 +272,14 @@ function CalRow({ r, reload, scale, ts, nineBox, onOverride }) {
   return (
     <>
       <tr className={wasAdjusted ? 'bg-amber-50/40' : ''}>
-        <td className="px-3 py-2 font-semibold">{r.name}</td>
+        <td className="px-3 py-2 font-semibold">{r.name}
+          {/* Super 50 tier and its fast-track promotion flag (15 Oct). */}
+          {r.super50 && (
+            <span className="ml-1.5 chip bg-violet-100 text-violet-700 whitespace-nowrap" title={r.super50.fast_track ? 'Fast-track promotion under the Super 50 benefits' : undefined}>
+              {r.super50.label}{r.super50.fast_track ? ' · fast-track' : ''}
+            </span>
+          )}
+        </td>
         <td className="px-3 py-2">{r.department || '—'}</td>
         <td className="px-3 py-2 text-right font-mono"><Grade value={r.manager_rating} scale={scale} /></td>
         <td className="px-3 py-2 text-right font-mono"><Grade value={r.hod_rating} scale={scale} /></td>

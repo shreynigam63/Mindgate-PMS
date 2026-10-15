@@ -96,6 +96,8 @@ async function main() {
   await require('./migrations/089-nine-box').ensureNineBoxPages(db, TENANT_ID);
   // Team Connects in the Manager, HOD, HRBP and HR tabs.
   await require('./migrations/093-team-connects').ensureTeamConnectPages(db, TENANT_ID);
+  // My Super 50 in Self, and HR's Super 50 Benefits.
+  await require('./migrations/095-super50-benefits').ensureSuper50Pages(db, TENANT_ID);
 
   const app = express();
   app.use(cors());
@@ -225,6 +227,10 @@ async function main() {
   // reminders. Every five minutes, because the reminder is minute-bound;
   // each step is guarded by its own column, so a re-run sends nothing twice.
   require('./modules/performance/mom').startScheduler(TENANT_ID);
+
+  // Super 50 benefits: closes a benefits year once it ends, and reminds
+  // everyone with money left before it lapses (super50-benefits.js).
+  require('./modules/performance/super50-benefits').startScheduler(TENANT_ID);
 }
 
 main().catch(e => { logger.error('boot failed', { error: e.message }); process.exit(1); });

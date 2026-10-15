@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useSearchParams } from 'react-router-dom';
 import { api } from '../utils/api';
 import { wallToIso, isoToWall, showAt, endOfEvent } from '../utils/zone';
 import PageHead from '../PageHead';
@@ -30,7 +30,10 @@ export default function EventsAdminPage() {
   const [csr, setCsr] = useState(null);
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
-  const [ev, setEv] = useState(BLANK_EVENT);
+  // Opened from another page with an event to plan (Super 50 Benefits →
+  // Plan the felicitation): the form starts filled in, nothing is saved.
+  const [params] = useSearchParams();
+  const [ev, setEv] = useState(() => ({ ...BLANK_EVENT, title: params.get('title') || '', description: params.get('description') || '' }));
   const [evId, setEvId] = useState(null);       // the event being edited, or null for a new one
   const [c, setC] = useState(BLANK_CSR);
   const [cId, setCId] = useState(null);

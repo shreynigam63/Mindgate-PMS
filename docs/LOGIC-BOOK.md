@@ -1162,6 +1162,32 @@ Built to the client's "MoM Tab – PMS Build Specification" (14 Oct). Connects p
 
 **HOD Review — three tabs.** *Review queue* as before. *Team analysis*: the Delivery Head's reporting line — the whole team, the direct reportees, then each manager's team — with KRAs approved, self-appraisals, manager evaluations and the HOD's own reviews submitted, and the ratings (the HOD's where submitted, else the manager's submitted one) as an average and a distribution by grade; open any group for the people. *9-Box Grid (my team)*: the 9-box of that reporting line only, not every employee of the departments they head. The HOD menu's 9-Box Grid opens this tab.
 
+## 3.18 Super 50 benefits
+
+What being Super 50 brings, from the client's policy sheet (15 Oct). Who is Super 50 in a year is §3.9; this section is the benefits year built on it.
+
+**The benefits year.** One per appraisal: *Super 50 benefits 2026-27* is based on the **FY25-26** annual appraisal and runs **1 Jul 2026 – 30 Jun 2027**. HR creates it from the policy sheet on HR → Super 50 Benefits and can change anything on it: dates, tiers, amounts, benefits, entitlements and hubs.
+
+**Tiers, by consecutive years.** A year counts when the Super 50 rule held for it, judged on the ratings up to that year — published cycles and imported pre-PMS years alike. The run ends at the first year that did not qualify or has no rating.
+
+| Consecutive years | Tier | Amount | Beyond the celebration, felicitation and fast-track promotion |
+|---|---|---|---|
+| 1 | Super 50 | ₹30,000 | — |
+| 2 | Super 50 Twice | ₹30,000 | single-punch full attendance; 10 days EL mandatory; an IIT/IIM programme from the catalogue |
+| 3 or more | Super 50 Elite | ₹50,000 | single-punch full attendance; 10 days EL mandatory; IIT/IIM 2-day refresher; 125% of last year's variable |
+
+The higher tier replaces the lower: each person holds one tier, and one amount. Example: A+ in FY25-26, FY24-25 and FY23-24 over A in the two years before — each of those three years qualified, so **Elite**. A+ this year but A last year — last year did not qualify, so the run is one: **Super 50**.
+
+**When tiers are set.** When HR publishes the annual cycle the benefits year is based on, and whenever HR presses *Set the tiers now*. A new or higher tier is told to the person in the app and by email. Someone who no longer qualifies (a corrected rating) loses the tier — unless a claim of theirs is already approved, which HR decides. A run that awards nobody says why (the rule's grades are not on the annual scale; nobody has a rating for the year).
+
+**One budget, claimed against bills.** The certification amount and the hub reimbursements are the same money. A claim names its hub — Knowledge (books, library), Health (gym, sports club), Personal (hobby membership), Tech (Claude certification, mobile, laptop) — the amount, and the bill (PDF, JPG, PNG or WEBP, up to 5 MB). It cannot be more than what is left after approved claims **and those still waiting on HR**. No cap per item.
+
+**HR alone decides.** Approve, or return with a reason the employee sees. Approving re-checks the limit. Nobody decides their own claim. The employee can withdraw a claim while it waits.
+
+**The lapse.** Claims are taken only between the year's dates. What is not claimed by the end date lapses. A reminder goes out once, 30 days before (HR can change the days), to everyone with money left; the year closes itself the day after it ends.
+
+**Other benefits.** *Entitlements* (Excel): tier, consecutive years, amount, approved, waiting, left, single punch, mandatory EL days, fast-track, programme — and the variable % only for someone who may see pay. *Approved claims* (Excel) for finance, with a total. Calibration shows each person's tier and fast-track flag beside their name. Twice and Elite pick their IIT/IIM programme on My Super 50 from HR's catalogue; HR marks it completed. Every awardee downloads a certificate; HR plans the felicitation in Events & CSR from the page (the form opens filled in).
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |
@@ -1176,6 +1202,7 @@ Built to the client's "MoM Tab – PMS Build Specification" (14 Oct). Connects p
 | HRBP remits | `core.hrbp_scope` |
 | Department heads | `core.department_heads` (HR → HOD) |
 | Super 50 rule, KRA Library scope | HR → Settings |
+| Super 50 benefits: dates, tiers, amounts, benefits, hubs, IIT/IIM catalogue | HR → Super 50 Benefits → `pms.super50_policies`, `pms.super50_programmes` |
 | Timesheet calendar (cycle start day, holidays, compliance thresholds) | HR → Timesheet → Settings |
 | Timesheet KRA rating bands, hours per day, indicative threshold | HR → Timesheet → Settings → KRA rating from the timesheet |
 | Which KRA a work item serves; KRAs not measured from timesheets | Manager → Timesheet (mapping), HR mapping backlog |

@@ -143,6 +143,10 @@ const SELF_SERVICE = {
     ['PUT', '/nine-box/actions/:id'],
     // HOD Review → Team analysis: the HRBP's own reporting line as a HOD.
     ['GET', '/hod/team/analysis'],
+    // My Super 50: the caller's own tier, claims, bills, programme and
+    // certificate. Every handler reads req.user only.
+    ['GET', '/super50/me'], ['POST', '/super50/me/claims'], ['POST', '/super50/me/claims/:id/withdraw'],
+    ['GET', '/super50/me/claims/:id/bill'], ['POST', '/super50/me/programme'], ['GET', '/super50/me/certificate.pdf'],
     // The MoM tab (mom.js): the HRBP's own daily connects, minutes and
     // action items, on what they hold. Nothing is lent here, so an HRBP
     // without pms_admin sees their own team, not every team.

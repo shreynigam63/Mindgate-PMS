@@ -4579,6 +4579,12 @@ router.get('/calibration', async (req, res) => {
     }
     const dist = {};
     for (const r of rows) { const k = r.proposed == null ? 'unrated' : String(Math.round(r.proposed)); dist[k] = (dist[k] || 0) + 1; }
+    // The Super 50 tier and its fast-track promotion flag (15 Oct), for
+    // the room to see. Context only, like the timesheet below.
+    try {
+      const tiers = await super50Benefits.tiersNow(T(req));
+      for (const r of rows) r.super50 = tiers.get(r.employee_id) || null;
+    } catch (e) { logger.warn('calibration super50 tiers unavailable', { error: e.message }); }
 
     // ---- the timesheet rollup, as CONTEXT ONLY (phase 4, 29 Sep) ------
     //
@@ -5041,6 +5047,10 @@ router.use('/mom', require('./mom').router);
 // HOD Review → Team analysis: the Delivery Head's reporting line (15 Oct).
 router.use('/hod/team', require('./hod-team').router);
 
+// Super 50 benefits: tiers, the benefits table, claims (15 Oct).
+const super50Benefits = require('./super50-benefits');
+router.use('/super50', super50Benefits.router);
+
 // The cell HR typed by hand. A placement now comes from the scores, and
 // HR moves it only by overriding one band with a reason (POST
 // /nine-box/override); a typed cell had neither a reason nor an audit
@@ -5165,6 +5175,16 @@ router.post('/publish', async (req, res) => {
       pipsOpened += nine.pips_opened;
       failures.push(...nine.failures);
     }
+    // Super 50 benefits: the tiers of the benefits year based on this
+    // appraisal, set and told to each person (super50-benefits.js). Its
+    // failure is reported, never allowed to undo the publish.
+    let super50Benefits_ = null;
+    if (annual) {
+      try { super50Benefits_ = await super50Benefits.afterAnnualPublish(req, c); } catch (e) {
+        logger.error('super50 tiers after publish failed', { error: e.message });
+        super50Benefits_ = { error: 'The Super 50 tiers could not be set. Set them on Super 50 Benefits.' };
+      }
+    }
     const nineSummary = nine && {
       placed: nine.placed, not_placed: nine.not_placed, by_box: nine.by_box, not_placed_by_reason: nine.not_placed_by_reason,
       actions_created: nine.actions_created, actions_superseded: nine.actions_superseded,
@@ -5174,7 +5194,8 @@ router.post('/publish', async (req, res) => {
     await audit(req, 'CYCLE_PUBLISHED', c.id, null, { published, failed: failures.length, pips_opened: pipsOpened, super50_flagged: super50Flagged,
       ...(nineSummary ? { nine_box: nineSummary } : {}) });
     res.json({ ok: true, published, pips_opened: pipsOpened, super50_flagged: super50Flagged, failures,
-      ...(nineSummary ? { nine_box: nineSummary } : {}) });
+      ...(nineSummary ? { nine_box: nineSummary } : {}),
+      ...(super50Benefits_ ? { super50_benefits: super50Benefits_ } : {}) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

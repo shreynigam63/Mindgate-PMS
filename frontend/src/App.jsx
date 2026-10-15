@@ -37,6 +37,8 @@ import TeamOverviewPage from './pages/TeamOverviewPage';
 import PIPPage from './pages/PIPPage';
 import HodCompetenciesPage from './pages/HodCompetenciesPage';
 import WatchlistPage from './pages/WatchlistPage';
+import MySuper50Page from './pages/MySuper50Page';
+import Super50BenefitsPage from './pages/Super50BenefitsPage';
 import NotificationBell from './pages/NotificationBell';
 import NineBoxPage from './pages/NineBoxPage';
 import MyGrowthPage, { TeamGrowthPage } from './pages/MyGrowthPage';
@@ -101,6 +103,9 @@ const NAV = [
     { to: '/my/rating', label: 'My Rating', icon: Star, gate: 'rating',
       gateHint: 'Your rating appears here once HR publishes your appraisal' },
     { to: '/my/history', label: 'Past Cycles', icon: History },
+    // Super 50 benefits (15 Oct): only for someone who holds a tier this
+    // year, so it is hidden, not greyed, for everybody else.
+    { to: '/my/super50', label: 'My Super 50', icon: Award, gate: 'super50', hideWhenClosed: true },
     // MOVED OUT OF THE TEAM GROUP on 23 Sep, asked for directly: an
     // employee should not see a Team tab at all. This page was the only
     // thing left in it for them, because it is deliberately public — it
@@ -253,6 +258,7 @@ const NAV = [
     // its /agentic/parameter-analysis routes and every analysis already
     // stored are untouched; only the way in is gone.
     { to: '/admin/watchlist', label: 'Super 50', icon: Award },
+    { to: '/admin/super50-benefits', label: 'Super 50 Benefits', icon: Award },
     // The admin half of Engagement — see the Self group for the split.
     { to: '/admin/engagement', label: 'Engagement Surveys', icon: HeartHandshake },
     { to: '/admin/engagement-insights', label: 'New Hire Insights', icon: HeartHandshake },
@@ -293,6 +299,9 @@ const mayOpen = (user, route) => !user.pages || user.pages.includes(route);
 // it to protect, since the page shows only your own data and the API
 // guards itself.
 const gateClosed = (item, gates) => !!item.gate && gates[item.gate] === false;
+// An entry that is not for everyone (My Super 50) is hidden until its gate
+// says it is open, rather than shown greyed to the many it never applies to.
+const gateHidden = (item, gates) => !!item.hideWhenClosed && gates[item.gate] !== true;
 
 // THE SHELL, rebuilt on 6 Oct to the reference the client sent ("current
 // UI seems bit dull for working, please build exact UI as shown"): a
@@ -472,7 +481,7 @@ function Sidebar({ user, groups, gates, mobileOpen, onClose }) {
             </NavLink>
           )}
           {groups.map(g => {
-            const items = g.items.filter(it => it.to !== '/home');
+            const items = g.items.filter(it => it.to !== '/home' && !gateHidden(it, gates));
             if (!items.length) return null;
             const isOpen = openGroups.has(g.group);
             return (
@@ -591,6 +600,7 @@ function Main({ user }) {
               <Route path="/team/growth" element={<TeamGrowthPage />} />
               <Route path="/my/annual-review" element={<AnnualReviewPage />} />
               <Route path="/my/history" element={<HistoryPage />} />
+              <Route path="/my/super50" element={<MySuper50Page />} />
               <Route path="/my/competencies" element={<MyCompetenciesPage />} />
               <Route path="/team/competencies" element={<TeamCompetenciesPage />} />
               <Route path="/admin/competencies" element={<CompetencyFrameworkPage />} />
@@ -651,6 +661,7 @@ function Main({ user }) {
               <Route path="/admin/kra-library" element={<RequireRole user={user} roles={['admin', 'hr']}><KraLibraryPage /></RequireRole>} />
               <Route path="/admin/closure-letters" element={<ClosureLettersPage />} />
               <Route path="/admin/watchlist" element={<WatchlistPage />} />
+              <Route path="/admin/super50-benefits" element={<Super50BenefitsPage />} />
               <Route path="/admin/nine-box" element={<NineBoxPage key="company" view="company" />} />
               <Route path="/hod/nine-box" element={<Navigate to="/hod?tab=nine-box" replace />} />
               <Route path="/team/nine-box" element={<NineBoxPage key="team" view="team" />} />
@@ -798,6 +809,9 @@ export default function App() {
     api('/pms/my/rating/status')
       .then(r => setGates(g => ({ ...g, rating: !!r.has_published })))
       .catch(() => setGates(g => ({ ...g, rating: true })));
+    api('/pms/super50/me')
+      .then(r => setGates(g => ({ ...g, super50: !!r.award })))
+      .catch(() => setGates(g => ({ ...g, super50: false })));
   }, [user && user.id]);
   if (!checked) return null;
   if (!user) return <Login onUser={loadMe} />;
