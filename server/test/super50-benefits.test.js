@@ -2,6 +2,9 @@
 // the one budget, claims decided by HR alone, the lapse, the exports and
 // the certificate. The pure rules run without a database; the rest runs
 // against real Postgres and skips cleanly without DATABASE_URL.
+// Before anything loads core/auth, which reads the secret once at load.
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-s50b';
+process.env.AUTH_DEV = 'true';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const {
@@ -77,8 +80,6 @@ const ids = {};
 
 before(async () => {
   if (!HAS_DB) return;
-  process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-s50b';
-  process.env.AUTH_DEV = 'true';
   db = require('../core/db');
   const bcrypt = require('bcryptjs');
   const express = require('express');
