@@ -5877,6 +5877,12 @@ router.post('/connects', async (req, res) => {
       }
     } else {
       if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
+      // Only with someone a Team Connects tab of theirs holds (15 Oct): a
+      // manager's report, anyone on a Delivery Head's reporting line, an
+      // HRBP's remit, anyone for HR.
+      if (!(await mayReadTeam(req, employee_id))) {
+        return res.status(403).json({ error: 'You can log a connect only with someone in your team.' });
+      }
       managerId = req.user.id;
     }
 

@@ -100,7 +100,6 @@ export function TeamConnectsPage({ scope = 'manager' }) {
   const [err, setErr] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [me, setMe] = useState(null);
-  const [team, setTeam] = useState(null);
   const [person, setPerson] = useState('');
   const [teamInfo, setTeamInfo] = useState(null);
   const load = () => api(`/pms/connects?view=team&scope=${scope}`).then(r => { setData(r.connects); setTeamInfo(r.team || null); }).catch(e => setErr(e.message));
@@ -108,7 +107,6 @@ export function TeamConnectsPage({ scope = 'manager' }) {
     setData(null); setErr(null); setPerson('');
     load();
     api('/me').then(r => setMe(r.user)).catch(() => setMe(null));
-    if (scope === 'manager') api('/pms/team/evaluations').then(r => setTeam(r.team || [])).catch(() => setTeam([]));
   }, [scope]);
 
   if (tab === 'mom') return <MomTab tabs={tabs} title="Team Connects" hue="lagoon" />;
@@ -127,6 +125,9 @@ export function TeamConnectsPage({ scope = 'manager' }) {
   const people = (teamInfo && !teamInfo.all ? teamInfo.people.map((p) => [p.id, p.name])
     : [...new Map(data.map((cn) => [cn.employee_id, cn.employee_name])).entries()]).sort((a, b) => a[1].localeCompare(b[1]));
   const teamSize = teamInfo ? teamInfo.size : people.length;
+  // A connect with someone in the team (15 Oct): a manager with a report,
+  // a Delivery Head with anyone on their reporting line, HR with anyone.
+  const canLog = ['manager', 'hod', 'hr'].includes(scope) && (scope === 'hr' || teamSize > 0);
   const pendingCount = data.filter(cn => !cn.signed_off && me && cn.manager_id === me.id).length;
   const shown = data.filter((cn) => (!person || cn.employee_id === person)
     && matches(q, cn.employee_name, cn.manager_name, cn.topic, cn.notes, cn.discussion_notes, cn.achievements, cn.blockers, cn.feedback));
@@ -135,12 +136,13 @@ export function TeamConnectsPage({ scope = 'manager' }) {
     <div className="space-y-4 max-w-3xl mx-auto">
       <PageHead title="Team Connects" hue="lagoon" sub={SCOPE_SUB[scope]}>
         {pendingCount > 0 && <span className="chip bg-amber-100 text-amber-700">{pendingCount} awaiting your sign-off</span>}
-        {scope === 'manager' && team && team.length > 0 && (
+        {canLog && (
           <button className="btn-pri" onClick={() => setShowNew(v => !v)}><Plus size={13} className="inline mr-1" />Log a connect</button>
         )}
       </PageHead>
       {tabs}
-      {showNew && <NewConnectForm me={me} team={team} mode="team" onSaved={() => { setShowNew(false); load(); }} />}
+      {showNew && <NewConnectForm me={me} mode="team" anyone={scope === 'hr'} team={teamInfo && !teamInfo.all ? teamInfo.people : null}
+        onSaved={() => { setShowNew(false); load(); }} />}
       <div className="flex flex-wrap items-center gap-2">
         <label className="lbl mb-0">Person</label>
         <select className="inp w-auto" value={person} onChange={(e) => setPerson(e.target.value)} disabled={!people.length}>
@@ -211,7 +213,7 @@ function TrainingPanel({ employeeId, label }) {
   );
 }
 
-function NewConnectForm({ me, team, mode = 'self', onSaved }) {
+function NewConnectForm({ me, team, mode = 'self', anyone = false, onSaved }) {
   const [employeeId, setEmployeeId] = useState('');
   const [heldAt, setHeldAt] = useState(new Date().toISOString().slice(0, 10));
   const [durationMin, setDurationMin] = useState('30');
@@ -307,14 +309,12 @@ function NewConnectForm({ me, team, mode = 'self', onSaved }) {
     <div className="card p-4 space-y-3">
       <div className="grid sm:grid-cols-3 gap-2">
         <div>
-          <label className="lbl">Whose connect</label>
+          <label className="lbl">{mode === 'self' ? 'Whose connect' : 'Team member'}</label>
           {mode === 'self' ? (
             <p className="inp bg-navy-50 text-navy-500">Myself{me ? ` (${me.name})` : ''}</p>
           ) : (
-            <select className="inp" value={employeeId} onChange={e => setEmployeeId(e.target.value)}>
-              <option value="">Select a report…</option>
-              {(team || []).map(t => <option key={t.employee_id} value={t.employee_id}>{t.name}</option>)}
-            </select>
+            <PersonPicker value={employeeId} onChange={setEmployeeId}
+              people={anyone ? ((people && people.people) || []) : (team || []).map((t) => ({ id: t.id || t.employee_id, name: t.name, designation: t.designation, department: t.department }))} />
           )}
         </div>
         <div>

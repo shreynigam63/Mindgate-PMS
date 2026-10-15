@@ -193,6 +193,18 @@ test('Team Connects: the HOD sees the whole reporting line, the HRBP the remit, 
   assert.ok(b1 && out);
 });
 
+test('Log a connect from Team Connects: the manager with a report, the HOD down the line, HR with anyone', { skip }, async () => {
+  let r = await call('POST', '/pms/connects', 'hod', { employee_id: id.a1, held_at: '2026-10-15', discussion_notes: 'Skip-level chat', achievements: 'x' });
+  assert.strictEqual(r.status, 200, 'two levels down is the HOD\'s');
+  r = await call('POST', '/pms/connects', 'hr', { employee_id: id.out, held_at: '2026-10-15', discussion_notes: 'Check-in', achievements: 'x' });
+  assert.strictEqual(r.status, 200, 'HR with anyone');
+  r = await call('POST', '/pms/connects', 'mgr', { employee_id: id.b1, held_at: '2026-10-15', discussion_notes: 'Not mine', achievements: 'x' });
+  assert.strictEqual(r.status, 403);
+  assert.match(r.body.error, /only with someone in your team/);
+  r = await call('POST', '/pms/connects', 'mgr', { employee_id: id.a2, held_at: '2026-10-15', discussion_notes: 'Mine', achievements: 'x' });
+  assert.strictEqual(r.status, 200);
+});
+
 test('training suggestions come from the person\'s connects, for them or whoever looks after them', { skip }, async () => {
   aiReply = { themes: ['Unstable staging environment'], trainings: [
     { title: 'SQL for analysts', type: 'course', why: 'Asked for in the 12 Oct connect', from: ['2026-10-12', 'soon'], priority: 'high' },
@@ -205,7 +217,7 @@ test('training suggestions come from the person\'s connects, for them or whoever
     ['SQL for analysts', 'course', 'high', ['2026-10-12']],
     ['Pairing with a senior on PR reviews', 'course', 'medium', []],
   ]);
-  assert.ok(r.body.connects_used === 2, 'both of A1\'s connects');
+  assert.ok(r.body.connects_used === 3, 'all three of A1\'s connects, the HOD\'s included');
   const input = aiCalls[aiCalls.length - 1].messages[0].content;
   assert.match(input, /Take an SQL course/);
   assert.match(aiCalls[aiCalls.length - 1].system, /Never rate or judge/);
