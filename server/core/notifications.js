@@ -36,8 +36,8 @@ async function emailNotification(tenantId, employeeId, kind, title, body, link) 
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#101f3d">
     <p style="font-size:16px;font-weight:bold;margin:0 0 8px">${esc(title)}</p>
     ${body ? `<p style="margin:0 0 12px;color:#2c4b7c">${esc(body)}</p>` : ''}
-    ${url ? `<p style="margin:0 0 12px"><a href="${esc(url)}" style="color:#1b3b6f;font-weight:bold">Open it in the Performance Management System</a></p>` : ''}
-    <p style="margin:16px 0 0;font-size:12px;color:#7d95bb">Sent by the Performance Management System. You are receiving this because it is waiting on you.</p>
+    ${url ? `<p style="margin:0 0 12px"><a href="${esc(url)}" style="color:#1b3b6f;font-weight:bold">Open it in Agentic PMS</a></p>` : ''}
+    <p style="margin:16px 0 0;font-size:12px;color:#7d95bb">Sent by Agentic PMS. You are receiving this because it is waiting on you.</p>
   </div>`;
   await sendMail(tenantId, { to: to.email, subject: title, html, kind });
 }

@@ -39,7 +39,7 @@ async function smtpConfig(tenantId) {
 // HOW mail leaves: 'google' (Gmail API, sending as each person — see
 // core/gmail.js) or 'smtp' (one mailbox, above). Chosen on HR → Settings
 // → Email; an instance that never chose keeps SMTP, as before.
-const DEFAULT_SENDER_NAME = 'Performance Management System';
+const DEFAULT_SENDER_NAME = 'Agentic PMS';
 const addrOf = (s) => { const m = String(s || '').match(/<([^>]+)>/); return (m ? m[1] : String(s || '')).trim().toLowerCase(); };
 
 async function transportConfig(tenantId) {

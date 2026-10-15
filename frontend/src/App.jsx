@@ -325,19 +325,15 @@ const visibleGroups = (user) => NAV
 const groupOf = (groups, pathname) =>
   groups.find(g => g.items.some(it => it.to !== '/home' && (pathname === it.to || pathname.startsWith(it.to + '/'))));
 
-// THE PRODUCT'S NAME, not the client's. The reference drew a Mindgate
-// logo here with "People Management System" beside it; on 6 Oct the
-// client asked for it to read "Performance Management System and not
-// Mindgate". One name, so the separate subtitle went with the logo.
-// The four coloured dots of the reference stay as a small mark — they
-// were the drawing's, not a trademark — and a phone shows "PMS", because
-// the full name and the bell, help and account icons do not fit 390px.
+// THE PRODUCT'S NAME, not the client's: "Agentic PMS" (15 Oct; it read
+// "Performance Management System" from 6 Oct). Short enough for a phone's
+// top bar beside the bell, help and account icons. The four coloured dots
+// of the reference stay as a small mark.
 function Wordmark() {
   return (
-    <span className="wordmark" aria-label="Performance Management System">
+    <span className="wordmark" aria-label="Agentic PMS">
       <span className="wordmark-mark" aria-hidden="true"><i /><i /><i /><i /></span>
-      <span className="hidden sm:inline">Performance Management System</span>
-      <span className="sm:hidden">PMS</span>
+      <span>Agentic PMS</span>
     </span>
   );
 }
@@ -578,7 +574,7 @@ function Main({ user }) {
   const blocked = known && !mayOpen(user, known);
   return (
     <main className="flex-1 min-w-0 p-4 lg:p-6 w-full">
-      <div className="max-w-[1500px] mx-auto">
+      <div className="page-frame max-w-[1500px] mx-auto">
       {blocked ? <NoAccess /> : (
             <Routes>
               <Route path="/" element={<Navigate to="/home" replace />} />

@@ -67,7 +67,7 @@ async function forgotPassword(req, res) {
         await sendMail(tenantId, {
           to: email, kind: 'password_reset', subject: 'Your PMS password reset code',
           html: `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#101f3d">
-            <p>Someone asked to reset the password for ${esc(email)} on the Performance Management System.</p>
+            <p>Someone asked to reset the password for ${esc(email)} on Agentic PMS.</p>
             <p style="font-size:22px;font-weight:bold;letter-spacing:4px;margin:12px 0">${code}</p>
             <p>Enter this code on the sign-in page under <b>Forgot password?</b> It works for ${LIFE_MINUTES} minutes, once.</p>
             ${site ? `<p><a href="${esc(site)}/" style="color:#1b3b6f;font-weight:bold">Open the sign-in page</a></p>` : ''}

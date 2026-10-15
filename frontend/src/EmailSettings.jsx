@@ -31,7 +31,7 @@ const PROVIDERS = {
   },
   other: { label: 'Other', sub: 'Any mail server', note: 'Enter the mail server details from IT under Advanced.' },
 };
-const DEFAULT_NAME = 'Performance Management System';
+const DEFAULT_NAME = 'Agentic PMS';
 const EMAIL = /^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$/;
 
 const STAGE = {

@@ -86,6 +86,25 @@ body {
 .hero .btn-sec { background: rgba(255, 255, 255, 0.16); color: #fff; border-color: rgba(255, 255, 255, 0.35); }
 .hero .btn-pri { background: #fff; color: theme('colors.brand.600'); }
 
+/* ---- the page band, as the Dashboard's greeting (15 Oct) --------------
+   Light, with a dark title and the same summit drawing, on every page. */
+.pagehead { @apply relative overflow-hidden rounded-2xl px-5 py-4 flex items-center justify-between gap-4 w-full;
+  min-height: 84px;
+  background: linear-gradient(100deg, #f4f1ff 0%, #eaf0ff 45%, #e6efff 70%, #fdeee8 100%);
+  border: 1px solid #e5e9f7; }
+.pagehead > * { position: relative; z-index: 1; }
+.pagehead .pagehead-art { position: absolute; z-index: 0; bottom: 0; right: 36%; height: 80px; width: 210px; }
+@media (max-width: 1279px) { .pagehead .pagehead-art { right: 0; opacity: .35; } }
+@media (max-width: 767px) { .pagehead .pagehead-art { display: none; } }
+.pagehead h2 { @apply text-[22px] font-extrabold leading-tight; color: #13235a; }
+.pagehead-sub { @apply text-[13px] mt-0.5 text-navy-600; }
+
+/* ---- every page as wide as the Dashboard (15 Oct) ----------------------
+   Pages set their own max-w-*xl mx-auto, which centred them in a narrow
+   column beside a full-width Dashboard. The page's own outer box is let out
+   to the frame's width; anything inside keeps its limits. */
+.page-frame > [class*="max-w-"] { max-width: none; margin-left: 0; margin-right: 0; }
+
 /* ---- stat tiles ---------------------------------------------------------
    Filled rather than white, so a row of counts reads as a row of counts. */
 .tile { @apply rounded-xl px-4 py-3 flex items-center gap-3 text-white; box-shadow: 0 8px 20px -12px rgba(16, 31, 61, 0.6); }

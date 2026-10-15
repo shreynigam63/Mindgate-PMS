@@ -2463,11 +2463,11 @@ router.post('/hr/mail/test', async (req, res) => {
     const { transportConfig, deliver, explain, sendMode, ensureLogTable } = require('../../core/mail');
     const cfg = await transportConfig(T(req));
     const to = req.user.email;
-    const subject = 'Performance Management System — test email';
+    const subject = 'Agentic PMS — test email';
     let detail = null;
     try {
       await deliver(cfg, { to, subject,
-        html: '<p>This is a test email from the Performance Management System. If you are reading it, email is working.</p>' });
+        html: '<p>This is a test email from Agentic PMS. If you are reading it, email is working.</p>' });
     } catch (e) { detail = e.message; logger.warn('mail test failed', { error: e.message }); }
     const ok = !detail;
     const at = new Date().toISOString();

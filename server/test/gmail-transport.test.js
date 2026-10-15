@@ -141,7 +141,7 @@ test('HR connects Google Workspace: the key is never shown back, the test goes f
   const t = await req('POST', '/pms/hr/mail/test');
   assert.equal(t.body.outcome, 'sent', t.text);
   assert.equal(sent[0].as, 'hr@mg.x');
-  assert.match(sent[0].raw, /^From: Performance Management System <hr@mg\.x>/m);
+  assert.match(sent[0].raw, /^From: Agentic PMS <hr@mg\.x>/m);
   assert.equal((await req('PUT', '/pms/hr/mail', { mode: 'live' })).body.stage, 'live');
 
   // Live, a product email from a SPOC goes from that SPOC's own Gmail.

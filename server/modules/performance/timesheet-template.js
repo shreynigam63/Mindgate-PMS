@@ -112,7 +112,7 @@ const colNum = (letters) => letters.split('').reduce((n, ch) => n * 26 + (ch.cha
  */
 function buildTimesheetTemplate(who = {}) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Performance Management System';
+  wb.creator = 'Agentic PMS';
   const ws = wb.addWorksheet('Main');
 
   // Rows 1–5: the export's metadata block, label in A and value in B.
