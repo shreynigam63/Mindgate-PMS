@@ -160,6 +160,7 @@ const SELF_SERVICE = {
     ['POST', '/mom/meetings/:id/recording/start'], ['PUT', '/mom/meetings/:id/recording/:u/chunks/:n'],
     ['POST', '/mom/meetings/:id/recording/:u/finish'], ['DELETE', '/mom/meetings/:id/recording/:u'],
     ['GET', '/mom/meetings/:id/recording'], ['POST', '/mom/meetings/:id/transcript'], ['POST', '/mom/meetings/:id/redraft'],
+    ['POST', '/mom/meetings/:id/suggestion/discard'],
   ],
   '/api/v1/agentic': [
     ['POST', '/kra-suggest'], ['POST', '/devplan-suggest'], ['POST', '/career-suggest'], ['POST', '/career-plan'],

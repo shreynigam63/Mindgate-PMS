@@ -371,8 +371,40 @@ test('the Google Meet transcript is uploaded and the AI drafts the MoM for the o
   assert.strictEqual(r.status, 200);
   assert.strictEqual(await mails('mom_published'), 2, 'both attendees are emailed');
   assert.strictEqual(await mails('mom_action_assigned'), 2);
+  // A published MoM redone with AI (15 Oct): the draft waits beside it and
+  // nothing changes until the organiser saves.
+  const ready = async () => {
+    for (let i = 0; i < 200; i++) {
+      const g = await get(`/pms/mom/meetings/${meeting.d1}`, 'mgr');
+      if (!g.body.suggestion || g.body.suggestion.status !== 'processing') return g;
+      await new Promise((ok) => setTimeout(ok, 25));
+    }
+    throw new Error('suggestion still processing');
+  };
   r = await call('POST', `/pms/mom/meetings/${meeting.d1}/transcript`, 'mgr', { text: TRANSCRIPT, replace: true });
-  assert.strictEqual(r.status, 409, 'published: no more drafts');
+  assert.strictEqual(r.status, 202, JSON.stringify(r.body));
+  assert.strictEqual(r.body.for, 'published_mom');
+  let g = await ready();
+  assert.strictEqual(g.body.suggestion.status, 'ready');
+  assert.match(g.body.suggestion.value.summary, /Discussed:/);
+  assert.strictEqual(g.body.meeting.status, 'published', 'the published MoM itself is untouched');
+  assert.strictEqual(g.body.can_transcript, true);
+  assert.strictEqual((await call('POST', `/pms/mom/meetings/${meeting.d1}/suggestion/discard`, 'a1', {})).status, 403);
+  const kept = g.body.action_items.map((a) => ({ id: a.id, task: a.task, owner_id: a.owner_id, due_date: a.due_date, priority: a.priority }));
+  r = await call('POST', `/pms/mom/meetings/${meeting.d1}/revise`, 'mgr',
+    { summary: `${g.body.suggestion.value.summary}\nChecked by the organiser.`, attendance: g.body.minutes.attendance, action_items: kept });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  g = await get(`/pms/mom/meetings/${meeting.d1}`, 'mgr');
+  assert.strictEqual(g.body.suggestion, null, 'saved, the draft is used up');
+  assert.match(g.body.minutes.notes, /Checked by the organiser/);
+  // Drafted again and set aside: the MoM stays as saved.
+  assert.strictEqual((await call('POST', `/pms/mom/meetings/${meeting.d1}/redraft`, 'mgr', {})).status, 202);
+  g = await ready();
+  assert.strictEqual(g.body.suggestion.status, 'ready');
+  assert.strictEqual((await call('POST', `/pms/mom/meetings/${meeting.d1}/suggestion/discard`, 'mgr', {})).status, 200);
+  g = await get(`/pms/mom/meetings/${meeting.d1}`, 'mgr');
+  assert.strictEqual(g.body.suggestion, null);
+  assert.match(g.body.minutes.notes, /Checked by the organiser/);
 });
 
 test('an AI failure is reported and can be tried again; a .docx transcript works; no PMS notice is needed for it', { skip }, async () => {
@@ -397,7 +429,7 @@ test('an AI failure is reported and can be tried again; a .docx transcript works
     'the open items of the previous MoM go with the transcript');
   assert.strictEqual(r.body.minutes.ai_notes.carried_hints.length, 1);
   assert.strictEqual(r.body.carried_forward.length, 2);
-  assert.match((await notesSoon('mgr', 'mom_draft_ready', 2))[1].body, /Low confidence/);
+  assert.ok((await notesSoon('mgr', 'mom_draft_ready', 4)).some((n) => /Low confidence/.test(n.body)), 'the low-confidence draft says so');
 
   const JSZip = require('jszip');
   const zip = new JSZip();

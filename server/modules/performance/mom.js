@@ -336,6 +336,11 @@ async function tick(t, now = new Date()) {
     }
   }
 
+  // A published MoM's AI draft that never came back is reported as failed.
+  await db.query(`UPDATE pms.mom_transcripts SET suggestion_status='failed',
+                     suggestion_error='The AI draft did not finish. Try again.', suggestion_at=now()
+                   WHERE tenant_id=$1 AND suggestion_status='processing' AND suggestion_at < now() - interval '20 minutes'`, [t]);
+
   // Retention: recordings after HR's number of days (60 unless changed),
   // transcripts after theirs (a year). The MoM and its items stay. By the
   // database's date, not the sweep's clock: files age in real days.
@@ -399,6 +404,71 @@ async function saveRecording(t, m, u, duration, by) {
 // upload answers at once and the editor shows Processing until this is
 // done. Failure is reported to the organiser and on the MoM, never silent.
 const drafting = new Set();
+
+// The AI's minutes from a transcript, in the three-part form. Shared by a
+// draft MoM (written into it) and a published one (kept as a suggestion).
+async function draftFrom(t, m, tr, requestedBy) {
+  if (!tr || !tr.text) throw new Error('The transcript is no longer stored. Upload it again.');
+  const names = await namesOf(t, onCall(m));
+  const attendees = (m.attendee_ids || []).filter((id) => names[id]).map((id) => ({ id, name: names[id] }));
+  const people = (await db.query(
+    `SELECT id, name FROM core.employees WHERE tenant_id=$1 AND status='active' AND (id = ANY($2::uuid[]) OR manager_id=$3)`,
+    [t, onCall(m), m.manager_id])).rows;
+  const mi = (await db.query(`SELECT id, status FROM pms.mom_minutes WHERE meeting_id=$1`, [m.id])).rows[0];
+  const carried = (await carriedForward(t, m.team_id, mi && mi.id)).map((a, i) => ({ ref: `C${i + 1}`, id: a.id, task: a.task, owner: a.owner_name, due_date: a.due_date }));
+  const out = await narrate({
+    tenantId: t, kind: 'mom_draft', ref: { meeting_id: m.id, transcript_id: tr.id }, requestedBy, maxTokens: 4000, system: tx.SYSTEM,
+    input: {
+      meeting: { title: m.title, date: m.date, start_time: m.start_time, end_time: m.end_time, organiser: names[m.organiser_id] || null },
+      attendees: attendees.map((a) => a.name),
+      open_items_from_previous: carried.map(({ id, ...c }) => c),
+      transcript: tr.text,
+    },
+  });
+  if (!out.draft || out.draft._unparsed) throw new Error('The AI reply could not be read. Try again.');
+  const d = tx.draftToMinutes(out.draft, { people, attendees, carried, words: tr.text.split(/\s+/).filter(Boolean).length });
+  d.value = foldNotes(d.value);
+  return { d, out };
+}
+
+const aiFailure = (e) => (e.status === 503 ? 'AI is not set up on this server, so the MoM cannot be drafted. Write it by hand.' : String(e.message || 'The AI draft failed.'));
+
+// A published MoM's AI draft: kept on the transcript row until the
+// organiser saves it (Save changes) or discards it. The MoM itself does
+// not change here.
+async function runSuggest(t, meetingId, requestedBy) {
+  const key = `s:${meetingId}`;
+  if (drafting.has(key)) return;
+  drafting.add(key);
+  let m = null;
+  try {
+    m = await meetingWithTeam(t, meetingId);
+    const tr = (await db.query(
+      `SELECT id, text FROM pms.mom_transcripts WHERE meeting_id=$1 AND deleted_at IS NULL AND suggestion_status='processing'`, [meetingId])).rows[0];
+    if (!m || !tr) return;
+    const s = await settingsFor(t);
+    try {
+      const { d, out } = await draftFrom(t, m, tr, requestedBy);
+      const r = await db.query(
+        `UPDATE pms.mom_transcripts SET suggestion=$2, suggestion_status='ready', suggestion_error=NULL, suggestion_at=now()
+          WHERE id=$1 AND suggestion_status='processing'`,
+        [tr.id, JSON.stringify({ ...d.value, confidence: d.confidence, ai_notes: d.notes, draft_id: out.id })]);
+      await auditAs(null, t, requestedBy, 'MOM_AI_DRAFTED', null,
+        { meeting_id: m.id, date: m.date, confidence: d.confidence, draft_id: out.id, for: 'published_mom', action_items: d.value.action_items.length });
+      if (r.rowCount && m.organiser_id) {
+        await tell(t, s, m.organiser_id, 'mom_draft_ready', `AI draft ready: ${m.title}, ${m.date}`,
+          'It is open in the editor of the published MoM. Nothing changes until you save it.', `${TEAM_LINK}&mom=${m.id}`);
+      }
+    } catch (e) {
+      const msg = aiFailure(e);
+      logger.warn('mom suggestion failed', { meeting_id: meetingId, error: e.message, reason: e.reason });
+      await db.query(`UPDATE pms.mom_transcripts SET suggestion_status='failed', suggestion_error=$2, suggestion_at=now()
+                       WHERE id=$1 AND suggestion_status='processing'`, [tr.id, msg.slice(0, 300)]);
+    }
+  } catch (e) {
+    logger.error('mom suggestion run', { meeting_id: meetingId, error: e.message });
+  } finally { drafting.delete(key); }
+}
 async function runDraft(t, meetingId, requestedBy) {
   if (drafting.has(meetingId)) return;
   drafting.add(meetingId);
@@ -412,26 +482,7 @@ async function runDraft(t, meetingId, requestedBy) {
     const s = await settingsFor(t);
     try {
       const tr = (await db.query(`SELECT id, text FROM pms.mom_transcripts WHERE meeting_id=$1 AND deleted_at IS NULL`, [m.id])).rows[0];
-      if (!tr || !tr.text) throw new Error('The transcript is no longer stored. Upload it again.');
-      const names = await namesOf(t, onCall(m));
-      const attendees = (m.attendee_ids || []).filter((id) => names[id]).map((id) => ({ id, name: names[id] }));
-      const people = (await db.query(
-        `SELECT id, name FROM core.employees WHERE tenant_id=$1 AND status='active' AND (id = ANY($2::uuid[]) OR manager_id=$3)`,
-        [t, onCall(m), m.manager_id])).rows;
-      const mi = (await db.query(`SELECT id, status FROM pms.mom_minutes WHERE meeting_id=$1`, [m.id])).rows[0];
-      const carried = (await carriedForward(t, m.team_id, mi && mi.id)).map((a, i) => ({ ref: `C${i + 1}`, id: a.id, task: a.task, owner: a.owner_name, due_date: a.due_date }));
-      const out = await narrate({
-        tenantId: t, kind: 'mom_draft', ref: { meeting_id: m.id, transcript_id: tr.id }, requestedBy, maxTokens: 4000, system: tx.SYSTEM,
-        input: {
-          meeting: { title: m.title, date: m.date, start_time: m.start_time, end_time: m.end_time, organiser: names[m.organiser_id] || null },
-          attendees: attendees.map((a) => a.name),
-          open_items_from_previous: carried.map(({ id, ...c }) => c),
-          transcript: tr.text,
-        },
-      });
-      if (!out.draft || out.draft._unparsed) throw new Error('The AI reply could not be read. Try again.');
-      const d = tx.draftToMinutes(out.draft, { people, attendees, carried, words: tr.text.split(/\s+/).filter(Boolean).length });
-      d.value = foldNotes(d.value);
+      const { d, out } = await draftFrom(t, m, tr, requestedBy);
       const done = await inTransaction(async (client) => {
         const still = (await client.query(`SELECT status FROM pms.mom_meetings WHERE id=$1 FOR UPDATE`, [m.id])).rows[0];
         if (!still || still.status !== 'processing') return false; // published by hand or cancelled meanwhile
@@ -449,7 +500,7 @@ async function runDraft(t, meetingId, requestedBy) {
           `${TEAM_LINK}&mom=${m.id}`);
       }
     } catch (e) {
-      const msg = e.status === 503 ? 'AI is not set up on this server, so the MoM cannot be drafted. Write it by hand.' : String(e.message || 'The AI draft failed.');
+      const msg = aiFailure(e);
       logger.warn('mom draft failed', { meeting_id: meetingId, error: e.message, reason: e.reason });
       const r = await db.query(`UPDATE pms.mom_meetings SET status='scheduled', draft_error=$2, processing_since=NULL WHERE id=$1 AND status='processing'`,
         [meetingId, msg.slice(0, 300)]);
@@ -780,9 +831,16 @@ router.get('/meetings/:id', async (req, res) => {
       `SELECT mime, size_bytes, duration_sec, source, uploaded_by, uploaded_at, to_char(delete_after,'YYYY-MM-DD') AS delete_after, deleted_at
          FROM pms.mom_recordings WHERE meeting_id=$1`, [m.id])).rows[0] || null;
     // The transcript is for whoever writes the MoM — the editor's side panel.
-    const transcript = role.edit ? (await db.query(
-      `SELECT text, language, speakers, source, file_name, uploaded_by, created_at, to_char(delete_after,'YYYY-MM-DD') AS delete_after, deleted_at
+    const trRow = role.edit ? (await db.query(
+      `SELECT text, language, speakers, source, file_name, uploaded_by, created_at, to_char(delete_after,'YYYY-MM-DD') AS delete_after, deleted_at,
+              suggestion, suggestion_status, suggestion_error, suggestion_at
          FROM pms.mom_transcripts WHERE meeting_id=$1`, [m.id])).rows[0] || null : null;
+    const transcript = trRow ? (({ suggestion: _s, suggestion_status: _ss, suggestion_error: _se, suggestion_at: _sa, ...x }) => x)(trRow) : null;
+    // A published MoM's AI draft, waiting for the organiser to save it.
+    const suggestion = trRow && ['processing', 'ready', 'failed'].includes(trRow.suggestion_status) ? {
+      status: trRow.suggestion_status, error: trRow.suggestion_error, at: trRow.suggestion_at,
+      value: trRow.suggestion_status === 'ready' ? trRow.suggestion : null,
+    } : null;
     const consent = role.edit ? await consentOf(t, onCall(m)) : null;
     const people = await (async () => {
       if (!role.edit) return [];
@@ -814,6 +872,10 @@ router.get('/meetings/:id', async (req, res) => {
       recording, transcript,
       consent: consent ? onCall(m).map((id) => ({ id, name: names[id] || 'Former employee', accepted: consent[id] })) : null,
       can_record: role.edit && !published && m.status !== 'cancelled',
+      // The transcript → AI draft: before publishing it fills the draft; after,
+      // it opens in the editor and changes nothing until saved.
+      can_transcript: role.edit && m.status !== 'cancelled',
+      suggestion,
       draft_error: role.edit ? m.draft_error : null,
       can_ack: published && role.attendee && !myAck,
       my_ack: myAck,
@@ -941,6 +1003,7 @@ router.post('/meetings/:id/revise', async (req, res) => {
     if (errors.length) return res.status(422).json({ error: errors[0], errors });
     const out = await publishVersion(req, m, c.value, { revise: true });
     if (out.nothing) return res.status(409).json({ error: 'Nothing has changed.' });
+    await db.query(`UPDATE pms.mom_transcripts SET suggestion_status='used' WHERE meeting_id=$1 AND suggestion_status IN ('ready','failed')`, [m.id]);
     await notifyPublished(req, m, out, { revise: true, before });
     res.json({ ok: true, version: out.version, changed: out.changed });
   } catch (e) { logger.error('mom revise', { error: e.message }); res.status(500).json({ error: 'Could not save the new version.' }); }
@@ -1213,6 +1276,19 @@ async function guardDraft(res, m, b) {
   return false;
 }
 
+// A published MoM has one AI draft running at a time.
+async function suggesting(res, m) {
+  const r = (await db.query(`SELECT suggestion_status FROM pms.mom_transcripts WHERE meeting_id=$1`, [m.id])).rows[0];
+  if (r && r.suggestion_status === 'processing') { res.status(409).json({ error: 'The AI is already drafting this MoM.' }); return true; }
+  return false;
+}
+
+async function startSuggest(req, m) {
+  await db.query(`UPDATE pms.mom_transcripts SET suggestion_status='processing', suggestion=NULL, suggestion_error=NULL, suggestion_at=now()
+                   WHERE meeting_id=$1`, [m.id]);
+  runSuggest(T(req), m.id, req.user.email);
+}
+
 async function startDraft(req, m) {
   await db.query(`UPDATE pms.mom_meetings SET status='processing', processing_since=now(), draft_attempts=0, draft_error=NULL WHERE id=$1`, [m.id]);
   runDraft(T(req), m.id, req.user.email);
@@ -1221,11 +1297,13 @@ async function startDraft(req, m) {
 router.post('/meetings/:id/transcript', oneFile, async (req, res) => {
   try {
     const t = T(req);
-    const m = await openConnect(req, res); if (!m) return;
+    const m = await editable(req, res); if (!m) return;
     const b = req.body || {};
+    const published = m.status === 'published';
     // No PMS recording notice since 15 Oct: Google Meet itself tells
     // everyone on the call that it is being transcribed.
-    if (await guardDraft(res, m, b)) return;
+    if (!published && await guardDraft(res, m, b)) return;
+    if (published && await suggesting(res, m)) return;
     let parsed;
     try {
       if (req.file) parsed = await tx.parseTranscript(req.file.buffer, req.file.originalname || 'transcript.txt');
@@ -1238,26 +1316,40 @@ router.post('/meetings/:id/transcript', oneFile, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CURRENT_DATE + $9::int)
        ON CONFLICT (meeting_id) DO UPDATE SET text=EXCLUDED.text, language=EXCLUDED.language, speakers=EXCLUDED.speakers,
          source=EXCLUDED.source, file_name=EXCLUDED.file_name, uploaded_by=EXCLUDED.uploaded_by, created_at=now(),
-         delete_after=EXCLUDED.delete_after, deleted_at=NULL`,
+         delete_after=EXCLUDED.delete_after, deleted_at=NULL,
+         suggestion=NULL, suggestion_status=NULL, suggestion_error=NULL, suggestion_at=NULL`,
       [t, m.id, parsed.text, parsed.language, parsed.speakers, req.file ? 'google_meet' : 'paste',
         req.file ? String(req.file.originalname || '').slice(0, 200) : null, req.user.email, s.transcript_days]);
     await audit(null, req, 'MOM_TRANSCRIPT_UPLOADED', null, { meeting_id: m.id, date: m.date, chars: parsed.text.length, source: req.file ? 'google_meet' : 'paste' });
-    await startDraft(req, m);
-    res.status(202).json({ ok: true, status: 'processing', speakers: parsed.speakers });
+    if (published) await startSuggest(req, m); else await startDraft(req, m);
+    res.status(202).json({ ok: true, status: 'processing', for: published ? 'published_mom' : 'draft', speakers: parsed.speakers });
   } catch (e) { logger.error('mom transcript', { error: e.message }); res.status(500).json({ error: 'Could not take the transcript.' }); }
 });
 
 // Draft again from the stored transcript (after a failure, or to start over).
 router.post('/meetings/:id/redraft', async (req, res) => {
   try {
-    const t = T(req);
-    const m = await openConnect(req, res); if (!m) return;
+    const m = await editable(req, res); if (!m) return;
     const tr = (await db.query(`SELECT 1 FROM pms.mom_transcripts WHERE meeting_id=$1 AND deleted_at IS NULL AND text IS NOT NULL`, [m.id])).rowCount;
     if (!tr) return res.status(409).json({ error: 'Upload the Google Meet transcript first.' });
+    if (m.status === 'published') {
+      if (await suggesting(res, m)) return;
+      await startSuggest(req, m);
+      return res.status(202).json({ ok: true, status: 'processing', for: 'published_mom' });
+    }
     if (await guardDraft(res, m, req.body || {})) return;
     await startDraft(req, m);
     res.status(202).json({ ok: true, status: 'processing' });
   } catch (e) { logger.error('mom redraft', { error: e.message }); res.status(500).json({ error: 'Could not start the AI draft.' }); }
+});
+
+// Set aside a published MoM's AI draft without saving it.
+router.post('/meetings/:id/suggestion/discard', async (req, res) => {
+  try {
+    const m = await editable(req, res); if (!m) return;
+    await db.query(`UPDATE pms.mom_transcripts SET suggestion_status='discarded' WHERE meeting_id=$1 AND suggestion_status IN ('ready','failed')`, [m.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Could not set the AI draft aside.' }); }
 });
 
 // -------- action items

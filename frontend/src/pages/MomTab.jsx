@@ -480,7 +480,8 @@ function MomView({ id, onBack }) {
   const load = () => api(`/pms/mom/meetings/${id}`).then((r) => { setD(r); setErr(null); }).catch((e) => setErr(e.message));
   useEffect(() => { setD(null); setRevising(false); load(); }, [id]);
   // While the AI drafts, look again every few seconds.
-  const processing = d && d.meeting.status === 'processing';
+  // A published MoM's AI draft runs beside it (d.suggestion), not in it.
+  const processing = d && (d.meeting.status === 'processing' || (d.suggestion && d.suggestion.status === 'processing'));
   useEffect(() => { if (!processing) return undefined; const h = setTimeout(load, 4000); return () => clearTimeout(h); }, [d]);
   const back = <button type="button" className="text-xs text-navy-500 flex items-center gap-1" onClick={onBack}><ArrowLeft size={13} />Back</button>;
   if (err && !d) return <div className="space-y-3">{back}<Failed msg={err} /></div>;
@@ -488,7 +489,9 @@ function MomView({ id, onBack }) {
   const m = d.meeting;
   const mi = d.minutes;
   const published = !!(mi && mi.status === 'published');
-  const editing = d.can_edit && (!published || revising);
+  const suggested = published && d.suggestion && d.suggestion.status === 'ready' ? d.suggestion : null;
+  const editing = d.can_edit && (!published || revising || !!suggested);
+  const discard = () => api(`/pms/mom/meetings/${id}/suggestion/discard`, { method: 'POST' }).catch(() => {}).then(() => { setRevising(false); load(); });
   return (
     <div className="space-y-4">
       {back}
@@ -508,7 +511,8 @@ function MomView({ id, onBack }) {
       <MediaCard d={d} reload={load} />
       {editing && !processing && (
         <div className={d.transcript && d.transcript.text ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] items-start' : ''}>
-          <Editor key={`${revising ? 'revise' : 'draft'}-${mi ? mi.updated_at : ''}`} d={d} revise={published} onDone={() => { setRevising(false); load(); }} onCancel={published ? () => setRevising(false) : null} />
+          <Editor key={`${revising ? 'revise' : 'draft'}-${mi ? mi.updated_at : ''}-${suggested ? suggested.at : ''}`} d={d} revise={published} suggestion={suggested}
+            onDone={() => { setRevising(false); load(); }} onCancel={published ? (suggested ? discard : () => setRevising(false)) : null} />
           {d.transcript && d.transcript.text && <TranscriptPanel t={d.transcript} />}
         </div>
       )}
@@ -535,15 +539,15 @@ function MomView({ id, onBack }) {
 // it is deleted under the retention rule.
 function MediaCard({ d, reload }) {
   const rec = d.recording;
-  const editor = d.can_record || !!d.transcript;
+  const editor = d.can_transcript || !!d.transcript;
   if (!(rec && !rec.deleted_at) && !editor) return null;
   return (
     <div className="card p-4 space-y-4">
       {rec && !rec.deleted_at && (
         <div className="space-y-2"><div className="lbl">Recording</div><RecordingPlayer meetingId={d.meeting.id} rec={rec} /></div>
       )}
-      {d.can_record && <TranscriptUpload d={d} reload={reload} />}
-      {!d.can_record && d.transcript && d.transcript.text && (
+      {d.can_transcript && <TranscriptUpload d={d} reload={reload} />}
+      {!d.can_transcript && d.transcript && d.transcript.text && (
         <p className="text-xs text-navy-500">Transcript uploaded by {d.transcript.uploaded_by} on {when(d.transcript.created_at)}.</p>
       )}
     </div>
@@ -611,22 +615,26 @@ function TranscriptUpload({ d, reload }) {
       } else setErr(e.message);
     } finally { setBusy(false); }
   };
+  const published = !!(d.minutes && d.minutes.status === 'published');
+  const busyAi = m.status === 'processing' || (d.suggestion && d.suggestion.status === 'processing');
+  const failure = published ? (d.suggestion && d.suggestion.status === 'failed' ? d.suggestion.error : null) : d.draft_error;
   const sendFile = (file) => send((replace) => { const fd = new FormData(); fd.append('file', file); if (replace) fd.append('replace', 'true'); return fd; });
   const sendText = () => send((replace) => JSON.stringify({ text, replace }));
   const redraft = () => send((replace) => JSON.stringify({ replace }), true);
   return (
     <div className="space-y-2">
-      <div className="lbl flex items-center gap-1"><FileText size={12} />Google Meet transcript → AI draft (optional)</div>
-      {m.status === 'processing' && <p className="text-sm text-violet-700"><Sparkles size={13} className="inline mr-1" />Drafting the MoM from the transcript…</p>}
-      {d.draft_error && m.status !== 'processing' && (
+      <div className="lbl flex items-center gap-1"><FileText size={12} />Create the MoM with AI from the Google Meet transcript</div>
+      {busyAi && <p className="text-sm text-violet-700"><Sparkles size={13} className="inline mr-1" />Drafting the MoM from the transcript…</p>}
+      {failure && !busyAi && (
         <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700 flex flex-wrap items-center gap-2">
-          <span className="flex-1">{d.draft_error}</span>
+          <span className="flex-1">{failure}</span>
           {t && <button type="button" className="btn-sec" disabled={busy} onClick={redraft}>Try again</button>}
         </div>
       )}
       {t && <p className="text-xs text-navy-500">Uploaded by {t.uploaded_by} on {when(t.created_at)}{t.file_name ? ` (${t.file_name})` : ''}{t.speakers.length ? ` · speakers: ${t.speakers.join(', ')}` : ''} · deleted after {t.delete_after}.</p>}
-      {m.status !== 'processing' && (
+      {!busyAi && (
         <>
+          {published && <p className="text-xs text-violet-700">This MoM is published. The AI draft opens in the editor below; nothing changes until you press Save changes.</p>}
           <p className="text-xs text-navy-500">After the call, Google Meet saves the transcript to the organiser's Google Drive (Meet Recordings folder) and emails a link to it.
             Open it, choose File → Download → Microsoft Word (.docx) or Plain text (.txt), and upload it here — or paste its text.</p>
           <div className="flex flex-wrap items-center gap-2">
@@ -634,7 +642,7 @@ function TranscriptUpload({ d, reload }) {
             <input ref={fileRef} type="file" accept=".docx,.txt,.vtt,.srt,.sbv,.md" className="hidden"
               onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) sendFile(f); }} />
             <button type="button" className="text-xs text-navy-500 underline" onClick={() => setPaste((v) => !v)}>{paste ? 'Hide' : 'Paste the text instead'}</button>
-            {t && !d.draft_error && <button type="button" className="text-xs text-navy-500 underline" disabled={busy} onClick={redraft}>Draft again from this transcript</button>}
+            {t && !failure && <button type="button" className="text-xs text-navy-500 underline" disabled={busy} onClick={redraft}>Draft again from this transcript</button>}
           </div>
           {paste && (
             <div className="space-y-2">
@@ -701,14 +709,31 @@ function MinutesBody({ v, names }) {
   );
 }
 
-function Editor({ d, revise, onDone, onCancel }) {
+function Editor({ d, revise, suggestion, onDone, onCancel }) {
   const m = d.meeting;
   const mi = d.minutes || {};
-  const [f, setF] = useState(() => ({
-    notes: mi.notes || '',
-    attendance: mi.attendance && Object.keys(mi.attendance).length ? mi.attendance : Object.fromEntries(m.attendees.map((a) => [a.id, 'present'])),
-    action_items: (d.action_items || []).map((a) => ({ id: a.id, task: a.task, owner_id: a.owner_id || '', due_date: a.due_date || '', priority: a.priority, status: a.status })),
-  }));
+  const sv = suggestion && suggestion.value;
+  const [f, setF] = useState(() => {
+    const kept = (d.action_items || []).map((a) => ({ id: a.id, task: a.task, owner_id: a.owner_id || '', due_date: a.due_date || '', priority: a.priority, status: a.status }));
+    if (!sv) {
+      return {
+        notes: mi.notes || '',
+        attendance: mi.attendance && Object.keys(mi.attendance).length ? mi.attendance : Object.fromEntries(m.attendees.map((a) => [a.id, 'present'])),
+        action_items: kept,
+      };
+    }
+    // A published MoM redone with AI: its notes and attendance come from the
+    // draft; its action items stay (they are people's tasks) and the AI's new
+    // ones are added below them.
+    const have = new Set(kept.map((a) => a.task.trim().toLowerCase()));
+    const added = (sv.action_items || []).filter((a) => a.task && !have.has(a.task.trim().toLowerCase()))
+      .map((a) => ({ id: null, task: a.task, owner_id: a.owner_id || '', due_date: a.due_date || '', priority: a.priority || 'medium' }));
+    return {
+      notes: sv.summary || '',
+      attendance: sv.attendance && Object.keys(sv.attendance).length ? sv.attendance : (mi.attendance || {}),
+      action_items: [...kept, ...added],
+    };
+  });
   const [carried, setCarried] = useState(d.carried_forward || []);
   const [busy, setBusy] = useState(null);
   const [errors, setErrors] = useState([]);
@@ -740,16 +765,17 @@ function Editor({ d, revise, onDone, onCancel }) {
     try { await api(`/pms/mom/action-items/${a.id}`, { method: 'PUT', body: JSON.stringify({ status: 'done' }) }); setCarried((xs) => xs.filter((x) => x.id !== a.id)); } catch (e) { setErrors([e.message]); }
   };
   const people = d.people || [];
-  const ai = mi.source === 'ai' && !revise;
-  const aiNotes = mi.ai_notes || {};
+  const ai = !!sv || (mi.source === 'ai' && !revise);
+  const aiNotes = (sv ? sv.ai_notes : mi.ai_notes) || {};
+  const confidence = sv ? sv.confidence : mi.ai_confidence;
   const hints = Object.fromEntries((aiNotes.carried_hints || []).map((h) => [h.id, h]));
   return (
     <div className="card p-4 space-y-4">
-      {revise && <p className="text-xs text-navy-500">Editing the published MoM. Owners of new action items are told; nobody else is asked to do anything.</p>}
+      {revise && <p className="text-xs text-navy-500">Editing the published MoM{sv ? ' with the AI draft' : ''}. Nothing changes until you press Save changes; owners of new action items are then told.</p>}
       {ai && (
         <div className="space-y-2">
           <span className="chip bg-violet-100 text-violet-700"><Sparkles size={11} className="inline mr-1" />AI DRAFT from the Google Meet transcript — check it before publishing</span>
-          {mi.ai_confidence === 'low' && (
+          {confidence === 'low' && (
             <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800"><b>Low confidence.</b> {aiNotes.confidence_reason} Review this draft closely.</div>
           )}
           {(aiNotes.unmatched_owners || []).length > 0 && (
@@ -823,7 +849,7 @@ function Editor({ d, revise, onDone, onCancel }) {
         <button type="button" className="btn-pri" disabled={!!busy} onClick={() => send(revise ? 'revise' : 'publish')}>
           {busy === 'publish' || busy === 'revise' ? 'Saving…' : revise ? 'Save changes' : 'Publish'}
         </button>
-        {onCancel && <button type="button" className="btn-sec" disabled={!!busy} onClick={onCancel}>Cancel</button>}
+        {onCancel && <button type="button" className="btn-sec" disabled={!!busy} onClick={onCancel}>{sv ? 'Discard AI draft' : 'Cancel'}</button>}
         {note && <span className="text-xs text-emerald-700">{note}</span>}
         {!revise && m.status !== 'published' && notHeld === null && (
           <button type="button" className="text-xs text-navy-500 underline ml-auto" onClick={() => setNotHeld('')}>Connect not held?</button>
