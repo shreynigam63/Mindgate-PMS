@@ -896,18 +896,35 @@ function FirstTimeSetup({ onUser }) {
   );
 }
 
+// SAVE PASSWORD (15 Oct). A real <form> with the username and
+// current-password fields named as browsers expect, so Chrome, Edge,
+// Safari and password managers offer to save it and fill it next time.
+// The PMS itself never stores the password — the browser's own password
+// manager does, if the person says yes. "Remember my email" keeps only
+// the address, in this browser.
+const REMEMBER_KEY = 'apms_remember_email';
+const readRemembered = () => { try { return localStorage.getItem(REMEMBER_KEY) || ''; } catch { return ''; } };
 function SignIn({ onUser }) {
-  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [err, setErr] = useState(null);
+  const [email, setEmail] = useState(readRemembered); const [password, setPassword] = useState(''); const [err, setErr] = useState(null);
+  const [remember, setRemember] = useState(() => !!readRemembered());
+  const [busy, setBusy] = useState(false);
   const [forgot, setForgot] = useState(false);
   const [done, setDone] = useState(null);
   if (forgot) return <ForgotPassword email={email} onBack={(msg) => { setForgot(false); setDone(msg || null); setErr(null); }} />;
-  const go = async () => {
-    setErr(null);
+  const go = async (e) => {
+    if (e) e.preventDefault();
+    setErr(null); setBusy(true);
     try {
       const r = await api('/auth/dev-login', { method: 'POST', body: JSON.stringify({ email, password }) });
+      try { if (remember) localStorage.setItem(REMEMBER_KEY, email.trim()); else localStorage.removeItem(REMEMBER_KEY); } catch { /* private window */ }
+      // A sign-in without a page load does not always make the browser ask;
+      // where it can be asked directly (Chrome, Edge), ask it to offer saving.
+      if (e && e.target && window.PasswordCredential) {
+        try { await navigator.credentials.store(new window.PasswordCredential(e.target)); } catch { /* declined or unsupported */ }
+      }
       localStorage.setItem('apms_token', r.token);
       await onUser();
-    } catch (e) { setErr(e.message); }
+    } catch (x) { setErr(x.message); setBusy(false); }
   };
   return (
     <div className="max-w-xs mx-auto mt-[14vh] flex flex-col gap-3 glass rounded-2xl p-6">
@@ -917,11 +934,19 @@ function SignIn({ onUser }) {
         </span>
         Agentic PMS
       </h1>
-      <input className="inp" placeholder="email" value={email} onChange={e => setEmail(e.target.value)} />
-      <input className="inp" type="password" placeholder="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} />
-      {done && <p className="text-xs text-emerald-700">{done}</p>}
-      {err && <p className="text-xs text-rose-600">{err}</p>}
-      <button className="btn-pri" onClick={go}>Sign in</button>
+      <form className="flex flex-col gap-3" onSubmit={go} method="post" action="#" autoComplete="on">
+        <input className="inp" type="email" id="email" name="email" autoComplete="username" placeholder="email" required
+          value={email} onChange={e => setEmail(e.target.value)} />
+        <input className="inp" type="password" id="password" name="password" autoComplete="current-password" placeholder="password" required
+          value={password} onChange={e => setPassword(e.target.value)} />
+        <label className="flex items-center gap-2 text-xs text-navy-600">
+          <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />Remember my email on this device
+        </label>
+        {done && <p className="text-xs text-emerald-700">{done}</p>}
+        {err && <p className="text-xs text-rose-600">{err}</p>}
+        <button type="submit" className="btn-pri" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+      </form>
+      <p className="text-[11px] text-navy-400">Your browser will offer to save the password after you sign in. Do not save it on a shared computer.</p>
       <button type="button" className="text-xs text-navy-500 underline self-center" onClick={() => setForgot(true)}>Forgot password?</button>
     </div>
   );
@@ -960,15 +985,17 @@ function ForgotPassword({ email: start, onBack }) {
           <button className="btn-pri" disabled={busy || !email.trim()} onClick={ask}>{busy ? 'Sending…' : 'Email me a code'}</button>
         </>
       ) : (
-        <>
+        <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); reset(); }} method="post" action="#">
           {msg && <p className="text-xs text-navy-600">{msg}</p>}
-          <input className="inp tracking-widest uppercase" placeholder="code from the email" value={code} onChange={e => setCode(e.target.value)} autoComplete="one-time-code" />
-          <input className="inp" type="password" placeholder="new password (8+ characters)" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
-          <input className="inp" type="password" placeholder="new password again" value={confirm} onChange={e => setConfirm(e.target.value)} onKeyDown={e => e.key === 'Enter' && reset()} autoComplete="new-password" />
+          {/* The account the new password belongs to, so a saved password is updated, not added beside it. */}
+          <input type="email" name="email" autoComplete="username" value={email} readOnly hidden />
+          <input className="inp tracking-widest uppercase" name="code" placeholder="code from the email" value={code} onChange={e => setCode(e.target.value)} autoComplete="one-time-code" />
+          <input className="inp" type="password" name="new-password" placeholder="new password (8+ characters)" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
+          <input className="inp" type="password" name="confirm-password" placeholder="new password again" value={confirm} onChange={e => setConfirm(e.target.value)} autoComplete="new-password" />
           {err && <p className="text-xs text-rose-600">{err}</p>}
-          <button className="btn-pri" disabled={busy || !code.trim() || !password} onClick={reset}>{busy ? 'Saving…' : 'Set new password'}</button>
+          <button type="submit" className="btn-pri" disabled={busy || !code.trim() || !password}>{busy ? 'Saving…' : 'Set new password'}</button>
           <button type="button" className="text-xs text-navy-500 underline self-center" disabled={busy} onClick={ask}>Send a new code</button>
-        </>
+        </form>
       )}
       <button type="button" className="text-xs text-navy-500 underline self-center" onClick={() => onBack(null)}>Back to sign in</button>
     </div>
