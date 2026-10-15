@@ -5961,19 +5961,40 @@ router.get('/connects', async (req, res) => {
     if (view === 'self' || view === 'team') {
       const params = [T(req), req.user.id];
       const where = ['cn.tenant_id=$1'];
+      // Team pages say WHO the team is, not only whose connects exist: the
+      // person filter lists everyone in it, and an empty page says why
+      // (15 Oct: a Super Admin with no reports saw "Everyone (0)" and a blank).
+      let team = null;
       if (view === 'self') {
         where.push('(cn.employee_id=$2 OR ((cn.manager_id=$2 OR cn.hr_id=$2) AND e.manager_id IS DISTINCT FROM $2))');
       } else {
-        const s = await teamScope(req, String(req.query.scope || 'manager'));
+        const scope = String(req.query.scope || 'manager');
+        const s = await teamScope(req, scope);
         if (s.error) return res.status(s.status).json({ error: s.error, needs: s.needs });
         if (!s.all) { params.push([...s.ids]); where.push(`cn.employee_id = ANY($${params.length}::uuid[])`); }
         where.push('cn.employee_id<>$2');
+        if (s.all) {
+          team = { all: true, size: Number((await db.query(
+            `SELECT count(*) FROM core.employees WHERE tenant_id=$1 AND status='active' AND archived_at IS NULL AND id<>$2`, [T(req), req.user.id])).rows[0].count) };
+        } else {
+          const people = s.ids.size ? (await db.query(
+            `SELECT id, name, designation FROM core.employees WHERE tenant_id=$1 AND id = ANY($2::uuid[]) ORDER BY name`, [T(req), [...s.ids]])).rows : [];
+          team = { all: false, size: people.length, people };
+          if (!people.length) {
+            const toHr = await hasPermission(req.user, 'pms_admin') ? ' Every team\'s connects are under HR → Team Connects.' : '';
+            team.empty_reason = {
+              manager: `Nobody reports to you on the employee master, so there are no team connects here.${toHr}`,
+              hod: `Nobody is on your reporting line on the employee master.${toHr}`,
+              hrbp: `Your remit is empty — HR assigns you locations or HODs under HR Business Partners.${toHr}`,
+            }[scope];
+          }
+        }
       }
       if (req.query.employee_id && /^[0-9a-f-]{36}$/i.test(req.query.employee_id)) { params.push(req.query.employee_id); where.push(`cn.employee_id=$${params.length}`); }
       const r = await db.query(
         `SELECT ${CONNECT_COLS}, (e.manager_id = $2) AS my_report ${CONNECT_FROM}
           WHERE ${where.join(' AND ')} ORDER BY cn.held_at DESC, cn.created_at DESC LIMIT 500`, params);
-      return res.json({ connects: r.rows, view });
+      return res.json({ connects: r.rows, view, team });
     }
     const mine = req.query.employee_id;
     const r = await db.query(

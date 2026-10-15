@@ -166,6 +166,20 @@ test('Self shows your own connects; your reports\' move to Team Connects', { ski
   assert.strictEqual(r.body.needs, 'pms_team_eval');
 });
 
+test('a Team Connects page names its team, and an empty one says why', { skip }, async () => {
+  let r = await get('/pms/connects?view=team&scope=manager', 'mgr');
+  assert.deepStrictEqual(r.body.team.people.map((p) => p.id).sort(), [id.a1, id.a2].sort(), 'everyone in the team, connects or not');
+  assert.strictEqual(r.body.team.size, 2);
+  r = await get('/pms/connects?view=team&scope=manager', 'hr');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.team.size, 0);
+  assert.match(r.body.team.empty_reason, /Nobody reports to you/);
+  assert.match(r.body.team.empty_reason, /HR → Team Connects/, 'HR is pointed at the page that has everyone');
+  r = await get('/pms/connects?view=team&scope=hr', 'hr');
+  assert.strictEqual(r.body.team.all, true);
+  assert.ok(r.body.team.size >= 7);
+});
+
 test('Team Connects: the HOD sees the whole reporting line, the HRBP the remit, HR everyone', { skip }, async () => {
   const b1 = (await call('POST', '/pms/connects', 'hod', { employee_id: id.b1, held_at: '2026-10-14', discussion_notes: 'Quarterly chat' })).body.id;
   const out = (await call('POST', '/pms/connects', 'out', { employee_id: id.out, held_at: '2026-10-14', discussion_notes: 'Mine', with_id: id.hr })).body.id;

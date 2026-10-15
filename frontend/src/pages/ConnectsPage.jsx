@@ -102,7 +102,8 @@ export function TeamConnectsPage({ scope = 'manager' }) {
   const [me, setMe] = useState(null);
   const [team, setTeam] = useState(null);
   const [person, setPerson] = useState('');
-  const load = () => api(`/pms/connects?view=team&scope=${scope}`).then(r => setData(r.connects)).catch(e => setErr(e.message));
+  const [teamInfo, setTeamInfo] = useState(null);
+  const load = () => api(`/pms/connects?view=team&scope=${scope}`).then(r => { setData(r.connects); setTeamInfo(r.team || null); }).catch(e => setErr(e.message));
   useEffect(() => {
     setData(null); setErr(null); setPerson('');
     load();
@@ -120,7 +121,12 @@ export function TeamConnectsPage({ scope = 'manager' }) {
     );
   }
 
-  const people = [...new Map(data.map((cn) => [cn.employee_id, cn.employee_name])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  // Everyone in the team, connects or not; for HR's company-wide page, the
+  // people who have connects (a list of the whole company is no filter).
+  const withConnects = new Set(data.map((cn) => cn.employee_id));
+  const people = (teamInfo && !teamInfo.all ? teamInfo.people.map((p) => [p.id, p.name])
+    : [...new Map(data.map((cn) => [cn.employee_id, cn.employee_name])).entries()]).sort((a, b) => a[1].localeCompare(b[1]));
+  const teamSize = teamInfo ? teamInfo.size : people.length;
   const pendingCount = data.filter(cn => !cn.signed_off && me && cn.manager_id === me.id).length;
   const shown = data.filter((cn) => (!person || cn.employee_id === person)
     && matches(q, cn.employee_name, cn.manager_name, cn.topic, cn.notes, cn.discussion_notes, cn.achievements, cn.blockers, cn.feedback));
@@ -137,14 +143,22 @@ export function TeamConnectsPage({ scope = 'manager' }) {
       {showNew && <NewConnectForm me={me} team={team} mode="team" onSaved={() => { setShowNew(false); load(); }} />}
       <div className="flex flex-wrap items-center gap-2">
         <label className="lbl mb-0">Person</label>
-        <select className="inp w-auto" value={person} onChange={(e) => setPerson(e.target.value)}>
-          <option value="">Everyone ({people.length})</option>
-          {people.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+        <select className="inp w-auto" value={person} onChange={(e) => setPerson(e.target.value)} disabled={!people.length}>
+          <option value="">{teamInfo && teamInfo.all ? `Everyone — ${teamSize} employees` : `Everyone in your team (${teamSize})`}</option>
+          {people.map(([id, name]) => <option key={id} value={id}>{name}{withConnects.has(id) ? '' : ' — no connects yet'}</option>)}
         </select>
       </div>
-      {person && <TrainingPanel key={person} employeeId={person} label={`Training suggestions for ${personName}`} />}
+      {person && withConnects.has(person) && <TrainingPanel key={person} employeeId={person} label={`Training suggestions for ${personName}`} />}
       {!person && data.length > 0 && <p className="text-[11px] text-navy-400">Pick a person for AI training suggestions from their connects.</p>}
-      {!data.length && <div className="card p-8 text-center text-sm text-navy-400">No connects logged for your team yet.</div>}
+      {teamInfo && teamInfo.empty_reason ? (
+        <div className="card p-8 text-center text-sm text-navy-500">{teamInfo.empty_reason}</div>
+      ) : person && !withConnects.has(person) ? (
+        <div className="card p-8 text-center text-sm text-navy-400">No connects logged for {personName} yet.</div>
+      ) : !data.length && (
+        <div className="card p-8 text-center text-sm text-navy-400">
+          {teamSize ? `None of the ${teamSize} ${teamSize === 1 ? 'person' : 'people'} in your team has a connect logged yet.` : 'No connects logged for your team yet.'}
+        </div>
+      )}
       <SearchBox value={q} onChange={setQ} placeholder="Search by person, topic or notes…" shown={shown.length} total={data.length} />
       <div className="space-y-2">
         {shown.map(cn => <ConnectRow key={cn.id} cn={cn} me={me} reload={load} anyMeeting={scope === 'hr'} />)}
