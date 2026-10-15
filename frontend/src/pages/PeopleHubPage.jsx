@@ -1,16 +1,20 @@
 import { useEffect, useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useSearchParams } from 'react-router-dom';
+import { QueriesPanel } from './QueriesPage';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import { showAt, endOfEvent } from '../utils/zone';
 
 export default function PeopleHubPage({ user }) {
-  const [tab, setTab] = useState('events');
+  // The tab is in the address, so a notice can open Queries directly.
+  const [params, setParams] = useSearchParams();
+  const tab = ['events', 'awards', 'csr', 'queries'].includes(params.get('tab')) ? params.get('tab') : 'events';
+  const setTab = (k) => setParams(k === 'events' ? {} : { tab: k }, { replace: true });
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       <PageHead title="People Hub" hue="teal" />
       <div className="flex gap-1 bg-navy-50 rounded-xl p-1 w-fit flex-wrap">
-        {[['events', 'Events'], ['awards', 'Awards'], ['csr', 'CSR'], ['queries', 'Appraisal Queries']].map(([k, l]) => (
+        {[['events', 'Events'], ['awards', 'Awards'], ['csr', 'CSR'], ['queries', 'Queries']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`text-sm font-medium px-3 py-1.5 rounded-lg ${tab === k ? 'bg-white shadow-sm' : 'text-navy-500'}`}>{l}</button>
         ))}
@@ -18,7 +22,7 @@ export default function PeopleHubPage({ user }) {
       {tab === 'events' && <Events manage={canManage(user)} />}
       {tab === 'awards' && <Awards user={user} />}
       {tab === 'csr' && <Csr manage={canManage(user)} />}
-      {tab === 'queries' && <Queries />}
+      {tab === 'queries' && <QueriesPanel />}
     </div>
   );
 }
@@ -180,50 +184,3 @@ function Csr({ manage }) {
   );
 }
 
-function Queries() {
-  const [data, setData] = useState(null);
-  const [openQ, setOpenQ] = useState(null);
-  const load = () => api('/people/queries').then(setData);
-  useEffect(() => { load(); }, []);
-  if (!data) return <p className="text-sm text-navy-400">Loading…</p>;
-  return (
-    <div className="space-y-3">
-      <button className="btn-pri" onClick={async () => {
-        const subject = prompt('Query subject'); if (!subject) return;
-        const body = prompt('Your question'); if (!body) return;
-        try { await api('/people/queries', { method: 'POST', body: JSON.stringify({ subject, body }) }); load(); }
-        catch (e) { alert(e.message); }
-      }}>Raise an appraisal query</button>
-      <div className="card divide-y divide-navy-100">
-        {data.queries.map(q => (
-          <div key={q.id} className="p-3">
-            <button className="w-full text-left flex items-center gap-2" onClick={() => setOpenQ(v => v === q.id ? null : q.id)}>
-              <span className="text-sm font-semibold flex-1">{q.subject}</span>
-              {data.admin && <span className="text-xs text-navy-400">{q.employee_name}</span>}
-              <span className={`chip ${q.status === 'open' ? 'bg-amber-100 text-amber-700' : q.status === 'answered' ? 'bg-blue-100 text-blue-700' : 'bg-navy-50 text-navy-600'}`}>{q.status}</span>
-            </button>
-            {openQ === q.id && <Thread id={q.id} reload={load} />}
-          </div>
-        ))}
-        {!data.queries.length && <p className="p-6 text-center text-sm text-navy-400">No queries.</p>}
-      </div>
-    </div>
-  );
-}
-
-function Thread({ id, reload }) {
-  const [t, setT] = useState(null);
-  const [body, setBody] = useState('');
-  const load = () => api(`/people/queries/${id}/messages`).then(setT);
-  useEffect(() => { load(); }, [id]);
-  if (!t) return null;
-  return (
-    <div className="mt-2 space-y-2 text-xs">
-      {t.messages.map(m => <p key={m.id}><b>{m.author_name}:</b> {m.body}</p>)}
-      <div className="flex gap-2">
-        <input className="inp" placeholder="Reply…" value={body} onChange={e => setBody(e.target.value)} />
-        <button className="btn-sec" onClick={async () => { await api(`/people/queries/${id}/reply`, { method: 'POST', body: JSON.stringify({ body }) }); setBody(''); load(); reload(); }}>Send</button>
-      </div>
-    </div>
-  );
-}

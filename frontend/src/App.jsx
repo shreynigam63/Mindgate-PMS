@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound, MapPin, Search, HelpCircle, ChevronDown, Menu, RefreshCw, CalendarDays } from 'lucide-react';
+import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound, MapPin, Search, HelpCircle, ChevronDown, Menu, RefreshCw, CalendarDays, Inbox } from 'lucide-react';
 import { api } from './utils/api';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
@@ -39,6 +39,7 @@ import HodCompetenciesPage from './pages/HodCompetenciesPage';
 import WatchlistPage from './pages/WatchlistPage';
 import MySuper50Page from './pages/MySuper50Page';
 import Super50BenefitsPage from './pages/Super50BenefitsPage';
+import HrQueriesPage from './pages/QueriesPage';
 import NotificationBell from './pages/NotificationBell';
 import NineBoxPage from './pages/NineBoxPage';
 import MyGrowthPage, { TeamGrowthPage } from './pages/MyGrowthPage';
@@ -235,6 +236,8 @@ const NAV = [
     { to: '/admin/rnr', label: 'RnR Administration', icon: Award },
     // People Hub's Events and CSR, scheduled by HR (13 Oct).
     { to: '/admin/events', label: 'Events & CSR', icon: CalendarDays },
+    // Every query raised in the company (15 Oct), moved out of People Hub.
+    { to: '/admin/queries', label: 'Queries', icon: Inbox },
     { to: '/admin/career-transitions', label: 'Career Pathing Matrix', icon: GitBranch },
     { to: '/admin/kra-overview', label: 'KRA Overview', icon: ClipboardList },
     // Next to KRA Overview because the two are easily confused and the
@@ -662,6 +665,9 @@ function Main({ user }) {
               <Route path="/admin/closure-letters" element={<ClosureLettersPage />} />
               <Route path="/admin/watchlist" element={<WatchlistPage />} />
               <Route path="/admin/super50-benefits" element={<Super50BenefitsPage />} />
+              <Route path="/admin/queries" element={<HrQueriesPage />} />
+              {/* Older query notices pointed here. */}
+              <Route path="/people/queries" element={<Navigate to="/people?tab=queries" replace />} />
               <Route path="/admin/nine-box" element={<NineBoxPage key="company" view="company" />} />
               <Route path="/hod/nine-box" element={<Navigate to="/hod?tab=nine-box" replace />} />
               <Route path="/team/nine-box" element={<NineBoxPage key="team" view="team" />} />

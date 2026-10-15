@@ -176,6 +176,9 @@ const SELF_SERVICE = {
     ['GET', '/awards'], ['POST', '/awards/cycles/:cycle/nominate'],
     ['GET', '/csr'], ['POST', '/csr/:id/participate'],
     ['GET', '/queries'], ['POST', '/queries'], ['GET', '/queries/:id/messages'], ['POST', '/queries/:id/reply'],
+    // Queries raised by or to the caller (queries.js checks which); whom to
+    // raise one to is a colleague search.
+    ['GET', '/queries/people'], ['POST', '/queries/:id/close'],
     // Nominating for RnR is a manager's own work, open only to someone who
     // holds pms_team_eval (never lent), and the pool is their own team.
     ['GET', '/rnr/nominate/options'], ['GET', '/rnr/nominate/eligible'], ['POST', '/rnr/nominations'],

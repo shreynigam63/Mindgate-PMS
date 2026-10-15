@@ -1188,6 +1188,14 @@ The higher tier replaces the lower: each person holds one tier, and one amount. 
 
 **Other benefits.** *Entitlements* (Excel): tier, consecutive years, amount, approved, waiting, left, single punch, mandatory EL days, fast-track, programme — and the variable % only for someone who may see pay. *Approved claims* (Excel) for finance, with a total. Calibration shows each person's tier and fast-track flag beside their name. Twice and Elite pick their IIT/IIM programme on My Super 50 from HR's catalogue; HR marks it completed. Every awardee downloads a certificate; HR plans the felicitation in Events & CSR from the page (the form opens filled in).
 
+## 3.19 Queries
+
+People Hub → **Queries** (until 15 Oct "Appraisal Queries"). *Raise query* opens the form on the page: **Title**, **Raise to** — one or more colleagues found by name or email, each told in the app and by email (leave it empty to raise it to HR) — and **Description**.
+
+People Hub shows the queries you raised and those raised to you. **HR → Queries** is HR's inbox of every query in the company, with Open / Answered / Closed and *Raised to me or to HR*; someone in HR answers a query raised to them there, not from People Hub. Only the person who raised it, the people it is raised to and HR can open a query.
+
+Status: **Open** until someone else answers, then **Answered**; the raiser's reply makes it Open again. Any of them can **Close** it, after which it takes no more replies. The raiser is emailed every answer; the others are told in the app.
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |

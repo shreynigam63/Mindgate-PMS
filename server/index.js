@@ -98,6 +98,8 @@ async function main() {
   await require('./migrations/093-team-connects').ensureTeamConnectPages(db, TENANT_ID);
   // My Super 50 in Self, and HR's Super 50 Benefits.
   await require('./migrations/095-super50-benefits').ensureSuper50Pages(db, TENANT_ID);
+  // HR → Queries, HR's inbox of every query.
+  await require('./migrations/096-queries').ensureQueryPages(db, TENANT_ID);
 
   const app = express();
   app.use(cors());

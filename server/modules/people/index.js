@@ -471,63 +471,9 @@ router.post('/campus/drives/:driveId/candidates', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ---- Appraisal queries ------------------------------------------------------
-router.get('/queries', async (req, res) => {
-  try {
-    const admin = await hasPermission(req.user, 'people_admin');
-    const r = await db.query(
-      `SELECT q.*, e.name AS employee_name,
-              (SELECT COUNT(*)::int FROM people.appraisal_query_messages m WHERE m.query_id=q.id) AS messages
-         FROM people.appraisal_queries q JOIN core.employees e ON e.id=q.employee_id
-        WHERE q.tenant_id=$1 ${admin ? '' : 'AND q.employee_id=$2'} ORDER BY q.created_at DESC`,
-      admin ? [T(req)] : [T(req), req.user.id]);
-    res.json({ queries: r.rows, admin });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/queries', async (req, res) => {
-  try {
-    const { subject, cycle_id, body } = req.body || {};
-    if (!subject || !body) return res.status(400).json({ error: 'subject and body required' });
-    const q = (await db.query(
-      `INSERT INTO people.appraisal_queries (tenant_id, employee_id, cycle_id, subject) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [T(req), req.user.id, cycle_id || null, subject])).rows[0];
-    await db.query(`INSERT INTO people.appraisal_query_messages (tenant_id, query_id, author_id, body) VALUES ($1,$2,$3,$4)`,
-      [T(req), q.id, req.user.id, body]);
-    res.json({ ok: true, query: q });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/queries/:id/reply', async (req, res) => {
-  try {
-    const { body, close } = req.body || {};
-    const q = (await db.query(`SELECT * FROM people.appraisal_queries WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
-    if (!q) return res.status(404).json({ error: 'query not found' });
-    const admin = await hasPermission(req.user, 'people_admin');
-    if (!admin && q.employee_id !== req.user.id) return res.status(403).json({ error: 'Not your query' });
-    if (body && body.trim()) {
-      await db.query(`INSERT INTO people.appraisal_query_messages (tenant_id, query_id, author_id, body) VALUES ($1,$2,$3,$4)`,
-        [T(req), q.id, req.user.id, body.trim()]);
-      if (admin && q.status === 'open') await db.query(`UPDATE people.appraisal_queries SET status='answered' WHERE id=$1`, [q.id]);
-      if (admin) await notify(T(req), q.employee_id, 'query_reply', `Reply on: ${q.subject}`, null, '/people/queries');
-    }
-    if (close) await db.query(`UPDATE people.appraisal_queries SET status='closed' WHERE id=$1`, [q.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.get('/queries/:id/messages', async (req, res) => {
-  try {
-    const q = (await db.query(`SELECT * FROM people.appraisal_queries WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
-    if (!q) return res.status(404).json({ error: 'query not found' });
-    const admin = await hasPermission(req.user, 'people_admin');
-    if (!admin && q.employee_id !== req.user.id) return res.status(403).json({ error: 'Not your query' });
-    const r = await db.query(
-      `SELECT m.*, e.name AS author_name FROM people.appraisal_query_messages m
-         JOIN core.employees e ON e.id=m.author_id WHERE m.query_id=$1 ORDER BY m.at`, [q.id]);
-    res.json({ query: q, messages: r.rows });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// ---- Queries ----------------------------------------------------------------
+// Raised to named colleagues or to HR; HR's inbox is HR → Queries (queries.js).
+router.use('/queries', require('./queries').router);
 
 // ---- Career -----------------------------------------------------------------
 // Career Framework (a flat role_band/level allow-list, people.career_matrix)
