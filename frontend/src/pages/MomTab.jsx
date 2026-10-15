@@ -774,7 +774,7 @@ function Editor({ d, revise, suggestion, onDone, onCancel }) {
       {revise && <p className="text-xs text-navy-500">Editing the published MoM{sv ? ' with the AI draft' : ''}. Nothing changes until you press Save changes; owners of new action items are then told.</p>}
       {ai && (
         <div className="space-y-2">
-          <span className="chip bg-violet-100 text-violet-700"><Sparkles size={11} className="inline mr-1" />AI DRAFT from the Google Meet transcript — check it before publishing</span>
+          <span className="chip bg-violet-100 text-violet-700"><Sparkles size={11} className="inline mr-1" />AI DRAFT from the Google Meet transcript — check it before {revise ? 'saving' : 'publishing'}</span>
           {confidence === 'low' && (
             <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800"><b>Low confidence.</b> {aiNotes.confidence_reason} Review this draft closely.</div>
           )}
