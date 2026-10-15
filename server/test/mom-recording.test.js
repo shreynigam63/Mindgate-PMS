@@ -54,6 +54,16 @@ const meetingOn = async (date) => (await db.query(`SELECT * FROM pms.mom_meeting
 const notes = async (who, kind) => (await db.query(
   `SELECT title, body FROM core.notifications WHERE tenant_id=$1 AND employee_id=$2 AND kind=$3 ORDER BY created_at, id`, [tenantId, id[who], kind])).rows;
 const mails = async (kind) => Number((await db.query(`SELECT count(*) FROM core.notif_log WHERE tenant_id=$1 AND kind=$2`, [tenantId, kind])).rows[0].count);
+// A notice is written just after the meeting's status changes, so a test
+// that has seen the status waits for the notice too.
+async function notesSoon(who, kind, n = 1) {
+  for (let i = 0; i < 80; i++) {
+    const got = await notes(who, kind);
+    if (got.length >= n) return got;
+    await new Promise((ok) => setTimeout(ok, 25));
+  }
+  return notes(who, kind);
+}
 async function settled(meetingId) {
   for (let i = 0; i < 200; i++) {
     const r = (await db.query(`SELECT status FROM pms.mom_meetings WHERE id=$1`, [meetingId])).rows[0];
@@ -325,14 +335,17 @@ test('the Google Meet transcript is uploaded and the AI drafts the MoM for the o
   assert.strictEqual(r.body.meeting.status, 'draft_ready');
   assert.strictEqual(r.body.minutes.source, 'ai');
   assert.strictEqual(r.body.minutes.ai_confidence, 'high');
-  assert.deepStrictEqual(r.body.minutes.discussion, ['Login fix status', 'Export report', 'Release freeze']);
+  // The simple form (15 Oct): the AI's discussion points are folded into the notes.
+  assert.deepStrictEqual(r.body.minutes.discussion, []);
+  assert.match(r.body.minutes.notes, /Discussed:\n- Login fix status\n- Export report\n- Release freeze/);
   assert.deepStrictEqual(r.body.action_items.map((a) => [a.task, a.owner_id, a.due_date]), [
     ['Finish the export report', id.a1, '2027-04-07'], ['Update the onboarding guide', null, null]]);
   assert.deepStrictEqual(r.body.minutes.attendance, { [id.a1]: 'present', [id.a2]: 'absent' });
   assert.match(r.body.transcript.text, /staging VPN/);
   assert.deepStrictEqual(r.body.transcript.speakers, ['MoM Mgr', 'MoM A1']);
   assert.strictEqual(r.body.can_record, true);
-  assert.match((await notes('mgr', 'mom_draft_ready'))[0].title, /AI draft ready/);
+  assert.match((await notesSoon('mgr', 'mom_draft_ready'))[0].title, /AI draft ready/);
+  for (let i = 0; i < 80 && !(await mails('mom_draft_ready')); i++) await new Promise((ok) => setTimeout(ok, 25));
   assert.strictEqual(await mails('mom_draft_ready'), 1);
   const stored = (await db.query(`SELECT input FROM agentic.drafts WHERE tenant_id=$1 AND kind='mom_draft'`, [tenantId])).rows;
   assert.strictEqual(stored.length, 1, 'the draft is stored with the input that produced it');
@@ -362,14 +375,14 @@ test('the Google Meet transcript is uploaded and the AI drafts the MoM for the o
   assert.strictEqual(r.status, 409, 'published: no more drafts');
 });
 
-test('an AI failure is reported and can be tried again; a .docx transcript works; consent gates the upload', { skip }, async () => {
+test('an AI failure is reported and can be tried again; a .docx transcript works; no PMS notice is needed for it', { skip }, async () => {
   aiReply = 'down';
   let r = await call('POST', `/pms/mom/meetings/${meeting.d2}/transcript`, 'mgr', { text: TRANSCRIPT });
   assert.strictEqual(r.status, 202);
   assert.strictEqual(await settled(meeting.d2), 'scheduled');
   r = await get(`/pms/mom/meetings/${meeting.d2}`, 'mgr');
   assert.ok(r.body.draft_error, 'the failure is on the MoM');
-  assert.strictEqual((await notes('mgr', 'mom_draft_failed')).length, 1);
+  assert.strictEqual((await notesSoon('mgr', 'mom_draft_failed')).length, 1);
 
   aiReply = { summary: 'Short.', discussion: ['Export report'], decisions: [], action_items: [], blockers: [],
     carried_forward: [{ ref: 'C1', status: 'done', note: 'A1 said the export is done' }], present: [], confidence: 'low', confidence_reason: 'Much of the audio was unclear.' };
@@ -384,7 +397,7 @@ test('an AI failure is reported and can be tried again; a .docx transcript works
     'the open items of the previous MoM go with the transcript');
   assert.strictEqual(r.body.minutes.ai_notes.carried_hints.length, 1);
   assert.strictEqual(r.body.carried_forward.length, 2);
-  assert.match((await notes('mgr', 'mom_draft_ready'))[1].body, /Low confidence/);
+  assert.match((await notesSoon('mgr', 'mom_draft_ready', 2))[1].body, /Low confidence/);
 
   const JSZip = require('jszip');
   const zip = new JSZip();
@@ -400,10 +413,12 @@ test('an AI failure is reported and can be tried again; a .docx transcript works
   assert.deepStrictEqual([tr.source, tr.file_name], ['google_meet', 'Daily connect - Transcript.docx']);
   assert.match(tr.text, /^MoM A1: export report finished and shared\.\nMoM Mgr:/);
 
+  // Since 15 Oct a Google Meet transcript needs no PMS recording notice:
+  // Meet itself tells everyone on the call that it is transcribing.
   await call('POST', '/pms/mom/consent', 'a2', { accept: false });
   r = await call('POST', `/pms/mom/meetings/${meeting.d2}/transcript`, 'mgr', { text: TRANSCRIPT, replace: true });
-  assert.strictEqual(r.status, 409);
-  assert.match(r.body.error, /MoM A2 has not accepted the recording notice/);
+  assert.strictEqual(r.status, 202, JSON.stringify(r.body));
+  assert.strictEqual(await settled(meeting.d2), 'draft_ready');
   await call('POST', '/pms/mom/consent', 'a2', { accept: true });
 });
 

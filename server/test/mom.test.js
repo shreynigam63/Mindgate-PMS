@@ -109,18 +109,22 @@ test('rules: Meet links, working days, what publishing needs, what a revision ch
   assert.strictEqual(mom.isWorkingDay('2027-03-07'), false);
   assert.strictEqual(mom.isWorkingDay('2027-03-05', ['2027-03-05']), false);
   const p = mom.publishProblems({ discussion: [' '], action_items: [{ task: 'X' }] });
-  assert.deepStrictEqual(p, ['Add at least one discussion point.', 'Action item 1 ("X") has no owner.', 'Action item 1 ("X") has no due date.']);
+  assert.deepStrictEqual(p, ['Write the notes.', 'Action item 1 ("X") has no owner.', 'Action item 1 ("X") has no due date.']);
   assert.deepStrictEqual(mom.publishProblems({ discussion: ['a'], action_items: [{ task: 'X', owner_id: 'u', due_date: '2027-01-01' }] }), []);
+  assert.deepStrictEqual(mom.publishProblems({ summary: 'Notes', action_items: [] }), [], 'the notes alone are enough');
+  // The three-part form: discussion, decisions and blockers fold into the notes.
+  const folded = mom.foldNotes({ summary: 'Quick sync.', discussion: ['Release'], decisions: ['Ship Friday'], blockers: [{ issue: 'VPN', help_from: 'IT' }] });
+  assert.strictEqual(folded.summary, 'Quick sync.\n\nDiscussed:\n- Release\n\nDecided:\n- Ship Friday\n\nBlockers:\n- VPN (help from IT)');
+  assert.deepStrictEqual([folded.discussion, folded.decisions, folded.blockers], [[], [], []]);
+  assert.strictEqual(mom.foldNotes({}).summary, null);
   const v = { summary: 's', discussion: ['a'], decisions: [], blockers: [], attendance: {}, start_time: '10:00', end_time: '10:30', action_items: [] };
   assert.deepStrictEqual(mom.changedSections(v, { ...v, decisions: ['d'], end_time: '10:40' }), ['decisions', 'times']);
 });
 
-test('team settings: a valid Meet link, only HR switches a team on, attendees from the team', { skip }, async () => {
+test('team settings: a valid Meet link switches the team on; the manager or HR switches it off and on', { skip }, async () => {
   let r = await call('PUT', `/pms/mom/teams/${id.mgr}`, 'mgr', { meet_link: 'https://zoom.us/j/1' });
   assert.strictEqual(r.status, 422);
   assert.strictEqual(r.body.error, 'Enter a valid Google Meet link');
-  r = await call('PUT', `/pms/mom/teams/${id.mgr}`, 'mgr', { meet_link: 'https://meet.google.com/abc-defg-hij', enabled: true });
-  assert.strictEqual(r.status, 422, 'a manager cannot switch daily connects on');
   r = await call('PUT', `/pms/mom/teams/${id.mgr}`, 'mgr', { attendee_ids: [id.r3] });
   assert.strictEqual(r.status, 422, 'attendees come from the manager\'s reports');
   r = await call('PUT', `/pms/mom/teams/${id.mgr}`, 'mgr2', { meet_link: 'https://meet.google.com/abc-defg-hij' });
@@ -128,22 +132,26 @@ test('team settings: a valid Meet link, only HR switches a team on, attendees fr
   r = await call('PUT', `/pms/mom/teams/${id.out}`, 'hr', { meet_link: 'https://meet.google.com/abc-defg-hij' });
   assert.strictEqual(r.status, 409, 'no reports, no team');
 
-  r = await call('PUT', `/pms/mom/teams/${id.mgr}`, 'mgr', { meet_link: 'https://meet.google.com/ABC-defg-hij?authuser=1', daily_time: '10:00', duration_min: 30 });
-  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-  assert.strictEqual(r.body.team.meet_link, 'https://meet.google.com/abc-defg-hij');
-  assert.strictEqual(r.body.team.enabled, false);
-
   r = await call('PUT', `/pms/mom/teams/${id.mgr2}`, 'hr', { enabled: true });
   assert.strictEqual(r.status, 422, 'no link, no daily connects');
   assert.match(r.body.error, /Google Meet link/);
 
-  // Switched on by HR — but no connect is made yet for the dates under
-  // test (the switch makes today's, whatever today is).
+  // Saving the link switches the team on (15 Oct) — but no connect is made
+  // yet for the dates under test (switching on makes today's, whatever
+  // today is).
+  r = await call('PUT', `/pms/mom/teams/${id.mgr}`, 'mgr', { meet_link: 'https://meet.google.com/ABC-defg-hij?authuser=1', daily_time: '10:00', duration_min: 30 });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.team.meet_link, 'https://meet.google.com/abc-defg-hij');
+  assert.strictEqual(r.body.team.enabled, true, 'the first link switches the team on');
+  r = await call('PUT', `/pms/mom/teams/${id.mgr}`, 'mgr', { enabled: false });
+  assert.strictEqual(r.body.team.enabled, false, 'the manager switches it off');
+  r = await call('PUT', `/pms/mom/teams/${id.mgr}`, 'mgr', { daily_time: '10:00' });
+  assert.strictEqual(r.body.team.enabled, false, 'saving again leaves it off');
   r = await call('PUT', `/pms/mom/teams/${id.mgr}`, 'hr', { enabled: true });
   assert.strictEqual(r.status, 200);
   const audit = (await db.query(`SELECT details FROM pms.audit_log WHERE tenant_id=$1 AND action='MOM_TEAM_UPDATED' ORDER BY id`, [tenantId])).rows;
-  assert.strictEqual(audit.length, 2);
-  assert.strictEqual(audit[1].details.after.enabled, true);
+  assert.strictEqual(audit.length, 4);
+  assert.strictEqual(audit[3].details.after.enabled, true);
 
   r = await get('/pms/mom/teams', 'mgr');
   assert.deepStrictEqual(r.body.teams.map((x) => x.manager_id), [id.mgr], 'a manager sees their own team');
@@ -224,12 +232,12 @@ test('a draft is the organiser\'s and HR\'s until it is published', { skip }, as
   assert.strictEqual(r.body.items.length, 0, 'a draft\'s items are not tasks yet');
 });
 
-test('publish: needs a discussion point and every item\'s owner and due date; then attendees are told', { skip }, async () => {
+test('publish: needs the notes and every item\'s owner and due date; then attendees are told', { skip }, async () => {
   let r = await call('POST', `/pms/mom/meetings/${meeting.d1}/publish`, 'mgr', {
     discussion: [], action_items: [{ task: 'Docs', owner_id: null, due_date: null }],
   });
   assert.strictEqual(r.status, 422);
-  assert.deepStrictEqual(r.body.errors, ['Add at least one discussion point.', 'Action item 1 ("Docs") has no owner.', 'Action item 1 ("Docs") has no due date.']);
+  assert.deepStrictEqual(r.body.errors, ['Write the notes.', 'Action item 1 ("Docs") has no owner.', 'Action item 1 ("Docs") has no due date.']);
   r = await call('POST', `/pms/mom/meetings/${meeting.d1}/publish`, 'mgr', {
     discussion: ['x'], action_items: [{ task: 'Docs', owner_id: '00000000-0000-0000-0000-000000000000', due_date: '2027-02-30x' }],
   });
@@ -302,7 +310,8 @@ test('acknowledge, and a revision is a new version with what changed', { skip },
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.version, 2);
   assert.deepStrictEqual(r.body.changed, ['decisions', 'action_items']);
-  assert.match((await notes('a2', 'mom_revised'))[0].body, /decisions, action_items/);
+  assert.strictEqual((await notes('a2', 'mom_revised')).length, 0, 'nobody is asked to acknowledge an edit (15 Oct)');
+  assert.strictEqual((await notes('a1', 'mom_action_assigned')).length, 2, 'the owner of the item the edit added is told');
 
   const after2 = (await get(`/pms/mom/meetings/${meeting.d1}`, 'mgr')).body;
   const temp = after2.action_items.find((a) => a.task === 'Temp');

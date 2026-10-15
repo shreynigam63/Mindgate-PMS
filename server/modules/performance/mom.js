@@ -77,11 +77,13 @@ const isWorkingDay = (date, holidays = []) => {
 };
 const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
 
-// What publishing needs: at least one discussion point, and every action
-// item with a task, an owner and a due date. Every problem at once.
+// What publishing needs: the notes, and every action item with a task, an
+// owner and a due date. Every problem at once. (Since 15 Oct the form is
+// Notes, Action items and Attendance; an older MoM's discussion points
+// count as its notes.)
 function publishProblems(m) {
   const errors = [];
-  if (!(m.discussion || []).some((d) => String(d).trim())) errors.push('Add at least one discussion point.');
+  if (!String(m.summary || '').trim() && !(m.discussion || []).some((d) => String(d).trim())) errors.push('Write the notes.');
   (m.action_items || []).forEach((a, i) => {
     const n = `Action item ${i + 1}${a.task ? ` ("${String(a.task).slice(0, 40)}")` : ''}`;
     if (!String(a.task || '').trim()) errors.push(`${n} has no task.`);
@@ -89,6 +91,20 @@ function publishProblems(m) {
     if (!a.due_date) errors.push(`${n} has no due date.`);
   });
   return errors;
+}
+
+// The simple form (15 Oct) has one Notes box. The AI, and MoMs written
+// before then, also have discussion points, decisions and blockers; they
+// are folded into the notes as plain lines, so nothing in them is lost.
+function foldNotes(v) {
+  const x = v || {};
+  const parts = [];
+  if (String(x.summary || '').trim()) parts.push(String(x.summary).trim());
+  const block = (label, list) => { if (list.length) parts.push(`${label}\n${list.map((l) => `- ${l}`).join('\n')}`); };
+  block('Discussed:', (x.discussion || []).map((d) => String(d).trim()).filter(Boolean));
+  block('Decided:', (x.decisions || []).map((d) => String(d).trim()).filter(Boolean));
+  block('Blockers:', (x.blockers || []).map((b) => (typeof b === 'string' ? b : `${b.issue || ''}${b.help_from ? ` (help from ${b.help_from})` : ''}`).trim()).filter(Boolean));
+  return { ...x, summary: parts.join('\n\n') || null, discussion: [], decisions: [], blockers: [] };
 }
 
 const SECTIONS = ['summary', 'discussion', 'decisions', 'blockers', 'attendance', 'times', 'action_items'];
@@ -415,6 +431,7 @@ async function runDraft(t, meetingId, requestedBy) {
       });
       if (!out.draft || out.draft._unparsed) throw new Error('The AI reply could not be read. Try again.');
       const d = tx.draftToMinutes(out.draft, { people, attendees, carried, words: tr.text.split(/\s+/).filter(Boolean).length });
+      d.value = foldNotes(d.value);
       const done = await inTransaction(async (client) => {
         const still = (await client.query(`SELECT status FROM pms.mom_meetings WHERE id=$1 FOR UPDATE`, [m.id])).rows[0];
         if (!still || still.status !== 'processing') return false; // published by hand or cancelled meanwhile
@@ -512,7 +529,7 @@ function cleanMinutes(b, people) {
   return {
     errors,
     value: {
-      summary: String(b.summary || '').trim().slice(0, 3000) || null,
+      summary: String(b.summary || '').trim().slice(0, 8000) || null,
       discussion: list(b.discussion), decisions: list(b.decisions), blockers, attendance, action_items: items,
       start_time: b.start_time || null, end_time: b.end_time || null,
     },
@@ -645,11 +662,13 @@ router.put('/teams/:managerId', async (req, res) => {
         attendees = b.attendee_ids.length ? [...new Set(b.attendee_ids)] : null;
       }
     }
+    // Since 15 Oct the manager switches their own team on: saving a Meet
+    // link for the first time does it, and the manager or HR can switch it
+    // off and on again. Taking the link away switches it off.
     let enabled = !!cur.enabled;
-    if (b.enabled !== undefined) {
-      if (!hr) errors.push('Only HR switches daily connects on or off.');
-      else enabled = !!b.enabled;
-    }
+    if (b.enabled !== undefined) enabled = !!b.enabled;
+    else if (link && !cur.meet_link) enabled = true;
+    if (!link && b.enabled === undefined) enabled = false;
     // "A team cannot start daily connects until a valid link is saved."
     if (enabled && !link) errors.push('Save a valid Google Meet link before switching daily connects on.');
     if (errors.length) return res.status(422).json({ error: errors[0], errors });
@@ -777,7 +796,8 @@ router.get('/meetings/:id', async (req, res) => {
         meet_link: m.meet_link, status: m.status, cancel_reason: m.cancel_reason, organiser_id: m.organiser_id,
         organiser_name: names[m.organiser_id] || null,
         attendees: (m.attendee_ids || []).map((id) => ({ id, name: names[id] || 'Former employee' })) },
-      minutes: showContent && mi ? { id: mi.id, version: mi.version, status: mi.status, summary: mi.summary, discussion: mi.discussion,
+      minutes: showContent && mi ? { id: mi.id, version: mi.version, status: mi.status, notes: foldNotes(mi).summary || '',
+        summary: mi.summary, discussion: mi.discussion,
         decisions: mi.decisions, blockers: mi.blockers, attendance: mi.attendance,
         carried_forward_snapshot: published ? mi.carried_forward : null,
         published_by: mi.published_by, published_at: mi.published_at, updated_by: mi.updated_by, updated_at: mi.updated_at,
@@ -831,7 +851,7 @@ router.put('/meetings/:id/minutes', async (req, res) => {
   try {
     const m = await editable(req, res); if (!m) return;
     const cur = (await db.query(`SELECT status FROM pms.mom_minutes WHERE meeting_id=$1`, [m.id])).rows[0];
-    if (cur && cur.status === 'published') return res.status(409).json({ error: 'This MoM is published. Use Revise to make a new version.' });
+    if (cur && cur.status === 'published') return res.status(409).json({ error: 'This MoM is published. Use Edit to change it.' });
     const c = cleanMinutes(req.body || {}, await employeeIds(T(req)));
     if (c.errors.length) return res.status(422).json({ error: c.errors[0], errors: c.errors });
     await inTransaction((client) => writeMinutes(client, req, m, c.value, { published: false }));
@@ -872,23 +892,25 @@ async function publishVersion(req, m, value, { revise }) {
   });
 }
 
-async function notifyPublished(req, m, out, { revise }) {
+// Published: attendees are told (nothing to acknowledge since 15 Oct) and
+// owners get their items. An edit afterwards tells only the owners of items
+// it added; the change itself is kept in the version history and audit log.
+async function notifyPublished(req, m, out, { revise, before = [] }) {
   const t = T(req);
   const s = await settingsFor(t);
   const link = `${LINK}&mom=${m.id}`;
-  for (const id of new Set((m.attendee_ids || []).filter((x) => x && x !== req.user.id))) {
-    await tell(t, s, id, revise ? 'mom_revised' : 'mom_published',
-      revise ? `MoM updated (v${out.version}): ${m.title}, ${m.date}` : `MoM published: ${m.title}, ${m.date}`,
-      revise ? `Changed: ${out.changed.join(', ')}. Please read and acknowledge.` : 'Please read and acknowledge.', link);
-  }
   if (!revise) {
-    const owners = (await db.query(
-      `SELECT owner_id, count(*)::int AS n FROM pms.mom_action_items WHERE minutes_id=$1 AND status='open' AND owner_id IS NOT NULL GROUP BY owner_id`,
-      [out.minutesId])).rows;
-    for (const o of owners) {
-      await tell(t, s, o.owner_id, 'mom_action_assigned', `${o.n} action item${o.n === 1 ? '' : 's'} for you from ${m.title}`,
-        `From the ${m.date} MoM.`, `${LINK}&sub=actions`);
+    for (const id of new Set((m.attendee_ids || []).filter((x) => x && x !== req.user.id))) {
+      await tell(t, s, id, 'mom_published', `MoM published: ${m.title}, ${m.date}`, 'Open the MoM tab to read it.', link);
     }
+  }
+  const owners = (await db.query(
+    `SELECT owner_id, count(*)::int AS n FROM pms.mom_action_items
+      WHERE minutes_id=$1 AND status='open' AND owner_id IS NOT NULL AND NOT (id = ANY($2::uuid[])) GROUP BY owner_id`,
+    [out.minutesId, before])).rows;
+  for (const o of owners) {
+    await tell(t, s, o.owner_id, 'mom_action_assigned', `${o.n} action item${o.n === 1 ? '' : 's'} for you from ${m.title}`,
+      `From the ${m.date} MoM.`, `${LINK}&sub=actions`);
   }
 }
 
@@ -896,7 +918,7 @@ router.post('/meetings/:id/publish', async (req, res) => {
   try {
     const m = await editable(req, res); if (!m) return;
     const cur = (await db.query(`SELECT status FROM pms.mom_minutes WHERE meeting_id=$1`, [m.id])).rows[0];
-    if (cur && cur.status === 'published') return res.status(409).json({ error: 'Already published. Use Revise to make a new version.' });
+    if (cur && cur.status === 'published') return res.status(409).json({ error: 'Already published. Use Edit to change it.' });
     const c = cleanMinutes(req.body || {}, await employeeIds(T(req)));
     const errors = [...c.errors, ...publishProblems(c.value)];
     if (errors.length) return res.status(422).json({ error: errors[0], errors });
@@ -906,18 +928,20 @@ router.post('/meetings/:id/publish', async (req, res) => {
   } catch (e) { logger.error('mom publish', { error: e.message }); res.status(500).json({ error: 'Could not publish the MoM.' }); }
 });
 
-// After publish, a change is a new version (v2, v3…) with what changed.
+// Edit after publish. Kept as a version under the hood (who changed which
+// sections, in the audit log); nobody is asked to acknowledge it.
 router.post('/meetings/:id/revise', async (req, res) => {
   try {
     const m = await editable(req, res); if (!m) return;
-    const cur = (await db.query(`SELECT status FROM pms.mom_minutes WHERE meeting_id=$1`, [m.id])).rows[0];
-    if (!cur || cur.status !== 'published') return res.status(409).json({ error: 'Only a published MoM is revised. Save or publish the draft.' });
+    const cur = (await db.query(`SELECT id, status FROM pms.mom_minutes WHERE meeting_id=$1`, [m.id])).rows[0];
+    if (!cur || cur.status !== 'published') return res.status(409).json({ error: 'Only a published MoM is edited this way. Save or publish the draft.' });
+    const before = (await db.query(`SELECT id FROM pms.mom_action_items WHERE minutes_id=$1`, [cur.id])).rows.map((r) => r.id);
     const c = cleanMinutes(req.body || {}, await employeeIds(T(req)));
     const errors = [...c.errors, ...publishProblems(c.value)];
     if (errors.length) return res.status(422).json({ error: errors[0], errors });
     const out = await publishVersion(req, m, c.value, { revise: true });
-    if (out.nothing) return res.status(409).json({ error: 'Nothing has changed since the published version.' });
-    await notifyPublished(req, m, out, { revise: true });
+    if (out.nothing) return res.status(409).json({ error: 'Nothing has changed.' });
+    await notifyPublished(req, m, out, { revise: true, before });
     res.json({ ok: true, version: out.version, changed: out.changed });
   } catch (e) { logger.error('mom revise', { error: e.message }); res.status(500).json({ error: 'Could not save the new version.' }); }
 });
@@ -1199,7 +1223,8 @@ router.post('/meetings/:id/transcript', oneFile, async (req, res) => {
     const t = T(req);
     const m = await openConnect(req, res); if (!m) return;
     const b = req.body || {};
-    if (await consentBlock(res, t, m, 'what was said cannot be sent to the AI')) return;
+    // No PMS recording notice since 15 Oct: Google Meet itself tells
+    // everyone on the call that it is being transcribed.
     if (await guardDraft(res, m, b)) return;
     let parsed;
     try {
@@ -1229,7 +1254,6 @@ router.post('/meetings/:id/redraft', async (req, res) => {
     const m = await openConnect(req, res); if (!m) return;
     const tr = (await db.query(`SELECT 1 FROM pms.mom_transcripts WHERE meeting_id=$1 AND deleted_at IS NULL AND text IS NOT NULL`, [m.id])).rowCount;
     if (!tr) return res.status(409).json({ error: 'Upload the Google Meet transcript first.' });
-    if (await consentBlock(res, t, m, 'what was said cannot be sent to the AI')) return;
     if (await guardDraft(res, m, req.body || {})) return;
     await startDraft(req, m);
     res.status(202).json({ ok: true, status: 'processing' });
@@ -1328,4 +1352,4 @@ function startScheduler(tenantId) {
   return h;
 }
 
-module.exports = { router, tick, ensureMeetings, startScheduler, runDraft, meetLink, localNow, isWorkingDay, publishProblems, changedSections, normaliseSettings, NOTICE_VERSION };
+module.exports = { router, tick, ensureMeetings, startScheduler, runDraft, meetLink, localNow, isWorkingDay, publishProblems, changedSections, foldNotes, normaliseSettings, NOTICE_VERSION };

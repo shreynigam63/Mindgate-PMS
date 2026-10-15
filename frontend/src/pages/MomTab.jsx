@@ -1,17 +1,19 @@
-// The MoM tab of the Connects page ("MoM Tab – PMS Build Specification",
-// 14 Oct). Today's daily connect with its Google Meet link and Record, the
-// list of MoMs, the action items, the team's settings and HR's daily
-// report. A MoM opens on its own view (?mom=<id>): the recording and the
-// Google Meet transcript, the editor while it is a draft (the AI's draft
-// when a transcript was uploaded), read-only once published, with its
-// versions and who has acknowledged it. The server is
-// server/modules/performance/mom.js; the recorder is momRecorder.js.
+// The MoM tab of the Connects page. Simplified on 15 Oct ("it is a lot more
+// complicated to handle"): no recording in the PMS and no recording notice
+// (Google Meet records and transcribes), a three-part form — Notes, Action
+// items, Attendance — and a published MoM is simply edited, with nobody
+// asked to acknowledge it.
+//
+// Today's daily connect with its Google Meet link, the list of MoMs, the
+// action items, the team's settings and HR's daily report. A MoM opens on
+// its own view (?mom=<id>): the Google Meet transcript (the AI drafts from
+// it), the editor while it is a draft, read-only once published with an
+// Edit button. The server is server/modules/performance/mom.js.
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Video, ArrowLeft, Plus, Trash2, CheckCircle2, AlertTriangle, History, RotateCcw, Mic, Square, Download, Play, Sparkles, FileText } from 'lucide-react';
+import { Video, ArrowLeft, Plus, Trash2, CheckCircle2, AlertTriangle, RotateCcw, Download, Play, Sparkles, FileText } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
-import * as recorder from './momRecorder';
 
 const STATUS = {
   scheduled: ['Scheduled', 'bg-navy-50 text-navy-600'],
@@ -21,35 +23,19 @@ const STATUS = {
   missing: ['Missing', 'bg-rose-100 text-rose-700'],
   cancelled: ['Not held', 'bg-navy-100 text-navy-500'],
 };
-const SECTION_LABEL = {
-  summary: 'Summary', discussion: 'Discussion points', decisions: 'Decisions', blockers: 'Blockers',
-  attendance: 'Attendance', times: 'Times', action_items: 'Action items',
-};
-const PRIORITY = { low: 'bg-navy-50 text-navy-600', medium: 'bg-amber-100 text-amber-700', high: 'bg-rose-100 text-rose-700' };
 const when = (x) => (x ? new Date(x).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
-function MomStatus({ status, momStatus, version }) {
+function MomStatus({ status, momStatus }) {
   if (!status) return <span className="chip bg-navy-50 text-navy-400">No connect</span>;
   const [label, cls] = status === 'scheduled' && momStatus === 'draft'
     ? ['Draft saved', 'bg-amber-100 text-amber-700'] : (STATUS[status] || [status, 'bg-navy-50 text-navy-600']);
-  return <span className={`chip ${cls}`}>{label}{status === 'published' && version > 1 ? ` · v${version}` : ''}</span>;
+  return <span className={`chip ${cls}`}>{label}</span>;
 }
 
 const Loading = () => <p className="text-sm text-navy-400">Loading…</p>;
 const Failed = ({ msg }) => <p className="text-sm text-rose-600">{msg}</p>;
 const Empty = ({ children }) => <div className="card p-8 text-center text-sm text-navy-400">{children}</div>;
-const clock = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(t / 3600) ? `${Math.floor(t / 3600)}:` : ''}${String(Math.floor(t / 60) % 60).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
-const listNames = (xs) => xs.map((x) => x.name).join(', ');
 
-function useRecorder() {
-  const [st, setSt] = useState(recorder.current());
-  useEffect(() => recorder.subscribe(setSt), []);
-  return st;
-}
-function useTick(on) {
-  const [, setN] = useState(0);
-  useEffect(() => { if (!on) return undefined; const h = setInterval(() => setN((n) => n + 1), 1000); return () => clearInterval(h); }, [on]);
-}
 
 export default function MomTab({ tabs, title = 'Connects', hue = 'azure' }) {
   const [params, setParams] = useSearchParams();
@@ -76,8 +62,6 @@ export default function MomTab({ tabs, title = 'Connects', hue = 'azure' }) {
     <div className="space-y-4 max-w-5xl mx-auto">
       <PageHead title={title} hue={hue} sub="Daily connects, their minutes and action items" />
       {tabs}
-      <RecorderBar open={open} />
-      <ConsentBanner />
       {momId ? <MomView id={momId} onBack={() => set({ mom: null })} /> : (
         <>
           <div className="flex flex-wrap gap-1.5">
@@ -112,12 +96,12 @@ function Today({ ctx, open, goSettings }) {
       {own && !own.meet_link && (
         <div className="card p-3 text-sm flex flex-wrap items-center gap-2 border-amber-200 bg-amber-50/70">
           <AlertTriangle size={14} className="text-amber-600" />
-          <span className="flex-1">Your team has no Google Meet link yet. Daily connects start once it is saved and HR switches them on.</span>
+          <span className="flex-1">Your team has no Google Meet link yet. Daily connects start once you save it in Team settings.</span>
           <button type="button" className="btn-sec" onClick={goSettings}>Team settings</button>
         </div>
       )}
       {own && own.meet_link && !own.enabled && (
-        <p className="text-xs text-navy-400">Daily connects for your team are off. HR switches them on.</p>
+        <p className="text-xs text-navy-400">Daily connects for your team are off. Switch them on in Team settings.</p>
       )}
       {!d.meetings.length && <Empty>No connect for you today.</Empty>}
       {d.meetings.map((m) => (
@@ -126,150 +110,25 @@ function Today({ ctx, open, goSettings }) {
             <div className="text-sm font-semibold text-navy-800">{m.title}</div>
             <div className="text-xs text-navy-400">{m.start_time}{m.end_time ? `–${m.end_time}` : ''} · Organiser {m.organiser_name || '—'}</div>
           </div>
-          {m.recorded && <span className="chip bg-rose-50 text-rose-700">Recorded</span>}
           {m.draft_error && <span className="chip bg-rose-100 text-rose-700">AI draft failed</span>}
-          <MomStatus status={m.status} momStatus={m.mom_status} version={m.version} />
+          <MomStatus status={m.status} momStatus={m.mom_status} />
           {m.meet_link && m.status === 'scheduled' && (
             <a className="btn-pri" href={m.meet_link} target="_blank" rel="noreferrer"><Video size={13} className="inline mr-1" />Join Google Meet</a>
           )}
           <button type="button" className="btn-sec" onClick={() => open(m.id)}>
             {m.can_edit && m.mom_status !== 'published' && m.status !== 'cancelled' ? 'Write MoM' : 'Open MoM'}
           </button>
-          {m.can_edit && ['scheduled', 'missing', 'draft_ready'].includes(m.status) && (
-            <div className="w-full"><RecordControl meeting={m} recorded={m.recorded} missing={m.consent_missing || []} onDone={load} /></div>
-          )}
         </div>
       ))}
-      <NoticeLine />
     </div>
   );
 }
 
 // ---------------------------------------------------------------- recording
 
-// Record / Stop for one connect. Record stays off until everyone on the
-// call has accepted the recording notice.
-function RecordControl({ meeting, recorded, missing, onDone }) {
-  const rs = useRecorder();
-  const mine = rs.meetingId === meeting.id;
-  const [err, setErr] = useState(null);
-  const last = useRef(rs.phase);
-  useEffect(() => { if (mine && last.current !== 'done' && rs.phase === 'done' && onDone) onDone(); last.current = rs.phase; }, [rs.phase]);
-  useTick(mine && rs.phase === 'recording');
-  if (missing.length) {
-    return <p className="text-xs text-amber-700">Record is off for this connect: {listNames(missing)} {missing.length === 1 ? 'has' : 'have'} not accepted the recording notice. They accept it in the MoM tab; until then, write the MoM by hand.</p>;
-  }
-  if (!recorder.canRecord()) return <p className="text-xs text-navy-400">Recording needs Chrome or Edge on a laptop or desktop.</p>;
-  if (mine && rs.phase === 'recording') {
-    return (
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="chip bg-rose-600 text-white animate-pulse">● REC {clock(Date.now() - rs.startedAt)}</span>
-        <button type="button" className="btn bg-rose-600 text-white hover:bg-rose-700" onClick={recorder.stop}><Square size={12} className="inline mr-1" />Stop</button>
-        <span className="text-[11px] text-navy-400">{rs.sent} of {rs.total} pieces sent. You can switch tabs; closing this tab stops the recording.</span>
-      </div>
-    );
-  }
-  if (mine && rs.phase === 'saving') return <p className="text-xs text-navy-500">Saving the recording…</p>;
-  if (mine && rs.phase === 'starting') return <p className="text-xs text-navy-500">Pick the Google Meet tab and tick “Share tab audio”…</p>;
-  if (session(rs) && !mine) return <p className="text-xs text-navy-400">Another connect is being recorded.</p>;
-  const go = async () => {
-    setErr(null);
-    let replace = false;
-    if (recorded) {
-      if (!window.confirm('This connect already has a recording. Recording again replaces it. Continue?')) return;
-      replace = true;
-    }
-    try { await recorder.start(meeting, { replace }); } catch (e) {
-      if (e.data && e.data.needs_replace && window.confirm('This connect already has a recording. Recording again replaces it. Continue?')) {
-        try { await recorder.start(meeting, { replace: true }); } catch (e2) { setErr(e2.message); }
-      } else setErr(e.message);
-    }
-  };
-  return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="btn bg-rose-600 text-white hover:bg-rose-700" onClick={go}><Mic size={13} className="inline mr-1" />{recorded ? 'Record again' : 'Record'}</button>
-        <span className="text-[11px] text-navy-400">Join the call first. Tell everyone it is being recorded. When the browser asks, pick the Google Meet tab and tick “Share tab audio”.</span>
-      </div>
-      {(err || (mine && rs.error)) && <p className="text-xs text-rose-600">{err || rs.error}</p>}
-    </div>
-  );
-}
-const session = (rs) => ['starting', 'recording', 'saving'].includes(rs.phase);
 
-// Across the tab: the running recording, and any recording this browser
-// kept because it never reached the PMS whole.
-function RecorderBar({ open }) {
-  const rs = useRecorder();
-  const [kept, setKept] = useState([]);
-  const [busy, setBusy] = useState(null);
-  const [err, setErr] = useState(null);
-  const loadKept = () => recorder.unsent().then(setKept).catch(() => setKept([]));
-  useEffect(() => { loadKept(); }, [rs.phase]);
-  useTick(rs.phase === 'recording');
-  const act = async (fn, id) => { setBusy(id); setErr(null); try { await fn(id); await loadKept(); } catch (e) { setErr(e.message); } finally { setBusy(null); } };
-  return (
-    <>
-      {rs.phase === 'recording' && (
-        <div className="card p-3 flex flex-wrap items-center gap-2 border-rose-200 bg-rose-50/80">
-          <span className="chip bg-rose-600 text-white animate-pulse">● REC {clock(Date.now() - rs.startedAt)}</span>
-          <button type="button" className="text-sm font-semibold text-navy-800 underline" onClick={() => open(rs.meetingId)}>{rs.title}</button>
-          <span className="text-xs text-navy-500 flex-1">{rs.sent} of {rs.total} pieces sent</span>
-          <button type="button" className="btn bg-rose-600 text-white hover:bg-rose-700" onClick={recorder.stop}><Square size={12} className="inline mr-1" />Stop</button>
-        </div>
-      )}
-      {rs.phase === 'done' && rs.meetingId && <p className="text-xs text-emerald-700">The recording of {rs.title} is saved in the PMS.</p>}
-      {kept.map((k) => (
-        <div key={k.meetingId} className="card p-3 flex flex-wrap items-center gap-2 border-amber-200 bg-amber-50/70">
-          <AlertTriangle size={14} className="text-amber-600" />
-          <span className="text-sm flex-1 min-w-[12rem]">The recording of <b>{k.title}</b> did not reach the PMS whole. It is kept in this browser ({Math.round(k.bytes / 1024)} KB).
-            {rs.phase === 'unsent' && rs.meetingId === k.meetingId && rs.error ? ` ${rs.error}` : ''}</span>
-          <button type="button" className="btn-pri" disabled={!!busy} onClick={() => act(recorder.resend, k.meetingId)}>{busy === k.meetingId ? 'Sending…' : 'Send again'}</button>
-          <button type="button" className="btn-sec" disabled={!!busy} onClick={() => recorder.saveToLaptop(k.meetingId)}><Download size={13} className="inline mr-1" />Save to laptop</button>
-          <button type="button" className="text-xs text-navy-500 underline" disabled={!!busy} onClick={() => window.confirm('Discard this recording from the browser?') && act(recorder.discard, k.meetingId)}>Discard</button>
-        </div>
-      ))}
-      {err && <Failed msg={err} />}
-    </>
-  );
-}
 
-// "Before the first recording, each attendee accepts a recording notice."
-function ConsentBanner() {
-  const [c, setC] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  useEffect(() => { api('/pms/mom/consent').then(setC).catch(() => setC(null)); }, []);
-  if (!c || c.accepted) return null;
-  const accept = async () => {
-    setBusy(true); setErr(null);
-    try { await api('/pms/mom/consent', { method: 'POST', body: JSON.stringify({ accept: true }) }); setC({ ...c, accepted: true }); } catch (e) { setErr(e.message); } finally { setBusy(false); }
-  };
-  return (
-    <div className="card p-4 space-y-2 border-amber-200 bg-amber-50/60">
-      <div className="text-sm font-semibold text-navy-800">Recording notice</div>
-      <p className="text-sm text-navy-700">{c.notice.text}</p>
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="btn-pri" disabled={busy} onClick={accept}>I accept</button>
-        <span className="text-xs text-navy-500">Until you accept, the connects you are in are not recorded and their minutes are written by hand.</span>
-        {err && <span className="text-xs text-rose-600">{err}</span>}
-      </div>
-    </div>
-  );
-}
 
-function NoticeLine() {
-  const [c, setC] = useState(null);
-  const load = () => api('/pms/mom/consent').then(setC).catch(() => setC(null));
-  useEffect(() => { load(); }, []);
-  if (!c || !c.accepted) return null;
-  const withdraw = async () => {
-    if (!window.confirm('Withdraw your acceptance? Connects you are in will not be recorded or sent to the AI.')) return;
-    await api('/pms/mom/consent', { method: 'POST', body: JSON.stringify({ accept: false }) }).catch(() => {});
-    window.location.reload();
-  };
-  return <p className="text-[11px] text-navy-400">You accepted the recording notice on {when(c.accepted_at)}. <button type="button" className="underline" onClick={withdraw}>Withdraw</button></p>;
-}
 
 // ---------------------------------------------------------------- MoMs list
 
@@ -321,10 +180,8 @@ function MomList({ open }) {
               className="w-full text-left px-4 py-3 flex flex-wrap items-center gap-2 hover:bg-navy-50/60">
               <span className="text-xs font-mono text-navy-500 w-24 shrink-0">{m.date}</span>
               <span className="flex-1 min-w-[10rem] text-sm text-navy-800">{m.title}</span>
-              {m.recorded && <span className="chip bg-rose-50 text-rose-700">Recorded</span>}
               {m.open_items > 0 && <span className="chip bg-amber-50 text-amber-700">{m.open_items} open item{m.open_items === 1 ? '' : 's'}</span>}
-              {m.attended && m.mom_status === 'published' && !m.acknowledged && <span className="chip bg-blue-100 text-blue-700">To acknowledge</span>}
-              <MomStatus status={m.status} momStatus={m.mom_status} version={m.version} />
+              <MomStatus status={m.status} momStatus={m.mom_status} />
             </button>
           ))}
         </div>
@@ -376,7 +233,6 @@ function ActionItems({ ctx, open }) {
                   {scope !== 'mine' && a.manager_name ? ` · ${a.manager_name}'s team` : ''}
                 </div>
               </div>
-              <span className={`chip ${PRIORITY[a.priority]}`}>{a.priority}</span>
               {a.carried_forward_count > 0 && <span className="chip bg-navy-50 text-navy-600">Carried ×{a.carried_forward_count}</span>}
               {a.overdue && <span className="chip bg-rose-100 text-rose-700">Overdue</span>}
               {a.status !== 'open' && <span className="chip bg-navy-100 text-navy-600">{a.status === 'done' ? `Done ${a.closed_on || ''}` : 'Cancelled'}</span>}
@@ -426,6 +282,9 @@ function TeamRow({ team, hr, startOpen, onSaved }) {
   const [reports, setReports] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  // Sent only when changed here: saving a link the first time switches
+  // the team on by itself.
+  const [toggled, setToggled] = useState(false);
   useEffect(() => {
     if (openRow && !reports) api(`/pms/mom/teams/${team.manager_id}/reports`).then((r) => setReports(r.reports)).catch(() => setReports([]));
   }, [openRow]);
@@ -434,7 +293,7 @@ function TeamRow({ team, hr, startOpen, onSaved }) {
     try {
       await api(`/pms/mom/teams/${team.manager_id}`, { method: 'PUT', body: JSON.stringify({
         meet_link: f.meet_link, daily_time: f.daily_time, duration_min: Number(f.duration_min), attendee_ids: f.attendee_ids,
-        ...(hr ? { enabled: f.enabled } : {}),
+        ...(toggled ? { enabled: f.enabled } : {}),
       }) });
       setMsg({ ok: true, text: 'Saved.' });
       onSaved();
@@ -480,21 +339,13 @@ function TeamRow({ team, hr, startOpen, onSaved }) {
                 ))}
               </div>
             )}
-            {reports && reports.length > 0 && (
-              <p className="text-[11px] text-navy-400 mt-1">
-                Recording notice accepted by {reports.filter((r) => r.notice_accepted).length} of {reports.length}
-                {reports.some((r) => !r.notice_accepted) && <> · not yet: {reports.filter((r) => !r.notice_accepted).map((r) => r.name).join(', ')}</>}
-              </p>
-            )}
           </div>
-          {hr ? (
+          {team.meet_link ? (
             <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} />
+              <input type="checkbox" checked={f.enabled} onChange={(e) => { setF({ ...f, enabled: e.target.checked }); setToggled(true); }} />
               Daily connects on for this team
             </label>
-          ) : (
-            <p className="text-xs text-navy-400">Daily connects are {team.enabled ? 'on' : 'off'} for your team. HR switches them on or off.</p>
-          )}
+          ) : <p className="text-xs text-navy-400">Saving the Meet link switches daily connects on for this team.</p>}
           <div className="flex items-center gap-2">
             <button type="button" className="btn-pri" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>
             {msg && <span className={`text-xs ${msg.ok ? 'text-emerald-700' : 'text-rose-600'}`}>{msg.text}</span>}
@@ -507,10 +358,10 @@ function TeamRow({ team, hr, startOpen, onSaved }) {
 
 const EMAIL_LABELS = [
   ['reminder', 'The 15-minute reminder with the Meet link'],
-  ['published', 'MoM published or revised, and comments on it'],
+  ['published', 'MoM published'],
   ['action_items', 'Action items: assigned, due today, overdue, and 3 days overdue to the manager'],
   ['missing', 'Missing MoM at 6 pm'],
-  ['draft', 'AI draft ready or failed, and a recording saved after a closed tab'],
+  ['draft', 'AI draft ready or failed'],
 ];
 
 // HR: how long recordings and transcripts are kept, and which notices are
@@ -535,12 +386,10 @@ function MomSettings() {
   return (
     <div className="card p-4 space-y-3">
       <div className="text-sm font-semibold text-navy-800">MoM settings</div>
-      {d.storage && !d.storage.ok && <p className="text-xs text-rose-600">Recordings cannot be stored on this server: {d.storage.error}</p>}
       <div className="grid grid-cols-2 gap-2 max-w-md">
-        <div><label className="lbl">Keep recordings (days)</label><input type="number" min="1" max="3650" className="inp" value={f.recording_days} onChange={(e) => setF({ ...f, recording_days: e.target.value })} /></div>
         <div><label className="lbl">Keep transcripts (days)</label><input type="number" min="1" max="3650" className="inp" value={f.transcript_days} onChange={(e) => setF({ ...f, transcript_days: e.target.value })} /></div>
       </div>
-      <p className="text-[11px] text-navy-400">A change applies to what is already stored, counted from when each file arrived. MoMs and action items are kept permanently.</p>
+      <p className="text-[11px] text-navy-400">A change applies to transcripts already stored, counted from when each arrived. MoMs and action items are kept permanently.</p>
       <div>
         <label className="lbl">Also send by email</label>
         <div className="space-y-1">
@@ -646,7 +495,7 @@ function MomView({ id, onBack }) {
       <div className="card p-4 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="flex-1 min-w-[12rem] text-base font-bold text-navy-800">{m.title}</h3>
-          <MomStatus status={m.status} momStatus={mi && mi.status} version={mi && mi.version} />
+          <MomStatus status={m.status} momStatus={mi && mi.status} />
         </div>
         <div className="text-xs text-navy-500">
           {m.date} · {m.start_time || '—'}{m.end_time ? `–${m.end_time}` : ''} · Organiser {m.organiser_name || '—'}
@@ -666,43 +515,34 @@ function MomView({ id, onBack }) {
       {!editing && mi && (
         <div className="card p-4 space-y-4">
           {d.can_edit && published && (
-            <div className="flex justify-end"><button type="button" className="btn-sec" onClick={() => setRevising(true)}>Revise (v{mi.version + 1})</button></div>
+            <div className="flex justify-end"><button type="button" className="btn-sec" onClick={() => setRevising(true)}>Edit</button></div>
           )}
           {!published && <span className="chip bg-amber-100 text-amber-700">Draft — not published</span>}
           <MinutesBody v={{ ...mi, action_items: d.action_items, carried_forward: mi.carried_forward_snapshot }} names={namesOf(m)} />
+          {published && mi.updated_at && mi.published_at && new Date(mi.updated_at) > new Date(mi.published_at) && (
+            <p className="text-[11px] text-navy-400">Last edited by {mi.updated_by} · {when(mi.updated_at)}</p>
+          )}
         </div>
       )}
       {!editing && !mi && m.status !== 'cancelled' && <Empty>The MoM for this connect is not published yet.</Empty>}
       {editing && processing && <Empty><Sparkles size={14} className="inline mr-1 text-violet-600" />The AI is drafting the MoM from the transcript. This page updates by itself.</Empty>}
-      {published && <Acks d={d} reload={load} />}
-      {d.versions.length > 0 && <Versions id={id} versions={d.versions} names={namesOf(m)} />}
     </div>
   );
 }
 
-// The connect's recording (play, download, record, upload a file) and,
-// for whoever writes the MoM, the Google Meet transcript and the AI draft.
+// For whoever writes the MoM: the Google Meet transcript, which the AI
+// drafts from. A recording made before 15 Oct can still be played until
+// it is deleted under the retention rule.
 function MediaCard({ d, reload }) {
-  const m = d.meeting;
   const rec = d.recording;
   const editor = d.can_record || !!d.transcript;
-  if (!rec && !editor) return null;
-  const missing = (d.consent || []).filter((c) => !c.accepted);
+  if (!(rec && !rec.deleted_at) && !editor) return null;
   return (
     <div className="card p-4 space-y-4">
-      <div className="space-y-2">
-        <div className="lbl">Recording</div>
-        {rec && !rec.deleted_at && <RecordingPlayer meetingId={m.id} rec={rec} />}
-        {rec && rec.deleted_at && <p className="text-sm text-navy-500">The recording was deleted on {when(rec.deleted_at)} under the retention rule.</p>}
-        {!rec && !d.can_record && <p className="text-sm text-navy-400">Not recorded.</p>}
-        {d.can_record && (
-          <>
-            <RecordControl meeting={m} recorded={!!(rec && !rec.deleted_at)} missing={missing} onDone={reload} />
-            {!missing.length && <FileUpload meetingId={m.id} recorded={!!(rec && !rec.deleted_at)} onDone={reload} />}
-          </>
-        )}
-      </div>
-      {d.can_record && <TranscriptUpload d={d} missing={missing} reload={reload} />}
+      {rec && !rec.deleted_at && (
+        <div className="space-y-2"><div className="lbl">Recording</div><RecordingPlayer meetingId={d.meeting.id} rec={rec} /></div>
+      )}
+      {d.can_record && <TranscriptUpload d={d} reload={reload} />}
       {!d.can_record && d.transcript && d.transcript.text && (
         <p className="text-xs text-navy-500">Transcript uploaded by {d.transcript.uploaded_by} on {when(d.transcript.created_at)}.</p>
       )}
@@ -749,32 +589,10 @@ function RecordingPlayer({ meetingId, rec }) {
   );
 }
 
-// A recording saved to the laptop earlier, sent from here.
-function FileUpload({ meetingId, recorded, onDone }) {
-  const [p, setP] = useState(null);
-  const [err, setErr] = useState(null);
-  const pick = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!file) return;
-    if (recorded && !window.confirm('This connect already has a recording. The file replaces it. Continue?')) return;
-    setErr(null); setP(0);
-    try { await recorder.uploadFile(meetingId, file, { replace: recorded, onProgress: setP }); setP(null); onDone(); } catch (x) { setErr(x.message); setP(null); }
-  };
-  return (
-    <div className="text-xs text-navy-500">
-      {p === null ? (
-        <label className="underline cursor-pointer">Or send a recording file saved on this laptop
-          <input type="file" accept="audio/*,video/webm,video/mp4,.webm,.m4a,.mp3,.wav,.ogg" className="hidden" onChange={pick} /></label>
-      ) : <span>Sending… {Math.round(p * 100)}%</span>}
-      {err && <span className="text-rose-600"> {err}</span>}
-    </div>
-  );
-}
 
 // Part 3: the transcript Google Meet made of the call, uploaded here; the
 // PMS's AI service drafts the MoM from it.
-function TranscriptUpload({ d, missing, reload }) {
+function TranscriptUpload({ d, reload }) {
   const m = d.meeting;
   const t = d.transcript && d.transcript.text ? d.transcript : null;
   const [paste, setPaste] = useState(false);
@@ -797,19 +615,17 @@ function TranscriptUpload({ d, missing, reload }) {
   const sendText = () => send((replace) => JSON.stringify({ text, replace }));
   const redraft = () => send((replace) => JSON.stringify({ replace }), true);
   return (
-    <div className="space-y-2 border-t border-navy-50 pt-3">
-      <div className="lbl flex items-center gap-1"><FileText size={12} />Google Meet transcript → AI draft</div>
+    <div className="space-y-2">
+      <div className="lbl flex items-center gap-1"><FileText size={12} />Google Meet transcript → AI draft (optional)</div>
       {m.status === 'processing' && <p className="text-sm text-violet-700"><Sparkles size={13} className="inline mr-1" />Drafting the MoM from the transcript…</p>}
       {d.draft_error && m.status !== 'processing' && (
         <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700 flex flex-wrap items-center gap-2">
           <span className="flex-1">{d.draft_error}</span>
-          {t && !missing.length && <button type="button" className="btn-sec" disabled={busy} onClick={redraft}>Try again</button>}
+          {t && <button type="button" className="btn-sec" disabled={busy} onClick={redraft}>Try again</button>}
         </div>
       )}
       {t && <p className="text-xs text-navy-500">Uploaded by {t.uploaded_by} on {when(t.created_at)}{t.file_name ? ` (${t.file_name})` : ''}{t.speakers.length ? ` · speakers: ${t.speakers.join(', ')}` : ''} · deleted after {t.delete_after}.</p>}
-      {missing.length > 0 ? (
-        <p className="text-xs text-amber-700">The transcript cannot be sent to the AI until everyone on the call has accepted the recording notice ({listNames(missing)}). Write the MoM by hand.</p>
-      ) : m.status !== 'processing' && (
+      {m.status !== 'processing' && (
         <>
           <p className="text-xs text-navy-500">After the call, Google Meet saves the transcript to the organiser's Google Drive (Meet Recordings folder) and emails a link to it.
             Open it, choose File → Download → Microsoft Word (.docx) or Plain text (.txt), and upload it here — or paste its text.</p>
@@ -852,18 +668,9 @@ function MinutesBody({ v, names }) {
   const att = v.attendance || {};
   const present = Object.keys(att).filter((k) => att[k] === 'present').map((k) => names[k] || 'Former employee');
   const absent = Object.keys(att).filter((k) => att[k] === 'absent').map((k) => names[k] || 'Former employee');
-  const list = (xs) => (xs && xs.length ? <ul className="list-disc pl-5 text-sm space-y-0.5">{xs.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p className="text-sm text-navy-400">None.</p>);
   return (
     <div className="space-y-4">
-      {v.summary && <Section title="Summary"><p className="text-sm whitespace-pre-wrap">{v.summary}</p></Section>}
-      {(present.length > 0 || absent.length > 0) && (
-        <Section title="Attendance">
-          <p className="text-sm">Present: {present.join(', ') || '—'}</p>
-          {absent.length > 0 && <p className="text-sm text-navy-500">Absent: {absent.join(', ')}</p>}
-        </Section>
-      )}
-      <Section title="Discussion points">{list(v.discussion)}</Section>
-      <Section title="Decisions">{list(v.decisions)}</Section>
+      <Section title="Notes"><p className="text-sm whitespace-pre-wrap">{v.notes || <span className="text-navy-400">None.</span>}</p></Section>
       <Section title="Action items">
         {(v.action_items || []).length ? (
           <div className="divide-y divide-navy-50 border border-navy-50 rounded-xl">
@@ -871,20 +678,20 @@ function MinutesBody({ v, names }) {
               <div key={a.id || i} className="px-3 py-2 flex flex-wrap items-center gap-2 text-sm">
                 <span className="flex-1 min-w-[10rem]">{a.task}</span>
                 <span className="text-xs text-navy-500">{a.owner_name || '—'} · due {a.due_date || '—'}</span>
-                <span className={`chip ${PRIORITY[a.priority] || ''}`}>{a.priority}</span>
                 {a.status && a.status !== 'open' && <span className="chip bg-navy-100 text-navy-600">{a.status === 'done' ? 'Done' : 'Cancelled'}</span>}
               </div>
             ))}
           </div>
         ) : <p className="text-sm text-navy-400">None.</p>}
       </Section>
-      <Section title="Blockers">
-        {(v.blockers || []).length ? (
-          <ul className="list-disc pl-5 text-sm space-y-0.5">{v.blockers.map((b, i) => <li key={i}>{b.issue}{b.help_from ? <span className="text-navy-500"> — help from {b.help_from}</span> : ''}</li>)}</ul>
-        ) : <p className="text-sm text-navy-400">None.</p>}
-      </Section>
+      {(present.length > 0 || absent.length > 0) && (
+        <Section title="Attendance">
+          <p className="text-sm">Present: {present.join(', ') || '—'}</p>
+          {absent.length > 0 && <p className="text-sm text-navy-500">Absent: {absent.join(', ')}</p>}
+        </Section>
+      )}
       {v.carried_forward && v.carried_forward.length > 0 && (
-        <Section title="Carried forward">
+        <Section title="Open items from earlier MoMs">
           <ul className="list-disc pl-5 text-sm space-y-0.5">
             {v.carried_forward.map((a) => <li key={a.id}>{a.task} <span className="text-navy-500">— {a.owner_name || '—'}, due {a.due_date || '—'}, from {a.from_date}</span></li>)}
           </ul>
@@ -894,33 +701,11 @@ function MinutesBody({ v, names }) {
   );
 }
 
-function ListField({ label, items, onChange, placeholder }) {
-  return (
-    <div>
-      <label className="lbl">{label}</label>
-      <div className="space-y-1.5">
-        {items.map((x, i) => (
-          <div key={i} className="flex gap-2">
-            <input className="inp" value={x} placeholder={placeholder} aria-label={`${label} ${i + 1}`}
-              onChange={(e) => onChange(items.map((y, j) => (j === i ? e.target.value : y)))} />
-            <button type="button" className="btn-sec" aria-label="Remove" onClick={() => onChange(items.filter((_, j) => j !== i))}><Trash2 size={13} /></button>
-          </div>
-        ))}
-      </div>
-      <button type="button" className="btn-sec mt-1.5" onClick={() => onChange([...items, ''])}><Plus size={13} className="inline mr-1" />Add</button>
-    </div>
-  );
-}
-
 function Editor({ d, revise, onDone, onCancel }) {
   const m = d.meeting;
   const mi = d.minutes || {};
   const [f, setF] = useState(() => ({
-    start_time: m.start_time || '', end_time: m.end_time || '',
-    summary: mi.summary || '',
-    discussion: mi.discussion && mi.discussion.length ? mi.discussion : [''],
-    decisions: mi.decisions || [],
-    blockers: mi.blockers || [],
+    notes: mi.notes || '',
     attendance: mi.attendance && Object.keys(mi.attendance).length ? mi.attendance : Object.fromEntries(m.attendees.map((a) => [a.id, 'present'])),
     action_items: (d.action_items || []).map((a) => ({ id: a.id, task: a.task, owner_id: a.owner_id || '', due_date: a.due_date || '', priority: a.priority, status: a.status })),
   }));
@@ -931,7 +716,10 @@ function Editor({ d, revise, onDone, onCancel }) {
   const [notHeld, setNotHeld] = useState(null);
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
   const item = (i, patch) => set('action_items', f.action_items.map((a, j) => (j === i ? { ...a, ...patch } : a)));
-  const body = () => JSON.stringify({ ...f, action_items: f.action_items.map((a) => ({ ...a, owner_id: a.owner_id || null, due_date: a.due_date || null })) });
+  const body = () => JSON.stringify({
+    summary: f.notes, attendance: f.attendance,
+    action_items: f.action_items.map((a) => ({ ...a, owner_id: a.owner_id || null, due_date: a.due_date || null })),
+  });
   const send = async (kind) => {
     setBusy(kind); setErrors([]); setNote(null);
     try {
@@ -953,48 +741,32 @@ function Editor({ d, revise, onDone, onCancel }) {
   };
   const people = d.people || [];
   const ai = mi.source === 'ai' && !revise;
-  const notes = mi.ai_notes || {};
-  const hints = Object.fromEntries((notes.carried_hints || []).map((h) => [h.id, h]));
+  const aiNotes = mi.ai_notes || {};
+  const hints = Object.fromEntries((aiNotes.carried_hints || []).map((h) => [h.id, h]));
   return (
     <div className="card p-4 space-y-4">
-      {revise && <p className="text-xs text-navy-500">You are editing v{mi.version}. Publishing makes v{mi.version + 1}; attendees are told what changed.</p>}
+      {revise && <p className="text-xs text-navy-500">Editing the published MoM. Owners of new action items are told; nobody else is asked to do anything.</p>}
       {ai && (
         <div className="space-y-2">
-          <span className="chip bg-violet-100 text-violet-700"><Sparkles size={11} className="inline mr-1" />AI DRAFT from the Google Meet transcript — check every section before publishing</span>
+          <span className="chip bg-violet-100 text-violet-700"><Sparkles size={11} className="inline mr-1" />AI DRAFT from the Google Meet transcript — check it before publishing</span>
           {mi.ai_confidence === 'low' && (
-            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800"><b>Low confidence.</b> {notes.confidence_reason} Review this draft closely.</div>
+            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800"><b>Low confidence.</b> {aiNotes.confidence_reason} Review this draft closely.</div>
           )}
-          {(notes.unmatched_owners || []).length > 0 && (
-            <p className="text-xs text-amber-700">The AI heard these owners but could not match them to a person: {notes.unmatched_owners.join(', ')}. Choose the owner for those items.</p>
+          {(aiNotes.unmatched_owners || []).length > 0 && (
+            <p className="text-xs text-amber-700">The AI heard these owners but could not match them to a person: {aiNotes.unmatched_owners.join(', ')}. Choose the owner for those items.</p>
           )}
         </div>
       )}
-      <div className="grid grid-cols-2 gap-2 max-w-sm">
-        <div><label className="lbl">Started</label><input type="time" className="inp" value={f.start_time} onChange={(e) => set('start_time', e.target.value)} /></div>
-        <div><label className="lbl">Ended</label><input type="time" className="inp" value={f.end_time} onChange={(e) => set('end_time', e.target.value)} /></div>
-      </div>
-      {m.attendees.length > 0 && (
-        <div>
-          <label className="lbl">Attendance</label>
-          <div className="grid sm:grid-cols-2 gap-1">
-            {m.attendees.map((a) => (
-              <label key={a.id} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={f.attendance[a.id] !== 'absent'}
-                  onChange={(e) => set('attendance', { ...f.attendance, [a.id]: e.target.checked ? 'present' : 'absent' })} />{a.name}
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-      <div><label className="lbl" htmlFor="mom-summary">Summary</label>
-        <textarea id="mom-summary" className="inp" rows={3} value={f.summary} onChange={(e) => set('summary', e.target.value)} /></div>
-      <ListField label="Discussion points" items={f.discussion} onChange={(v) => set('discussion', v)} placeholder="What was discussed" />
-      <ListField label="Decisions" items={f.decisions} onChange={(v) => set('decisions', v)} placeholder="What was decided" />
       <div>
-        <label className="lbl">Action items</label>
+        <label className="lbl" htmlFor="mom-notes">1. Notes</label>
+        <textarea id="mom-notes" className="inp" rows={8} value={f.notes} onChange={(e) => set('notes', e.target.value)}
+          placeholder="What was discussed and decided, and anything blocking the team" />
+      </div>
+      <div>
+        <label className="lbl">2. Action items</label>
         <div className="space-y-2">
           {f.action_items.map((a, i) => (
-            <div key={a.id || `n${i}`} className="grid grid-cols-2 sm:grid-cols-[1fr_10rem_9rem_6.5rem_auto] gap-2 items-center border border-navy-50 rounded-xl p-2">
+            <div key={a.id || `n${i}`} className="grid grid-cols-2 sm:grid-cols-[1fr_11rem_9.5rem_auto] gap-2 items-center border border-navy-50 rounded-xl p-2">
               <input className="inp col-span-2 sm:col-span-1" placeholder="Task" aria-label={`Task ${i + 1}`} value={a.task} onChange={(e) => item(i, { task: e.target.value })} />
               <select className="inp" aria-label={`Owner ${i + 1}`} value={a.owner_id} onChange={(e) => item(i, { owner_id: e.target.value })}>
                 <option value="">Owner…</option>
@@ -1002,9 +774,6 @@ function Editor({ d, revise, onDone, onCancel }) {
                 {a.owner_id && !people.some((p) => p.id === a.owner_id) && <option value={a.owner_id}>{(d.action_items.find((x) => x.id === a.id) || {}).owner_name || 'Current owner'}</option>}
               </select>
               <input type="date" className="inp" aria-label={`Due date ${i + 1}`} value={a.due_date} onChange={(e) => item(i, { due_date: e.target.value })} />
-              <select className="inp" aria-label={`Priority ${i + 1}`} value={a.priority} onChange={(e) => item(i, { priority: e.target.value })}>
-                <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
-              </select>
               {a.status && a.status !== 'open'
                 ? <span className="chip bg-navy-100 text-navy-600 justify-self-start">{a.status === 'done' ? 'Done' : 'Cancelled'}</span>
                 : <button type="button" className="btn-sec justify-self-start" aria-label="Remove" onClick={() => set('action_items', f.action_items.filter((_, j) => j !== i))}><Trash2 size={13} /></button>}
@@ -1015,39 +784,33 @@ function Editor({ d, revise, onDone, onCancel }) {
           <Plus size={13} className="inline mr-1" />Add action item
         </button>
       </div>
-      <div>
-        <label className="lbl">Blockers</label>
-        <div className="space-y-1.5">
-          {f.blockers.map((b, i) => (
-            <div key={i} className="flex flex-wrap sm:flex-nowrap gap-2">
-              <input className="inp" placeholder="Issue" aria-label={`Blocker ${i + 1}`} value={b.issue} onChange={(e) => set('blockers', f.blockers.map((x, j) => (j === i ? { ...x, issue: e.target.value } : x)))} />
-              <input className="inp sm:w-48" placeholder="Help needed from" aria-label={`Help from ${i + 1}`} value={b.help_from || ''} onChange={(e) => set('blockers', f.blockers.map((x, j) => (j === i ? { ...x, help_from: e.target.value } : x)))} />
-              <button type="button" className="btn-sec" aria-label="Remove" onClick={() => set('blockers', f.blockers.filter((_, j) => j !== i))}><Trash2 size={13} /></button>
-            </div>
-          ))}
-        </div>
-        <button type="button" className="btn-sec mt-1.5" onClick={() => set('blockers', [...f.blockers, { issue: '', help_from: '' }])}><Plus size={13} className="inline mr-1" />Add blocker</button>
-      </div>
-      {!revise && (
+      {m.attendees.length > 0 && (
         <div>
-          <label className="lbl">Carried forward</label>
-          {carried.length ? (
-            <div className="divide-y divide-navy-50 border border-navy-50 rounded-xl">
-              {carried.map((a) => (
-                <div key={a.id} className="px-3 py-2 flex flex-wrap items-center gap-2 text-sm">
-                  <span className="flex-1 min-w-[10rem]">{a.task}</span>
-                  <span className="text-xs text-navy-500">{a.owner_name || '—'} · due {a.due_date || '—'} · from {a.from_date}</span>
-                  {hints[a.id] && (
-                    <span className={`chip ${hints[a.id].status === 'done' ? 'bg-emerald-100 text-emerald-700' : 'bg-navy-50 text-navy-600'}`} title={hints[a.id].note}>
-                      AI: {hints[a.id].status === 'done' ? 'said done in the call' : 'still open'}
-                    </span>
-                  )}
-                  <button type="button" className="btn-sec" onClick={() => closeCarried(a)}><CheckCircle2 size={13} className="inline mr-1" />Mark done</button>
-                </div>
-              ))}
-            </div>
-          ) : <p className="text-sm text-navy-400">No open items from earlier MoMs.</p>}
-          <p className="text-[11px] text-navy-400 mt-1">Open items from the team's earlier MoMs. They stay open until marked done.</p>
+          <label className="lbl">3. Attendance <span className="normal-case font-normal">— untick anyone who missed it</span></label>
+          <div className="grid sm:grid-cols-2 gap-1">
+            {m.attendees.map((a) => (
+              <label key={a.id} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={f.attendance[a.id] !== 'absent'}
+                  onChange={(e) => set('attendance', { ...f.attendance, [a.id]: e.target.checked ? 'present' : 'absent' })} />{a.name}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+      {!revise && carried.length > 0 && (
+        <div>
+          <label className="lbl">Open items from earlier MoMs</label>
+          <div className="divide-y divide-navy-50 border border-navy-50 rounded-xl">
+            {carried.map((a) => (
+              <div key={a.id} className="px-3 py-2 flex flex-wrap items-center gap-2 text-sm">
+                <span className="flex-1 min-w-[10rem]">{a.task}</span>
+                <span className="text-xs text-navy-500">{a.owner_name || '—'} · due {a.due_date || '—'} · from {a.from_date}</span>
+                {hints[a.id] && hints[a.id].status === 'done' && <span className="chip bg-emerald-100 text-emerald-700" title={hints[a.id].note}>AI: said done in the call</span>}
+                <button type="button" className="btn-sec" onClick={() => closeCarried(a)}><CheckCircle2 size={13} className="inline mr-1" />Mark done</button>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-navy-400 mt-1">They carry over to the next MoM by themselves until marked done.</p>
         </div>
       )}
       {errors.length > 0 && (
@@ -1058,7 +821,7 @@ function Editor({ d, revise, onDone, onCancel }) {
       <div className="flex flex-wrap items-center gap-2">
         {!revise && <button type="button" className="btn-sec" disabled={!!busy} onClick={() => send('save')}>{busy === 'save' ? 'Saving…' : 'Save draft'}</button>}
         <button type="button" className="btn-pri" disabled={!!busy} onClick={() => send(revise ? 'revise' : 'publish')}>
-          {busy === 'publish' || busy === 'revise' ? 'Publishing…' : revise ? `Publish v${mi.version + 1}` : 'Publish'}
+          {busy === 'publish' || busy === 'revise' ? 'Saving…' : revise ? 'Save changes' : 'Publish'}
         </button>
         {onCancel && <button type="button" className="btn-sec" disabled={!!busy} onClick={onCancel}>Cancel</button>}
         {note && <span className="text-xs text-emerald-700">{note}</span>}
@@ -1073,69 +836,6 @@ function Editor({ d, revise, onDone, onCancel }) {
           <button type="button" className="text-xs text-navy-500 underline" onClick={() => setNotHeld(null)}>Keep it</button>
         </div>
       )}
-    </div>
-  );
-}
-
-function Acks({ d, reload }) {
-  const [comment, setComment] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const version = d.minutes.version;
-  const ack = async () => {
-    setBusy(true); setErr(null);
-    try { await api(`/pms/mom/meetings/${d.meeting.id}/acknowledge`, { method: 'POST', body: JSON.stringify({ comment }) }); await reload(); } catch (e) { setErr(e.message); } finally { setBusy(false); }
-  };
-  const others = d.acks.filter((a) => a.version === version && !(d.my_ack && a.employee_id === d.my_ack.employee_id));
-  return (
-    <div className="card p-4 space-y-3">
-      <div className="lbl">Acknowledgements</div>
-      {d.can_ack && (
-        <div className="space-y-2">
-          <textarea className="inp" rows={2} placeholder="Comment (optional)" value={comment} onChange={(e) => setComment(e.target.value)} aria-label="Comment" />
-          <div className="flex items-center gap-2">
-            <button type="button" className="btn-pri" disabled={busy} onClick={ack}><CheckCircle2 size={13} className="inline mr-1" />Acknowledge v{version}</button>
-            {err && <span className="text-xs text-rose-600">{err}</span>}
-          </div>
-        </div>
-      )}
-      {d.my_ack && <p className="text-sm text-emerald-700">You acknowledged v{d.my_ack.version} on {when(d.my_ack.acknowledged_at)}{d.my_ack.comment ? ` — “${d.my_ack.comment}”` : ''}.</p>}
-      {(others.length > 0 || d.pending_acks.length > 0) && (
-        <div className="space-y-1 text-sm">
-          {others.map((a) => (
-            <div key={a.employee_id}><span className="font-medium">{a.name}</span> <span className="text-xs text-navy-400">{when(a.acknowledged_at)}</span>{a.comment && <span className="text-navy-600"> — “{a.comment}”</span>}</div>
-          ))}
-          {d.pending_acks.length > 0 && <p className="text-xs text-navy-500">Not yet acknowledged: {d.pending_acks.map((p) => p.name).join(', ')}</p>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Versions({ id, versions, names }) {
-  const [shown, setShown] = useState(null);
-  const [err, setErr] = useState(null);
-  const view = async (v) => {
-    if (shown && shown.version === v) { setShown(null); return; }
-    setErr(null);
-    try { setShown((await api(`/pms/mom/meetings/${id}/versions/${v}`)).version); } catch (e) { setErr(e.message); }
-  };
-  return (
-    <div className="card p-4 space-y-2">
-      <div className="lbl flex items-center gap-1"><History size={12} />Versions</div>
-      {versions.map((v) => (
-        <div key={v.version}>
-          <button type="button" className="text-left text-sm w-full flex flex-wrap gap-2 items-center" onClick={() => view(v.version)}>
-            <span className="chip bg-navy-50 text-navy-700">v{v.version}</span>
-            <span className="text-navy-600">{when(v.changed_at)} · {v.changed_by}</span>
-            {v.version > 1 && <span className="text-xs text-navy-400">Changed: {v.changed.map((c) => SECTION_LABEL[c] || c).join(', ')}</span>}
-          </button>
-          {shown && shown.version === v.version && (
-            <div className="mt-2 ml-2 pl-3 border-l-2 border-navy-100"><MinutesBody v={shown.snapshot} names={names} /></div>
-          )}
-        </div>
-      ))}
-      {err && <Failed msg={err} />}
     </div>
   );
 }
