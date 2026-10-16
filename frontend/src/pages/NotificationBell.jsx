@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Bell } from 'lucide-react';
+import { Bell, X } from 'lucide-react';
 import { api } from '../utils/api';
 
 // Notices sent before 16 Oct carry a few links that are not pages (they
@@ -24,6 +24,9 @@ export default function NotificationBell() {
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const [items, setItems] = useState([]);
   const [err, setErr] = useState(null);
+  // The notice last opened from the list, marked so a reader keeps their
+  // place while the panel stays open.
+  const [current, setCurrent] = useState(null);
   const rootRef = useRef(null);
   const btnRef = useRef(null);
   // The panel is rendered via portal into document.body, which puts it
@@ -71,8 +74,10 @@ export default function NotificationBell() {
       const inPanel = panelRef.current && panelRef.current.contains(e.target);
       if (!inButton && !inPanel) setOpen(false);
     };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onClick); document.removeEventListener('keydown', onKey); };
   }, []);
 
   const unread = items.filter(i => !i.read_at).length;
@@ -138,7 +143,11 @@ export default function NotificationBell() {
         >
           <div className="px-3 py-2 border-b border-navy-100 text-xs font-bold text-navy-500 uppercase tracking-wide flex items-center justify-between">
             <span>Notifications</span>
-            {unread > 0 && <span className="chip bg-rose-100 text-rose-600 normal-case">{unread} unread</span>}
+            <span className="flex items-center gap-1.5">
+              {unread > 0 && <span className="chip bg-rose-100 text-rose-600 normal-case">{unread} unread</span>}
+              <button type="button" onClick={() => setOpen(false)} aria-label="Close notifications" title="Close"
+                className="p-1 rounded hover:bg-navy-50 text-navy-400 hover:text-navy-700"><X size={14} /></button>
+            </span>
           </div>
           {/*
             Show the error banner ONLY when we have nothing else to display.
@@ -152,13 +161,20 @@ export default function NotificationBell() {
           {!err && !items.length && <p className="p-6 text-xs text-navy-400 text-center">Nothing yet.</p>}
           {items.map(n => (
             // Opened inside the app, not by reloading the page (16 Oct, Def-004).
+            // The panel STAYS OPEN while the page opens behind it, so the
+            // reader keeps their place in the list (16 Oct, from QA: it
+            // closed on every click). It closes with the bell, the ×, Esc,
+            // or a click outside it.
             <a key={n.id} href={pageFor(n.link) || '#'}
               onClick={(e) => {
                 if (!n.read_at) markRead(n.id);
+                setCurrent(n.id);
                 const to = pageFor(n.link);
-                if (to && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) { e.preventDefault(); setOpen(false); navigate(to); }
+                if (!to) { e.preventDefault(); return; }
+                if (!e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) { e.preventDefault(); navigate(to); }
               }}
-              className={`block px-3 py-2 border-b border-navy-50 last:border-0 hover:bg-navy-50 transition-colors ${!n.read_at ? 'bg-amber-50/50' : ''}`}>
+              aria-current={current === n.id ? 'true' : undefined}
+              className={`block px-3 py-2 border-b border-navy-50 last:border-0 hover:bg-navy-50 transition-colors ${current === n.id ? 'bg-brand-50 border-l-2 border-l-brand-500' : !n.read_at ? 'bg-amber-50/50' : ''}`}>
               <p className="text-xs font-semibold text-navy-800">{n.title}</p>
               {n.body && <p className="text-[11px] text-navy-500 mt-0.5">{n.body}</p>}
               <p className="text-[10px] text-navy-400 mt-1">{new Date(n.created_at).toLocaleString()}</p>

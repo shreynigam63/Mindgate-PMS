@@ -1197,7 +1197,7 @@ From the defect tracker and the employee and manager test cases.
 
 **Company name and logo.** HR sets them on Settings → Company branding (PNG, JPG, WEBP or SVG, at most 300 KB). They show on the sign-in page and in the top bar, beside Agentic PMS. Nothing shows until HR sets them. Audited.
 
-**Notifications.** Every notice opens the page it is about (several pointed at pages that no longer existed), and opens it without reloading the app. Older notices with an old address are sent to the right page.
+**Notifications.** Every notice opens the page it is about (several pointed at pages that no longer existed), and opens it without reloading the app. Older notices with an old address are sent to the right page. The panel stays open while you read: clicking a notice opens its page behind the panel and marks that notice, so you can go on to the next. It closes with the bell, its ×, Esc, or a click outside it.
 
 **Menu search.** Pages hidden in the current phase are not offered; pages shut in this phase are shown with a lock and the reason, and Enter opens the first page that is open.
 
