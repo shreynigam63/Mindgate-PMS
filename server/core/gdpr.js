@@ -52,7 +52,7 @@ async function buildExport(tenantId, employeeId, { includeRestricted = false } =
     db.query(`SELECT cycle_id, status, overall_rating, strengths, improvement_areas, submitted_at FROM pms.manager_evaluations WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT p.cycle_id, p.status, p.manager_comment, g.title, g.progress_pct, g.target_date FROM pms.development_plans p LEFT JOIN pms.development_goals g ON g.plan_id=p.id WHERE p.tenant_id=$1 AND p.employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT horizon, target_role, plan, updated_at FROM people.career_paths WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
-    db.query(`SELECT held_at, notes, signed_off, meeting_based FROM pms.connects WHERE tenant_id=$1 AND employee_id=$2 ORDER BY held_at DESC`, [tenantId, employeeId]),
+    db.query(`SELECT held_at, topic, discussion_notes, notes, achievements, blockers, feedback, signed_off, meeting_based FROM pms.connects WHERE tenant_id=$1 AND employee_id=$2 ORDER BY held_at DESC`, [tenantId, employeeId]),
     db.query(`SELECT status, plan, opened_at, closed_at, closed_reason FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT h.cycle_id, c.name AS cycle_name, h.final_rating, h.rating_label, h.published_at FROM pms.employee_performance_history h JOIN pms.cycles c ON c.id=h.cycle_id WHERE h.tenant_id=$1 AND h.employee_id=$2`, [tenantId, employeeId]),
     db.query(`SELECT consent_type, granted, granted_at, revoked_at FROM core.employee_consents WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, employeeId]),
@@ -122,51 +122,161 @@ async function restrictedSections(tenantId, employeeId) {
 }
 
 // The same export as a workbook a person can open (16 Oct, Def-013: the
-// JSON file read as "a random file"). One sheet per section: a list
-// becomes a table, a record becomes Field / Value rows. Nothing is left
-// out that the JSON carries. Asked for with ?format=xlsx (the "Download all
-// my data" button); without it the API keeps answering JSON.
-async function exportWorkbook(data) {
+// JSON file read as "a random file"; then, from the client: "not backend
+// data or code"). Written for the person, not the database: names instead
+// of ids (the cycle, the KRA, the manager), dates as dates, Yes / No,
+// statuses in words, the per-KRA review as rows, and no internal keys,
+// ids or JSON anywhere. Asked for with ?format=xlsx (the "Download all my
+// data" button); without it the API keeps answering JSON.
+const ID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const words = (v) => (v == null || v === '' ? '' : String(v).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()));
+const yesNo = (v) => (v == null ? '' : v ? 'Yes' : 'No');
+const num = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? '' : Math.round(Number(v) * 100) / 100);
+const day = (v) => {
+  if (!v) return '';
+  const d = v instanceof Date ? v : new Date(v);
+  return Number.isNaN(d.getTime()) ? String(v) : d;
+};
+// Free-form stored values (a plan, an AI analysis) as plain lines of text.
+function text(v) {
+  if (v == null) return '';
+  if (typeof v !== 'object') return ID_LIKE.test(String(v)) ? '' : String(v);
+  if (Array.isArray(v)) return v.map(text).filter(Boolean).join('\n');
+  return Object.entries(v)
+    .filter(([k, x]) => !/(^|_)id$/i.test(k) && !(typeof x === 'string' && ID_LIKE.test(x)) && x != null && x !== '')
+    .map(([k, x]) => `${words(k)}: ${typeof x === 'object' ? text(x).replace(/\n/g, '; ') : x}`).join('\n');
+}
+
+async function lookupsFor(tenantId, data) {
+  const cycles = new Map((await db.query(`SELECT id, name FROM pms.cycles WHERE tenant_id=$1`, [tenantId])).rows.map((r) => [r.id, r.name]));
+  const kraIds = [...new Set((data.self_appraisals || []).flatMap((a) => Object.keys(a.entries || {})))].filter((k) => ID_LIKE.test(k));
+  const kras = new Map(kraIds.length ? (await db.query(`SELECT id, title FROM pms.kras WHERE tenant_id=$1 AND id = ANY($2::uuid[])`, [tenantId, kraIds])).rows.map((r) => [r.id, r.title]) : []);
+  const params = new Map((await db.query(`SELECT id, name FROM pms.review_parameters WHERE tenant_id=$1`, [tenantId])).rows.map((r) => [r.id, r.name]));
+  const mgr = data.profile && data.profile.manager_id
+    ? (await db.query(`SELECT name FROM core.employees WHERE id=$1 AND tenant_id=$2`, [data.profile.manager_id, tenantId])).rows[0] : null;
+  return { cycle: (id) => cycles.get(id) || '', kra: (id) => kras.get(id) || 'A KRA no longer on the sheet',
+    param: (id) => params.get(id) || '', manager: mgr ? mgr.name : '' };
+}
+
+async function exportWorkbook(data, tenantId) {
   const ExcelJS = require('exceljs');
+  const L = await lookupsFor(tenantId, data);
   const wb = new ExcelJS.Workbook();
-  const cell = (v) => (v == null ? '' : v instanceof Date ? v : typeof v === 'object' ? JSON.stringify(v) : v);
-  const title = (k) => String(k).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()).slice(0, 31);
-  const used = new Set();
-  const sheetFor = (name) => {
-    let n = title(name) || 'Sheet'; let i = 2;
-    while (used.has(n.toLowerCase())) n = `${title(name).slice(0, 28)} ${i++}`;
-    used.add(n.toLowerCase());
-    return wb.addWorksheet(n);
+  wb.creator = 'Agentic PMS';
+  const font = { name: 'Arial', size: 10 };
+  const sheet = (name, columns, rows) => {
+    const ws = wb.addWorksheet(name.slice(0, 31));
+    ws.columns = columns.map(([header, key, width]) => ({ header, key, width: width || 18 }));
+    if (rows.length) rows.forEach((r) => ws.addRow(r));
+    else ws.addRow({ [columns[0][1]]: 'Nothing on record.' });
+    ws.eachRow((row, i) => row.eachCell((c) => {
+      c.font = i === 1 ? { ...font, bold: true } : font;
+      c.alignment = { vertical: 'top', wrapText: true };
+      if (c.value instanceof Date) c.numFmt = 'dd-mmm-yyyy';
+    }));
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+    return ws;
   };
-  const record = (ws, obj) => {
-    ws.columns = [{ header: 'Field', key: 'k', width: 30 }, { header: 'Value', key: 'v', width: 60 }];
-    for (const [k, v] of Object.entries(obj || {})) ws.addRow({ k: title(k), v: cell(v) });
-  };
-  const table = (ws, rows) => {
-    const keys = [...new Set(rows.flatMap((r) => (r && typeof r === 'object' ? Object.keys(r) : ['value'])))];
-    ws.columns = keys.map((k) => ({ header: title(k), key: k, width: Math.min(40, Math.max(12, k.length + 4)) }));
-    for (const r of rows) ws.addRow(r && typeof r === 'object' ? Object.fromEntries(keys.map((k) => [k, cell(r[k])])) : { value: cell(r) });
-    if (!rows.length) ws.addRow({ [keys[0] || 'value']: 'Nothing on record.' });
-  };
-  const walk = (name, v) => {
-    if (Array.isArray(v)) table(sheetFor(name), v);
-    else if (v && typeof v === 'object') {
-      const flat = Object.entries(v).filter(([, x]) => !(x && typeof x === 'object' && !(x instanceof Date)));
-      const nested = Object.entries(v).filter(([, x]) => x && typeof x === 'object' && !(x instanceof Date));
-      if (flat.length) record(sheetFor(name), Object.fromEntries(flat));
-      for (const [k, x] of nested) walk(k, x);
-    } else record(sheetFor(name), { [name]: v });
-  };
-  for (const [k, v] of Object.entries(data || {})) walk(k, v);
-  wb.worksheets.forEach((ws) => { ws.getRow(1).font = { bold: true }; });
+  const p = data.profile || {};
+
+  const about = wb.addWorksheet('About this file');
+  about.columns = [{ key: 'a', width: 28 }, { key: 'b', width: 70 }];
+  [['Personal data held about', p.name || ''], ['Exported on', day(data.exported_at)],
+    ['What this is', 'Everything the Performance Management System keeps about you, one sheet per kind of record.'],
+    ['Questions', 'Ask HR. They can also explain anything in this file.']].forEach((r) => about.addRow({ a: r[0], b: r[1] }));
+  about.eachRow((row) => row.eachCell((c, col) => { c.font = col === 1 ? { ...font, bold: true } : font; c.alignment = { vertical: 'top', wrapText: true }; if (c.value instanceof Date) c.numFmt = 'dd-mmm-yyyy'; }));
+
+  const profile = wb.addWorksheet('Profile');
+  profile.columns = [{ header: 'Field', key: 'k', width: 28 }, { header: 'Value', key: 'v', width: 50 }];
+  [['Employee code', p.emp_code], ['Name', p.name], ['Email', p.email], ['Department', p.department],
+    ['Designation', p.designation], ['Band', p.role_band], ['Reports to', L.manager], ['Date of joining', day(p.date_of_joining)],
+    ['Status', words(p.status)], ['Last appraisal rating', num(p.last_appraisal_rating)], ['Last appraisal on', day(p.last_appraisal_at)],
+    ['Super 50', yesNo(p.super50_flag)], ['Super 50 since', day(p.super50_since)]]
+    .forEach(([k, v]) => profile.addRow({ k, v: v == null ? '' : v }));
+  profile.eachRow((row, i) => row.eachCell((c) => { c.font = i === 1 ? { ...font, bold: true } : font; c.alignment = { horizontal: 'left', vertical: 'top' }; if (c.value instanceof Date) c.numFmt = 'dd-mmm-yyyy'; }));
+  about.pageSetup = profile.pageSetup = { orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+
+  sheet('KRAs', [['Cycle', 'cycle', 22], ['Sheet status', 'status', 14], ['KRA', 'title', 40], ['Weight %', 'weight', 10],
+    ['How it is measured', 'measures', 40], ["Manager's comment", 'comment', 40]],
+  (data.kra_sheets || []).filter((r) => r.title).map((r) => ({ cycle: L.cycle(r.cycle_id), status: words(r.status), title: r.title,
+    weight: num(r.weight), measures: r.measures || '', comment: r.manager_comment || '' })));
+
+  sheet('Annual Review', [['Cycle', 'cycle', 22], ['Status', 'status', 14], ['Overall self-rating', 'overall', 16],
+    ['What went well', 'well', 40], ['What could improve', 'improve', 40], ['Submitted on', 'at', 14]],
+  (data.self_appraisals || []).map((a) => ({ cycle: L.cycle(a.cycle_id), status: words(a.status), overall: num(a.overall_self_rating),
+    well: a.went_well || '', improve: a.could_improve || '', at: day(a.submitted_at) })));
+
+  sheet('Annual Review by KRA', [['Cycle', 'cycle', 22], ['KRA', 'kra', 40], ['Your rating', 'rating', 12], ['What you wrote', 'note', 60]],
+    (data.self_appraisals || []).flatMap((a) => Object.entries(a.entries || {}).map(([k, e]) => ({
+      cycle: L.cycle(a.cycle_id), kra: L.kra(k), rating: num(e && e.self_rating),
+      note: e ? text(Object.fromEntries(Object.entries(e).filter(([x]) => x !== 'self_rating'))).replace(/^Narrative: /, '') : '' }))));
+
+  sheet('Manager evaluation', [['Cycle', 'cycle', 22], ['Status', 'status', 14], ['Overall rating', 'overall', 14],
+    ['Strengths', 'strengths', 40], ['Areas to improve', 'areas', 40], ['Submitted on', 'at', 14]],
+  (data.manager_evaluations || []).map((m) => ({ cycle: L.cycle(m.cycle_id), status: words(m.status), overall: num(m.overall_rating),
+    strengths: m.strengths || '', areas: m.improvement_areas || '', at: day(m.submitted_at) })));
+
+  sheet('Growth plan', [['Cycle', 'cycle', 22], ['Plan status', 'status', 14], ['Goal', 'goal', 40], ['Progress %', 'pct', 12],
+    ['Target date', 'date', 14], ["Manager's comment", 'comment', 40]],
+  (data.development_plans || []).filter((g) => g.title).map((g) => ({ cycle: L.cycle(g.cycle_id), status: words(g.status), goal: g.title,
+    pct: num(g.progress_pct), date: day(g.target_date), comment: g.manager_comment || '' })));
+
+  const cp = data.career_path;
+  sheet('Career path', [['Horizon', 'horizon', 14], ['Target role', 'role', 30], ['Plan', 'plan', 60], ['Updated on', 'at', 14]],
+    cp ? [{ horizon: words(cp.horizon), role: cp.target_role || '', plan: text(cp.plan), at: day(cp.updated_at) }] : []);
+
+  sheet('Connects', [['Held on', 'at', 14], ['Topic', 'topic', 22], ['What was discussed', 'notes', 50], ['Achievements', 'ach', 30],
+    ['Blockers', 'blk', 30], ['Feedback', 'fb', 30], ['Signed off', 'signed', 12], ['From a meeting', 'meeting', 14]],
+  (data.quarterly_connects || []).map((c) => ({ at: day(c.held_at), topic: c.topic || '', notes: c.discussion_notes || c.notes || '',
+    ach: c.achievements || '', blk: c.blockers || '', fb: c.feedback || '', signed: yesNo(c.signed_off), meeting: yesNo(c.meeting_based) })));
+
+  sheet('Improvement plan', [['Status', 'status', 18], ['Plan', 'plan', 60], ['Opened on', 'opened', 14], ['Closed on', 'closed', 14], ['Why it closed', 'reason', 40]],
+    (data.pip_records || []).map((r) => ({ status: words(r.status), plan: text(r.plan), opened: day(r.opened_at), closed: day(r.closed_at), reason: r.closed_reason || '' })));
+
+  sheet('Ratings', [['Cycle', 'cycle', 24], ['Final rating', 'rating', 12], ['Grade', 'label', 16], ['Published on', 'at', 14]],
+    (data.rating_history || []).map((h) => ({ cycle: h.cycle_name || L.cycle(h.cycle_id), rating: num(h.final_rating), label: h.rating_label || '', at: day(h.published_at) })));
+
+  sheet('Consents', [['Consent', 'type', 30], ['Given', 'given', 10], ['Given on', 'at', 14], ['Withdrawn on', 'revoked', 14]],
+    (data.consents || []).map((c) => ({ type: words(c.consent_type), given: yesNo(c.granted), at: day(c.granted_at), revoked: day(c.revoked_at) })));
+
+  const scored = (rows) => rows.map((r) => ({ cycle: L.cycle(r.cycle_id), param: L.param(r.parameter_id), score: num(r.score), at: day(r.updated_at) }));
+  const scoreCols = [['Cycle', 'cycle', 22], ['Parameter', 'param', 30], ['Score', 'score', 10], ['Updated on', 'at', 14]];
+  if ((data.annual_review_parameter_scores || []).length) sheet('Parameter scores', scoreCols, scored(data.annual_review_parameter_scores));
+  if ((data.midyear_pulse_checks || []).length) sheet('Pulse checks', scoreCols, scored(data.midyear_pulse_checks));
+
+  sheet('Review meetings', [['When', 'at', 14], ['About', 'context', 16], ['Held on', 'provider', 16], ['Meeting link', 'url', 30], ['Transcript', 'transcript', 80]],
+    (data.review_meetings || []).map((m) => ({ at: day(m.scheduled_at || m.created_at), context: words(m.context), provider: words(m.provider),
+      url: m.meeting_url || '', transcript: m.transcript || '' })));
+
+  sheet('AI suggestions', [['Kind', 'kind', 22], ['Title', 'title', 30], ['Detail', 'detail', 60], ['Status', 'status', 12],
+    ['Decision note', 'note', 30], ['Decided on', 'decided', 14], ['Made on', 'at', 14]],
+  (data.ai_recommendations || []).map((r) => ({ kind: words(r.kind), title: r.title || '', detail: text(r.detail), status: words(r.status),
+    note: r.decision_note || '', decided: day(r.decided_at), at: day(r.created_at) })));
+
+  // HR's export of someone carries what the employee is not shown in the
+  // product, on sheets marked as such.
+  const hr = data.hr_only;
+  if (hr) {
+    sheet('HR only - AI review analysis', [['Cycle', 'cycle', 22], ['Analysis', 'entries', 70], ['Overall', 'overall', 40], ['Updated on', 'at', 14]],
+      (hr.annual_review_parameter_ai_analysis || []).map((a) => ({ cycle: a.cycle_name || L.cycle(a.cycle_id), entries: text(a.entries), overall: text(a.overall), at: day(a.updated_at || a.created_at) })));
+    sheet('HR only - 9-box', [['Cycle', 'cycle', 22], ['Box', 'box', 24], ['Status', 'status', 14], ['Not placed because', 'why', 22],
+      ['Performance', 'perf', 12], ['Competency', 'comp', 12], ['Potential questions', 'q', 12], ['Potential', 'pot', 12],
+      ['Movement', 'move', 12], ['Placed on', 'at', 14]],
+    (hr.nine_box_placements || []).map((b) => ({ cycle: b.cycle_name || L.cycle(b.cycle_id), box: b.box_name || '', status: words(b.status), why: words(b.not_placed_reason),
+      perf: num(b.performance_score), comp: num(b.competency_score), q: num(b.questions_score), pot: num(b.potential_score),
+      move: words(b.movement), at: day(b.placed_at) })));
+    sheet('HR only - Potential answers', [['Cycle', 'cycle', 22], ['Question', 'q', 30], ['Answer (1-5)', 'a', 14], ['Updated on', 'at', 14]],
+      (hr.potential_answers || []).flatMap((a) => Object.entries(a.answers || {}).map(([k, v]) => ({ cycle: a.cycle_name || L.cycle(a.cycle_id), q: words(k), a: num(v), at: day(a.updated_at) }))));
+  }
   return wb;
 }
-async function sendExport(res, data, base, format) {
+async function sendExport(res, data, base, format, tenantId) {
   if (format !== 'xlsx') {
     res.setHeader('Content-Disposition', `attachment; filename="${base}.json"`);
     return res.json(data);
   }
-  const wb = await exportWorkbook(data);
+  const wb = await exportWorkbook(data, tenantId);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${base}.xlsx"`);
   await wb.xlsx.write(res);
@@ -182,7 +292,7 @@ guardUuidParams(router);
 router.get('/export', async (req, res) => {
   try {
     const data = await buildExport(req.user.tenant_id, req.user.id);
-    await sendExport(res, data, 'my-data-export', req.query.format);
+    await sendExport(res, data, 'my-data-export', req.query.format, req.user.tenant_id);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -198,7 +308,7 @@ router.get('/export/:employeeId', async (req, res) => {
       delete data.hr_only.nine_box_placements;
       delete data.hr_only.potential_answers;
     }
-    await sendExport(res, data, `data-export-${req.params.employeeId}`, req.query.format);
+    await sendExport(res, data, `data-export-${String(data.profile.emp_code || data.profile.name || 'employee').replace(/[^A-Za-z0-9 _-]/g, '').trim() || 'employee'}`, req.query.format, req.user.tenant_id);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

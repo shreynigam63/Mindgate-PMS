@@ -760,13 +760,13 @@ function ChangePassword({ forced, email, onDone, onCancel }) {
       </p>
       <PasswordInput autoComplete="current-password"
         placeholder={forced ? 'The password HR gave you' : 'Current password'}
-        value={current} onChange={(e) => setCurrent(e.target.value)} />
+        value={current} onChange={(e) => { setErr(null); setCurrent(e.target.value); }} />
       <PasswordInput autoComplete="new-password"
         placeholder="New password (at least 8 characters)"
-        value={next} onChange={(e) => setNext(e.target.value)} />
+        value={next} onChange={(e) => { setErr(null); setNext(e.target.value); }} />
       <PasswordInput autoComplete="new-password"
         placeholder="New password again" value={confirm}
-        onChange={(e) => setConfirm(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && go()} />
+        onChange={(e) => { setErr(null); setConfirm(e.target.value); }} onKeyDown={(e) => e.key === 'Enter' && go()} />
       {err && <p className="text-xs text-rose-600">{err}</p>}
       <button className="btn-pri" disabled={busy} onClick={go}>
         {busy ? 'Saving…' : 'Save my password'}

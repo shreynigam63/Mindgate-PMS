@@ -84,7 +84,7 @@ test('gdpr export: HR can export on behalf of an employee; a plain employee cann
   assert.equal(asStranger.status, 403);
 });
 
-test('gdpr export: ?format=xlsx is a workbook a person can open, one sheet per section (16 Oct, Def-013)', { skip }, async () => {
+test('gdpr export: ?format=xlsx is a workbook a person can read — names, not ids or code (16 Oct, Def-013)', { skip }, async () => {
   const { token } = await login('gd-emp@x.com');
   const r = await fetch(`${base}/gdpr/export?format=xlsx`, { headers: { Authorization: `Bearer ${token}` } });
   assert.equal(r.status, 200);
@@ -94,9 +94,19 @@ test('gdpr export: ?format=xlsx is a workbook a person can open, one sheet per s
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(Buffer.from(await r.arrayBuffer()));
   const names = wb.worksheets.map((w) => w.name);
-  assert.ok(names.includes('Profile'), names.join(', '));
-  assert.ok(names.includes('Consents'));
-  const profile = wb.getWorksheet('Profile');
-  const values = []; profile.eachRow((row) => values.push(row.getCell(2).value));
-  assert.ok(values.includes('GD Emp'));
+  for (const n of ['About this file', 'Profile', 'KRAs', 'Annual Review', 'Consents', 'Ratings']) assert.ok(names.includes(n), names.join(', '));
+  const profile = [];
+  wb.getWorksheet('Profile').eachRow((row) => profile.push([row.getCell(1).value, row.getCell(2).value]));
+  assert.ok(profile.some(([k, v]) => k === 'Name' && v === 'GD Emp'));
+  // Nothing from the database's side of things: no ids, no keys, no JSON.
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  wb.worksheets.forEach((ws) => ws.eachRow((row) => row.eachCell((c) => {
+    const v = c.value instanceof Date ? '' : String(c.value == null ? '' : c.value);
+    assert.ok(!UUID.test(v), `${ws.name}: an id in "${v}"`);
+    assert.ok(!/^[{[]/.test(v.trim()), `${ws.name}: JSON in "${v}"`);
+    assert.ok(!/_id\b|\btenant\b|_at\b/.test(v), `${ws.name}: a database name in "${v}"`);
+  })));
+  const consents = [];
+  wb.getWorksheet('Consents').eachRow((row, i) => { if (i > 1) consents.push(row.getCell(2).value); });
+  assert.deepEqual(consents, ['Yes'], 'Yes / No, not true / false');
 });

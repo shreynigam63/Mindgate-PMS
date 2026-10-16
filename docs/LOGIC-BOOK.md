@@ -1193,7 +1193,7 @@ A query raised to nobody goes to HR, and everyone in HR is told, in the app and 
 
 From the defect tracker and the employee and manager test cases.
 
-**Signing in.** Empty boxes are named before anything is sent: *Enter your email and password* / *Enter your email* / *Enter your password*. Every password box has its own Show/Hide button. A password cannot be copied or cut out of the box; pasting still works, so password managers do. After **30 minutes** without a click, key or scroll in any PMS tab, you are signed out; a notice two minutes before offers *Stay signed in*. The sign-in page then says why you were signed out. *Forgot password* checks the code is 8 characters and the new password at least 8 before sending.
+**Signing in.** Empty boxes are named before anything is sent: *Enter your email and password* / *Enter your email* / *Enter your password*. Every password box has its own Show/Hide button. A password is typed by hand: it cannot be copied or cut out of the box, nor pasted or dropped into it, and the box says so when someone tries. A browser's own saved-password fill still works (it is not a paste). The mailbox password in Email settings is a system secret, not a login, and can still be pasted. After **30 minutes** without a click, key or scroll in any PMS tab, you are signed out; a notice two minutes before offers *Stay signed in*. The sign-in page then says why you were signed out. *Forgot password* checks the code is 8 characters and the new password at least 8 before sending.
 
 **Company name and logo.** HR sets them on Settings → Company branding (PNG, JPG, WEBP or SVG, at most 300 KB). They show on the sign-in page and in the top bar, beside Agentic PMS. Nothing shows until HR sets them. Audited.
 
@@ -1207,7 +1207,7 @@ From the defect tracker and the employee and manager test cases.
 
 **Completion Report.** The search also matches the status columns (*pending*, *submitted*, *complete*…).
 
-**Download all my data.** An Excel workbook, one sheet per section (profile, consents, ratings…). The API still answers JSON unless `?format=xlsx` is asked for.
+**Download all my data.** An Excel workbook written for the person, not the database: *About this file*, *Profile*, *KRAs*, *Annual Review* and *Annual Review by KRA*, *Manager evaluation*, *Growth plan*, *Career path*, *Connects*, *Improvement plan*, *Ratings*, *Consents*, *Review meetings*, *AI suggestions*. Names instead of ids (the cycle, the KRA, the manager), dates as dates, Yes / No, statuses in words; no ids, internal keys or code anywhere. Each sheet prints one page wide. HR's export of someone adds the sheets marked *HR only*. The API still answers JSON unless `?format=xlsx` is asked for.
 
 **My Competencies.** A refused submit keeps the form: the competencies still blank are marked in red and the first one is opened.
 

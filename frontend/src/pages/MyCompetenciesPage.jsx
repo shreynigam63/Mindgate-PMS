@@ -104,7 +104,7 @@ export default function MyCompetenciesPage() {
     if (blanks.length) {
       setShowBlanks(true);
       setOpen(blanks[0].category);
-      setActErr(`Rate all ${rows.length} competencies before submitting — ${blanks.length} still blank: ${blanks.slice(0, 5).map((b) => b.name).join(', ')}${blanks.length > 5 ? '…' : ''}. They are marked in red below.`);
+      setActErr(`Rate all ${rows.length} competencies before submitting — ${blanks.length} still blank: ${blanks.slice(0, 5).map((b) => b.name).join(', ')}${blanks.length > 5 ? ` and ${blanks.length - 5} more` : ''}. Each is marked in red.`);
       return;
     }
     setBusy(true);

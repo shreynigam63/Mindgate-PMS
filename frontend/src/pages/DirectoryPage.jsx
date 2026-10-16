@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo, Fragment } from 'react';
 import { Settings2, Trash2, Search, ArrowUpDown, ArrowUp, ArrowDown, X, UserPlus, Undo2, KeyRound, Download } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
+import PasswordInput from '../PasswordInput';
 
 const ROLES = ['employee', 'manager', 'hod', 'hr', 'hr_ops', 'admin'];
 
@@ -977,7 +978,7 @@ function EmployeePanel({ employee, onDone, canManageAccess = true }) {
         <div className="flex flex-wrap items-end gap-2">
           <div>
             <label className="lbl">Set login password for {employee.email}</label>
-            <input className="inp w-56" type="password" placeholder="min 8 characters" value={password} onChange={e => setPassword(e.target.value)} />
+            <div className="w-56"><PasswordInput placeholder="min 8 characters" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} /></div>
           </div>
           <button className="btn-pri" onClick={setLogin}>Set password</button>
           <p className="text-[11px] text-navy-400 max-w-xs">Chosen by you on their behalf — no company SSO is wired up yet, so this is the only way to give someone a real login right now.</p>
