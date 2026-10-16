@@ -57,6 +57,21 @@ async function linkFor(tenantId, employeeId) {
   return (await isHr({ email: e.email, role: e.role, tenant_id: tenantId })) ? HR_LINK : SELF_LINK;
 }
 
+// Everyone who answers the HR inbox. A query raised to nobody goes there,
+// and until 16 Oct nobody was told it had arrived (from QA).
+async function hrPeople(tenantId) {
+  const rows = (await db.query(
+    `SELECT DISTINCT e.id, e.email, ur.role FROM core.employees e
+       LEFT JOIN core.user_roles ur ON ur.tenant_id=e.tenant_id AND lower(ur.email)=lower(e.email)
+      WHERE e.tenant_id=$1 AND e.status='active' AND e.archived_at IS NULL
+        AND ((ur.role IS NOT NULL AND ur.role <> 'employee')
+             OR EXISTS (SELECT 1 FROM core.user_permissions up WHERE up.tenant_id=e.tenant_id AND lower(up.email)=lower(e.email)))`,
+    [tenantId])).rows;
+  const out = [];
+  for (const r of rows) if (await isHr({ email: r.email, role: r.role || 'employee', tenant_id: tenantId })) out.push(r.id);
+  return out;
+}
+
 async function tell(tenantId, ids, kind, title, body, opts) {
   for (const id of ids) {
     try { await notify(tenantId, id, kind, title, body, await linkFor(tenantId, id), opts); } catch (e) {
@@ -148,7 +163,8 @@ router.post('/', async (req, res) => {
       await client.query(`INSERT INTO people.appraisal_query_recipients (tenant_id, query_id, employee_id) VALUES ($1,$2,$3)`, [T(req), q.id, p.id]);
     }
     await client.query('COMMIT');
-    await tell(T(req), to.map((p) => p.id), 'query_raised', `${req.user.name || req.user.email} raised a query: ${title}`,
+    const hearers = to.length ? to.map((p) => p.id) : (await hrPeople(T(req))).filter((id) => id !== req.user.id);
+    await tell(T(req), hearers, 'query_raised', `${req.user.name || req.user.email} raised a query: ${title}`,
       description.length > 300 ? `${description.slice(0, 297)}…` : description, { email: true });
     res.json({ ok: true, query: q,
       message: to.length ? `Query raised to ${to.map((p) => p.name).join(', ')}. They have been told by email.` : 'Query raised to HR.' });

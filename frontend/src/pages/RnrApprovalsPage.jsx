@@ -158,7 +158,11 @@ export default function RnrApprovalsPage() {
                   </div>
                 ))}
               </div>
-              {[['Achievement', detail.nomination.achievement], ['Business impact', detail.nomination.business_impact],
+              {/* A team award names a team, not a person: what the approver
+                  decides on is who is in it and what they did (16 Oct, QA). */}
+              {[['Team', detail.nomination.team_name], ['Team members', detail.nomination.team_members],
+                ['Project', detail.nomination.project], ['Quantified impact', detail.nomination.quantified_impact],
+                ['Achievement', detail.nomination.achievement], ['Business impact', detail.nomination.business_impact],
                 ['Justification', detail.nomination.justification], ['Comments', detail.nomination.comments]]
                 .filter(([, v]) => v).map(([k, v]) => (
                 <div key={k}><p className="text-[11px] text-navy-500">{k}</p>

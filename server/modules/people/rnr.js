@@ -383,6 +383,19 @@ async function nominatablePool(req) {
 // population and ask the manager to work out eligibility. Pick the award,
 // and the system lists only who qualifies — with the count per award on
 // the picker itself.
+// The dates HR set are the window (16 Oct, from QA: a nomination went in
+// after the closing date). Days in the company's time zone.
+async function nominationWindow(cycle) {
+  const w = (await db.query(
+    `SELECT to_char($1::date,'DD Mon YYYY') AS opens, to_char($2::date,'DD Mon YYYY') AS closes,
+            ($1::date IS NOT NULL AND (now() AT TIME ZONE $3)::date < $1::date) AS early,
+            ($2::date IS NOT NULL AND (now() AT TIME ZONE $3)::date > $2::date) AS late`,
+    [cycle.nominations_open, cycle.nominations_close, APP_TZ])).rows[0];
+  w.shut = w.late ? `Nominations for ${cycle.name} closed on ${w.closes}.`
+    : w.early ? `Nominations for ${cycle.name} open on ${w.opens}.` : null;
+  return w;
+}
+
 router.get('/rnr/nominate/options', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) {
@@ -403,7 +416,7 @@ router.get('/rnr/nominate/options', async (req, res) => {
       .map((a) => ({ id: a.id, key: a.key, name: a.name, level: a.level, criteria: a.criteria,
         is_team: a.is_team, discretionary: a.discretionary,
         eligible_count: a.is_team ? null : elig.eligibleFrom(pool, a, ctx).length }));
-    res.json({ cycle, options, pool_size: pool.length });
+    res.json({ cycle, options, pool_size: pool.length, window: await nominationWindow(cycle) });
   } catch (e) { logger.error('rnr options', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
@@ -446,6 +459,8 @@ router.post('/rnr/nominations', async (req, res) => {
     const cycle = (await db.query(`SELECT * FROM rnr.cycles WHERE id=$1 AND tenant_id=$2`, [b.cycle_id, T(req)])).rows[0];
     if (!cycle) return res.status(404).json({ error: 'cycle not found' });
     if (cycle.status !== 'open') return res.status(409).json({ error: `Nominations are not open — this cycle is ${cycle.status}.` });
+    const win = await nominationWindow(cycle);
+    if (win.shut) return res.status(409).json({ error: win.shut });
 
     if (award.needs_justification && !String(b.justification || '').trim()) {
       return res.status(422).json({ error: 'A nomination needs a written justification. '
@@ -540,6 +555,33 @@ async function hrbpRemitOf(req) {
 // award, which names nobody — the manager who raised it.
 const personOf = (n) => n.employee_id || n.nominated_by;
 
+// THE HOD STAGE BELONGS TO THE NOMINEE'S OWN HOD (16 Oct, from QA: any
+// HOD could read and decide every department's nominations). The heads
+// of a department are the ones registered in core.department_heads. A
+// department with nobody registered stays open to every HOD, so a
+// nomination never sits where nobody can reach it. HR is never limited.
+const dkey = (d) => String(d == null ? '' : d).trim().toLowerCase();
+async function headsByDepartment(tenantId) {
+  const map = new Map();
+  for (const r of (await db.query(`SELECT department, employee_id FROM core.department_heads WHERE tenant_id=$1`, [tenantId])).rows) {
+    if (!map.has(dkey(r.department))) map.set(dkey(r.department), []);
+    map.get(dkey(r.department)).push(r.employee_id);
+  }
+  return map;
+}
+async function departmentOf(tenantId, employeeId) {
+  const r = (await db.query(`SELECT department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, tenantId])).rows[0];
+  return r ? r.department : null;
+}
+const isHeadFor = (heads, department, userId) => {
+  const h = heads.get(dkey(department));
+  return !h || !h.length || h.includes(userId);
+};
+async function hodMayAct(req, n) {
+  if (await isHr(req.user)) return true;
+  return isHeadFor(await headsByDepartment(T(req)), await departmentOf(T(req), personOf(n)), req.user.id);
+}
+
 router.get('/rnr/nominations', async (req, res) => {
   try {
     const status = req.query.status || null;
@@ -560,7 +602,10 @@ router.get('/rnr/nominations', async (req, res) => {
       `SELECT n.*, a.name AS award_name, a.key AS award_key, a.level AS award_level, a.is_team,
               e.name AS employee_name, e.emp_code, e.department, e.role_band, e.date_of_joining,
               e.location, e.hod_name, e.total_experience_years,
-              m.name AS nominated_by_name, c.name AS cycle_name
+              m.name AS nominated_by_name, m.department AS nominated_by_department, c.name AS cycle_name,
+              (SELECT ev.comment FROM rnr.events ev
+                WHERE ev.nomination_id=n.id AND ev.to_status IN ('rejected','sent_back') AND ev.comment IS NOT NULL
+                ORDER BY ev.at DESC LIMIT 1) AS last_reason
          FROM rnr.nominations n
          JOIN rnr.awards a ON a.id=n.award_id
          JOIN rnr.cycles c ON c.id=n.cycle_id
@@ -571,7 +616,11 @@ router.get('/rnr/nominations', async (req, res) => {
       mine ? (status ? [T(req), status, req.user.id] : [T(req), req.user.id])
            : (status ? [T(req), status] : [T(req)]))).rows;
     const remit = mine ? null : await hrbpRemitOf(req);
-    const shown = remit ? rows.filter((r) => remit.has(personOf(r))) : rows;
+    let shown = remit ? rows.filter((r) => remit.has(personOf(r))) : rows;
+    if (!mine && status === 'pending_delivery_head' && !(await isHr(req.user))) {
+      const heads = await headsByDepartment(T(req));
+      shown = shown.filter((r) => isHeadFor(heads, r.employee_id ? r.department : r.nominated_by_department, req.user.id));
+    }
     res.json({ nominations: shown.map((r) => ({ ...r, status_label: wf.LABELS[r.status] || r.status })),
       total: shown.length, labels: wf.LABELS });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -594,7 +643,8 @@ router.get('/rnr/nominations/:id', async (req, res) => {
     // The nominee is not on this list: a nomination is not theirs to
     // read until it is decided, and they hear about an award by notice.
     const nominator = n.nominated_by === req.user.id;
-    const stageHolder = await holdsStage(req.user, n.status);
+    const stageHolder = (await holdsStage(req.user, n.status))
+      && (n.status !== 'pending_delivery_head' || (await hodMayAct(req, n)));
     const wide = (await isHr(req.user)) || (await hasPermission(req.user, VIEW_ALL));
     if (!nominator && !stageHolder && !wide) {
       return res.status(403).json({ error: 'This nomination is not open to you.', needs: QUEUE_PERMISSION[n.status] || 'pms_admin' });
@@ -639,6 +689,9 @@ router.post('/rnr/nominations/:id/decide', async (req, res) => {
       }
       const remit = await hrbpRemitOf(req);
       if (remit && !remit.has(personOf(n))) return res.status(403).json({ error: 'That person is not in your remit.' });
+      if (n.status === 'pending_delivery_head' && !(await hodMayAct(req, n))) {
+        return res.status(403).json({ error: 'This nomination is for the HOD of another department.' });
+      }
     } else {
       const resubmit = b.action === 'submit' && ['draft', 'sent_back'].includes(n.status) && n.nominated_by === req.user.id;
       const marksAwarded = b.action === 'award' && n.status === 'final_approved' && (await isHr(req.user));
@@ -732,13 +785,42 @@ async function notifyStage(tenantId, n, award, status, reason) {
   if (status === 'pending_delivery_head') {
     await tell(n.nominated_by, 'Your RnR nomination has been submitted',
       `${name} — it is now with the HOD.`, '/rnr/nominate');
-    const heads = (await db.query(
+    // Only the HOD(s) of the nominee's department; every HOD when the
+    // department has none registered (16 Oct, from QA).
+    const registered = (await headsByDepartment(tenantId)).get(dkey(await departmentOf(tenantId, personOf(n)))) || [];
+    const heads = registered.length ? registered.map((id) => ({ id })) : (await db.query(
       `SELECT e.id FROM core.employees e JOIN core.user_roles ur
          ON ur.tenant_id=e.tenant_id AND lower(ur.email)=lower(e.email)
         WHERE e.tenant_id=$1 AND e.status='active' AND ur.role='hod'`, [tenantId])).rows;
     for (const h of heads) {
+      if (h.id === n.nominated_by) continue;
       await tell(h.id, 'An RnR nomination is waiting on you',
         `${name} — pending HOD approval.`, '/rnr/approvals/delivery-head');
+    }
+  }
+  // The next stages hear too (16 Oct, from QA: nothing told the HRBP or HR
+  // a nomination had reached them). An HRBP only for someone in their remit.
+  if (status === 'pending_hrbp') {
+    const hrbps = (await db.query(
+      `SELECT DISTINCT e.id, e.email FROM core.hrbp_scope s
+         JOIN core.employees e ON e.tenant_id=s.tenant_id AND lower(e.email)=lower(s.email) AND e.status='active'
+        WHERE s.tenant_id=$1`, [tenantId])).rows;
+    for (const h of hrbps) {
+      if (h.id === n.nominated_by) continue;
+      const ids = await hrbpScope.employeeIdsFor(tenantId, h.email, { includeInactive: true }).catch(() => []);
+      if (ids.includes(personOf(n))) {
+        await tell(h.id, 'An RnR nomination is waiting on you', `${name} — pending HRBP approval.`, '/hrbp/rnr-approvals');
+      }
+    }
+  }
+  if (status === 'pending_hr') {
+    const hr = (await db.query(
+      `SELECT DISTINCT e.id FROM core.employees e JOIN core.user_roles ur
+         ON ur.tenant_id=e.tenant_id AND lower(ur.email)=lower(e.email)
+        WHERE e.tenant_id=$1 AND e.status='active' AND ur.role='hr'`, [tenantId])).rows;
+    for (const h of hr) {
+      if (h.id === n.nominated_by) continue;
+      await tell(h.id, 'An RnR nomination is waiting on you', `${name} — pending final HR approval.`, '/rnr/approvals/hr');
     }
   }
   if (status === 'rejected' || status === 'sent_back') {

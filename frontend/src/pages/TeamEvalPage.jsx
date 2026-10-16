@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles, Send, ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react';
-import { api, phaseLabel, phaseColor, KraBullets } from '../utils/api';
+import { api, phaseLabel, phaseColor, KraBullets, API_BASE } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import AppraisalSummaryPanel, { KeptRecommendations } from './AppraisalSummaryPanel';
 import { useKraEdit, KraEditBar, KraHead } from './ReviewKraEditor';
@@ -66,6 +66,7 @@ export default function TeamEvalPage() {
           <button className="w-full flex items-center gap-2 px-4 py-3 text-left" onClick={() => setOpenId(v => v === t.employee_id ? null : t.employee_id)}>
             {openId === t.employee_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             <span className="text-sm font-semibold flex-1">{t.name}</span>
+            {t.former_report && <span className="chip bg-navy-50 text-navy-500" title="Reports to someone else now. What you submitted stays with you, read-only.">former report · read only</span>}
             <span className={`chip ${t.self_status === 'submitted' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>self: {t.self_status || 'not started'}</span>
             <span className={`chip ${t.eval_status === 'submitted' ? 'bg-emerald-100 text-emerald-700' : 'bg-navy-50 text-navy-600'}`}>eval: {t.eval_status || 'pending'}</span>
           </button>
@@ -88,7 +89,7 @@ function EvalEditor({ t, phase, scale, reload }) {
   // KRA, KPI and weightage, edited in the rating cards (7 Oct).
   const kraEdit = useKraEdit(t.employee_id, () => setKraKey((k) => k + 1));
   const timer = useRef(null);
-  const editable = phase === 'manager_eval' && t.eval_status !== 'submitted';
+  const editable = phase === 'manager_eval' && t.eval_status !== 'submitted' && !t.former_report;
 
   const persist = async (patch) => {
     setState('saving');
@@ -115,6 +116,7 @@ function EvalEditor({ t, phase, scale, reload }) {
           <p className="font-bold text-navy-500 uppercase text-[10px]">Their annual review</p>
           {t.went_well && <p><b>Went well:</b> {t.went_well}</p>}
           {t.could_improve && <p><b>Could improve:</b> {t.could_improve}</p>}
+          <TheirEvidence employeeId={t.employee_id} />
         </div>
       )}
       {/* The pre-read comes BEFORE the rating controls: it is meant to be
@@ -206,6 +208,32 @@ function EvalEditor({ t, phase, scale, reload }) {
 // Low/Medium/High chip. Annual cycles only — the server says when it does
 // not apply, and then nothing is shown. Each click saves.
 const SCORE = [1, 2, 3, 4, 5];
+// The files they attached to their Annual Review, to open while rating
+// (16 Oct, from QA: the evidence was uploaded but nowhere to be seen here).
+function TheirEvidence({ employeeId }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    api(`/pms/team/evaluations/${employeeId}/evidence`).then((r) => setRows(r.evidence || [])).catch(() => setRows([]));
+  }, [employeeId]);
+  if (!rows) return null;
+  const token = localStorage.getItem('apms_token');
+  return (
+    <div className="pt-1">
+      <p className="font-bold text-navy-500 uppercase text-[10px]">Their evidence</p>
+      {rows.length === 0 ? <p className="text-navy-400">No files attached.</p> : (
+        <ul className="space-y-0.5">
+          {rows.map((ev) => (
+            <li key={ev.id}>
+              <a className="text-brand-600 hover:underline" href={`${API_BASE}/pms/evidence/${ev.id}/download?token=${token}`}>{ev.filename}</a>
+              <span className="text-navy-400">{ev.kra_title ? ` · ${ev.kra_title}` : ''}{ev.file_size ? ` · ${Math.max(1, Math.round(ev.file_size / 1024))} KB` : ''}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function PotentialStep({ employeeId }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);

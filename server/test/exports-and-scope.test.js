@@ -303,9 +303,20 @@ test('the manager dashboard names who is waiting, not just how many', { skip }, 
     assert.equal(row.name, 'EX Report A');
     assert.equal(row.to, '/team/growth');
     assert.ok(row.since, 'and it says when, so the page can say how long');
-    // The one action band picks this up too, since nothing else is due
-    // in kra_open with no KRA sheets submitted.
-    assert.ok(/target achievement/i.test(r.body.action.title), r.body.action.title);
+    // The manager's OWN overdue work comes first (16 Oct, from QA): this
+    // manager has no KRA sheet of their own yet, so that is the action.
+    assert.equal(r.body.action.kind, 'kra_due');
+    assert.equal(r.body.action.own, true);
+    // With their own sheet in, the action band picks up the team's
+    // submission, since nothing else is due in kra_open.
+    const cyc = (await db.query(`SELECT cycle_id FROM pms.development_plans WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, emp])).rows[0].cycle_id;
+    await db.query(`INSERT INTO pms.kra_sheets (tenant_id, cycle_id, employee_id, status) VALUES ($1,$2,$3,'submitted')`, [tenantId, cyc, mgrId]);
+    try {
+      const r2 = await json('/pms/team/home', mgrTok);
+      assert.ok(/target achievement/i.test(r2.body.action.title), r2.body.action.title);
+    } finally {
+      await db.query(`DELETE FROM pms.kra_sheets WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, mgrId]);
+    }
 
     // A plan belonging to somebody who is NOT this manager's report must
     // not appear — EX Admin's plan has no manager_id at all.

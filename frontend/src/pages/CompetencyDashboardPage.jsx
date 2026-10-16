@@ -225,6 +225,67 @@ export default function CompetencyDashboardPage() {
         <p className="lbl mb-1">Rating scale</p>
         <ScaleLegend scale={d.scale} />
       </div>
+
+      <ReopenAssessments />
+    </div>
+  );
+}
+
+// Reopen a submitted self- or manager assessment, with a reason the
+// person who has to redo it is sent (16 Oct, from QA: the route existed,
+// no screen called it). Audited on the server.
+function ReopenAssessments() {
+  const [rows, setRows] = useState(null);
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(null); // `${employee_id}:${side}`
+  const [reason, setReason] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = () => api('/pms/competencies/submitted').then((r) => setRows(r.rows || [])).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  if (!rows) return null;
+  const shown = rows.filter((r) => !q.trim() || `${r.name} ${r.department || ''}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 50);
+  const go = async (r, side) => {
+    setErr(null); setMsg(null);
+    if (!reason.trim()) { setErr('Say why it is reopened. The person who redoes it is sent this.'); return; }
+    try {
+      await api(`/pms/competencies/reopen/${r.employee_id}`, { method: 'POST', body: JSON.stringify({ side, reason: reason.trim() }) });
+      setMsg(`${r.name}: the ${side === 'self' ? 'self-assessment' : 'manager assessment'} is open again.`);
+      setOpen(null); setReason(''); load();
+    } catch (e) { setErr(e.message); }
+  };
+  return (
+    <div className="card p-4 space-y-2">
+      <p className="lbl mb-0">Reopen a submitted assessment</p>
+      <p className="text-[11.5px] text-navy-400">For a correction. The employee (self) or their manager (manager assessment) can edit and submit again, and is told your reason.</p>
+      <input className="inp" placeholder="Search by name or department…" value={q} onChange={(e) => setQ(e.target.value)} />
+      {msg && <p className="text-xs text-emerald-700">{msg}</p>}
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      {rows.length === 0 ? <p className="text-xs text-navy-400">Nothing has been submitted in this cycle yet.</p> : (
+        <div className="divide-y divide-navy-50">
+          {shown.map((r) => (
+            <div key={r.employee_id} className="py-2 text-xs space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-navy-900">{r.name}</span>
+                <span className="text-navy-400">{r.department || '—'}</span>
+                {['self', 'manager'].filter((side) => r[`${side}_status`] === 'submitted').map((side) => (
+                  <button key={side} type="button" className="btn-sec !py-0.5 !text-[11px]"
+                    onClick={() => { setOpen(`${r.employee_id}:${side}`); setReason(''); setErr(null); }}>
+                    Reopen {side === 'self' ? 'self-assessment' : 'manager assessment'}
+                  </button>
+                ))}
+              </div>
+              {open && open.startsWith(`${r.employee_id}:`) && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input className="inp !py-1 flex-1 min-w-[220px]" autoFocus placeholder="Reason (sent to them)" value={reason} onChange={(e) => setReason(e.target.value)} />
+                  <button type="button" className="btn-pri !py-1" onClick={() => go(r, open.split(':')[1])}>Reopen</button>
+                  <button type="button" className="btn-sec !py-1" onClick={() => setOpen(null)}>Cancel</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

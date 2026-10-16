@@ -1023,6 +1023,15 @@ router.put('/review/kras/:employeeId', async (req, res) => {
     const after = (await db.query(
       `SELECT id, title, description, weight, category, measures FROM pms.kras WHERE sheet_id=$1 ORDER BY sort_order`, [s.id])).rows;
     const changes = diffKras(before, after);
+    // THE OVERALLS FOLLOW THE WEIGHTS (16 Oct, from QA: after a weight-only
+    // edit the Annual Review still showed the overall worked out from the
+    // old weights). The self-rating is worked out again, and so is a
+    // manager evaluation still in draft. A SUBMITTED manager evaluation
+    // keeps the rating its manager signed: HR reopens it to re-rate.
+    let recomputed = null;
+    if (before.some((k) => { const n = after.find((x) => x.id === k.id); return n && Number(n.weight) !== Number(k.weight); })) {
+      recomputed = await recomputeKraOveralls(req, c.id, a.emp.id, after);
+    }
     if (changes.length) {
       await audit(req, 'KRA_EDITED_IN_REVIEW', c.id, a.emp.id, { sheet_id: s.id, phase: c.phase, side: a.side, changed: changes.length, changes });
       // Tell the other person on the sheet.
@@ -1034,9 +1043,39 @@ router.put('/review/kras/:employeeId', async (req, res) => {
           a.side === 'self' ? '/team/eval' : '/my/kras').catch((e) => logger.warn('review kra notify failed', { error: e.message }));
       }
     }
-    res.json({ ok: true, kras: after, weights: pm.weightsValid(after), changes });
+    res.json({ ok: true, kras: after, weights: pm.weightsValid(after), changes, recomputed });
   } catch (e) { logger.error('review kra edit', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
+
+async function recomputeKraOveralls(req, cycleId, employeeId, kras) {
+  const weights = kras.map((k) => ({ id: k.id, weight_pct: k.weight }));
+  const overall = (entries, field) => {
+    const scores = new Map(weights.map((k) => [k.id, entries && entries[k.id] ? entries[k.id][field] : null]));
+    const { rating, missing } = computeWeightedRating(weights, scores);
+    return rating != null && weights.length > missing.length ? rating : null;
+  };
+  const out = {};
+  const sa = (await db.query(`SELECT id, entries, overall_self_rating FROM pms.self_appraisals WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [T(req), cycleId, employeeId])).rows[0];
+  const selfNew = sa ? overall(sa.entries, 'self_rating') : null;
+  if (sa && selfNew != null && Number(selfNew) !== Number(sa.overall_self_rating)) {
+    await db.query(`UPDATE pms.self_appraisals SET overall_self_rating=$2, updated_at=now() WHERE id=$1`, [sa.id, selfNew]);
+    await audit(req, 'SELF_RATING_RECOMPUTED', cycleId, employeeId, { from: sa.overall_self_rating, to: selfNew, why: 'KRA weights changed in review' });
+    out.self = { from: sa.overall_self_rating == null ? null : Number(sa.overall_self_rating), to: selfNew };
+  }
+  const me = (await db.query(`SELECT id, entries, overall_rating, status FROM pms.manager_evaluations WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [T(req), cycleId, employeeId])).rows[0];
+  if (me && me.status === 'submitted') out.manager_kept = true;
+  else if (me) {
+    const mgrNew = overall(me.entries, 'rating');
+    if (mgrNew != null && Number(mgrNew) !== Number(me.overall_rating)) {
+      await db.query(`UPDATE pms.manager_evaluations SET overall_rating=$2, updated_at=now() WHERE id=$1`, [me.id, mgrNew]);
+      await audit(req, 'MANAGER_RATING_RECOMPUTED', cycleId, employeeId, { from: me.overall_rating, to: mgrNew, why: 'KRA weights changed in review' });
+      out.manager = { from: me.overall_rating == null ? null : Number(me.overall_rating), to: mgrNew };
+    }
+  }
+  return out;
+}
 
 // ---------------- HR: org-wide KRA overview + enter-on-behalf — BR-1.1/1.4 -
 // FOUND MISSING 28-Aug-2026: /team/kra-sheets (above) is manager-scoped
@@ -3814,6 +3853,25 @@ router.get('/evidence/:id/download', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// The evidence a report attached to their Annual Review, listed where the
+// manager evaluates them (16 Oct, from QA: the download route existed but
+// no screen listed the files). The same people the download allows.
+router.get('/team/evaluations/:employeeId/evidence', async (req, res) => {
+  try {
+    const emp = (await db.query(`SELECT id, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee not found' });
+    if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin')) && !(await submittedByMe(req, emp.id, 'eval'))) return res.status(403).json({ error: 'Not your report' });
+    const c = await activeCycle(T(req));
+    if (!c) return res.json({ evidence: [] });
+    const r = await db.query(
+      `SELECT ev.id, ev.filename, ev.kra_id, ev.content_type, ev.file_size, ev.uploaded_at, k.title AS kra_title
+         FROM pms.evidence ev JOIN pms.self_appraisals sa ON sa.id=ev.appraisal_id
+         LEFT JOIN pms.kras k ON k.id=ev.kra_id
+        WHERE ev.tenant_id=$1 AND sa.cycle_id=$2 AND sa.employee_id=$3 ORDER BY ev.uploaded_at DESC`, [T(req), c.id, emp.id]);
+    res.json({ evidence: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.delete('/my/self-appraisal/evidence/:id', async (req, res) => {
   try {
     const row = (await db.query(
@@ -4109,7 +4167,8 @@ router.get('/team/midyear-review/:employeeId', async (req, res) => {
   try {
     const emp = (await db.query(`SELECT id, name, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, T(req)])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
-    if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin')) && !(await hasPermission(req.user, 'pms_hod'))) {
+    if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin')) && !(await hasPermission(req.user, 'pms_hod'))
+        && !(await submittedByMe(req, emp.id, 'midyear'))) {
       return res.status(403).json({ error: 'Not your report' });
     }
     const c = await activeCycleForMidyear(T(req));
@@ -4187,8 +4246,9 @@ router.post('/team/midyear-review/:employeeId/submit', async (req, res) => {
     await db.query(
       `UPDATE pms.midyear_checkins
           SET manager_status='submitted', manager_submitted_at=now(),
-              reopened_reason=NULL, reopened_note=NULL, updated_at=now()
-        WHERE id=$1`, [row.id]);
+              reopened_reason=NULL, reopened_note=NULL, updated_at=now(),
+              manager_id=COALESCE($2, manager_id)
+        WHERE id=$1`, [row.id, emp.manager_id]);
     await audit(req, 'MIDYEAR_MANAGER_SUBMITTED', c.id, emp.id, null);
     await notify(T(req), emp.id, 'midyear_manager_signed', `${req.user.name} signed off your Mid-Year Review`,
       null, '/my/midyear', { email: true });
@@ -4197,11 +4257,25 @@ router.post('/team/midyear-review/:employeeId/submit', async (req, res) => {
 });
 
 // ---------------- Manager & HOD evaluation ----------------------------------
+// AFTER A REPORTING-LINE CHANGE (16 Oct, TC_NEW_007): a mid-year or an
+// evaluation the old manager SUBMITTED stays theirs — they still find it
+// and can read it, locked. Work they had not submitted follows the
+// employee to the new manager, as it always did. The record's manager_id
+// is set to the employee's manager at the moment it is submitted.
+async function submittedByMe(req, employeeId, kind) {
+  const sql = kind === 'midyear'
+    ? `SELECT 1 FROM pms.midyear_checkins WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND manager_status='submitted' AND manager_id=$4`
+    : `SELECT 1 FROM pms.manager_evaluations WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3 AND status='submitted' AND manager_id=$4`;
+  const c = kind === 'midyear' ? await activeCycleForMidyear(T(req)) : await activeCycle(T(req));
+  return !!c && (await db.query(sql, [T(req), c.id, employeeId, req.user.id])).rows.length > 0;
+}
+
 router.get('/team/evaluations', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, team: [] });
+    const mc = await activeCycleForMidyear(T(req));
     // Super admin sees every employee here, themselves included.
     const wide = await wantsWholeCompany(req);
     const r = await db.query(
@@ -4211,13 +4285,17 @@ router.get('/team/evaluations', async (req, res) => {
               me.id AS eval_id, me.status AS eval_status, me.entries AS eval_entries,
               me.overall_rating, me.strengths, me.improvement_areas,
               pa.answers AS potential_answers
+              ${wide ? '' : ', (e.manager_id IS DISTINCT FROM $3) AS former_report'}
          FROM core.employees e
          LEFT JOIN pms.self_appraisals sa ON sa.cycle_id=$1 AND sa.employee_id=e.id
          LEFT JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id
          LEFT JOIN pms.potential_answers pa ON pa.cycle_id=$1 AND pa.employee_id=e.id
         WHERE e.tenant_id=$2 AND e.status='active'
-          ${wide ? '' : 'AND e.manager_id=$3'} ORDER BY e.name`,
-      wide ? [c.id, T(req)] : [c.id, T(req), req.user.id]);
+          ${wide ? '' : `AND (e.manager_id=$3
+               OR (me.status='submitted' AND me.manager_id=$3)
+               OR EXISTS (SELECT 1 FROM pms.midyear_checkins mc WHERE mc.tenant_id=$2 AND mc.cycle_id=$4
+                            AND mc.employee_id=e.id AND mc.manager_status='submitted' AND mc.manager_id=$3))`} ORDER BY e.name`,
+      wide ? [c.id, T(req)] : [c.id, T(req), req.user.id, mc ? mc.id : c.id]);
     res.json({ cycle: cycleForClient(c),
                scope: wide ? 'all_employees' : 'my_reports', can_see_all: await seesWholeCompany(req), team: r.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -4228,7 +4306,8 @@ router.get('/team/evaluations/:employeeId/kras', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const emp = (await db.query(`SELECT id, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, T(req)])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
-    if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: 'Not your report' });
+    if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))
+        && !(await submittedByMe(req, emp.id, 'eval')) && !(await submittedByMe(req, emp.id, 'midyear'))) return res.status(403).json({ error: 'Not your report' });
     const c = await activeCycle(T(req));
     if (!c) return res.json({ kras: [] });
     const sheet = (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.params.employeeId])).rows[0];
@@ -4330,7 +4409,7 @@ router.post('/team/evaluations/:employeeId/submit', async (req, res) => {
     const entries = ev.entries || {};
     const unrated = kraIds.filter((id) => !entries[id] || entries[id].rating == null || entries[id].rating === '');
     if (unrated.length) return res.status(422).json({ error: `Rate every KRA before submitting — ${unrated.length} still ${unrated.length === 1 ? 'has' : 'have'} no rating.` });
-    await db.query(`UPDATE pms.manager_evaluations SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [ev.id]);
+    await db.query(`UPDATE pms.manager_evaluations SET status='submitted', submitted_at=now(), updated_at=now(), manager_id=COALESCE($2, manager_id) WHERE id=$1`, [ev.id, emp.manager_id]);
     await audit(req, 'MANAGER_EVAL_SUBMITTED', c.id, req.params.employeeId, { rating: ev.overall_rating });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6699,6 +6778,15 @@ router.post('/pip', async (req, res) => {
     const c = await activeCycle(T(req));
     const cycleId = c ? c.id : null;
     let dup = null;
+    // Without an open cycle there is no cycle slot to hold the one plan,
+    // so the guard is "no plan still running" (16 Oct, from QA: two plans
+    // were opened for one person this way).
+    if (!cycleId) {
+      const running = (await db.query(
+        `SELECT id FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id IS NULL AND status NOT LIKE 'closed%'`,
+        [T(req), b.employee_id])).rows[0];
+      if (running) return res.status(409).json({ error: 'This employee already has an improvement plan running — open it to edit.', pip_id: running.id });
+    }
     if (cycleId) {
       dup = (await db.query(
         `SELECT id, status, opened_by FROM pms.pip_records WHERE tenant_id=$1 AND employee_id=$2 AND cycle_id=$3`,
@@ -6770,6 +6858,9 @@ router.put('/pip/:id', async (req, res) => {
     const p = (await db.query(`SELECT * FROM pms.pip_records WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!p) return res.status(404).json({ error: 'PIP not found' });
     if (p.employee_id === req.user.id || !(await isManagerOfOrAdmin(req, p.employee_id))) return res.status(403).json({ error: 'Requires being this employee\'s manager, or pms_admin' });
+    // A closed plan is a record, whatever is sent (16 Oct, from QA: its
+    // status and closing reason could still be rewritten).
+    if (p.status.startsWith('closed')) return res.status(409).json({ error: 'This plan is closed — it can no longer be changed.' });
     const b = req.body || {};
     const { plan, status, closed_reason } = b;
     const VALID = ['open', 'in_progress', 'closed_successful', 'closed_unsuccessful'];
@@ -6875,6 +6966,8 @@ router.post('/pip/:id/entries', async (req, res) => {
   try {
     const p = (await db.query(`SELECT * FROM pms.pip_records WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!p) return res.status(404).json({ error: 'PIP not found' });
+    // Not on your own plan, even as HR (16 Oct, from QA).
+    if (p.employee_id === req.user.id) return res.status(403).json({ error: 'Weekly notes on a plan are written by the manager or HR, not by the person on it.' });
     if (!(await isManagerOfOrAdmin(req, p.employee_id))) return res.status(403).json({ error: 'Requires being this employee\'s manager, or pms_admin' });
     if (p.status.startsWith('closed')) return res.status(409).json({ error: 'PIP is closed — no further entries' });
     const { week_ending, notes } = req.body || {};

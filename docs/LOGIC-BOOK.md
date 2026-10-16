@@ -240,7 +240,7 @@ deploy shows a *Reload now* bar (`BuildWatch`).
 | Dashboard | `/home` | Top of the sidebar, §2.6 |
 | My KRAs | `/my/kras` | Sheet status machine, §3.1. Weights must total exactly 100 to submit. Each KRA shows its timesheet hours and rating, §3.7 |
 | My Growth | `/my/growth` | Opens on **your** KRA submission, §3.2. Short-term and long-term aspiration are separate records; long-term stays editable through Manager Evaluation |
-| Connects | `/team/connects` | Connect log. **With anyone**: your own connect names who it was with (default your manager), and that person signs it off. Every connect asks *"Do you need HR as part of this connect?"* — yes names one person from HR, who is told and can read it. HR is anyone holding the `hr` or `hrbp` role, or anyone whose department or designation says HR ("Human Resources", "HR Manager", "Head of HR", "HR Business Partner"); "hr" must be a whole word, so "Chrome Engineer" does not count. Suggested: the HRBP whose remit covers you, else an HR role-holder, else the first person from the HR department. Action items carry `sort_order` — `created_at` ties inside one transaction |
+| Connects | `/team/connects` | Connect log. **With anyone**: your own connect names who it was with (default your manager), and that person signs it off — the one who logged a connect never signs it off; the other person in it, or HR, does (§3.20). Every connect asks *"Do you need HR as part of this connect?"* — yes names one person from HR, who is told and can read it. HR is anyone holding the `hr` or `hrbp` role, or anyone whose department or designation says HR ("Human Resources", "HR Manager", "Head of HR", "HR Business Partner"); "hr" must be a whole word, so "Chrome Engineer" does not count. Suggested: the HRBP whose remit covers you, else an HR role-holder, else the first person from the HR department. Action items carry `sort_order` — `created_at` ties inside one transaction |
 | Mid-Year Review | `/my/midyear` | Opens at `mid_year_review`, stays open to end of Annual Review. Per-KRA ratings with a computed overall. KRA, KPI and weightage editable here, §3.1 |
 | Annual Review | `/my/self-appraisal` | Opens at `self_appraisal`. Locks permanently on sign-off. KRA, KPI and weightage editable here, §3.1 |
 | Final Rating | `/my/annual-review` | The annual review only, as a chain: your rating → manager → HOD → HR → final, §3.3 |
@@ -1186,6 +1186,48 @@ People Hub → **Queries** (until 15 Oct "Appraisal Queries"). *Raise query* ope
 People Hub shows the queries you raised and those raised to you. **HR → Queries** is HR's inbox of every query in the company, with Open / Answered / Closed and *Raised to me or to HR*; someone in HR answers a query raised to them there, not from People Hub. Only the person who raised it, the people it is raised to and HR can open a query.
 
 Status: **Open** until someone else answers, then **Answered**; the raiser's reply makes it Open again. Any of them can **Close** it, after which it takes no more replies. The raiser is emailed every answer; the others are told in the app.
+
+A query raised to nobody goes to HR, and everyone in HR is told, in the app and by email (16 Oct).
+
+## 3.20 Changes of 16 Oct — from the client's QA
+
+From the defect tracker and the employee and manager test cases.
+
+**Signing in.** Empty boxes are named before anything is sent: *Enter your email and password* / *Enter your email* / *Enter your password*. Every password box has its own Show/Hide button. A password cannot be copied or cut out of the box; pasting still works, so password managers do. After **30 minutes** without a click, key or scroll in any PMS tab, you are signed out; a notice two minutes before offers *Stay signed in*. The sign-in page then says why you were signed out. *Forgot password* checks the code is 8 characters and the new password at least 8 before sending.
+
+**Company name and logo.** HR sets them on Settings → Company branding (PNG, JPG, WEBP or SVG, at most 300 KB). They show on the sign-in page and in the top bar, beside Agentic PMS. Nothing shows until HR sets them. Audited.
+
+**Notifications.** Every notice opens the page it is about (several pointed at pages that no longer existed), and opens it without reloading the app. Older notices with an old address are sent to the right page.
+
+**Menu search.** Pages hidden in the current phase are not offered; pages shut in this phase are shown with a lock and the reason, and Enter opens the first page that is open.
+
+**Manager evaluation.** Submit needs every KRA rated (*Rate every KRA before submitting — N still have no rating*), and only the employee's manager (or HR) submits. Once submitted it is locked. HR reopens it on the Completion Report with a reason; the manager is told the reason. Reopening is possible only while manager evaluation is open — after that HR changes the rating in Calibration. Saved KRA ratings come back when the page is opened again. The one exception to "every KRA rated": an overall set through the 7 organisational parameters (switched off on screen since 23 Sep).
+
+**HOD rating.** A HOD rates only employees in a department they head, never themselves (another HOD or HR does), only after the manager has submitted, and only on the cycle's scale. Submitted, it is locked; HR changes it in Calibration with a reason. The queue says why it is empty (no department headed / not the HOD phase yet / nothing submitted by managers yet), shows the manager, and keeps the HOD's saved comment.
+
+**Completion Report.** The search also matches the status columns (*pending*, *submitted*, *complete*…).
+
+**Download all my data.** An Excel workbook, one sheet per section (profile, consents, ratings…). The API still answers JSON unless `?format=xlsx` is asked for.
+
+**My Competencies.** A refused submit keeps the form: the competencies still blank are marked in red and the first one is opened.
+
+**Connects.** Search also finds the HR person, who logged it, the KRA linked, the date written several ways (16/10/2026, 16 Oct 2026, 2026-10-16) and *signed off* / *pending sign-off*. **Sign-off** is by the other person in the connect, never the one who logged it — or by HR. A connect saved before the author was recorded keeps the old rule (its manager signs). Everyone else in the connect is told when it is signed off. The Manager Dashboard's connect links open Team Connects.
+
+**Timesheet upload.** A re-upload replaces **only the days the file has logs for**, person by person; the check says how many stored logs that will replace, and the result how many it did. (Until 16 Oct every day from the file's first date to its last was replaced: a file with 1 and 30 Sep wiped the days between.) The file box empties after an upload. An empty *Log owner* is reported even when Owner Mail Id is filled. A row with hours and only a sprint, item type or project is reported, not skipped. **Dates:** 18/Sep/2026, 18-Sep-26, 18 September 2026, Sep 18, 2026 and 2026-09-18 are read; an all-number date is read only when one reading is possible — 25/09/2026 is 25 Sep — and 05/09/2026 is refused: *ambiguous — it could be 5 Sep or 9 May. Write it as 05/Sep/2026*.
+
+**RnR.** The HOD stage belongs to the nominee's own HOD — the head(s) of their department in the department-head register (a team award: the nominator's department). Another department's HOD does not see it, cannot open it and cannot decide it; only that department's HOD is told. A department with no head registered stays open to every HOD. Nominations are taken only between the cycle's open and close dates (company time zone); after the close the page says so and Submit is off. A rejection's or send-back's reason shows in *Your nominations*. The HRBP (for someone in their remit) and HR are told when a nomination reaches them. The approval screen shows a team award's team, members, project and quantified impact.
+
+**PIP.** A closed plan cannot be changed at all, status and reason included. Weekly notes are never written by the person on the plan, even if they are HR. Without an open cycle, a second plan for someone whose plan is still running is refused.
+
+**Dashboards.** The Dashboard names the phase in every phase and says what it means for you, e.g. *Annual Review — Write your Annual Review: rate yourself against each KRA and submit*, or *Manager Evaluation — Your manager is evaluating your year. Nothing is needed from you.* On the Manager Dashboard the manager's **own** overdue work (a returned KRA sheet, their own Annual Review) comes before the team's, marked *Your own work first*; the *Team progress* row is always shown. On Team KRA Sheets only the employee's own manager gets Approve / Return; HR decides others from All Approvals.
+
+**Team Evaluation.** The files an employee attached to their Annual Review are listed under *Their annual review*, each with its KRA, to open while rating.
+
+**Reporting-line change.** KRA sheets and growth plans follow the employee to the new manager whatever their state (as before). A mid-year sign-off, a manager evaluation or a competency assessment the old manager **submitted** stays with them: they still find it (marked *former report · read only*) and can open it; they cannot change it. One they had not submitted follows the employee. The record keeps the manager it was submitted under.
+
+**Weights edited during a review.** Changing KRA weights on the review screens works the self-rating out again, and a manager evaluation still in draft. A submitted manager evaluation keeps the rating its manager signed (HR reopens it to re-rate). Each recomputation is audited with the old and new figure. Example: self ratings 5 and 2 at 50/50 = 3.5; at 80/20 = **4.4**.
+
+**Competencies — reopen.** HR → Competency Dashboard → *Reopen a submitted assessment*: search, pick the self- or manager assessment, give a reason. The employee (self) or their manager (manager assessment) can edit and submit again, and is told the reason. Audited.
 
 # Part 4 — Changing behaviour without code
 

@@ -137,15 +137,14 @@ export default function TeamDashboardPage({ user }) {
     desk.push({ key: 'nc', icon: MessageCircle, hue: 'amber', n: stats.no_connect, label: 'No Connect Logged Yet', to: '/team/team-connects' });
   if (stats.open_actions > 0)
     desk.push({ key: 'oa', icon: ListChecks, hue: 'amber', n: stats.open_actions, label: 'Connect actions open', to: '/team/team-connects' });
-  // Fewer than four outstanding: the row is completed with where the team
-  // stands — real numbers, never zero-padding to look busy.
+  // Where the team stands: its own row, always shown (16 Oct, from QA: it
+  // disappeared whenever four things were outstanding).
   const progress = [
     { key: 'pk', icon: Target, hue: 'navy', n: `${stats.kra_approved}/${stats.reports}`, label: 'KRAs approved', to: '/team/kra-sheets' },
     { key: 'pe', icon: ClipboardList, hue: 'violet', n: `${stats.evals_done}/${stats.reports}`, label: 'Evaluations done', to: '/team/eval' },
     { key: 'pm', icon: Clock, hue: 'azure', n: `${stats.midyear_signed}/${stats.reports}`, label: 'Mid-year signed', to: '/team/midyear' },
     { key: 'pc', icon: MessageCircle, hue: 'leaf', n: stats.connects, label: 'Connects logged', to: '/team/team-connects' },
   ];
-  const cards = [...desk, ...progress.slice(0, Math.max(0, 4 - desk.length))];
   return (
     <div className="space-y-3">
       <div className="greet">
@@ -160,7 +159,7 @@ export default function TeamDashboardPage({ user }) {
           </p>
           {action && action.tone !== 'clear' ? (
             <p className="mt-1.5 text-[12.5px] flex flex-wrap items-center gap-2">
-              <span className="pill pill-red">Action needed</span>
+              <span className="pill pill-red">{action.own ? 'Your own work first' : 'Action needed'}</span>
               <b className="text-navy-900">{action.title}</b>
               {action.cta && <NavLink to={action.to} className="inline-flex items-center gap-1 font-semibold text-brand-600">{action.cta} <ArrowRight size={13} /></NavLink>}
             </p>
@@ -176,8 +175,14 @@ export default function TeamDashboardPage({ user }) {
           {today}</span>
       </div>
 
+      {desk.length > 0 && (
+        <div className="kpirow">
+          {desk.map(({ key, ...x }) => <Kpi key={key} {...x} />)}
+        </div>
+      )}
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-navy-400 px-1">Team progress</p>
       <div className="kpirow">
-        {cards.map(({ key, ...x }) => <Kpi key={key} {...x} />)}
+        {progress.map(({ key, ...x }) => <Kpi key={key} {...x} />)}
       </div>
 
       <QuickActions user={user} items={QA_MANAGER} />

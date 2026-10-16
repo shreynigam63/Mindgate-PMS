@@ -45,14 +45,17 @@ function YourNominations({ refresh }) {
                 <td className="py-1.5 pr-3">{n.award_name}</td>
                 <td className="py-1.5 pr-3">{n.employee_name || n.team_name || '—'}</td>
                 <td className="py-1.5 pr-3">{n.cycle_name}</td>
-                <td className="py-1.5 pr-3"><span className="chip bg-navy-50 text-navy-600">{n.status_label}</span></td>
+                <td className="py-1.5 pr-3"><span className="chip bg-navy-50 text-navy-600">{n.status_label}</span>
+                  {n.last_reason && ['rejected', 'sent_back'].includes(n.status) && (
+                    <span className="block mt-1 text-[11px] text-rose-700">Reason: {n.last_reason}</span>
+                  )}</td>
                 <td className="py-1.5">{String(n.updated_at || n.created_at || '').slice(0, 10)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-navy-400">A rejection or a send-back carries its reason in the notification you were sent.</p>
+      <p className="text-[11px] text-navy-400">A rejection or a send-back shows its reason here, and in the notification you were sent.</p>
     </div>
   );
 }
@@ -109,7 +112,11 @@ export default function RnrNominatePage() {
   return (
     <div className="space-y-3 max-w-5xl mx-auto">
       <PageHead title="Nominate for an award" hue="amber"
-        sub={<>{d.cycle.name} · nominations close {String(d.cycle.nominations_close).slice(0, 10)}</>} />
+        sub={<>{d.cycle.name} · nominations close {d.window?.closes || String(d.cycle.nominations_close).slice(0, 10)}</>} />
+
+      {d.window?.shut && (
+        <div className="card p-3 text-xs border-l-4 border-rose-400 text-rose-700">{d.window.shut} New nominations cannot be submitted.</div>
+      )}
 
       {done && (
         <div className="card p-3 text-xs border-l-4 border-leaf-500">
@@ -223,7 +230,7 @@ export default function RnrNominatePage() {
             justification, so it is worth writing.
           </p>
           {err && <p className="text-xs text-rose-600">{err}</p>}
-          <button className="btn-pri" disabled={busy} onClick={submit}>
+          <button className="btn-pri" disabled={busy || !!d.window?.shut} title={d.window?.shut || undefined} onClick={submit}>
             <Check size={13} className="inline mr-1" />{busy ? 'Submitting…' : 'Submit nomination'}
           </button>
         </div>

@@ -80,6 +80,45 @@ function nextAction({ phase, kra, midyear, appraisal, teamPending, team, request
            cta: null, to: null, tone: 'clear' };
 }
 
+// What the phase means for an employee, said on the Dashboard in every
+// phase (16 Oct, TC_DASH_004: the banner said nothing once a person's own
+// step was done, so nobody could tell where the cycle was).
+const PHASE_NOTE = {
+  draft: 'HR is setting up the cycle. Nothing is needed from you yet.',
+  kra_open: 'Set your KRAs and growth plan, and send them to your manager.',
+  growth_planning: 'Set your growth plan and send it to your manager.',
+  mid_year_review: 'Record your mid-year progress against each KRA. Your manager signs it off.',
+  self_appraisal: 'Write your Annual Review: rate yourself against each KRA and submit.',
+  manager_eval: 'Your manager is evaluating your year. Nothing is needed from you.',
+  hod_eval: 'Your HOD is reviewing the ratings. Nothing is needed from you.',
+  calibration: 'HR is calibrating ratings across the company. Nothing is needed from you.',
+  publish: 'Ratings are being released. Yours appears on My Rating once published.',
+  closed: 'This cycle is closed. Your published rating is on My Rating.',
+};
+const withPhase = (action, phase) => ({ ...action, phase, phase_note: PHASE_NOTE[phase] || null });
+
+// The person's own KRA sheet, mid-year and self-appraisal rows: what
+// nextAction() reads. Shared by the Dashboard and the Manager Dashboard.
+async function ownWork(t, c, userId) {
+  const one = async (sql, params) => (await db.query(sql, params)).rows[0] || null;
+  const kra = await one(
+    `SELECT s.status, s.manager_comment, s.reopened_reason,
+            (SELECT count(*)::int FROM pms.kras k WHERE k.sheet_id = s.id) AS kra_count,
+            (SELECT coalesce(sum(k.weight),0)::int FROM pms.kras k WHERE k.sheet_id = s.id) AS total_weight
+       FROM pms.kra_sheets s WHERE s.tenant_id=$1 AND s.cycle_id=$2 AND s.employee_id=$3`,
+    [t, c.id, userId]);
+  // Mid-year hangs off its own cycle resolver — see active-cycle.js for why
+  // the annual cycle is not always the one the mid-year belongs to.
+  const mc = await activeCycleForMidyear(t);
+  const midyear = mc ? await one(
+    `SELECT self_status, manager_status FROM pms.midyear_checkins
+      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [t, mc.id, userId]) : null;
+  const appraisal = await one(
+    `SELECT status FROM pms.self_appraisals WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
+    [t, c.id, userId]);
+  return { kra, midyear, appraisal };
+}
+
 // How many published ratings this person has, across EVERY cycle.
 //
 // This is the gate on My Rating, and it is deliberately not the current
@@ -105,27 +144,12 @@ async function home(user) {
   const published_count = await publishedRatingCount(t, user.id);
   if (!c) return { cycle: null, me: { published_count },
     action: { kind: 'no_cycle', title: 'No cycle is open',
-    detail: 'HR opens a cycle before KRAs can be set.', cta: null, to: null, tone: 'clear' } };
+    detail: 'HR opens a cycle before KRAs can be set.', cta: null, to: null, tone: 'clear',
+    phase: null, phase_note: 'No appraisal cycle is open. HR opens one when it is time to set KRAs.' } };
 
   const one = async (sql, params) => (await db.query(sql, params)).rows[0] || null;
 
-  const kra = await one(
-    `SELECT s.status, s.manager_comment, s.reopened_reason,
-            (SELECT count(*)::int FROM pms.kras k WHERE k.sheet_id = s.id) AS kra_count,
-            (SELECT coalesce(sum(k.weight),0)::int FROM pms.kras k WHERE k.sheet_id = s.id) AS total_weight
-       FROM pms.kra_sheets s WHERE s.tenant_id=$1 AND s.cycle_id=$2 AND s.employee_id=$3`,
-    [t, c.id, user.id]);
-
-  // Mid-year hangs off its own cycle resolver — see active-cycle.js for why
-  // the annual cycle is not always the one the mid-year belongs to.
-  const mc = await activeCycleForMidyear(t);
-  const midyear = mc ? await one(
-    `SELECT self_status, manager_status FROM pms.midyear_checkins
-      WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`, [t, mc.id, user.id]) : null;
-
-  const appraisal = await one(
-    `SELECT status FROM pms.self_appraisals WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3`,
-    [t, c.id, user.id]);
+  const { kra, midyear, appraisal } = await ownWork(t, c, user.id);
 
   const published = await one(
     `SELECT final_rating, rating_label FROM pms.employee_performance_history
@@ -282,8 +306,8 @@ async function home(user) {
     },
     me: { kra, midyear, appraisal, published, published_count, goals, connects, requested },
     team, admin,
-    action: nextAction({ phase: c.phase, kra, midyear, appraisal, team, requested,
-                         teamPending: team ? team.kra_pending : 0 }),
+    action: withPhase(nextAction({ phase: c.phase, kra, midyear, appraisal, team, requested,
+                         teamPending: team ? team.kra_pending : 0 }), c.phase),
   };
 }
 
@@ -432,11 +456,20 @@ async function teamHome(user) {
                          WHERE me.cycle_id=$2 AND me.employee_id=e.id AND me.status='submitted')
       ORDER BY since NULLS LAST`, [t, c.id, user.id])).rows;
 
+  // THE MANAGER'S OWN OVERDUE WORK COMES FIRST (16 Oct, from QA): a
+  // returned KRA sheet or an unsubmitted Annual Review of their own is
+  // something nobody else can do, so it outranks what the team is owed —
+  // the same order nextAction() keeps on the Dashboard.
+  const mineDue = nextAction({ phase: c.phase, ...(await ownWork(t, c, user.id)) });
+  const action = mineDue.kind !== 'clear'
+    ? { ...mineDue, tone: 'urgent', own: true }
+    : teamAction({ phase: c.phase, s: stats });
+
   return {
     cycle: { id: c.id, name: c.name, phase: c.phase, cycle_type: c.cycle_type, fiscal_year: c.fiscal_year },
     reports: roster.length, stats, pending, roster,
-    action: teamAction({ phase: c.phase, s: stats }),
+    action,
   };
 }
 
-module.exports = { home, nextAction, teamHome, publishedRatingCount };
+module.exports = { home, nextAction, teamHome, publishedRatingCount, PHASE_NOTE };

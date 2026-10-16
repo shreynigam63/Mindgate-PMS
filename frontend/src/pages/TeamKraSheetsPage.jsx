@@ -154,7 +154,10 @@ function SheetEditor({ sheet, reload, isMine, scale }) {
     setBusy(false);
   };
 
-  const canDecide = sheet.status === 'submitted';
+  // Only the person's own manager decides here (16 Oct, from QA: a
+  // Delivery Head saw Approve on sheets further down their line). HR
+  // decides anyone's from All Approvals.
+  const canDecide = sheet.status === 'submitted' && isMine;
   // DIRECT EDIT, asked for on 24 Sep: "Direct KRA edit option to
   // manager in team KRAs after submission from employee." Only on a
   // submitted sheet — a draft is still the employee's, and an approved
@@ -289,6 +292,9 @@ function SheetEditor({ sheet, reload, isMine, scale }) {
             <button className="btn-sec" disabled={busy} onClick={() => decide('returned')}><Undo2 size={13} className="inline mr-1" />Return for edits</button>
           </div>
         </div>
+      )}
+      {sheet.status === 'submitted' && !isMine && (
+        <p className="text-[11px] text-navy-400">Waiting on {sheet.employee_name ? `${sheet.employee_name}'s` : 'their'} own manager to approve or return it.</p>
       )}
       {err && <p className="text-xs text-rose-600">{err}</p>}
     </div>

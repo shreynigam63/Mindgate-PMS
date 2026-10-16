@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { api } from '../utils/api';
+import { api, phaseLabel } from '../utils/api';
 import { grade } from '../grade';
 import {
   Target, TrendingUp, MessageCircle, Clock, ClipboardList, Star, Users, CheckCircle2, BarChart3,
@@ -295,6 +295,14 @@ export default function HomePage({ user }) {
           <h1 className="text-[24px] font-extrabold leading-tight" style={{ color: '#13235a' }}>{first} <span aria-hidden="true">👋</span></h1>
           <p className="text-[13px] text-navy-600">Here’s what needs your attention today.</p>
           {/* The one thing waiting on this person — the server picks it. */}
+          {/* Which phase the cycle is in, and what that means for this
+              person, in every phase (16 Oct, TC_DASH_004). */}
+          {action && (
+            <p className="mt-1.5 text-[12.5px] flex flex-wrap items-center gap-2">
+              <span className="pill pill-blue">{phase ? phaseLabel(phase) : 'No cycle'}</span>
+              <span className="text-navy-700">{action.phase_note}</span>
+            </p>
+          )}
           {action && action.tone !== 'clear' && (
             <p className="mt-1.5 text-[12.5px] flex flex-wrap items-center gap-2">
               <span className="pill pill-red">Action needed</span>

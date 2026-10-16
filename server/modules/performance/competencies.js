@@ -266,14 +266,23 @@ router.post('/me/submit', async (req, res) => {
 
 // Who this caller may assess. Their own reports, and the whole company
 // for pms_admin — the same row rule every other team route here uses.
-async function assessable(req, employeeId) {
+//
+// AFTER A REPORTING-LINE CHANGE (16 Oct, TC_NEW_007): an assessment the
+// old manager submitted stays theirs to read (`read`); one they had not
+// submitted follows the employee to the new manager.
+async function assessable(req, employeeId, { read = false } = {}) {
   const t = T(req);
   const emp = (await db.query(
     `SELECT id, name, designation, department, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`,
     [employeeId, t])).rows[0];
   if (!emp) return { error: 'employee not found', status: 404 };
   if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) {
-    return { error: 'Not your report', status: 403 };
+    const c = read ? await activeCycle(t) : null;
+    const mine = c ? (await db.query(
+      `SELECT 1 FROM pms.competency_assessments WHERE tenant_id=$1 AND cycle_id=$2 AND employee_id=$3
+          AND manager_status='submitted' AND manager_id=$4`, [t, c.id, emp.id, req.user.id])).rows.length : 0;
+    if (!mine) return { error: 'Not your report', status: 403 };
+    return { emp, former: true };
   }
   return { emp };
 }
@@ -295,9 +304,11 @@ router.get('/team', async (req, res) => {
               (SELECT count(*)::int FROM pms.competency_ratings cr
                 WHERE cr.assessment_id=a.id AND cr.manager_rating IS NOT NULL
                   AND cr.manager_rating < cr.required_level) AS below_required
+              , (e.manager_id IS DISTINCT FROM $3) AS former_report
          FROM core.employees e
          LEFT JOIN pms.competency_assessments a ON a.cycle_id=$2 AND a.tenant_id=$1 AND a.employee_id=e.id
-        WHERE e.tenant_id=$1 AND e.status='active' AND e.manager_id=$3
+        WHERE e.tenant_id=$1 AND e.status='active'
+          AND (e.manager_id=$3 OR (a.manager_status='submitted' AND a.manager_id=$3))
         ORDER BY e.name`, [t, c.id, req.user.id]);
     res.json({ cycle: { id: c.id, name: c.name, phase: c.phase }, team: r.rows });
   } catch (e) { logger.error('competency team', { error: e.message }); res.status(500).json({ error: e.message }); }
@@ -307,7 +318,7 @@ router.get('/team/:employeeId', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const t = T(req);
-    const g = await assessable(req, req.params.employeeId);
+    const g = await assessable(req, req.params.employeeId, { read: true });
     if (g.error) return res.status(g.status).json({ error: g.error });
     const c = await activeCycle(t);
     if (!c) return res.json({ cycle: null, rows: [] });
@@ -318,7 +329,8 @@ router.get('/team/:employeeId', async (req, res) => {
       cycle: { id: c.id, name: c.name, phase: c.phase },
       employee: { id: g.emp.id, name: g.emp.name, designation: g.emp.designation, department: g.emp.department },
       assessment: a,
-      editable: a.manager_status !== 'submitted',
+      editable: a.manager_status !== 'submitted' && !g.former,
+      former_report: !!g.former,
       rows, scale,
       summary: summarise(rows, { scale }),
       technical_tiers: TECH_TIERS.map(([key, label, hint]) => ({ key, label, hint })),
@@ -384,8 +396,9 @@ router.post('/team/:employeeId/submit', async (req, res) => {
       });
     }
     await db.query(
-      `UPDATE pms.competency_assessments SET manager_status='submitted', manager_submitted_at=now(), updated_at=now()
-        WHERE id=$1`, [a.id]);
+      `UPDATE pms.competency_assessments SET manager_status='submitted', manager_submitted_at=now(), updated_at=now(),
+              manager_id=COALESCE($2, manager_id)
+        WHERE id=$1`, [a.id, g.emp.manager_id]);
     // A competency rating feeds development decisions and, through the
     // gap list, who gets training money. Every one of those is audited,
     // with the self-action flag the rest of this module sets.
@@ -399,6 +412,22 @@ router.post('/team/:employeeId/submit', async (req, res) => {
     }
     res.json({ ok: true, rows: rows.length });
   } catch (e) { logger.error('competency team submit', { error: e.message }); res.status(500).json({ error: e.message }); }
+});
+
+// The submitted assessments of the open cycle, for HR to pick one to
+// reopen (16 Oct, from QA: the reopen route had no screen).
+router.get('/submitted', async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    const c = await activeCycle(T(req));
+    if (!c) return res.json({ rows: [] });
+    const r = await db.query(
+      `SELECT e.id AS employee_id, e.name, e.department, a.self_status, a.manager_status
+         FROM pms.competency_assessments a JOIN core.employees e ON e.id=a.employee_id AND e.tenant_id=a.tenant_id
+        WHERE a.tenant_id=$1 AND a.cycle_id=$2 AND (a.self_status='submitted' OR a.manager_status='submitted')
+        ORDER BY e.name`, [T(req), c.id]);
+    res.json({ rows: r.rows });
+  } catch (e) { logger.error('competency submitted list', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
 
 // Reopening a submitted assessment. HR only, audited, and it says why —
@@ -420,6 +449,15 @@ router.post('/reopen/:employeeId', async (req, res) => {
         RETURNING id`, [t, c.id, req.params.employeeId]);
     if (!r.rows[0]) return res.status(409).json({ error: 'Nothing submitted to reopen' });
     await audit(req, 'COMPETENCY_REOPENED', c.id, req.params.employeeId, { side, reason });
+    // Whoever has to do it again hears why (16 Oct, from QA).
+    const who = side === 'self' ? req.params.employeeId
+      : ((await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, t])).rows[0] || {}).manager_id;
+    if (who) {
+      await notify(t, who, 'competency_reopened',
+        side === 'self' ? 'HR reopened your competency self-assessment' : 'HR reopened a competency assessment you submitted',
+        `HR's reason: ${reason}`, side === 'self' ? '/my/competencies' : '/team/competencies', { email: true })
+        .catch((e) => logger.warn('competency notify failed', { error: e.message }));
+    }
     res.json({ ok: true });
   } catch (e) { logger.error('competency reopen', { error: e.message }); res.status(500).json({ error: e.message }); }
 });
