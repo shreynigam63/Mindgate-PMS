@@ -36,9 +36,9 @@ export default function MyRatingPage() {
       {rows.length > 0 && <AppraisalSummaryPanel stage="employee" onKeep={() => setKeptKey(k => k + 1)} />}
       {rows.length > 0 && <KeptRecommendations key={keptKey} kind="appraisal_employee" title="What you kept from your summary" />}
 
-      <p className="text-[11px] text-navy-400">Questions about a rating? Raise an appraisal query in People Hub — it reaches HR with a tracked thread.</p>
-      <a href={`${API_BASE}/gdpr/export?token=${token}`} className="btn-sec inline-flex items-center gap-1 !text-xs">
-        <Download size={12} />Download all my data (GDPR export)
+      <p className="text-[11px] text-navy-400">Questions about a rating? Raise a query in People Hub — it reaches HR with a tracked thread.</p>
+      <a href={`${API_BASE}/gdpr/export?format=xlsx&token=${token}`} className="btn-sec inline-flex items-center gap-1 !text-xs">
+        <Download size={12} />Download all my data (Excel)
       </a>
     </div>
   );

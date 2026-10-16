@@ -76,7 +76,7 @@ async function fireCalendarRule({ tenantId, rule, dates, today, from, cycleId, p
   for (const p of pending) {
     const missed = due.filter((occ) => !already.has(`${sched.iso(occ)}|${p.recipientId}|${p.aboutId}`));
     if (!missed.length) continue;
-    await notify(tenantId, p.recipientId, rule, p.title, p.body || null, p.link || '/pms');
+    await notify(tenantId, p.recipientId, rule, p.title, p.body || null, p.link || '/home');
     for (const occ of missed) await recordSent(tenantId, rule, occ, p.recipientId, p.aboutId, cycleId);
     rung++;
   }
@@ -122,13 +122,13 @@ async function runQuarterlyConnect(tenantId, today, from) {
       recipientId: e.id, aboutId: e.id,
       title: 'Your quarterly one-on-one connect is due',
       body: `Book time with ${e.manager_name} for the quarter just ended.`,
-      link: '/pms/connects',
+      link: '/team/connects',
     });
     pending.push({
       recipientId: e.manager_id, aboutId: e.id,
       title: `Quarterly one-on-one connect due with ${e.name}`,
       body: 'For the quarter just ended.',
-      link: '/pms/connects',
+      link: '/team/connects',
     });
   }
   return fireCalendarRule({ tenantId, rule: 'quarterly_connect', dates, today, from, pending });
@@ -162,8 +162,8 @@ const REVIEW_KINDS = {
     managerPhaseAction: 'midyear_manager_submit',
     remindPhase: 'mid_year_review',
     label: 'Mid-Year Review',
-    selfLink: '/pms/midyear-review',
-    managerLink: '/pms/team/midyear-review',
+    selfLink: '/my/midyear',
+    managerLink: '/team/midyear',
     pendingSql: `SELECT e.id, e.name, e.manager_id
                    FROM core.employees e
                    LEFT JOIN pms.midyear_checkins mc
@@ -180,8 +180,8 @@ const REVIEW_KINDS = {
     managerPhaseAction: 'manager_submit',
     remindPhase: 'self_appraisal',
     label: 'annual self-appraisal',
-    selfLink: '/pms/self-appraisal',
-    managerLink: '/pms/team',
+    selfLink: '/my/self-appraisal',
+    managerLink: '/team/eval',
     pendingSql: `SELECT e.id, e.name, e.manager_id
                    FROM core.employees e
                    LEFT JOIN pms.self_appraisals sa
@@ -257,7 +257,7 @@ const CHASE_KINDS = {
   midyear: {
     rule: 'midyear_chase',
     label: 'Mid-Year Review',
-    link: '/pms/team/midyear-review',
+    link: '/team/midyear',
     phaseAction: 'midyear_manager_submit',
     // Same reasoning as remindPhase above: the manager can still sign a
     // mid-year off during Annual Review, but being chased about it then
@@ -312,7 +312,7 @@ const CHASE_KINDS = {
   annual: {
     rule: 'annual_chase',
     label: 'annual appraisal',
-    link: '/pms/team',
+    link: '/team/eval',
     phaseAction: 'manager_submit',
     sql: `SELECT sa.employee_id, sa.submitted_at AS self_submitted_at, e.name, e.manager_id
             FROM pms.self_appraisals sa
@@ -363,7 +363,7 @@ const SELF_KINDS = {
   midyear: {
     rule: 'midyear_self_chase',
     label: 'Mid-Year Review',
-    link: '/my/midyear-review',
+    link: '/my/midyear',
     phaseAction: 'midyear_self_submit',
     detail: 'The mid-year window has been open for more than a week and yours is not in yet.',
     sql: `SELECT e.id AS employee_id, e.name

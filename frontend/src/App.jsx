@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Target, ClipboardList, Users, Landmark, Sparkles, BarChart3, HeartHandshake, Star, LogOut, Upload, User, ShieldAlert, Award, Grid3x3, TrendingUp, Clock, MessageCircle, FileText, UserCog, History, LayoutDashboard, GitBranch, Calculator, ShieldCheck, Library, SlidersHorizontal, CheckCircle2, Home, Gauge, Layers, CalendarClock, Lock, KeyRound, MapPin, Search, HelpCircle, ChevronDown, Menu, RefreshCw, CalendarDays, Inbox } from 'lucide-react';
 import { api } from './utils/api';
+import PasswordInput from './PasswordInput';
+import IdleGuard, { EXPIRED_FLAG, IDLE_MINUTES } from './IdleGuard';
+import { useBrand, BrandMark } from './Brand';
 import MyKRASheetPage from './pages/MyKRASheetPage';
 import SelfAppraisalPage from './pages/SelfAppraisalPage';
 import TeamEvalPage from './pages/TeamEvalPage';
@@ -342,10 +345,14 @@ const groupOf = (groups, pathname) =>
 // top bar beside the bell, help and account icons. The four coloured dots
 // of the reference stay as a small mark.
 function Wordmark() {
+  const brand = useBrand();
   return (
-    <span className="wordmark" aria-label="Agentic PMS">
-      <span className="wordmark-mark" aria-hidden="true"><i /><i /><i /><i /></span>
-      <span>Agentic PMS</span>
+    <span className="flex items-center gap-3 min-w-0">
+      <span className="wordmark" aria-label="Agentic PMS">
+        <span className="wordmark-mark" aria-hidden="true"><i /><i /><i /><i /></span>
+        <span>Agentic PMS</span>
+      </span>
+      <BrandMark brand={brand} divider />
     </span>
   );
 }
@@ -354,14 +361,19 @@ function Wordmark() {
 // employee search on purpose: it works for every role, it cannot show
 // anybody a name they may not see, and "where is Calibration?" is the
 // question the old 22-item HR row was worst at answering.
-function NavSearch({ groups }) {
+// It follows the menu's own gates (16 Oct, Def-012): a page greyed out in
+// the menu (My Rating before a rating is published) is shown locked here
+// too, and one hidden from the menu (My Super 50) is not found.
+function NavSearch({ groups, gates = {} }) {
   const nav = useNavigate();
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const hits = q.trim().length < 2 ? [] : groups.flatMap(g => g.items.map(it => ({ ...it, group: g.group })))
+    .filter(it => !gateHidden(it, gates))
     .filter(it => `${it.label} ${it.group}`.toLowerCase().includes(q.trim().toLowerCase()))
     .slice(0, 8);
   const go = (to) => { setQ(''); setOpen(false); nav(to); };
+  const firstOpen = hits.find((h) => !gateClosed(h, gates));
   return (
     <div className="topsearch" onBlur={() => setTimeout(() => setOpen(false), 150)}>
       <Search size={16} className="text-navy-400 shrink-0" />
@@ -369,16 +381,22 @@ function NavSearch({ groups }) {
         aria-label="Search pages"
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && hits[0]) go(hits[0].to); if (e.key === 'Escape') setOpen(false); }} />
+        onKeyDown={(e) => { if (e.key === 'Enter' && firstOpen) go(firstOpen.to); if (e.key === 'Escape') setOpen(false); }} />
       {open && hits.length > 0 && (
         <div className="topsearch-pop">
-          {hits.map(h => (
+          {hits.map(h => (gateClosed(h, gates) ? (
+            <div key={h.to} className="opacity-50 cursor-not-allowed flex items-center gap-2 px-3 py-2 text-sm" title={h.gateHint} aria-disabled="true">
+              <Lock size={14} className="text-navy-400 shrink-0" />
+              <span className="flex-1 text-left">{h.label}</span>
+              <span className="text-[11px] text-navy-400">{h.gateHint || 'Not open yet'}</span>
+            </div>
+          ) : (
             <button key={h.to} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => go(h.to)}>
               <h.icon size={14} className="text-brand-600 shrink-0" />
               <span className="flex-1 text-left">{h.label}</span>
               <span className="text-[11px] text-navy-400">{h.group}</span>
             </button>
-          ))}
+          )))}
         </div>
       )}
       {open && q.trim().length >= 2 && hits.length === 0 && (
@@ -403,7 +421,7 @@ function usePopover() {
 
 const ROLE_LABEL = { admin: 'Super Admin', hr: 'HR', hod: 'HOD', manager: 'Manager', employee: 'Employee', hrbp: 'HRBP' };
 
-function Topbar({ user, groups, onChangePassword, onMenu }) {
+function Topbar({ user, groups, gates, onChangePassword, onMenu }) {
   const help = usePopover();
   const me = usePopover();
   const initial = (user.name || user.email || '?').trim().charAt(0).toUpperCase();
@@ -415,7 +433,7 @@ function Topbar({ user, groups, onChangePassword, onMenu }) {
         </button>
         <NavLink to="/home" className="flex items-center"><Wordmark /></NavLink>
       </div>
-      <div className="flex-1 min-w-0 hidden md:flex justify-center px-4"><NavSearch groups={groups} /></div>
+      <div className="flex-1 min-w-0 hidden md:flex justify-center px-4"><NavSearch groups={groups} gates={gates} /></div>
       <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-auto">
         <span className="topicon"><NotificationBell /></span>
         <div className="relative" ref={help.ref}>
@@ -427,7 +445,6 @@ function Topbar({ user, groups, onChangePassword, onMenu }) {
               <p className="font-bold text-navy-900">Finding your way</p>
               <p>The menu on the left is grouped by role — <b>Self</b> is your own work, <b>Manager</b> your reports, then <b>HOD</b>, <b>HRBP</b> and <b>HR</b> as the scope widens. You only see the groups you hold.</p>
               <p>Search at the top finds any page you can open. Stuck on access? HR can grant a page per role without a release.</p>
-              <p className="text-[11px] text-navy-400">Build {typeof __APP_BUILD__ !== 'undefined' && __APP_BUILD__ ? __APP_BUILD__ : 'local'}</p>
             </div>
           )}
         </div>
@@ -708,9 +725,13 @@ function ChangePassword({ forced, email, onDone, onCancel }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  // In the order the boxes are on the screen (16 Oct, Def-008).
   const go = async () => {
     setErr(null);
+    if (!current) { setErr(forced ? 'Enter the password HR gave you.' : 'Enter your current password.'); return; }
+    if (!next) { setErr('Enter your new password.'); return; }
     if (next.length < 8) { setErr('Your new password must be at least 8 characters.'); return; }
+    if (!confirm) { setErr('Enter your new password again.'); return; }
     if (next !== confirm) { setErr('The two new passwords do not match.'); return; }
     setBusy(true);
     try {
@@ -737,13 +758,13 @@ function ChangePassword({ forced, email, onDone, onCancel }) {
           ? `The password you signed in with was set for you by HR, and other people can work it out. Choose your own to carry on${email ? ` — you are signed in as ${email}` : ''}.`
           : 'Enter your current password, then the one you want instead.'}
       </p>
-      <input className="inp" type="password" autoComplete="current-password"
+      <PasswordInput autoComplete="current-password"
         placeholder={forced ? 'The password HR gave you' : 'Current password'}
         value={current} onChange={(e) => setCurrent(e.target.value)} />
-      <input className="inp" type="password" autoComplete="new-password"
+      <PasswordInput autoComplete="new-password"
         placeholder="New password (at least 8 characters)"
         value={next} onChange={(e) => setNext(e.target.value)} />
-      <input className="inp" type="password" autoComplete="new-password"
+      <PasswordInput autoComplete="new-password"
         placeholder="New password again" value={confirm}
         onChange={(e) => setConfirm(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && go()} />
       {err && <p className="text-xs text-rose-600">{err}</p>}
@@ -762,7 +783,8 @@ function Shell({ user, gates, onChangePassword }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   return (
     <div className="min-h-screen flex flex-col">
-      <Topbar user={user} groups={groups} onChangePassword={onChangePassword} onMenu={() => setMobileOpen(true)} />
+      <IdleGuard />
+      <Topbar user={user} groups={groups} gates={gates} onChangePassword={onChangePassword} onMenu={() => setMobileOpen(true)} />
       <BuildWatch />
       <div className="flex flex-1 min-h-0">
         <Sidebar user={user} groups={groups} gates={gates} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
@@ -904,8 +926,8 @@ function FirstTimeSetup({ onUser }) {
       <p className="text-xs text-navy-500">No account exists yet on this deployment. Create the first admin account below — this screen only appears once.</p>
       <input className="inp" placeholder="Your name" value={name} onChange={e => setName(e.target.value)} />
       <input className="inp" placeholder="Your email" value={email} onChange={e => setEmail(e.target.value)} />
-      <input className="inp" type="password" placeholder="Choose a password (min 8 characters)" value={password} onChange={e => setPassword(e.target.value)} />
-      <input className="inp" type="password" placeholder="Confirm password" value={confirm} onChange={e => setConfirm(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} />
+      <PasswordInput placeholder="Choose a password (min 8 characters)" value={password} onChange={e => setPassword(e.target.value)} />
+      <PasswordInput placeholder="Confirm password" value={confirm} onChange={e => setConfirm(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} />
       {err && <p className="text-xs text-rose-600">{err}</p>}
       <button className="btn-pri" disabled={busy} onClick={go}>{busy ? 'Creating account…' : 'Create admin account & sign in'}</button>
     </div>
@@ -925,11 +947,22 @@ function SignIn({ onUser }) {
   const [remember, setRemember] = useState(() => !!readRemembered());
   const [busy, setBusy] = useState(false);
   const [forgot, setForgot] = useState(false);
-  const [done, setDone] = useState(null);
+  const [done, setDone] = useState(() => {
+    // Said once after an automatic sign-out (IdleGuard).
+    try { if (localStorage.getItem(EXPIRED_FLAG)) { localStorage.removeItem(EXPIRED_FLAG); return `You were signed out after ${IDLE_MINUTES} minutes without activity. Sign in again to carry on.`; } } catch { /* ignore */ }
+    return null;
+  });
+  const brand = useBrand();
   if (forgot) return <ForgotPassword email={email} onBack={(msg) => { setForgot(false); setDone(msg || null); setErr(null); }} />;
   const go = async (e) => {
     if (e) e.preventDefault();
-    setErr(null); setBusy(true);
+    setErr(null);
+    // Said before asking the server (16 Oct, Def-006): an empty box is not
+    // "invalid credentials".
+    if (!email.trim() && !password) { setErr('Enter your email and password.'); return; }
+    if (!email.trim()) { setErr('Enter your email.'); return; }
+    if (!password) { setErr('Enter your password.'); return; }
+    setBusy(true);
     try {
       const r = await api('/auth/dev-login', { method: 'POST', body: JSON.stringify({ email, password }) });
       try { if (remember) localStorage.setItem(REMEMBER_KEY, email.trim()); else localStorage.removeItem(REMEMBER_KEY); } catch { /* private window */ }
@@ -944,16 +977,17 @@ function SignIn({ onUser }) {
   };
   return (
     <div className="max-w-xs mx-auto mt-[14vh] flex flex-col gap-3 glass rounded-2xl p-6">
+      <BrandMark brand={brand} large />
       <h1 className="text-lg font-bold flex items-center gap-2 text-navy-900">
         <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-navy-700 to-brand-500 flex items-center justify-center shadow-card shrink-0">
           <Sparkles size={14} className="text-white" />
         </span>
         Agentic PMS
       </h1>
-      <form className="flex flex-col gap-3" onSubmit={go} method="post" action="#" autoComplete="on">
-        <input className="inp" type="email" id="email" name="email" autoComplete="username" placeholder="email" required
+      <form className="flex flex-col gap-3" onSubmit={go} method="post" action="#" autoComplete="on" noValidate>
+        <input className="inp" type="email" id="email" name="email" autoComplete="username" placeholder="Email"
           value={email} onChange={e => setEmail(e.target.value)} />
-        <input className="inp" type="password" id="password" name="password" autoComplete="current-password" placeholder="password" required
+        <PasswordInput id="password" name="password" autoComplete="current-password" placeholder="Password"
           value={password} onChange={e => setPassword(e.target.value)} />
         <label className="flex items-center gap-2 text-xs text-navy-600">
           <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />Remember my email on this device
@@ -984,6 +1018,8 @@ function ForgotPassword({ email: start, onBack }) {
   };
   const reset = async () => {
     setErr(null);
+    if (code.length !== 8) { setErr('Enter the 8-character code from the email.'); return; }
+    if (password.length < 8) { setErr('Your new password must be at least 8 characters.'); return; }
     if (password !== confirm) { setErr('The two passwords do not match.'); return; }
     setBusy(true);
     try { const r = await api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ email, code, new_password: password }) }); onBack(r.message); }
@@ -996,7 +1032,7 @@ function ForgotPassword({ email: start, onBack }) {
       {step === 'ask' ? (
         <>
           <p className="text-xs text-navy-500">Enter your work email. We will email you a one-time code.</p>
-          <input className="inp" placeholder="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && ask()} />
+          <input className="inp" type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && ask()} />
           {err && <p className="text-xs text-rose-600">{err}</p>}
           <button className="btn-pri" disabled={busy || !email.trim()} onClick={ask}>{busy ? 'Sending…' : 'Email me a code'}</button>
         </>
@@ -1005,11 +1041,13 @@ function ForgotPassword({ email: start, onBack }) {
           {msg && <p className="text-xs text-navy-600">{msg}</p>}
           {/* The account the new password belongs to, so a saved password is updated, not added beside it. */}
           <input type="email" name="email" autoComplete="username" value={email} readOnly hidden />
-          <input className="inp tracking-widest uppercase" name="code" placeholder="code from the email" value={code} onChange={e => setCode(e.target.value)} autoComplete="one-time-code" />
-          <input className="inp" type="password" name="new-password" placeholder="new password (8+ characters)" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
-          <input className="inp" type="password" name="confirm-password" placeholder="new password again" value={confirm} onChange={e => setConfirm(e.target.value)} autoComplete="new-password" />
+          {/* The code is 8 letters and digits (Def-014); typed in capitals. */}
+          <input className={`inp ${code ? 'tracking-widest' : ''}`} name="code" placeholder="Code from the email" value={code} maxLength={8}
+            onChange={e => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))} autoComplete="one-time-code" inputMode="text" />
+          <PasswordInput name="new-password" placeholder="New password (8+ characters)" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
+          <PasswordInput name="confirm-password" placeholder="New password again" value={confirm} onChange={e => setConfirm(e.target.value)} autoComplete="new-password" />
           {err && <p className="text-xs text-rose-600">{err}</p>}
-          <button type="submit" className="btn-pri" disabled={busy || !code.trim() || !password}>{busy ? 'Saving…' : 'Set new password'}</button>
+          <button type="submit" className="btn-pri" disabled={busy}>{busy ? 'Saving…' : 'Set new password'}</button>
           <button type="button" className="text-xs text-navy-500 underline self-center" disabled={busy} onClick={ask}>Send a new code</button>
         </form>
       )}

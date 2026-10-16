@@ -35,7 +35,12 @@ const CAREER_QUESTIONS = [
 
 export default function MyCompetenciesPage() {
   const [d, setD] = useState(null);
-  const [err, setErr] = useState(null);
+  const [err, setErr] = useState(null);       // the page could not load
+  const [actErr, setActErr] = useState(null); // a save or submit was refused
+  // After a refused submit, the competencies still blank are marked, so
+  // the form stays on screen and says where to go (16 Oct, Def-010: the
+  // error used to replace the whole page).
+  const [showBlanks, setShowBlanks] = useState(false);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
   // Edits live here until saved, so a slow network cannot make the page
@@ -87,20 +92,29 @@ export default function MyCompetenciesPage() {
   };
 
   const save = async () => {
-    setBusy(true); setErr(null); setMsg(null);
+    setBusy(true); setActErr(null); setMsg(null);
     try { await api('/pms/competencies/me', { method: 'PUT', body: JSON.stringify(body()) }); await load(); setMsg('Saved.'); }
-    catch (e) { setErr(e.message); }
+    catch (e) { setActErr(e.message); }
     setBusy(false);
   };
 
+  const blanks = rows.filter((r) => val(r) == null);
   const submit = async () => {
-    setBusy(true); setErr(null); setMsg(null);
+    setActErr(null); setMsg(null);
+    if (blanks.length) {
+      setShowBlanks(true);
+      setOpen(blanks[0].category);
+      setActErr(`Rate all ${rows.length} competencies before submitting — ${blanks.length} still blank: ${blanks.slice(0, 5).map((b) => b.name).join(', ')}${blanks.length > 5 ? '…' : ''}. They are marked in red below.`);
+      return;
+    }
+    setBusy(true);
     try {
       if (dirty) await api('/pms/competencies/me', { method: 'PUT', body: JSON.stringify(body()) });
       await api('/pms/competencies/me/submit', { method: 'POST' });
       await load();
+      setShowBlanks(false);
       setMsg('Submitted to your manager.');
-    } catch (e) { setErr(e.message); }
+    } catch (e) { setActErr(e.message); }
     setBusy(false);
   };
 
@@ -217,9 +231,10 @@ export default function MyCompetenciesPage() {
           the count, so a collapsed block still says whether it is done. */}
       {categories.map((cat) => {
         const catRated = cat.rows.filter((r) => val(r) != null).length;
+        const catBlank = showBlanks && catRated < cat.rows.length;
         const isOpen = open === cat.name;
         return (
-          <div key={cat.name} className="card overflow-hidden">
+          <div key={cat.name} className={`card overflow-hidden ${catBlank ? 'ring-2 ring-rose-300' : ''}`}>
             <button type="button" onClick={() => setOpen(isOpen ? null : cat.name)}
               className="w-full p-4 flex flex-wrap items-center gap-2 text-left hover:bg-navy-50">
               {isOpen ? <ChevronDown size={14} className="text-navy-400" />
@@ -235,9 +250,10 @@ export default function MyCompetenciesPage() {
                 <ScaleLegend scale={d.scale} />
                 <div className="divide-y divide-navy-50">
                   {cat.rows.map((r) => (
-                    <div key={r.competency_id} className="py-3 space-y-2">
+                    <div key={r.competency_id} className={`py-3 space-y-2 ${showBlanks && val(r) == null ? 'bg-rose-50 -mx-4 px-4' : ''}`}>
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-sm font-semibold text-navy-900">{r.name}</span>
+                        <span className="text-sm font-semibold text-navy-900">{r.name}
+                          {showBlanks && val(r) == null && <span className="ml-2 text-[11px] font-normal text-rose-600">needs a rating</span>}</span>
                         <RatingPicker scale={d.scale} value={val(r)} required={r.required_level}
                           disabled={!editable}
                           onChange={(lvl) => setEntry(r.competency_id, { rating: lvl })} />
@@ -274,6 +290,7 @@ export default function MyCompetenciesPage() {
           <button className="btn-pri" disabled={busy} onClick={submit}>
             <Send size={13} className="inline mr-1" />Submit to my manager
           </button>
+          {actErr && <p className="basis-full text-xs text-rose-600" role="alert">{actErr}</p>}
           <span className="text-[11px] text-navy-400">
             {rated < rows.length
               ? `All ${rows.length} competencies must be rated before you can submit — ${rows.length - rated} left.`

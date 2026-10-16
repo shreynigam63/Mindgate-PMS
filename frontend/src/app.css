@@ -449,3 +449,11 @@ a.kpi:hover { transform: translateY(-2px); }
 .sidebar .subnav-item { border-bottom: 0; color: rgba(255, 255, 255, .74); }
 .sidebar .subnav-item:hover { color: #fff; }
 .sidebar .subnav-item.side-on { color: #fff; }
+
+/* The browser's own reveal eye (Edge) is replaced by PasswordInput's
+   Show/Hide button, which stays put. */
+.pw-input::-ms-reveal, .pw-input::-ms-clear { display: none; }
+
+/* The client's name and logo beside the product's (16 Oct). */
+.brand-logo { height: 28px; width: auto; max-width: 140px; object-fit: contain; }
+.brand-name { @apply text-sm font-bold text-navy-700 whitespace-nowrap; }

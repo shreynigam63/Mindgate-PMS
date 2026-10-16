@@ -399,6 +399,18 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
       scope: isAdmin ? 'all employees' : 'your own logs only',
     };
 
+    // A re-upload replaces only the days the file has logs for, per person
+    // (16 Oct, Def-020: a file with 1 and 30 Sep wiped every day between
+    // them). The check says how many stored logs that is, before loading.
+    const daysOf = (empId) => [...new Set(keep.filter((e) => e.employee.id === empId).map((e) => e.log_date))];
+    let replaces = 0;
+    for (const emp of touched.values()) {
+      replaces += Number((await db.query(
+        `SELECT count(*) FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2 AND log_date = ANY($3::date[])`,
+        [T(req), emp.id, daysOf(emp.id)])).rows[0].count);
+    }
+    report.replaces_stored = replaces;
+
     if (req.query.commit !== '1') {
       return res.json({ ok: errors.length === 0, committed: false, note: 'Dry run — pass ?commit=1 to load.', ...report });
     }
@@ -419,15 +431,17 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
           parsed.meta.team_name || null, parsed.meta.exported_on || null,
           keep.length, touched.size, report.first_log_date, report.last_log_date])).rows[0].id;
 
-      // Replace the window this file covers, per employee — see 053 for
-      // why a window and not the world.
+      // Replace the days this file has logs for, per employee. Until 16 Oct
+      // this was every day from the file's first date to its last (053),
+      // which deleted the days in between that the file did not carry.
+      let replaced = 0;
       for (const emp of touched.values()) {
-        const mine = keep.filter((e) => e.employee.id === emp.id).map((e) => e.log_date).sort();
-        await client.query(
+        replaced += (await client.query(
           `DELETE FROM pms.timesheet_entries
-            WHERE tenant_id=$1 AND employee_id=$2 AND log_date BETWEEN $3::date AND $4::date`,
-          [T(req), emp.id, mine[0], mine[mine.length - 1]]);
+            WHERE tenant_id=$1 AND employee_id=$2 AND log_date = ANY($3::date[])`,
+          [T(req), emp.id, daysOf(emp.id)])).rowCount;
       }
+      report.replaced = replaced;
       for (const e of keep) {
         await client.query(
           `INSERT INTO pms.timesheet_entries

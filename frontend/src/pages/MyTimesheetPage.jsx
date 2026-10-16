@@ -18,6 +18,9 @@ export default function MyTimesheetPage() {
   const [report, setReport] = useState(null);
   const [err, setErr] = useState(null);
   const [file, setFile] = useState(null);
+  // Bumped after an upload so the file box empties (Def-020: the old file
+  // name stayed, and the next click re-sent it).
+  const [inputKey, setInputKey] = useState(0);
   const [up, setUp] = useState(null);
   const [upErr, setUpErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -34,7 +37,7 @@ export default function MyTimesheetPage() {
     try {
       const r = await api(`/pms/timesheet/upload${commit ? '?commit=1' : ''}`, { method: 'POST', body: fd });
       setUp(r);
-      if (commit) { load(); setFile(null); }
+      if (commit) { load(); setFile(null); setInputKey((k) => k + 1); }
     } catch (e) {
       setUpErr(e.message);
       setUp(e.data && (e.data.errors || e.data.skipped) ? e.data : null);
@@ -62,7 +65,7 @@ export default function MyTimesheetPage() {
       <div className="card p-4 space-y-2">
         <p className="lbl">Upload your export</p>
         <div className="flex flex-wrap items-center gap-2">
-          <input type="file" accept=".csv,.xlsx,.xls" className="text-xs"
+          <input key={inputKey} type="file" accept=".csv,.xlsx,.xls" className="text-xs"
             onChange={(e) => { setFile(e.target.files[0]); setUp(null); setUpErr(null); }} />
           <button className="btn-sec" disabled={!file || busy} onClick={() => send(false)}>
             <FileSpreadsheet size={13} className="inline mr-1" />Check the file
@@ -83,8 +86,8 @@ export default function MyTimesheetPage() {
           header row is found, wherever it sits. No export to hand? <b>Download the template</b>: it
           has the export's layout, with the columns to fill shaded and explained. <b>Only your own rows are loaded.</b> A project
           export usually carries the whole team; everybody else's rows are listed back to you and
-          left alone. Uploading again replaces the days the new file covers and leaves every other
-          day untouched, so re-uploading the same export changes nothing.
+          left alone. Uploading again replaces only the days the new file has logs for and leaves every
+          other day untouched, so re-uploading the same export changes nothing.
         </p>
 
         {upErr && <p className="text-xs text-rose-600">{upErr}</p>}
@@ -99,6 +102,12 @@ export default function MyTimesheetPage() {
                 {up.first_log_date && <> · {up.first_log_date} to {up.last_log_date}</>}
               </span>
             </p>
+            {up.committed && up.replaced > 0 && (
+              <p className="text-navy-600">{up.replaced} log{up.replaced === 1 ? '' : 's'} already stored for those days {up.replaced === 1 ? 'was' : 'were'} replaced. Other days were not touched.</p>
+            )}
+            {!up.committed && up.replaces_stored > 0 && (
+              <p className="text-amber-700">Uploading will replace {up.replaces_stored} log{up.replaces_stored === 1 ? '' : 's'} already stored for the days in this file. Other days stay as they are.</p>
+            )}
             {up.meta && (up.meta.project_name || up.meta.team_name) && (
               <p className="text-navy-400">{[up.meta.team_name, up.meta.project_name, up.meta.exported_on].filter(Boolean).join(' · ')}</p>
             )}

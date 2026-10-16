@@ -37,7 +37,7 @@ const DECIDABLE = {
     action: (decision) => `KRA_${decision.toUpperCase()}`,
     notifyKind: 'kra_decided',
     message: (decision) => `Your KRA sheet was ${decision}`,
-    link: '/pms',
+    link: '/my/kras',
   },
   growth_plan: {
     table: 'pms.development_plans',
@@ -45,7 +45,7 @@ const DECIDABLE = {
     action: (decision) => `DEVPLAN_${decision.toUpperCase()}`,
     notifyKind: 'devplan_decided',
     message: (decision) => `Your target achievements for the year were ${decision}`,
-    link: '/pms/my-growth',
+    link: '/my/growth',
   },
 };
 

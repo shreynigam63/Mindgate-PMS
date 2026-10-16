@@ -191,6 +191,20 @@ test('re-uploading the same export twice is a no-op, not a doubling', { skip }, 
   assert.equal(after2, before, 'the window is replaced, not appended to');
 });
 
+test('a re-upload replaces only the days in the file, not the days between them (Def-020)', { skip }, async () => {
+  const days = async () => (await db.query(
+    `SELECT to_char(log_date,'YYYY-MM-DD') AS d FROM pms.timesheet_entries
+      WHERE tenant_id=$1 AND employee_id=$2 ORDER BY log_date`, [tenantId, empId])).rows.map((r) => r.d);
+  const had = await days();
+  const logs = [WEEK[0], WEEK[3]].map((d) => ({ date: d, name: 'TS Report', email: 'ts-emp@x.com' }));
+  const check = await upload(empTok, logs, false);
+  assert.equal(check.body.replaces_stored, 2, 'the check says how many stored logs go');
+  const r = await upload(empTok, logs, true);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.replaced, 2);
+  assert.deepEqual(await days(), had, '22 and 23 Sep are still there');
+});
+
 test('an upload outside the window leaves the earlier window alone', { skip }, async () => {
   await upload(empTok, [{ date: '2026-08-24', name: 'TS Report', email: 'ts-emp@x.com' }], true);
   const dates = (await db.query(

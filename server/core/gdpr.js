@@ -121,6 +121,58 @@ async function restrictedSections(tenantId, employeeId) {
     nine_box_placements: placements.rows, potential_answers: potential.rows };
 }
 
+// The same export as a workbook a person can open (16 Oct, Def-013: the
+// JSON file read as "a random file"). One sheet per section: a list
+// becomes a table, a record becomes Field / Value rows. Nothing is left
+// out that the JSON carries. Asked for with ?format=xlsx (the "Download all
+// my data" button); without it the API keeps answering JSON.
+async function exportWorkbook(data) {
+  const ExcelJS = require('exceljs');
+  const wb = new ExcelJS.Workbook();
+  const cell = (v) => (v == null ? '' : v instanceof Date ? v : typeof v === 'object' ? JSON.stringify(v) : v);
+  const title = (k) => String(k).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()).slice(0, 31);
+  const used = new Set();
+  const sheetFor = (name) => {
+    let n = title(name) || 'Sheet'; let i = 2;
+    while (used.has(n.toLowerCase())) n = `${title(name).slice(0, 28)} ${i++}`;
+    used.add(n.toLowerCase());
+    return wb.addWorksheet(n);
+  };
+  const record = (ws, obj) => {
+    ws.columns = [{ header: 'Field', key: 'k', width: 30 }, { header: 'Value', key: 'v', width: 60 }];
+    for (const [k, v] of Object.entries(obj || {})) ws.addRow({ k: title(k), v: cell(v) });
+  };
+  const table = (ws, rows) => {
+    const keys = [...new Set(rows.flatMap((r) => (r && typeof r === 'object' ? Object.keys(r) : ['value'])))];
+    ws.columns = keys.map((k) => ({ header: title(k), key: k, width: Math.min(40, Math.max(12, k.length + 4)) }));
+    for (const r of rows) ws.addRow(r && typeof r === 'object' ? Object.fromEntries(keys.map((k) => [k, cell(r[k])])) : { value: cell(r) });
+    if (!rows.length) ws.addRow({ [keys[0] || 'value']: 'Nothing on record.' });
+  };
+  const walk = (name, v) => {
+    if (Array.isArray(v)) table(sheetFor(name), v);
+    else if (v && typeof v === 'object') {
+      const flat = Object.entries(v).filter(([, x]) => !(x && typeof x === 'object' && !(x instanceof Date)));
+      const nested = Object.entries(v).filter(([, x]) => x && typeof x === 'object' && !(x instanceof Date));
+      if (flat.length) record(sheetFor(name), Object.fromEntries(flat));
+      for (const [k, x] of nested) walk(k, x);
+    } else record(sheetFor(name), { [name]: v });
+  };
+  for (const [k, v] of Object.entries(data || {})) walk(k, v);
+  wb.worksheets.forEach((ws) => { ws.getRow(1).font = { bold: true }; });
+  return wb;
+}
+async function sendExport(res, data, base, format) {
+  if (format !== 'xlsx') {
+    res.setHeader('Content-Disposition', `attachment; filename="${base}.json"`);
+    return res.json(data);
+  }
+  const wb = await exportWorkbook(data);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${base}.xlsx"`);
+  await wb.xlsx.write(res);
+  res.end();
+}
+
 const router = express.Router();
 router.use(authenticate, apiPermissionParity);
 // Malformed uuid path params are rejected with 400 here, before any
@@ -130,8 +182,7 @@ guardUuidParams(router);
 router.get('/export', async (req, res) => {
   try {
     const data = await buildExport(req.user.tenant_id, req.user.id);
-    res.setHeader('Content-Disposition', 'attachment; filename="my-data-export.json"');
-    res.json(data);
+    await sendExport(res, data, 'my-data-export', req.query.format);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -147,9 +198,8 @@ router.get('/export/:employeeId', async (req, res) => {
       delete data.hr_only.nine_box_placements;
       delete data.hr_only.potential_answers;
     }
-    res.setHeader('Content-Disposition', `attachment; filename="data-export-${req.params.employeeId}.json"`);
-    res.json(data);
+    await sendExport(res, data, `data-export-${req.params.employeeId}`, req.query.format);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-module.exports = { router, buildExport };
+module.exports = { router, buildExport, exportWorkbook };

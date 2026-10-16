@@ -179,7 +179,7 @@ async function syncGoalsToKras(tenantId, cycleId, employeeId, { actorEmail = nul
   if (plan.manager_id) {
     await notify(tenantId, plan.manager_id, 'devplan_reopened',
       "A report's growth plan was reopened because their KRAs changed",
-      `${reason} It has gone back to them to refill.`, '/pms/team');
+      `${reason} It has gone back to them to refill.`, '/team/growth');
   }
 
   return { plan_id: plan.id, relinked, orphaned: orphaned.map((g) => g.serves_kra), reopened: true };

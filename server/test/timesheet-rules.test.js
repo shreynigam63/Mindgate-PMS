@@ -4,7 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  parseTimesheetSheet, compliance, cycleOf, parseDate, parseHours, key,
+  parseTimesheetSheet, compliance, cycleOf, parseDate, dateProblem, parseHours, key,
 } = require('../modules/performance/timesheet-rules');
 
 // The shape of the client's own export: five metadata rows, a group-band
@@ -297,4 +297,38 @@ test('the local-date key does not shift the day across a timezone', () => {
     process.stdout.write(JSON.stringify({ k: key(new Date(2026, 8, 18)), work: c.work, filled: c.filled }));
   `], { env: { ...process.env, TZ: 'Asia/Kolkata' } }).toString();
   assert.deepEqual(JSON.parse(out), { k: '2026-09-18', work: 1, filled: 1 });
+});
+
+// 16 Oct, from the client's QA (Def-018, Def-019).
+test('an empty Log owner is reported even when Owner Mail Id is filled (Def-018)', () => {
+  const p = parseTimesheetSheet(sheet(row(), row({ 'Log owner': '' })));
+  assert.equal(p.entries.length, 1);
+  assert.match(p.errors[0].error, /Log owner is empty/);
+});
+
+test('hours with only an item type, a sprint or a project is a log line, reported (Def-018)', () => {
+  const only = (col) => {
+    const r = new Array(HEADER.length).fill('');
+    r[HEADER.indexOf('Log Hours(for calculation)')] = '4';
+    r[HEADER.indexOf(col)] = 'Sprint 7';
+    return r;
+  };
+  const p = parseTimesheetSheet(sheet(row(), only('Sprint'), only('Item Type')));
+  assert.equal(p.entries.length, 1);
+  assert.equal(p.errors.length, 2);
+  assert.match(p.errors[0].error, /no Log Date/);
+});
+
+test('dates typed by hand: two-digit years, month first, day-first numbers; ambiguous ones refused with the fix (Def-019)', () => {
+  assert.equal(key(parseDate('18/Sep/26')), '2026-09-18');
+  assert.equal(key(parseDate('Sep 5, 2026')), '2026-09-05');
+  assert.equal(key(parseDate('September 18 2026')), '2026-09-18');
+  assert.equal(key(parseDate('25/09/2026')), '2026-09-25', 'only one reading is possible');
+  assert.equal(key(parseDate('05/05/2026')), '2026-05-05');
+  assert.equal(parseDate('05/09/2026'), null, '5 Sep or 9 May: never guessed');
+  assert.equal(parseDate('31/09/2026'), null);
+  assert.match(dateProblem('05/09/2026'), /ambiguous — it could be 5 Sep or 9 May\. Write it as 05\/Sep\/2026/);
+  assert.match(dateProblem('rubbish'), /not a date — write it as 18\/Sep\/2026/);
+  const p = parseTimesheetSheet(sheet(row({ 'Log Date': '05/09/2026' })));
+  assert.match(p.errors[0].error, /ambiguous/);
 });

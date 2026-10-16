@@ -1,9 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { Bell } from 'lucide-react';
 import { api } from '../utils/api';
 
+// Notices sent before 16 Oct carry a few links that are not pages (they
+// landed on Home). Translated here so the ones already in people's bells
+// open the right page too; the server sends the right ones from now on.
+const OLD_LINKS = {
+  '/pms/my-rating': '/my/rating', '/pms/my-growth': '/my/growth', '/pms/my/kras': '/my/kras',
+  '/pms/team': '/team/overview', '/pms/team/midyear-review': '/team/midyear', '/pms/connects': '/team/connects',
+  '/pms/watchlist': '/admin/watchlist', '/my/midyear-review': '/my/midyear', '/people/queries': '/people?tab=queries', '/pms': '/home',
+};
+export const pageFor = (link) => (link ? OLD_LINKS[link] || link : null);
+
 export default function NotificationBell() {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   // Calculated at open time from the bell's viewport rect (see toggle below).
   // Kept in state rather than computed inline so a resize/scroll during "open"
@@ -139,7 +151,13 @@ export default function NotificationBell() {
           {err && !items.length && <p className="p-3 text-xs text-rose-600">Couldn't load notifications: {err}</p>}
           {!err && !items.length && <p className="p-6 text-xs text-navy-400 text-center">Nothing yet.</p>}
           {items.map(n => (
-            <a key={n.id} href={n.link || '#'} onClick={() => !n.read_at && markRead(n.id)}
+            // Opened inside the app, not by reloading the page (16 Oct, Def-004).
+            <a key={n.id} href={pageFor(n.link) || '#'}
+              onClick={(e) => {
+                if (!n.read_at) markRead(n.id);
+                const to = pageFor(n.link);
+                if (to && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) { e.preventDefault(); setOpen(false); navigate(to); }
+              }}
               className={`block px-3 py-2 border-b border-navy-50 last:border-0 hover:bg-navy-50 transition-colors ${!n.read_at ? 'bg-amber-50/50' : ''}`}>
               <p className="text-xs font-semibold text-navy-800">{n.title}</p>
               {n.body && <p className="text-[11px] text-navy-500 mt-0.5">{n.body}</p>}

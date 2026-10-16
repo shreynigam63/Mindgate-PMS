@@ -3,6 +3,7 @@ import { Check } from 'lucide-react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import EmailSettings from '../EmailSettings';
+import { loadBrand, BrandMark } from '../Brand';
 
 // HR Admin → Settings.
 //
@@ -156,6 +157,8 @@ export default function SettingsPage() {
         Tenant-wide configuration. Changes take effect immediately for everyone.
         </>} />
 
+      <CompanyBranding />
+
       <EmailSettings />
 
       <ConnectQuestions />
@@ -196,6 +199,52 @@ export default function SettingsPage() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// The company's name and logo beside "Agentic PMS" on the sign-in page and
+// in the top bar (16 Oct, Def-002).
+function CompanyBranding() {
+  const [b, setB] = useState(null);
+  const [name, setName] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { loadBrand(true).then((x) => { setB(x); setName(x.name || ''); }); }, []);
+  const save = async (patch, done) => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api('/brand', { method: 'PUT', body: JSON.stringify(patch) });
+      setB(r); setName(r.name || ''); await loadBrand(true); setMsg({ ok: true, text: done });
+    } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setBusy(false); }
+  };
+  const pick = (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    if (f.size > 300 * 1024) { setMsg({ ok: false, text: 'The logo must be 300 KB or smaller.' }); return; }
+    const rd = new FileReader();
+    rd.onload = () => save({ logo: rd.result }, 'Logo saved. It shows on the sign-in page and in the top bar.');
+    rd.readAsDataURL(f);
+  };
+  if (!b) return null;
+  return (
+    <div className="card p-4 space-y-3">
+      <p className="font-bold text-sm">Company branding</p>
+      <p className="text-xs text-navy-500">Your company's name and logo, shown beside "Agentic PMS" on the sign-in page and in the top bar of every page.</p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="block flex-1 min-w-[14rem]"><span className="lbl">Company name</span>
+          <input className="inp" value={name} maxLength={80} placeholder="e.g. Mindgate Solutions" onChange={(e) => setName(e.target.value)} /></label>
+        <button type="button" className="btn-pri" disabled={busy || name.trim() === (b.name || '')} onClick={() => save({ name }, 'Name saved.')}>Save name</button>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="btn-sec cursor-pointer">{b.logo ? 'Change logo' : 'Upload logo'}
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={pick} /></label>
+        {b.logo && <button type="button" className="text-xs text-rose-600 underline" disabled={busy} onClick={() => save({ logo: null }, 'Logo removed.')}>Remove logo</button>}
+        <span className="text-[11px] text-navy-400">PNG, JPG, WEBP or SVG, up to 300 KB. A wide logo on a transparent background looks best.</span>
+      </div>
+      {(b.logo || b.name) && <div className="rounded-xl border border-navy-100 p-3 inline-flex"><BrandMark brand={b} /></div>}
+      {msg && <p className={`text-xs ${msg.ok ? 'text-emerald-700' : 'text-rose-600'}`}>{msg.text}</p>}
     </div>
   );
 }

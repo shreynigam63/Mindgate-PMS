@@ -28,6 +28,27 @@ export default function ConnectsPage() {
 // SELF → CONNECTS (15 Oct): your own connects, and the ones others had
 // with you to sign off. Your reports' connects are on Team Connects, in the
 // Manager tab.
+// Everything a connect row shows can be searched for (16 Oct, Def-021:
+// the HR person, who logged it and the date found nothing): names, the
+// date as shown and as written in other ways, and the sign-off state.
+function searchable(cn, me) {
+  const d = cn.held_at ? new Date(cn.held_at) : null;
+  const dates = d && !Number.isNaN(d.getTime()) ? [
+    d.toLocaleDateString(), d.toISOString().slice(0, 10),
+    d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+    d.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
+    d.toLocaleDateString('en-GB'),
+  ] : [];
+  const loggedBy = !cn.logged_by_id ? null
+    : cn.logged_by_id === cn.employee_id ? cn.employee_name
+      : cn.logged_by_id === cn.manager_id ? cn.manager_name
+        : cn.logged_by_id === cn.hr_id ? cn.hr_name : null;
+  return [cn.employee_name, cn.manager_name, cn.hr_name, cn.hr_name && 'hr', loggedBy, me && cn.logged_by_id === me.id && 'you',
+    cn.topic, cn.notes, cn.discussion_notes, cn.achievements, cn.blockers, cn.feedback,
+    ...(cn.linked_kras || []).map((k) => k.title), ...dates,
+    cn.signed_off ? 'signed off' : 'pending sign-off'];
+}
+
 function ConnectsLog({ tabs }) {
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
@@ -50,8 +71,8 @@ function ConnectsLog({ tabs }) {
   }
 
   // Waiting on YOU: connects others had with you that you have not signed off.
-  const pendingCount = data.filter(cn => !cn.signed_off && me && cn.manager_id === me.id).length;
-  const shown = (data || []).filter((cn) => matches(q, cn.employee_name, cn.manager_name, cn.topic, cn.notes, cn.discussion_notes, cn.achievements, cn.blockers));
+  const pendingCount = data.filter(cn => cn.can_sign_off).length;
+  const shown = (data || []).filter((cn) => matches(q, ...searchable(cn, me)));
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
       <PageHead title="Connects" hue="azure">
@@ -62,7 +83,7 @@ function ConnectsLog({ tabs }) {
       {showNew && <NewConnectForm me={me} mode="self" onSaved={() => { setShowNew(false); load(); }} />}
       {me && data.some((cn) => cn.employee_id === me.id) && <TrainingPanel employeeId={me.id} label="Training ideas from my connects" />}
       {!data.length && <div className="card p-8 text-center text-sm text-navy-400">No connects logged yet.</div>}
-      <SearchBox value={q} onChange={setQ} placeholder="Search by person, topic or notes…"
+      <SearchBox value={q} onChange={setQ} placeholder="Search by person, HR, topic, notes or date…"
         shown={shown.length} total={data.length} />
       <div className="space-y-2">
         {shown.map(cn => <ConnectRow key={cn.id} cn={cn} me={me} reload={load} />)}
@@ -128,9 +149,9 @@ export function TeamConnectsPage({ scope = 'manager' }) {
   // A connect with someone in the team (15 Oct): a manager with a report,
   // a Delivery Head with anyone on their reporting line, HR with anyone.
   const canLog = ['manager', 'hod', 'hr'].includes(scope) && (scope === 'hr' || teamSize > 0);
-  const pendingCount = data.filter(cn => !cn.signed_off && me && cn.manager_id === me.id).length;
+  const pendingCount = data.filter(cn => cn.can_sign_off).length;
   const shown = data.filter((cn) => (!person || cn.employee_id === person)
-    && matches(q, cn.employee_name, cn.manager_name, cn.topic, cn.notes, cn.discussion_notes, cn.achievements, cn.blockers, cn.feedback));
+    && matches(q, ...searchable(cn, me)));
   const personName = person ? (people.find(([id]) => id === person) || [])[1] : null;
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
@@ -161,7 +182,7 @@ export function TeamConnectsPage({ scope = 'manager' }) {
           {teamSize ? `None of the ${teamSize} ${teamSize === 1 ? 'person' : 'people'} in your team has a connect logged yet.` : 'No connects logged for your team yet.'}
         </div>
       )}
-      <SearchBox value={q} onChange={setQ} placeholder="Search by person, topic or notes…" shown={shown.length} total={data.length} />
+      <SearchBox value={q} onChange={setQ} placeholder="Search by person, HR, topic, notes or date…" shown={shown.length} total={data.length} />
       <div className="space-y-2">
         {shown.map(cn => <ConnectRow key={cn.id} cn={cn} me={me} reload={load} anyMeeting={scope === 'hr'} />)}
       </div>
@@ -569,7 +590,7 @@ function ConnectRow({ cn, me, reload, anyMeeting = false }) {
         )}
       </div>
       <div className="flex gap-2">
-        {!cn.signed_off && (!me || me.id === cn.manager_id) && <button className="btn-sec" onClick={signOff}>Sign off</button>}
+        {cn.can_sign_off && <button className="btn-sec" onClick={signOff}>Sign off</button>}
         <button className="btn-sec" disabled={busy} onClick={askInsights}><Sparkles size={12} className="inline mr-1 text-amber-500" />{busy ? 'Thinking…' : 'AI insights'}</button>
       </div>
       {/* A connect row is a compact thing in a list of connect rows. The

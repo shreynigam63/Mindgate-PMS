@@ -45,14 +45,32 @@ const ymd = (y, m, d) => {
 // The export writes "18/Sep/2026", the xlsx parser may hand back
 // "2026-09-18" for a real date cell, and a raw Excel serial turns up
 // when a column is formatted as a number. All three, one function.
+//
+// Also read since 16 Oct (Def-019, dates typed by hand): a two-digit year
+// (18/Sep/26), the month first (Sep 18, 2026), and an all-number date when
+// only one reading is possible (25/09/2026 is 25 Sep). 05/09/2026 could be
+// 5 Sep or 9 May, so it is refused with a way to write it (dateProblem()),
+// never guessed: a guess puts a day's hours on a day nobody worked.
+const year = (y) => (y.length === 2 ? 2000 + +y : +y);
+const numericDate = (s) => s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4}|\d{2})$/);
 function parseDate(v) {
   if (v instanceof Date) return new Date(v.getFullYear(), v.getMonth(), v.getDate());
   const s = String(v == null ? '' : v).trim();
   if (!s) return null;
-  const dmy = s.match(/^(\d{1,2})[/\- ]([A-Za-z]{3})[A-Za-z]*[/\- ](\d{4})/);
-  if (dmy && MON[dmy[2].toLowerCase()] != null) return ymd(+dmy[3], MON[dmy[2].toLowerCase()], +dmy[1]);
+  const dmy = s.match(/^(\d{1,2})[/\- ]([A-Za-z]{3})[A-Za-z]*\.?[/\- ](\d{4}|\d{2})(?!\d)/);
+  if (dmy && MON[dmy[2].toLowerCase()] != null) return ymd(year(dmy[3]), MON[dmy[2].toLowerCase()], +dmy[1]);
+  const mdy = s.match(/^([A-Za-z]{3})[A-Za-z]*\.?[ /\-](\d{1,2})(?:st|nd|rd|th)?,?[ /\-]+(\d{4}|\d{2})(?!\d)/);
+  if (mdy && MON[mdy[1].toLowerCase()] != null) return ymd(year(mdy[3]), MON[mdy[1].toLowerCase()], +mdy[2]);
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return ymd(+iso[1], +iso[2] - 1, +iso[3]);
+  const nd = numericDate(s);
+  if (nd) {
+    const a = +nd[1]; const b = +nd[2];
+    if (a > 12 && b <= 12) return ymd(year(nd[3]), b - 1, a);   // day first
+    if (b > 12 && a <= 12) return ymd(year(nd[3]), a - 1, b);   // month first
+    if (a === b) return ymd(year(nd[3]), a - 1, a);
+    return null;                                                // both readings possible
+  }
   const num = Number(s);
   // Excel serials. 25569 is 1970-01-01; anything below 20000 (1954) in a
   // date column is a typo, not a date, and is better reported as
@@ -72,6 +90,17 @@ function parseDate(v) {
 // reported — never read as its leading digits: that is how a time-formatted
 // cell once loaded as 1899 hours and a typed "7:30" in G as 7. (8 Oct,
 // review of the upload template.)
+// Why a Log Date was not read, in words a person can act on.
+const MON_NAME = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function dateProblem(v) {
+  const s = String(v == null ? '' : v).trim();
+  const nd = numericDate(s);
+  if (nd && +nd[1] <= 12 && +nd[2] <= 12 && +nd[1] !== +nd[2]) {
+    return `log date "${s}" is ambiguous — it could be ${+nd[1]} ${MON_NAME[+nd[2] - 1]} or ${+nd[2]} ${MON_NAME[+nd[1] - 1]}. Write it as ${pad(+nd[1])}/${MON_NAME[+nd[2] - 1]}/${year(nd[3])}`;
+  }
+  return `log date "${s}" is not a date — write it as 18/Sep/2026${/\d/.test(s) ? ', and check the day exists' : ''}`;
+}
+
 const HOURS_NUMBER = /^\d+(\.\d+)?$/;
 const HOURS_HM = /^(\d+):([0-5]?\d)(?::[0-5]\d)?$/;
 function hoursIn(v) {
@@ -158,12 +187,20 @@ function parseTimesheetSheet(rows, opts = {}) {
     // figure wrong in the flattering direction. Until 8 Oct a row with an
     // item, a description and hours but no owner or date — the natural way
     // to write a second log on the same day by hand — was skipped as blank.
+    //
+    // 16 Oct (Def-018): a row with hours and only an item type, a sprint or
+    // a project is a log line too, and is reported rather than skipped.
     if (!ownerEmail && !ownerName && !get('log_date') && !get('item_id')
-        && !get('item_name') && !get('description') && !get('hours_decimal')) continue;
+        && !get('item_name') && !get('description') && !get('hours_decimal')
+        && !get('item_type') && !get('sprint') && !get('project_name')) continue;
     if (!get('log_date')) { errors.push({ line, error: 'the row has no Log Date — every row needs one, a second log on the same day too' }); continue; }
     const d = parseDate(get('log_date'));
-    if (!d) { errors.push({ line, error: `log date "${get('log_date')}" is not a date` }); continue; }
-    if (!ownerEmail && !ownerName) { errors.push({ line, error: 'the row names no log owner' }); continue; }
+    if (!d) { errors.push({ line, error: dateProblem(get('log_date')) }); continue; }
+    if (!ownerEmail && !ownerName) { errors.push({ line, error: 'the row names no log owner — fill Log owner and Owner Mail Id' }); continue; }
+    // Both columns are filled in a Zoho export. The email is what the log is
+    // matched on; the name is what a person reading the sheet checks it by,
+    // so an empty one is reported (16 Oct, Def-018) rather than passed.
+    if (at.owner_name >= 0 && !ownerName) { errors.push({ line, error: 'Log owner is empty — write the person\'s name, as in Zoho' }); continue; }
     const hours = parseHours(get('hours_display'), get('hours_decimal'));
     if (hours == null) {
       const raw = get('hours_decimal') || get('hours_display');
@@ -334,4 +371,4 @@ function compliance(entries, settings = {}, asOf = null) {
   };
 }
 
-module.exports = { parseTimesheetSheet, compliance, cycleOf, ratingOf, parseDate, parseHours, key, DEFAULTS, COLUMNS, HEADER_MARKERS };
+module.exports = { parseTimesheetSheet, compliance, cycleOf, ratingOf, parseDate, dateProblem, parseHours, key, DEFAULTS, COLUMNS, HEADER_MARKERS };

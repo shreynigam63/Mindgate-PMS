@@ -58,6 +58,11 @@ function HodQueue() {
   // department, not the whole company, so there is nothing to gain
   // from a round trip per keystroke.
   const queueShown = (data.queue || []).filter(row => matches(q, row.name, row.department, row.manager_name));
+  const EMPTY = {
+    no_departments: 'HR has not assigned you a department yet, so there is nobody to review. Ask HR to add you under HR → HOD.',
+    before_hod_phase: `HOD Review opens after manager evaluations. The cycle is in ${phaseLabel(data.cycle.phase)} now.`,
+    none_submitted: 'Nothing is waiting on you: no manager in your departments has submitted an evaluation yet.',
+  };
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -66,7 +71,8 @@ function HodQueue() {
       </div>
       <SearchBox value={q} onChange={setQ} placeholder="Search the queue by name, department or manager…"
         shown={queueShown.length} total={(data.queue || []).length} />
-      {!data.queue.length && <div className="card p-8 text-center text-sm text-navy-400">Nothing awaiting HOD review — manager evaluations feed this queue as they are submitted.</div>}
+      {!data.queue.length && <div className="card p-8 text-center text-sm text-navy-400">{EMPTY[data.empty_reason] || 'Nothing awaiting HOD review — manager evaluations feed this queue as they are submitted.'}</div>}
+      {!!data.queue.length && !editable && <p className="text-xs text-navy-500">View only: ratings can be given during the HOD Review phase.</p>}
       {queueShown.map(q => (
         <div key={q.employee_id} className="card overflow-hidden">
           <button className="w-full flex items-center gap-2 px-4 py-3 text-left" onClick={() => setOpenId(v => v === q.employee_id ? null : q.employee_id)}>
@@ -90,7 +96,8 @@ function HodRow({ q, editable, reload, scale }) {
   const [detail, setDetail] = useState(null);
   const [detailErr, setDetailErr] = useState(null);
   const [v, setV] = useState(q.hod_rating ?? '');
-  const [comment, setComment] = useState('');
+  const [comment, setComment] = useState(q.hod_comment || '');
+  const [saved, setSaved] = useState(null);
   const [err, setErr] = useState(null);
   const ts = useTimesheetRatings(q.employee_id);
 
@@ -102,7 +109,8 @@ function HodRow({ q, editable, reload, scale }) {
     setErr(null);
     try {
       await api(`/pms/hod/queue/${q.employee_id}`, { method: 'PUT', body: JSON.stringify({ overall_rating: v === '' ? null : Number(v), comment: comment.trim() || null, submit }) });
-      if (submit) reload();
+      setSaved(submit ? 'Submitted. The rating is locked and goes to HR Calibration.' : 'Saved. You can come back and submit it later.');
+      reload();
     } catch (e) { setErr(e.message); }
   };
 
@@ -157,6 +165,8 @@ function HodRow({ q, editable, reload, scale }) {
           </div>
         </div>
       )}
+      {q.hod_status === 'submitted' && q.hod_comment && <p className="text-xs text-navy-600"><b>Your comment:</b> {q.hod_comment}</p>}
+      {saved && <p className="text-xs text-emerald-700">{saved}</p>}
       {err && <p className="text-xs text-rose-600">{err}</p>}
     </div>
   );

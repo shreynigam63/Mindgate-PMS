@@ -120,6 +120,10 @@ async function main() {
   // Forgot password: a one-time code by email (core/password-reset.js).
   const { forgotPassword, resetPassword } = require('./core/password-reset');
   app.post('/api/v1/auth/forgot-password', forgotPassword);
+  // The client's name and logo (core/brand.js): read before sign-in, set by HR.
+  const { getBrand, putBrand } = require('./core/brand');
+  app.get('/api/v1/brand', getBrand);
+  app.put('/api/v1/brand', authenticate, putBrand);
   app.post('/api/v1/auth/reset-password', resetPassword);
   // /me carries the pages this person may open. One row in
   // core.page_permission drives both the sidebar and the direct-URL guard,

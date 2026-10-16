@@ -66,7 +66,7 @@ async function api(path, token, opts = {}) {
   return { status: r.status, body: await r.json() };
 }
 
-test('connect sign-off: a logged connect starts unsigned, manager can sign it off, employee is notified', { skip }, async () => {
+test('connect sign-off: a logged connect starts unsigned; the other person signs it off, not its author; the author hears', { skip }, async () => {
   const mgrAuth = await login('so-mgr@x.com');
   const empAuth = await login('so-emp@x.com');
 
@@ -77,15 +77,22 @@ test('connect sign-off: a logged connect starts unsigned, manager can sign it of
   const cn = list.body.connects[0];
   assert.equal(cn.signed_off, false, 'not signed off at creation');
 
-  const signOff = await api(`/pms/connects/${cn.id}/sign-off`, mgrAuth.token, { method: 'POST' });
+  assert.equal(cn.can_sign_off, false, 'the author is not offered the sign-off');
+  const own = await api(`/pms/connects/${cn.id}/sign-off`, mgrAuth.token, { method: 'POST' });
+  assert.equal(own.status, 403, 'TC_NEW_018: the author cannot sign off their own log');
+  assert.match(own.body.error, /other person/);
+
+  const forEmp = (await api('/pms/connects', empAuth.token)).body.connects.find((c) => c.id === cn.id);
+  assert.equal(forEmp.can_sign_off, true);
+  const signOff = await api(`/pms/connects/${cn.id}/sign-off`, empAuth.token, { method: 'POST' });
   assert.equal(signOff.status, 200);
 
   const list2 = await api('/pms/connects', mgrAuth.token);
   assert.equal(list2.body.connects[0].signed_off, true);
   assert.ok(list2.body.connects[0].signed_off_at);
 
-  const empNotifs = await api('/notifications', empAuth.token);
-  assert.ok(empNotifs.body.notifications.some((n) => n.kind === 'connect_signed_off'));
+  const mgrNotifs = await api('/notifications', mgrAuth.token);
+  assert.ok(mgrNotifs.body.notifications.some((n) => n.kind === 'connect_signed_off'));
 });
 
 test('connect sign-off: cannot sign off twice, and an unrelated manager cannot sign someone else\'s connect', { skip }, async () => {

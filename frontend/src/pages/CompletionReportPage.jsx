@@ -83,7 +83,9 @@ export default function CompletionReportPage() {
 
   // from a round trip per keystroke.
 
-  const rowsShown = (rows || []).filter(r => matches(q, r.name, r.department, r.kra_status, r.midyear_status, r.self_status, r.manager_status));
+  // Every status the table shows can be searched (16 Oct: three of these
+  // names did not match the report's fields).
+  const rowsShown = (rows || []).filter(r => matches(q, r.name, r.department, r.kra_status, r.devplan_status, r.self_appraisal_status, r.manager_eval_status, r.hod_status, r.complete ? 'complete' : 'pending'));
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
@@ -136,7 +138,11 @@ export default function CompletionReportPage() {
                 <td className="px-3 py-2"><StatusChip value={r.kra_status} /></td>
                 <td className="px-3 py-2"><StatusChip value={r.devplan_status} /></td>
                 <td className="px-3 py-2"><StatusChip value={r.self_appraisal_status} /></td>
-                <td className="px-3 py-2"><StatusChip value={r.manager_eval_status} /></td>
+                <td className="px-3 py-2"><StatusChip value={r.manager_eval_status} />
+                  {r.manager_eval_status === 'submitted' && data.cycle && data.cycle.phase === 'manager_eval' && (
+                    <ReopenEval employeeId={r.employee_id} name={r.name} onDone={(m) => { setReseedMsg(m); load(cycleId); }} />
+                  )}
+                </td>
                 <td className="px-3 py-2"><StatusChip value={r.hod_status} /></td>
                 <td className="px-3 py-2">
                   <span className={`chip ${r.complete ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{r.complete ? 'Complete' : 'Pending'}</span>
@@ -153,6 +159,33 @@ export default function CompletionReportPage() {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+// HR reopens a submitted manager evaluation, with a reason the manager is
+// told (16 Oct). Only while manager evaluation is open.
+function ReopenEval({ employeeId, name, onDone }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  if (!open) return <button type="button" className="block text-[10.5px] text-navy-600 underline mt-1" onClick={() => setOpen(true)}>Reopen</button>;
+  const go = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await api(`/pms/team/evaluations/${employeeId}/reopen`, { method: 'POST', body: JSON.stringify({ reason }) });
+      setOpen(false); onDone(`${name}'s evaluation is reopened. The manager has been told why.`);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-1 space-y-1 min-w-[12rem]">
+      <input className="inp !py-1 text-xs" autoFocus placeholder="Why (the manager sees this)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      <div className="flex gap-1">
+        <button type="button" className="btn-pri !py-1 !px-2" disabled={busy || !reason.trim()} onClick={go}>Reopen</button>
+        <button type="button" className="btn-sec !py-1 !px-2" onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+      {err && <p className="text-[10.5px] text-rose-600">{err}</p>}
     </div>
   );
 }

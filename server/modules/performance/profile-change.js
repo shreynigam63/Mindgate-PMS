@@ -125,11 +125,11 @@ async function reopenLockedSheets(tenantId, employeeId, changes, { actorEmail = 
   // to them and nobody pressed a button they can see; the manager because
   // a sheet they had approved, or were about to, has left their queue.
   await notify(tenantId, employeeId, 'kra_reopened',
-    'Your KRA sheet was reopened after a change to your role', reason, '/pms');
+    'Your KRA sheet was reopened after a change to your role', reason, '/my/kras');
   for (const managerId of [...new Set(reopened.map((r) => r.manager_id).filter(Boolean))]) {
     await notify(tenantId, managerId, 'kra_reopened',
       'A report\'s KRA sheet was reopened after a role change',
-      `${describe(changes)}. Their sheet has gone back to them to refill.`, '/pms/team');
+      `${describe(changes)}. Their sheet has gone back to them to refill.`, '/team/kra-sheets');
   }
 
   return reopened;
@@ -178,7 +178,7 @@ async function reopenLockedGrowthPlans(tenantId, employeeId, changes, { actorEma
   for (const managerId of [...new Set(reopened.map((r) => r.manager_id).filter(Boolean))]) {
     await notify(tenantId, managerId, 'devplan_reopened',
       'A report\'s growth plan was reopened after a role change',
-      `${describe(changes)}. Their growth plan has gone back to them to refill.`, '/pms/team');
+      `${describe(changes)}. Their growth plan has gone back to them to refill.`, '/team/growth');
   }
 
   return reopened;
@@ -242,7 +242,7 @@ async function reopenLockedMidyear(tenantId, employeeId, changes, { actorEmail =
   for (const managerId of [...new Set(reopened.map((r) => r.manager_id).filter(Boolean))]) {
     await notify(tenantId, managerId, 'midyear_reopened',
       'A report\'s mid-year review was reopened after a role change',
-      `${describe(changes)}. Their mid-year review is open again for both of you.`, '/pms/team');
+      `${describe(changes)}. Their mid-year review is open again for both of you.`, '/team/midyear');
   }
 
   return reopened;

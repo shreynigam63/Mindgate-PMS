@@ -83,3 +83,20 @@ test('gdpr export: HR can export on behalf of an employee; a plain employee cann
   const asStranger = await api(`/gdpr/export/${empId}`, strangerAuth.token);
   assert.equal(asStranger.status, 403);
 });
+
+test('gdpr export: ?format=xlsx is a workbook a person can open, one sheet per section (16 Oct, Def-013)', { skip }, async () => {
+  const { token } = await login('gd-emp@x.com');
+  const r = await fetch(`${base}/gdpr/export?format=xlsx`, { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /spreadsheetml/);
+  assert.match(r.headers.get('content-disposition'), /my-data-export\.xlsx/);
+  const ExcelJS = require('exceljs');
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(Buffer.from(await r.arrayBuffer()));
+  const names = wb.worksheets.map((w) => w.name);
+  assert.ok(names.includes('Profile'), names.join(', '));
+  assert.ok(names.includes('Consents'));
+  const profile = wb.getWorksheet('Profile');
+  const values = []; profile.eachRow((row) => values.push(row.getCell(2).value));
+  assert.ok(values.includes('GD Emp'));
+});

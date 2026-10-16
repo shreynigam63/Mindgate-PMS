@@ -134,7 +134,7 @@ function EvalEditor({ t, phase, scale, reload }) {
           KRA weights rather than trusting this number. */}
       <PerKraRating reloadKey={kraKey} kraEdit={kraEdit} employeeId={t.employee_id} scale={scale} editable={editable} overallRating={f.overall_rating}
         selfSubmitted={t.self_status === 'submitted'}
-        selfEntries={t.self_entries || {}} onOverallChange={(v) => setF(s => ({ ...s, overall_rating: v }))} />
+        selfEntries={t.self_entries || {}} savedEntries={t.eval_entries || {}} onOverallChange={(v) => setF(s => ({ ...s, overall_rating: v }))} />
       <div className="flex flex-wrap items-center gap-2">
         {editable && (
           <button className="btn-sec" disabled={drafting} onClick={askDraft}>
@@ -273,9 +273,11 @@ function PotentialStep({ employeeId }) {
   );
 }
 
-function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries, onOverallChange, hideOverallFooter, selfSubmitted, kraEdit, reloadKey }) {
+function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries, savedEntries, onOverallChange, hideOverallFooter, selfSubmitted, kraEdit, reloadKey }) {
   const [kras, setKras] = useState(null);
-  const [entries, setEntries] = useState({});
+  // The ratings already saved come back with the page (16 Oct, from QA:
+  // reopening an evaluation showed every KRA unrated).
+  const [entries, setEntries] = useState(savedEntries || {});
   const [err, setErr] = useState(null);
   const [saveState, setSaveState] = useState('idle');
   const timer = useRef(null);

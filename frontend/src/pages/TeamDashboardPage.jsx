@@ -53,7 +53,7 @@ const PHASE_LABEL = {
 // The manager's four shortcuts, in the order the work runs.
 const QA_MANAGER = [
   { to: '/team/eval', label: 'Evaluate My Team', icon: PenLine, bg: '#fdecef', fg: '#e0435f' },
-  { to: '/team/connects', label: 'Log Connect', icon: Users, bg: '#e9f1ff', fg: '#2563eb' },
+  { to: '/team/team-connects', label: 'Log Connect', icon: Users, bg: '#e9f1ff', fg: '#2563eb' },
   { to: '/team/kra-sheets', label: 'Review KRA Approvals', icon: CircleCheckBig, bg: '#e7f7ee', fg: '#1f9d5c' },
   { to: '/team/overview', label: 'Team Overview', icon: LayoutDashboard, bg: '#f1ecfd', fg: '#7c4dde' },
   { to: '/team/midyear', label: 'Team Mid-Year', icon: Clock, bg: '#fff1dc', fg: '#e7860d' },
@@ -134,16 +134,16 @@ export default function TeamDashboardPage({ user }) {
   if (stats.kra_not_submitted > 0)
     desk.push({ key: 'ns', icon: Hourglass, hue: 'navy', n: stats.kra_not_submitted, label: 'KRAs not submitted yet', to: '/team/overview' });
   if (stats.no_connect > 0)
-    desk.push({ key: 'nc', icon: MessageCircle, hue: 'amber', n: stats.no_connect, label: 'No Connect Logged Yet', to: '/team/connects' });
+    desk.push({ key: 'nc', icon: MessageCircle, hue: 'amber', n: stats.no_connect, label: 'No Connect Logged Yet', to: '/team/team-connects' });
   if (stats.open_actions > 0)
-    desk.push({ key: 'oa', icon: ListChecks, hue: 'amber', n: stats.open_actions, label: 'Connect actions open', to: '/team/connects' });
+    desk.push({ key: 'oa', icon: ListChecks, hue: 'amber', n: stats.open_actions, label: 'Connect actions open', to: '/team/team-connects' });
   // Fewer than four outstanding: the row is completed with where the team
   // stands — real numbers, never zero-padding to look busy.
   const progress = [
     { key: 'pk', icon: Target, hue: 'navy', n: `${stats.kra_approved}/${stats.reports}`, label: 'KRAs approved', to: '/team/kra-sheets' },
     { key: 'pe', icon: ClipboardList, hue: 'violet', n: `${stats.evals_done}/${stats.reports}`, label: 'Evaluations done', to: '/team/eval' },
     { key: 'pm', icon: Clock, hue: 'azure', n: `${stats.midyear_signed}/${stats.reports}`, label: 'Mid-year signed', to: '/team/midyear' },
-    { key: 'pc', icon: MessageCircle, hue: 'leaf', n: stats.connects, label: 'Connects logged', to: '/team/connects' },
+    { key: 'pc', icon: MessageCircle, hue: 'leaf', n: stats.connects, label: 'Connects logged', to: '/team/team-connects' },
   ];
   const cards = [...desk, ...progress.slice(0, Math.max(0, 4 - desk.length))];
   return (

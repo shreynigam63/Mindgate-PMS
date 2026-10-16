@@ -17,7 +17,7 @@ const logger = require('../../core/logger');
 const { authenticate } = require('../../core/auth');
 const { guardUuidParams } = require('../../core/http');
 const { visibleRows } = require('../../core/scope-hooks');
-const { apiPermissionParity, hasPermission } = require('../../core/permissions');
+const { apiPermissionParity, hasPermission, holdsPermission } = require('../../core/permissions');
 const { notify } = require('../../core/notifications');
 const { requireConsent } = require('../../core/consent');
 const meetings = require('../../core/meetings');
@@ -156,7 +156,7 @@ async function alertHrOfRetentionRisk(tenantId, employee) {
   const title = `Retention alert: ${employee.name} is a consistent top performer`;
   const body = 'Flagged on the Super 50 watchlist (3 consecutive top-tier ratings, most recently the highest grade). Consider retention actions — a bonus, fast-track promotion, or a leadership succession conversation.';
   await Promise.all(hrAndAdmin.map((h) =>
-    notify(tenantId, h.id, 'retention_alert', title, body, '/pms/watchlist').catch((e) => logger.warn('retention alert notify failed', { error: e.message }))));
+    notify(tenantId, h.id, 'retention_alert', title, body, '/admin/watchlist').catch((e) => logger.warn('retention alert notify failed', { error: e.message }))));
   return hrAndAdmin.length;
 }
 
@@ -324,7 +324,7 @@ async function sendPhaseNotices(tenantId, phase, direction) {
     // to derive one from open-direction text.
     const title = direction === 'open' ? n.title : n.title.replace('is now open', 'has closed').replace('is open', 'is now closed');
     const body = direction === 'open' ? n.body : `This is no longer open.`;
-    await notifyAudience(tenantId, n.audience, 'phase_change', title, body, '/pms/my/kras');
+    await notifyAudience(tenantId, n.audience, 'phase_change', title, body, '/my/kras');
   }
 }
 
@@ -355,7 +355,7 @@ router.post('/cycles/:id/phase', async (req, res) => {
         WHERE id=$2`, [target, c.id, !!rollback]);
     await audit(req, cancel ? 'CYCLE_CANCELLED' : rollback ? 'PHASE_ROLLBACK' : 'PHASE_ADVANCE', c.id, null, { from: c.phase, to: target });
     if (cancel) {
-      await notifyAudience(T(req), 'all', 'phase_change', `${c.name} has been cancelled`, 'This performance cycle has been cancelled by HR.', '/pms/my/kras');
+      await notifyAudience(T(req), 'all', 'phase_change', `${c.name} has been cancelled`, 'This performance cycle has been cancelled by HR.', '/my/kras');
     } else if (rollback) {
       // Rolling back closes the phase being LEFT (c.phase) — notify its
       // audience it's no longer open, same as a forward close would.
@@ -1334,7 +1334,7 @@ router.post('/hr/development-plan/:employeeId/reopen', async (req, res) => {
     if (p.manager_id) {
       await notify(T(req), p.manager_id, 'devplan_reopened',
         "A report's growth plan was reopened by HR",
-        `${comment} It has gone back to them to edit.`, '/pms/team');
+        `${comment} It has gone back to them to edit.`, '/team/growth');
     }
     res.json({ ok: true, status: 'returned', from: p.status });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -4245,7 +4245,19 @@ router.put('/team/evaluations/:employeeId', async (req, res) => {
     const emp = (await db.query(`SELECT id, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, T(req)])).rows[0];
     if (!emp) return res.status(404).json({ error: 'employee not found' });
     if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: 'Not your report' });
+    // A submitted evaluation is locked (16 Oct, from QA: it stayed editable
+    // through the API). HR reopens it with a reason.
     const b = req.body || {};
+    // Potential is no longer one Low/Medium/High chip here. Since the
+    // 9-box build (13 Oct) it is the four questions of the Potential step
+    // (PUT /team/evaluations/:id/potential, nine-box.js), averaged with
+    // the competency score. Refused rather than ignored, so an old client
+    // learns where it went instead of believing it saved.
+    if (b.potential_rating !== undefined) {
+      return res.status(422).json({ error: 'Potential is now the four questions on the Potential step, not a single rating.' });
+    }
+    const locked = (await db.query(`SELECT status FROM pms.manager_evaluations WHERE cycle_id=$1 AND employee_id=$2`, [c.id, emp.id])).rows[0];
+    if (locked && locked.status === 'submitted') return res.status(409).json({ error: 'This evaluation is submitted and locked. HR can reopen it.' });
     // THE ANNUAL RATING NOW COMES FROM THE KRAs, on every cycle type.
     //
     // It used to be special. On an annual cycle the overall rating was
@@ -4276,17 +4288,10 @@ router.put('/team/evaluations/:employeeId', async (req, res) => {
       const kras = sheet ? (await db.query(`SELECT id, weight AS weight_pct FROM pms.kras WHERE sheet_id=$1`, [sheet.id])).rows : [];
       const scores = new Map(kras.map((k) => [k.id, b.entries[k.id] ? b.entries[k.id].rating : null]));
       const { rating } = computeWeightedRating(kras, scores);
-      if (rating != null) overallRating = rating;
+      // Nothing rated yet is not a 0 overall.
+      if (rating != null && [...scores.values()].some((x) => x != null && x !== '')) overallRating = rating;
     } else if (b.overall_rating != null) {
       overallRating = b.overall_rating;
-    }
-    // Potential is no longer one Low/Medium/High chip here. Since the
-    // 9-box build (13 Oct) it is the four questions of the Potential step
-    // (PUT /team/evaluations/:id/potential, nine-box.js), averaged with
-    // the competency score. Refused rather than ignored, so an old client
-    // learns where it went instead of believing it saved.
-    if (b.potential_rating !== undefined) {
-      return res.status(422).json({ error: 'Potential is now the four questions on the Potential step, not a single rating.' });
     }
     await db.query(
       `INSERT INTO pms.manager_evaluations (tenant_id, cycle_id, employee_id, manager_id, entries, overall_rating, strengths, improvement_areas, status)
@@ -4308,11 +4313,46 @@ router.post('/team/evaluations/:employeeId/submit', async (req, res) => {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
     const c = await activeCycle(T(req));
     if (!c || !pm.phaseAllows(c.phase, 'manager_submit')) return res.status(409).json({ error: 'Manager evaluation is not open' });
+    const emp = (await db.query(`SELECT id, manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [req.params.employeeId, T(req)])).rows[0];
+    if (!emp) return res.status(404).json({ error: 'employee not found' });
+    if (emp.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: 'Not your report' });
     const ev = (await db.query(`SELECT * FROM pms.manager_evaluations WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.params.employeeId])).rows[0];
     if (!ev) return res.status(404).json({ error: 'no evaluation drafted' });
+    if (ev.status === 'submitted') return res.status(409).json({ error: 'This evaluation is already submitted.' });
     if (ev.overall_rating == null) return res.status(422).json({ error: 'overall_rating required to submit' });
+    // Every KRA rated before the evaluation goes in (a part-rated sheet
+    // would submit a weighted figure of only some KRAs). An overall set
+    // through the dormant 7-parameter route is a whole rating of its own
+    // and is not held to this.
+    const byParams = (await db.query(`SELECT 1 FROM pms.parameter_scores WHERE cycle_id=$1 AND employee_id=$2 LIMIT 1`, [c.id, req.params.employeeId])).rows.length > 0;
+    const sheet = byParams ? null : (await db.query(`SELECT id FROM pms.kra_sheets WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.params.employeeId])).rows[0];
+    const kraIds = sheet ? (await db.query(`SELECT id FROM pms.kras WHERE sheet_id=$1`, [sheet.id])).rows.map((k) => k.id) : [];
+    const entries = ev.entries || {};
+    const unrated = kraIds.filter((id) => !entries[id] || entries[id].rating == null || entries[id].rating === '');
+    if (unrated.length) return res.status(422).json({ error: `Rate every KRA before submitting — ${unrated.length} still ${unrated.length === 1 ? 'has' : 'have'} no rating.` });
     await db.query(`UPDATE pms.manager_evaluations SET status='submitted', submitted_at=now(), updated_at=now() WHERE id=$1`, [ev.id]);
     await audit(req, 'MANAGER_EVAL_SUBMITTED', c.id, req.params.employeeId, { rating: ev.overall_rating });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// HR reopens a submitted manager evaluation, with a reason the manager
+// sees (TC_NEW_031). Only while manager evaluation is open; after that HR
+// adjusts the rating in Calibration.
+router.post('/team/evaluations/:employeeId/reopen', async (req, res) => {
+  try {
+    if (!(await holdsPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: "Requires 'pms_admin'", needs: 'pms_admin' });
+    const reason = String((req.body || {}).reason || '').trim().slice(0, 500);
+    if (!reason) return res.status(422).json({ error: 'Say why the evaluation is reopened. The manager sees this.' });
+    const c = await activeCycle(T(req));
+    if (!c || !pm.phaseAllows(c.phase, 'manager_edit')) return res.status(409).json({ error: 'Manager evaluation is closed for this cycle. Adjust the rating in Calibration instead.' });
+    const ev = (await db.query(`SELECT * FROM pms.manager_evaluations WHERE cycle_id=$1 AND employee_id=$2 AND tenant_id=$3`, [c.id, req.params.employeeId, T(req)])).rows[0];
+    if (!ev || ev.status !== 'submitted') return res.status(409).json({ error: 'Only a submitted evaluation is reopened.' });
+    await db.query(`UPDATE pms.manager_evaluations SET status='pending', submitted_at=NULL, updated_at=now() WHERE id=$1`, [ev.id]);
+    await audit(req, 'MANAGER_EVAL_REOPENED', c.id, req.params.employeeId, { reason, rating: ev.overall_rating });
+    const emp = (await db.query(`SELECT name, manager_id FROM core.employees WHERE id=$1`, [req.params.employeeId])).rows[0];
+    const to = (emp && emp.manager_id) || ev.manager_id;
+    if (to) await notify(T(req), to, 'eval_reopened', `HR reopened your evaluation of ${emp ? emp.name : 'a report'}`, `HR's reason: ${reason}`, '/team/eval', { email: true });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4476,22 +4516,53 @@ router.put('/team/parameter-scores/:employeeId', async (req, res) => {
 // is: the manager's rows depend on it.
 
 // HOD: department queue + decide.
+//
+// Who a HOD rates (16 Oct, from QA): employees of the departments HR
+// assigned them (core.department_heads), never themselves, and only once
+// the manager's evaluation is submitted. A submitted HOD rating is locked;
+// HR changes it in Calibration with a reason. HR (pms_admin) may act on any.
+const hodDepartments = async (req) => (await db.query(
+  `SELECT department FROM core.department_heads WHERE tenant_id=$1 AND employee_id=$2`, [T(req), req.user.id])).rows.map((r) => r.department);
+async function hodMayRate(req, employeeId) {
+  if (employeeId === req.user.id) return { status: 403, error: 'Your own HOD rating is given by another HOD or by HR.' };
+  if (await hasPermission(req.user, 'pms_admin')) return null;
+  const emp = (await db.query(`SELECT department FROM core.employees WHERE id=$1 AND tenant_id=$2`, [employeeId, T(req)])).rows[0];
+  if (!emp) return { status: 404, error: 'employee not found' };
+  if (!(await hodDepartments(req)).includes(emp.department)) return { status: 403, error: 'This employee is not in a department you head.' };
+  return null;
+}
+// A rating on the cycle's scale, in half steps.
+function ratingProblem(value, scale) {
+  const n = Number(value);
+  const vals = (Array.isArray(scale) && scale.length ? scale : DEFAULT_SCALE).map((x) => Number(x.value)).filter(Number.isFinite);
+  const lo = Math.min(...vals); const hi = Math.max(...vals);
+  if (!Number.isFinite(n) || n < lo || n > hi || Math.round(n * 2) !== n * 2) return `The rating must be between ${lo} and ${hi}, in steps of 0.5.`;
+  return null;
+}
+
 router.get('/hod/queue', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_hod'))) return res.status(403).json({ error: "Requires 'pms_hod'" });
     const c = await activeCycle(T(req));
     if (!c) return res.json({ cycle: null, queue: [] });
-    const depts = (await db.query(`SELECT department FROM core.department_heads WHERE tenant_id=$1 AND employee_id=$2`, [T(req), req.user.id])).rows.map(r => r.department);
+    const depts = await hodDepartments(req);
     const isAdmin = await hasPermission(req.user, 'pms_admin');
     const r = await db.query(
       `SELECT e.id AS employee_id, e.name, e.department, me.overall_rating AS manager_rating,
-              me.status AS manager_status, he.overall_rating AS hod_rating, he.status AS hod_status
+              me.status AS manager_status, m.name AS manager_name,
+              he.overall_rating AS hod_rating, he.status AS hod_status, he.comment AS hod_comment
          FROM core.employees e
          JOIN pms.manager_evaluations me ON me.cycle_id=$1 AND me.employee_id=e.id AND me.status='submitted'
+         LEFT JOIN core.employees m ON m.id = me.manager_id
          LEFT JOIN pms.hod_evaluations he ON he.cycle_id=$1 AND he.employee_id=e.id
-        WHERE e.tenant_id=$2 ${isAdmin ? '' : 'AND e.department = ANY($3)'} ORDER BY e.department, e.name`,
-      isAdmin ? [c.id, T(req)] : [c.id, T(req), depts]);
-    res.json({ cycle: cycleForClient(c), departments: depts, queue: r.rows });
+        WHERE e.tenant_id=$2 AND e.id <> $3 ${isAdmin ? '' : 'AND e.department = ANY($4)'} ORDER BY e.department, e.name`,
+      isAdmin ? [c.id, T(req), req.user.id] : [c.id, T(req), req.user.id, depts]);
+    // Why the queue is empty, said rather than guessed (TC_NEW_072).
+    const emptyReason = r.rows.length ? null
+      : (!isAdmin && !depts.length) ? 'no_departments'
+        : !['hod_eval', 'calibration', 'publish', 'closed'].includes(c.phase) ? 'before_hod_phase' : 'none_submitted';
+    res.json({ cycle: cycleForClient(c), departments: depts, queue: r.rows, empty_reason: emptyReason,
+      editable: pm.phaseAllows(c.phase, 'hod_edit') });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -4524,6 +4595,19 @@ router.put('/hod/queue/:employeeId', async (req, res) => {
     const c = await activeCycle(T(req));
     if (!c || !pm.phaseAllows(c.phase, 'hod_edit')) return res.status(409).json({ error: `HOD evaluation is not open (phase: ${c ? c.phase : 'none'})` });
     const { overall_rating, comment, submit } = req.body || {};
+    const refused = await hodMayRate(req, req.params.employeeId);
+    if (refused) return res.status(refused.status).json({ error: refused.error });
+    const me = (await db.query(`SELECT status FROM pms.manager_evaluations WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.params.employeeId])).rows[0];
+    if (!me || me.status !== 'submitted') return res.status(409).json({ error: 'The manager has not submitted this evaluation yet.' });
+    const cur = (await db.query(`SELECT overall_rating, status FROM pms.hod_evaluations WHERE cycle_id=$1 AND employee_id=$2`, [c.id, req.params.employeeId])).rows[0];
+    if (cur && cur.status === 'submitted') return res.status(409).json({ error: 'This HOD rating is submitted and locked. HR can change it in Calibration, with a reason.' });
+    if (overall_rating != null && overall_rating !== '') {
+      const bad = ratingProblem(overall_rating, c.rating_scale);
+      if (bad) return res.status(422).json({ error: bad });
+    }
+    if (submit && (overall_rating == null || overall_rating === '') && !(cur && cur.overall_rating != null)) {
+      return res.status(422).json({ error: 'Give a rating before submitting.' });
+    }
     await db.query(
       `INSERT INTO pms.hod_evaluations (tenant_id, cycle_id, employee_id, hod_id, overall_rating, comment, status, submitted_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -4533,8 +4617,9 @@ router.put('/hod/queue/:employeeId', async (req, res) => {
          status=$7, submitted_at=COALESCE($8,pms.hod_evaluations.submitted_at)`,
       [T(req), c.id, req.params.employeeId, req.user.id, overall_rating ?? null, comment ?? null,
        submit ? 'submitted' : 'pending', submit ? new Date() : null]);
-    if (submit) audit(req, 'HOD_EVAL_SUBMITTED', c.id, req.params.employeeId, { rating: overall_rating });
-    res.json({ ok: true });
+    audit(req, submit ? 'HOD_EVAL_SUBMITTED' : 'HOD_EVAL_SAVED', c.id, req.params.employeeId,
+      { rating: overall_rating ?? (cur && cur.overall_rating) ?? null, before: cur ? Number(cur.overall_rating) : null });
+    res.json({ ok: true, status: submit ? 'submitted' : 'pending' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -5131,7 +5216,7 @@ router.post('/publish', async (req, res) => {
             await db.query(`UPDATE core.employees SET super50_flag=true, super50_since=now() WHERE id=$1`, [r.employee_id]);
             super50Flagged++;
             await audit(req, 'SUPER50_FLAGGED', c.id, r.employee_id, { ratings: hist.map((x) => x.rating) });
-            await notify(T(req), r.employee_id, 'super50_flagged', 'You have been recognised as a consistent top performer', null, '/pms/my-rating');
+            await notify(T(req), r.employee_id, 'super50_flagged', 'You have been recognised as a consistent top performer', null, '/my/rating');
             // BR-6.6: proactively alert HR/Management to consider retention
             // actions for this newly-flagged employee.
             const alerted = await alertHrOfRetentionRisk(T(req), { id: r.employee_id, name: r.employee_name });
@@ -5158,11 +5243,11 @@ router.post('/publish', async (req, res) => {
             [T(req), r.employee_id, c.id, `system:publish (${req.user.email})`]);
           if (pipR.rows[0]) {
             pipsOpened++;
-            await notify(T(req), r.employee_id, 'pip_opened', `A Performance Improvement Plan has been opened for ${c.name}`, null, '/pms/my-rating');
+            await notify(T(req), r.employee_id, 'pip_opened', `A Performance Improvement Plan has been opened for ${c.name}`, null, '/pip');
             await audit(req, 'PIP_AUTO_OPENED', c.id, r.employee_id, { final_rating: r.final_rating, threshold: c.pip_threshold });
           }
         }
-        await notify(T(req), r.employee_id, 'rating_published', `Your ${c.name} rating is published`, null, '/pms/my-rating');
+        await notify(T(req), r.employee_id, 'rating_published', `Your ${c.name} rating is published`, null, '/my/rating');
         published++;
         publishedIds.push(r.employee_id);
       } catch (e) { failures.push({ employee_id: r.employee_id, reason: e.message }); }
@@ -5982,6 +6067,23 @@ const CONNECT_COLS = `cn.*, e.name AS employee_name, e.designation AS employee_d
 const CONNECT_FROM = `FROM pms.connects cn JOIN core.employees e ON e.id=cn.employee_id JOIN core.employees m ON m.id=cn.manager_id
          LEFT JOIN core.employees hr ON hr.id=cn.hr_id`;
 
+// Who signs off a connect (16 Oct, TC_NEW_018): the other person in it,
+// never the one who logged it; or HR. A connect saved before the author
+// was recorded keeps its old signer, the manager.
+function maySignOff(cn, userId, isHr) {
+  if (cn.signed_off) return false;
+  const author = cn.logged_by_id || null;
+  if (author && author === userId) return false;
+  if (isHr) return true;
+  if (!author) return cn.manager_id === userId;
+  return cn.manager_id === userId || cn.employee_id === userId;
+}
+const markSigners = async (req, rows) => {
+  const isHr = await hasPermission(req.user, 'pms_admin');
+  for (const r of rows) r.can_sign_off = maySignOff(r, req.user.id, isHr);
+  return rows;
+};
+
 router.get('/connects', async (req, res) => {
   try {
     const view = req.query.view;
@@ -6021,7 +6123,7 @@ router.get('/connects', async (req, res) => {
       const r = await db.query(
         `SELECT ${CONNECT_COLS}, (e.manager_id = $2) AS my_report ${CONNECT_FROM}
           WHERE ${where.join(' AND ')} ORDER BY cn.held_at DESC, cn.created_at DESC LIMIT 500`, params);
-      return res.json({ connects: r.rows, view, team });
+      return res.json({ connects: await markSigners(req, r.rows), view, team });
     }
     const mine = req.query.employee_id;
     const r = await db.query(
@@ -6035,7 +6137,7 @@ router.get('/connects', async (req, res) => {
         WHERE cn.tenant_id=$1 AND (cn.employee_id=$2 OR cn.manager_id=$2 OR cn.hr_id=$2) ${mine ? 'AND cn.employee_id=$3' : ''}
         ORDER BY cn.held_at DESC LIMIT 100`,
       mine ? [T(req), req.user.id, mine] : [T(req), req.user.id]);
-    res.json({ connects: r.rows });
+    res.json({ connects: await markSigners(req, r.rows) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -6298,11 +6400,20 @@ router.post('/connects/:id/sign-off', async (req, res) => {
   try {
     const cn = (await db.query(`SELECT * FROM pms.connects WHERE id=$1 AND tenant_id=$2`, [req.params.id, T(req)])).rows[0];
     if (!cn) return res.status(404).json({ error: 'connect not found' });
-    if (cn.manager_id !== req.user.id && !(await hasPermission(req.user, 'pms_admin'))) return res.status(403).json({ error: 'Not your connect to sign off' });
     if (cn.signed_off) return res.status(409).json({ error: 'already signed off' });
+    if (!maySignOff(cn, req.user.id, await hasPermission(req.user, 'pms_admin'))) {
+      return res.status(403).json({ error: cn.logged_by_id === req.user.id
+        ? 'You logged this connect, so the other person in it (or HR) signs it off.'
+        : 'Not your connect to sign off' });
+    }
     await db.query(`UPDATE pms.connects SET signed_off=true, signed_off_at=now() WHERE id=$1`, [cn.id]);
-    await audit(req, 'CONNECT_SIGNED_OFF', null, cn.employee_id, { connect_id: cn.id });
-    await notify(T(req), cn.employee_id, 'connect_signed_off', `${req.user.name} signed off your connect`, null, '/team/connects');
+    await audit(req, 'CONNECT_SIGNED_OFF', null, cn.employee_id, { connect_id: cn.id, logged_by: cn.logged_by_id });
+    // Everyone in the connect hears, except whoever just signed it.
+    const emp = (await db.query(`SELECT manager_id FROM core.employees WHERE id=$1 AND tenant_id=$2`, [cn.employee_id, T(req)])).rows[0];
+    for (const who of new Set([cn.employee_id, cn.manager_id, cn.hr_id].filter((x) => x && x !== req.user.id))) {
+      const link = who !== cn.employee_id && emp && emp.manager_id === who ? '/team/team-connects' : '/team/connects';
+      await notify(T(req), who, 'connect_signed_off', `${req.user.name} signed off your connect`, null, link);
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -6327,8 +6438,8 @@ async function checkAndSendConnectReminders(tenantId) {
       `SELECT MAX(sent_at) AS last_sent FROM pms.connect_reminders_log WHERE tenant_id=$1 AND employee_id=$2`, [tenantId, emp.id])).rows[0];
     const lastSent = lastReminder.last_sent ? new Date(lastReminder.last_sent) : null;
     if (!shouldRemindAgain(lastSent, today)) continue;
-    await notify(tenantId, emp.manager_id, 'connect_due', `A quarterly connect with ${emp.name} is due`, null, '/pms');
-    await notify(tenantId, emp.id, 'connect_due', 'Your quarterly connect with your manager is due', null, '/pms');
+    await notify(tenantId, emp.manager_id, 'connect_due', `A quarterly connect with ${emp.name} is due`, null, '/team/team-connects');
+    await notify(tenantId, emp.id, 'connect_due', 'Your quarterly connect with your manager is due', null, '/team/connects');
     await db.query(
       `INSERT INTO pms.connect_reminders_log (tenant_id, employee_id, manager_id) VALUES ($1,$2,$3)`,
       [tenantId, emp.id, emp.manager_id]);
@@ -7028,7 +7139,7 @@ router.post('/closure-letters/:employeeId/:cycleId/generate', async (req, res) =
         WHERE tenant_id=$3 AND employee_id=$4 AND cycle_id=$5`,
       [pdfBuffer, req.user.email, T(req), req.params.employeeId, req.params.cycleId]);
     await audit(req, 'CLOSURE_LETTER_GENERATED', req.params.cycleId, req.params.employeeId, { bytes: pdfBuffer.length });
-    await notify(T(req), req.params.employeeId, 'closure_letter_ready', `Your ${h.cycle_name} closure letter is ready`, null, '/pms/my-rating');
+    await notify(T(req), req.params.employeeId, 'closure_letter_ready', `Your ${h.cycle_name} closure letter is ready`, null, '/my/rating');
     res.json({ ok: true, bytes: pdfBuffer.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
