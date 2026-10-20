@@ -258,7 +258,7 @@ function ReopenAssessments() {
     <div className="card p-4 space-y-2">
       <p className="lbl mb-0">Reopen a submitted assessment</p>
       <p className="text-[11.5px] text-navy-400">For a correction. The employee (self) or their manager (manager assessment) can edit and submit again, and is told your reason.</p>
-      <input className="inp" placeholder="Search by name or department…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <input maxLength={150} className="inp" placeholder="Search by name or department…" value={q} onChange={(e) => setQ(e.target.value)} />
       {msg && <p className="text-xs text-emerald-700">{msg}</p>}
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {rows.length === 0 ? <p className="text-xs text-navy-400">Nothing has been submitted in this cycle yet.</p> : (
@@ -277,7 +277,7 @@ function ReopenAssessments() {
               </div>
               {open && open.startsWith(`${r.employee_id}:`) && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <input className="inp !py-1 flex-1 min-w-[220px]" autoFocus placeholder="Reason (sent to them)" value={reason} onChange={(e) => setReason(e.target.value)} />
+                  <input maxLength={150} className="inp !py-1 flex-1 min-w-[220px]" autoFocus placeholder="Reason (sent to them)" value={reason} onChange={(e) => setReason(e.target.value)} />
                   <button type="button" className="btn-pri !py-1" onClick={() => go(r, open.split(':')[1])}>Reopen</button>
                   <button type="button" className="btn-sec !py-1" onClick={() => setOpen(null)}>Cancel</button>
                 </div>

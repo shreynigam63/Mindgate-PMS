@@ -8,6 +8,7 @@ import { useKraEdit, KraEditBar, KraHead } from './ReviewKraEditor';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import Grade, { grade } from '../grade';
+import LongText, { Req } from '../LongText';
 
 // Rebuilt per an explicit request with a reference screenshot: previously
 // this page only ever showed a read-only summary of the ANNUAL self-
@@ -135,7 +136,7 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
             <KraHead edit={kraEdit} k={k} index={i} />
 
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="lbl mb-0">Rating</span>
+              <span className="lbl mb-0">Rating<Req /></span>
               {(scale || []).map((sc) => (
                 <button key={sc.value} type="button" disabled={!editable}
                   className={`chip ${Number(get(k.id, 'rating')) === sc.value ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
@@ -143,7 +144,7 @@ function KraScoringList({ kras, entries, scale, editable, onPatch, perspective, 
               ))}
             </div>
 
-            <textarea className="inp" rows={3}
+            <LongText className="inp" rows={3}
               placeholder="Justify this rating — what was delivered, by when, against the measures above."
               disabled={!editable} value={get(k.id, 'narrative')}
               onChange={(e) => setNarrative(k.id, e.target.value)} />
@@ -279,7 +280,7 @@ function FormQuestion({ q, scale, editable, value, onChange }) {
   return (
     <div className="space-y-1">
       {label}
-      <textarea className="inp" rows={2} disabled={!editable}
+      <LongText className="inp" rows={2} disabled={!editable}
         value={value.answer_text || ''}
         onChange={(e) => onChange({ answer_text: e.target.value })} />
     </div>
@@ -561,7 +562,7 @@ function MyMidYearCard() {
             </>
           ) : (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="lbl mb-0">Self-rating</span>
+              <span className="lbl mb-0">Self-rating<Req /></span>
               {(data.cycle.rating_scale || []).map((s) => (
                 <button key={s.value} type="button" disabled={!editable}
                   className={`chip ${Number(selfRating) === s.value ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-600'}`}
@@ -569,7 +570,8 @@ function MyMidYearCard() {
               ))}
             </div>
           )}
-          <textarea className="inp" rows={4} placeholder="Reflect on progress this half — highlights, challenges, focus for next half."
+          <label className="lbl">Your reflection<Req /></label>
+          <LongText className="inp" rows={4} placeholder="Reflect on progress this half — highlights, challenges, focus for next half."
             disabled={!editable} value={selfNarrative} onChange={(e) => { setSelfNarrative(e.target.value); scheduleSave(e.target.value); }} />
           <div className="flex items-center gap-2">
             {editable && <button className="btn-sec" onClick={() => { if (timer.current) clearTimeout(timer.current); persist({ self_rating: selfRating || null, self_narrative: selfNarrative }); }}>Save</button>}
@@ -762,7 +764,7 @@ function TeamMidYearDetail({ employeeId }) {
         </>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="lbl mb-0">Mid-year rating</span>
+          <span className="lbl mb-0">Mid-year rating<Req /></span>
           <select className="inp w-auto" value={managerRating} disabled={!editable} onChange={(e) => pickRating(e.target.value === '' ? '' : Number(e.target.value))}>
             <option value="">—</option>
             {(data.cycle.rating_scale || []).map((s) => (
@@ -771,7 +773,8 @@ function TeamMidYearDetail({ employeeId }) {
           </select>
         </div>
       )}
-      <textarea className="inp" rows={3} placeholder="Your narrative for this employee's mid-year progress."
+      <label className="lbl">Your narrative<Req /></label>
+      <LongText className="inp" rows={3} placeholder="Your narrative for this employee's mid-year progress."
         disabled={!editable} value={managerNarrative} onChange={(e) => { setManagerNarrative(e.target.value); scheduleSave(e.target.value); }} />
       <div className="flex items-center gap-2">
         {editable && <button className="btn-sec" onClick={() => { if (timer.current) clearTimeout(timer.current); persist({ manager_rating: managerRating || null, manager_narrative: managerNarrative }); }}>Save</button>}

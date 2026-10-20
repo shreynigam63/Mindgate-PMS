@@ -108,7 +108,7 @@ function ConnectQuestions() {
           <div key={q.key} className={`rounded-xl border p-3 space-y-2 ${q.active ? 'border-navy-100' : 'border-navy-100 bg-navy-50/60'}`}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="chip bg-navy-50 text-navy-500">{q.key}</span>
-              <input className="inp !text-xs flex-1 !w-auto" value={q.label}
+              <input maxLength={150} className="inp !text-xs flex-1 !w-auto" value={q.label}
                 onChange={(e) => edit(q.key, { label: e.target.value })} placeholder="The question" />
               <label className="text-[11px] text-navy-500 flex items-center gap-1">
                 <input type="checkbox" checked={q.active !== false}
@@ -116,7 +116,7 @@ function ConnectQuestions() {
                 on the form
               </label>
             </div>
-            <input className="inp !text-[11px]" value={q.hint || ''}
+            <input maxLength={150} className="inp !text-[11px]" value={q.hint || ''}
               onChange={(e) => edit(q.key, { hint: e.target.value })}
               placeholder="The grey hint under it (optional)" />
           </div>

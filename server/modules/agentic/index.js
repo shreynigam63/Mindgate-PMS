@@ -111,6 +111,20 @@ const { activeCycle, activeCycleForMidyear } = require('../performance/active-cy
 // Input: the employee's KRAs + their self-appraisal narratives. Output:
 // strengths / improvement-areas prose. Ratings are NEVER suggested — the
 // system prompt forbids it AND stripRatingSuggestions enforces it.
+// The boxes these drafts land in take at most 220 words (20 Oct, Def-025;
+// server/core/text-limits.js). A draft is kept to whole lines within that,
+// so "Use this draft" never fills a box the save would then refuse.
+function fitWords(text, limit = 220) {
+  const lines = String(text || '').split('\n');
+  const out = []; let n = 0;
+  for (const line of lines) {
+    const w = (line.match(/\S+/g) || []).length;
+    if (n + w > limit) break;
+    out.push(line); n += w;
+  }
+  return out.join('\n').trimEnd();
+}
+
 router.post('/appraisal-draft', async (req, res) => {
   try {
     if (!(await hasPermission(req.user, 'pms_team_eval'))) return res.status(403).json({ error: "Requires 'pms_team_eval'" });
@@ -161,8 +175,8 @@ Respond ONLY with JSON:
       ...out,
       draft: {
         ...d,
-        strengths: renderKraBullets(d.by_kra, 'strengths', cross.strengths),
-        improvement_areas: renderKraBullets(d.by_kra, 'improvement_areas', cross.improvement_areas),
+        strengths: fitWords(renderKraBullets(d.by_kra, 'strengths', cross.strengths)),
+        improvement_areas: fitWords(renderKraBullets(d.by_kra, 'improvement_areas', cross.improvement_areas)),
       },
       note: 'Draft only — edit before use; ratings are yours to decide.',
     });
@@ -245,7 +259,7 @@ Respond ONLY with JSON:
     res.json({
       ok: true,
       ...d,
-      narrative: sections.map(([h, body]) => `${h}\n${body}`).join('\n\n'),
+      narrative: fitWords(sections.map(([h, body]) => `${h}\n${body}`).join('\n\n')),
     });
   } catch (e) { fail(res, e); }
 });

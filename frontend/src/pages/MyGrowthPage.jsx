@@ -4,6 +4,7 @@ import { api, phaseLabel, phaseColor, Bullets } from '../utils/api';
 import AiDraftPanel, { SuggestionList } from './AiDraftPanel';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import LongText, { Req } from '../LongText';
 
 const STATUS_COLOR = {
   draft: 'bg-slate-100 text-navy-600',
@@ -439,14 +440,14 @@ function GoalList({ goals: initial, editable, onSaved, kras = [] }) {
         <div key={g.id || i} className="border border-navy-100 rounded-xl p-3.5 space-y-3 bg-white">
           <div className="flex items-start gap-2">
             <div className="flex-1 min-w-0">
-              <label className="lbl">Goal title</label>
-              <input className="inp w-full font-medium" placeholder="e.g. Cloud Architecture Certification"
+              <label className="lbl">Goal title<Req /></label>
+              <input maxLength={150} className="inp w-full font-medium" placeholder="e.g. Cloud Architecture Certification"
                 value={g.title} onChange={e => update(i, 'title', e.target.value)} />
             </div>
             <button className="btn-sec !p-1.5 mt-6 shrink-0" onClick={() => remove(i)} title="Remove goal"><Trash2 size={13} /></button>
           </div>
           <div className="max-w-[200px]">
-            <label className="lbl">Target date <span className="text-rose-600">*</span></label>
+            <label className="lbl">Target date<Req /></label>
             <input className={`inp w-full ${!dateValue(g.target_date) ? '!border-rose-300 !bg-rose-50/50' : ''}`}
               type="date" required value={dateValue(g.target_date)} onChange={e => update(i, 'target_date', e.target.value)} />
             {!dateValue(g.target_date) && <p className="text-[11px] text-rose-600 mt-1">Required before this goal can be saved.</p>}
@@ -481,7 +482,7 @@ function GoalList({ goals: initial, editable, onSaved, kras = [] }) {
           </div>
           <div>
             <label className="lbl">Description (optional)</label>
-            <textarea className="inp w-full" rows={4} placeholder="Add detail — what you'll do, resources you'll use, milestones along the way. Paste as much as you need."
+            <LongText className="inp w-full" rows={4} placeholder="Add detail — what you'll do, resources you'll use, milestones along the way. Paste as much as you need."
               value={g.description || ''} onChange={e => update(i, 'description', e.target.value)} />
           </div>
         </div>
@@ -1047,7 +1048,7 @@ function CareerPathCard() {
           // long term"). Type any role; the matrix and the Grade and Level
           // sheet only suggest.
           <>
-            <input className="inp" list="lt-role-options" value={form.target_role} disabled={!editable}
+            <input maxLength={150} className="inp" list="lt-role-options" value={form.target_role} disabled={!editable}
               onChange={e => pickRole(e.target.value)} placeholder="Type the role you want to grow into, e.g. Lead - Technical" />
             <datalist id="lt-role-options">
               {(data.eligible_target_roles || []).map(b => <option key={b} value={b} />)}
@@ -1071,7 +1072,7 @@ function CareerPathCard() {
             Your short-term goal comes from the Career Pathing Matrix, and there is no move configured from your current role yet — ask HR to add one.
           </p>
         ) : (
-          <input className="inp" value={form.target_role} disabled={!editable} onChange={e => setForm(f => ({ ...f, target_role: e.target.value }))} placeholder="e.g. Staff Engineer" />
+          <input maxLength={150} className="inp" value={form.target_role} disabled={!editable} onChange={e => setForm(f => ({ ...f, target_role: e.target.value }))} placeholder="e.g. Staff Engineer" />
         )}
         {data.eligible_target_roles.length > 0 && <p className="text-[11px] text-navy-400 mt-1">
           {horizon === 'long_term'
@@ -1119,7 +1120,7 @@ function CareerPathCard() {
         <label className="lbl">Expected timeline</label>
         {/* Short-Term: the matrix's figure, not typed — the server stores
             that figure whatever is sent. Typed only when HR left it blank. */}
-        <input className="inp" value={form.target_timeline}
+        <input maxLength={150} className="inp" value={form.target_timeline}
           disabled={!editable || (horizon === 'short_term' && !data.eligible_target_roles.length)}
           readOnly={horizon === 'short_term' && !!chosen && chosen.typical_time_months != null}
           onChange={e => setForm(f => ({ ...f, target_timeline: e.target.value }))}
@@ -1172,7 +1173,7 @@ function CareerPathCard() {
         </div>
         <div>
           <label className="lbl">Your skill sets and interests</label>
-          <textarea className="inp" rows={3} disabled={!editable}
+          <LongText className="inp" rows={3} disabled={!editable}
             value={form.skills_interests}
             onChange={e => setForm(f => ({ ...f, skills_interests: e.target.value }))}
             placeholder="What you are good at, and what you want to do more of" />
@@ -1183,7 +1184,7 @@ function CareerPathCard() {
         {planForOtherRole && (
           <p className="text-[11.5px] text-amber-700 mb-1">This plan was written for <b>{savedRole}</b> — update it for <b>{form.target_role}</b>, or use <i>Suggest a path</i>.</p>
         )}
-        <textarea className="inp" rows={4} value={form.plan} disabled={!editable} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))} placeholder="How you plan to get there" />
+        <LongText className="inp" rows={4} value={form.plan} disabled={!editable} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))} placeholder="How you plan to get there" />
       </div>
 
       {/* Milestones are what make this a plan rather than an aspiration:
@@ -1204,13 +1205,13 @@ function CareerPathCard() {
                   layer — so a bare w-40 loses to it and the date input grows
                   until the flex-1 title collapses to nothing. Same fix the
                   increment-matrix rows already use. */}
-              <input className="inp flex-1 min-w-[180px]" placeholder="Milestone *" value={m.title || ''} disabled={!editable}
+              <input maxLength={150} className="inp flex-1 min-w-[180px]" placeholder="Milestone *" value={m.title || ''} disabled={!editable}
                 onChange={e => setMilestones(ms => ms.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} />
               <input className="inp basis-40 grow-0 shrink-0" type="date" value={m.target_date || ''} disabled={!editable}
                 onChange={e => setMilestones(ms => ms.map((x, j) => (j === i ? { ...x, target_date: e.target.value } : x)))} />
               {editable && <button className="text-rose-500" onClick={() => setMilestones(ms => ms.filter((_, j) => j !== i))}><Trash2 size={15} /></button>}
             </div>
-            <input className="inp text-xs" placeholder="What done looks like" value={m.description || ''} disabled={!editable}
+            <input maxLength={150} className="inp text-xs" placeholder="What done looks like" value={m.description || ''} disabled={!editable}
               onChange={e => setMilestones(ms => ms.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))} />
             {m.id && (
               <div className="flex items-center gap-2">
@@ -1355,7 +1356,8 @@ function TeamPlanDetail({ plan, reload }) {
       )}
       {canDecide && (
         <div className="space-y-2">
-          <textarea className="inp" rows={2} placeholder="Comment (required if returning)" value={comment} onChange={e => setComment(e.target.value)} />
+          <label className="lbl">Comment<Req /> <span className="normal-case font-normal text-navy-400">needed to return it</span></label>
+          <LongText className="inp" rows={2} placeholder="What should change" value={comment} onChange={e => setComment(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <button className="btn-pri" disabled={busy} onClick={() => decide('approved')}><CheckCircle2 size={13} className="inline mr-1" />Approve</button>
             <button className="btn-sec" disabled={busy} onClick={() => decide('returned')}><RotateCcw size={13} className="inline mr-1" />Return for edits</button>

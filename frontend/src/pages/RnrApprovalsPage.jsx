@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import { CheckCircle2, XCircle, CornerUpLeft, AlertTriangle, Clock } from 'lucide-react';
+import LongText from '../LongText';
 
 // The approval queue, for whichever stage the person opening it owns.
 //
@@ -199,7 +200,7 @@ export default function RnrApprovalsPage() {
                 <label className="text-[11px] text-navy-500 block mb-1">
                   Reason — required to reject or send back
                 </label>
-                <textarea className="inp" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+                <LongText className="inp" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
               </div>
 
               {/* Only HR sees this, and only when it is needed. */}
@@ -208,7 +209,7 @@ export default function RnrApprovalsPage() {
                   <p className="text-[11px] text-rose-700 font-semibold">
                     The quota for this cycle is used up. Approving anyway is an override, and is recorded.
                   </p>
-                  <input className="inp !text-xs" placeholder="Reason for the override"
+                  <input maxLength={150} className="inp !text-xs" placeholder="Reason for the override"
                     value={override} onChange={(e) => setOverride(e.target.value)} />
                 </div>
               )}

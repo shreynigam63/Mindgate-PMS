@@ -282,7 +282,7 @@ function BulkCredentials({ rows, picked, onDone }) {
             The same password for everyone
           </label>
           {mode === 'same' && (
-            <input className="inp !text-xs" value={shared} onChange={(e) => { setShared(e.target.value); setPreview(null); setResult(null); }}
+            <input maxLength={150} className="inp !text-xs" value={shared} onChange={(e) => { setShared(e.target.value); setPreview(null); setResult(null); }}
               placeholder="at least 8 characters" aria-label="Password for everyone" />
           )}
         </div>
@@ -664,7 +664,7 @@ export default function DirectoryPage() {
                  the placeholder was exactly what a prior compact version got
                  wrong. */}
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400 pointer-events-none" />
-              <input
+              <input maxLength={150}
                 type="text"
                 className="inp w-80 !pl-10 !pr-9"
                 placeholder="Search employees…"
@@ -948,11 +948,11 @@ function EmployeePanel({ employee, onDone, canManageAccess = true }) {
         <p className="lbl">Edit profile</p>
         <p className="text-[11px] text-navy-400 -mt-1">Email itself can't be changed here — it's tied to their login. Re-import via file if it genuinely needs to change.</p>
         <div className="grid sm:grid-cols-3 gap-2">
-          <div><label className="lbl">Name</label><input className="inp" value={name} onChange={e => setName(e.target.value)} /></div>
-          <div><label className="lbl">Department</label><input className="inp" value={department} onChange={e => setDepartment(e.target.value)} /></div>
-          <div><label className="lbl">Designation</label><input className="inp" value={designation} onChange={e => setDesignation(e.target.value)} /></div>
-          <div><label className="lbl">Role band</label><input className="inp" value={roleBand} onChange={e => setRoleBand(e.target.value)} /></div>
-          <div><label className="lbl">Manager's email</label><input className="inp" value={managerEmail} onChange={e => setManagerEmail(e.target.value)} placeholder="leave blank for none" /></div>
+          <div><label className="lbl">Name</label><input maxLength={150} className="inp" value={name} onChange={e => setName(e.target.value)} /></div>
+          <div><label className="lbl">Department</label><input maxLength={150} className="inp" value={department} onChange={e => setDepartment(e.target.value)} /></div>
+          <div><label className="lbl">Designation</label><input maxLength={150} className="inp" value={designation} onChange={e => setDesignation(e.target.value)} /></div>
+          <div><label className="lbl">Role band</label><input maxLength={150} className="inp" value={roleBand} onChange={e => setRoleBand(e.target.value)} /></div>
+          <div><label className="lbl">Manager's email</label><input maxLength={150} className="inp" value={managerEmail} onChange={e => setManagerEmail(e.target.value)} placeholder="leave blank for none" /></div>
           <div><label className="lbl">Date of joining</label><input className="inp" type="date" value={doj} onChange={e => setDoj(e.target.value)} /></div>
           <div>
             <label className="lbl">Status</label>

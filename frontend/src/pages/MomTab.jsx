@@ -793,7 +793,7 @@ function Editor({ d, revise, suggestion, onDone, onCancel }) {
         <div className="space-y-2">
           {f.action_items.map((a, i) => (
             <div key={a.id || `n${i}`} className="grid grid-cols-2 sm:grid-cols-[1fr_11rem_9.5rem_auto] gap-2 items-center border border-navy-50 rounded-xl p-2">
-              <input className="inp col-span-2 sm:col-span-1" placeholder="Task" aria-label={`Task ${i + 1}`} value={a.task} onChange={(e) => item(i, { task: e.target.value })} />
+              <input maxLength={150} className="inp col-span-2 sm:col-span-1" placeholder="Task" aria-label={`Task ${i + 1}`} value={a.task} onChange={(e) => item(i, { task: e.target.value })} />
               <select className="inp" aria-label={`Owner ${i + 1}`} value={a.owner_id} onChange={(e) => item(i, { owner_id: e.target.value })}>
                 <option value="">Owner…</option>
                 {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -857,7 +857,7 @@ function Editor({ d, revise, suggestion, onDone, onCancel }) {
       </div>
       {notHeld !== null && (
         <div className="flex flex-wrap gap-2 items-center">
-          <input className="inp flex-1 min-w-[12rem]" placeholder="Why it did not happen" value={notHeld} onChange={(e) => setNotHeld(e.target.value)} aria-label="Reason not held" />
+          <input maxLength={150} className="inp flex-1 min-w-[12rem]" placeholder="Why it did not happen" value={notHeld} onChange={(e) => setNotHeld(e.target.value)} aria-label="Reason not held" />
           <button type="button" className="btn-sec" disabled={!notHeld.trim() || !!busy} onClick={markNotHeld}>Mark as not held</button>
           <button type="button" className="text-xs text-navy-500 underline" onClick={() => setNotHeld(null)}>Keep it</button>
         </div>

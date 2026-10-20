@@ -7,6 +7,7 @@ import SearchBox, { matches } from '../SearchBox';
 import { grade } from '../grade';
 import { useTimesheetRatings, TimesheetRatingChip, TimesheetRatingNote } from '../TimesheetRating';
 import NineBoxPage from './NineBoxPage';
+import LongText, { Req } from '../LongText';
 
 // Matches Self-Appraisal/Team Evaluation's convention: per-KRA ratings in
 // letter grades, overall figures in descriptive wording — fixed local
@@ -148,7 +149,7 @@ function HodRow({ q, editable, reload, scale }) {
           <p className="text-xs text-navy-500">Manager's overall: <b>{overallLabel(q.manager_rating, scale)}</b></p>
         </div>
         <div className="flex items-center gap-2">
-          <label className="lbl mb-0">HOD rating</label>
+          <label className="lbl mb-0">HOD rating<Req /></label>
           {q.hod_status === 'submitted' ? (
             <span className="font-mono text-sm">{overallLabel(q.hod_rating, scale)}</span>
           ) : (
@@ -158,7 +159,7 @@ function HodRow({ q, editable, reload, scale }) {
       </div>
       {q.hod_status !== 'submitted' && editable && (
         <div className="space-y-2">
-          <textarea className="inp" rows={2} placeholder="Comment (optional)" value={comment} onChange={e => setComment(e.target.value)} />
+          <LongText className="inp" rows={2} placeholder="Comment (optional)" value={comment} onChange={e => setComment(e.target.value)} />
           <div className="flex gap-2">
             <button className="btn-sec" onClick={() => save(false)}>Save</button>
             <button className="btn-pri" onClick={() => save(true)}>Submit</button>

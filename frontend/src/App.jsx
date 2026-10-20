@@ -167,7 +167,7 @@ const NAV = [
     { to: '/team/nine-box', label: '9-Box Grid', icon: Grid3x3 },
     // Opened by the manager from here or from Team Evaluation (7 Oct).
     { to: '/team/pip', label: 'Improvement Plans', icon: ShieldAlert },
-    { to: '/team/timesheet', label: 'Timesheet', icon: CalendarClock },
+    { to: '/team/timesheet', label: 'Team Timesheet', icon: CalendarClock },
   ]},
   // DELIVERY HEAD IS ITS OWN TAB from 24 Sep, asked for directly:
   // "There should be separate HOD tab next to 3 roles of employee,
@@ -377,7 +377,7 @@ function NavSearch({ groups, gates = {} }) {
   return (
     <div className="topsearch" onBlur={() => setTimeout(() => setOpen(false), 150)}>
       <Search size={16} className="text-navy-400 shrink-0" />
-      <input value={q} placeholder="Search for a page — KRA, evaluation, connects…"
+      <input maxLength={150} value={q} placeholder="Search for a page — KRA, evaluation, connects…"
         aria-label="Search pages"
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
@@ -924,8 +924,8 @@ function FirstTimeSetup({ onUser }) {
         Agentic PMS — First-Time Setup
       </h1>
       <p className="text-xs text-navy-500">No account exists yet on this deployment. Create the first admin account below — this screen only appears once.</p>
-      <input className="inp" placeholder="Your name" value={name} onChange={e => setName(e.target.value)} />
-      <input className="inp" placeholder="Your email" value={email} onChange={e => setEmail(e.target.value)} />
+      <input maxLength={150} className="inp" placeholder="Your name" value={name} onChange={e => setName(e.target.value)} />
+      <input maxLength={150} className="inp" placeholder="Your email" value={email} onChange={e => setEmail(e.target.value)} />
       <PasswordInput placeholder="Choose a password (min 8 characters)" value={password} onChange={e => setPassword(e.target.value)} />
       <PasswordInput placeholder="Confirm password" value={confirm} onChange={e => setConfirm(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} />
       {err && <p className="text-xs text-rose-600">{err}</p>}

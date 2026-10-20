@@ -3,6 +3,7 @@ import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import { Plus, Trash2, X, SlidersHorizontal } from 'lucide-react';
+import LongText from '../LongText';
 
 // "Competency Framework" — the Competency Master sheet of the client's
 // workbook, as a page HR maintains.
@@ -185,13 +186,13 @@ function AddCompetency({ scale, categories, onClose, onDone }) {
   return (
     <Modal title="Add a competency" onClose={onClose}>
       <label className="lbl">Category</label>
-      <input className="inp" list="comp-cats" value={f.category}
+      <input maxLength={150} className="inp" list="comp-cats" value={f.category}
         onChange={(e) => setF({ ...f, category: e.target.value })} />
       <datalist id="comp-cats">{categories.map((c) => <option key={c} value={c} />)}</datalist>
       <label className="lbl mt-3">Competency</label>
-      <input className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+      <input maxLength={150} className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
       <label className="lbl mt-3">Description</label>
-      <textarea className="inp" rows={2} value={f.description}
+      <LongText className="inp" rows={2} value={f.description}
         onChange={(e) => setF({ ...f, description: e.target.value })} />
       <label className="lbl mt-3">Default required level</label>
       <select className="inp" value={f.default_required_level}
@@ -261,11 +262,11 @@ function JobLevels({ competency, scale, headcount, levels, onClose, onDone }) {
         </div>
       )}
       <label className="lbl">Designation</label>
-      <input className="inp" list="cl-desigs" value={f.designation}
+      <input maxLength={150} className="inp" list="cl-desigs" value={f.designation}
         onChange={(e) => setF({ ...f, designation: e.target.value })} />
       <datalist id="cl-desigs">{designations.map((x) => <option key={x} value={x} />)}</datalist>
       <label className="lbl mt-3">Department (optional)</label>
-      <input className="inp" list="cl-depts" value={f.department}
+      <input maxLength={150} className="inp" list="cl-depts" value={f.department}
         onChange={(e) => setF({ ...f, department: e.target.value })} />
       <datalist id="cl-depts">{departments.map((x) => <option key={x} value={x} />)}</datalist>
       <label className="lbl mt-3">Required level</label>

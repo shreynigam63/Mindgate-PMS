@@ -5,6 +5,7 @@ import StatusTabs from '../StatusTabs';
 import KraTable from '../KraTable';
 import { MidYearOnKra, groupByCategory } from './MyKRASheetPage';
 import { CheckCircle2, Clock, Check, Undo2, ChevronRight, ChevronDown } from 'lucide-react';
+import LongText from '../LongText';
 
 // Every pending decision in the company, in one queue.
 //
@@ -115,7 +116,7 @@ export default function ApprovalsPage() {
 
       <StatusTabs tabs={TABS} value={filter} onChange={setFilter} />
 
-      <input className="inp" placeholder="Search across every approval queue…" value={q} onChange={e => setQ(e.target.value)} />
+      <input maxLength={150} className="inp" placeholder="Search across every approval queue…" value={q} onChange={e => setQ(e.target.value)} />
 
       {!rows.length && <div className="card p-8 text-center text-sm text-navy-400">Nothing pending here.</div>}
       {!!rows.length && (
@@ -315,7 +316,7 @@ function Record({ item, onDone, scale }) {
         </div>
       )}
 
-      <textarea className="inp" rows={2} value={comment} onChange={e => setComment(e.target.value)}
+      <LongText className="inp" rows={2} value={comment} onChange={e => setComment(e.target.value)}
         placeholder="Comment — required to return, optional to approve" />
       <div className="flex flex-wrap gap-2">
         <button className="btn-pri" disabled={busy} onClick={() => decide('approved')}>

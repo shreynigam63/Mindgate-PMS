@@ -5,6 +5,7 @@ import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import { Award, RefreshCw, Download, Plus, Save, Trash2, CalendarDays, Clock, CheckCircle2, Users } from 'lucide-react';
 import { CLAIM_STATUS } from './MySuper50Page';
+import LongText from '../LongText';
 
 // HR's Super 50 Benefits (15 Oct, from the client's policy sheet).
 //
@@ -237,7 +238,7 @@ function Claims({ policy, act, busy }) {
                       )}
                       {returning === c.id && (
                         <div className="flex gap-1 items-center justify-end mt-1">
-                          <input className="inp !py-1 text-xs w-56" autoFocus placeholder="Why it is returned (they see this)" value={note} onChange={(e) => setNote(e.target.value)} />
+                          <input maxLength={150} className="inp !py-1 text-xs w-56" autoFocus placeholder="Why it is returned (they see this)" value={note} onChange={(e) => setNote(e.target.value)} />
                           <button className="btn-pri !py-1" disabled={busy || !note.trim()} onClick={async () => { if (await decide(c, 'return')) setReturning(null); }}>Return</button>
                           <button className="btn-sec !py-1" onClick={() => setReturning(null)}>Cancel</button>
                         </div>
@@ -280,8 +281,8 @@ function PolicyForm({ policy, act, busy }) {
   return (
     <div className="space-y-4">
       <div className="card p-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        <Field label="Name"><input className="inp" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} /></Field>
-        <Field label="Based on the appraisal of"><input className="inp" value={p.basis_fiscal_year} onChange={(e) => setP({ ...p, basis_fiscal_year: e.target.value })} /></Field>
+        <Field label="Name"><input maxLength={150} className="inp" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} /></Field>
+        <Field label="Based on the appraisal of"><input maxLength={150} className="inp" value={p.basis_fiscal_year} onChange={(e) => setP({ ...p, basis_fiscal_year: e.target.value })} /></Field>
         <Field label="Status">
           <select className="inp" value={p.status} onChange={(e) => setP({ ...p, status: e.target.value })}>
             <option value="active">Active</option><option value="closed">Closed</option>
@@ -295,12 +296,12 @@ function PolicyForm({ policy, act, busy }) {
       <div className="grid lg:grid-cols-3 gap-3">
         {p.tiers.map((t, i) => (
           <div key={t.key} className="card p-4 space-y-2">
-            <Field label="Tier"><input className="inp" value={t.label} onChange={(e) => setTier(i, { label: e.target.value })} /></Field>
+            <Field label="Tier"><input maxLength={150} className="inp" value={t.label} onChange={(e) => setTier(i, { label: e.target.value })} /></Field>
             <div className="grid grid-cols-2 gap-2">
               <Field label="Consecutive years"><input className="inp" type="number" min="1" value={t.min_streak} onChange={(e) => setTier(i, { min_streak: e.target.value })} /></Field>
               <Field label="Amount (₹)"><input className="inp" type="number" min="0" value={t.amount} onChange={(e) => setTier(i, { amount: e.target.value })} /></Field>
             </div>
-            <Field label="Benefits, one per line"><textarea className="inp" rows={6} value={t.benefitsText} onChange={(e) => setTier(i, { benefitsText: e.target.value })} /></Field>
+            <Field label="Benefits, one per line"><LongText className="inp" rows={6} value={t.benefitsText} onChange={(e) => setTier(i, { benefitsText: e.target.value })} /></Field>
             <p className="lbl !mb-0 pt-1">For the entitlements sheet</p>
             <label className="flex items-center gap-2 text-xs text-navy-700"><input type="checkbox" checked={!!t.entitlements.single_punch} onChange={(e) => setEnt(i, { single_punch: e.target.checked })} />Single-punch full attendance</label>
             <label className="flex items-center gap-2 text-xs text-navy-700"><input type="checkbox" checked={!!t.entitlements.fast_track} onChange={(e) => setEnt(i, { fast_track: e.target.checked })} />Fast-track promotion (shown on Calibration)</label>
@@ -321,7 +322,7 @@ function PolicyForm({ policy, act, busy }) {
         <p className="lbl">Hubs a claim can be made under</p>
         {p.hubs.map((h, i) => (
           <div key={i} className="grid sm:grid-cols-[14rem_1fr_auto] gap-2 items-center">
-            <input className="inp" value={h.label} placeholder="Hub name" onChange={(e) => setHub(i, { label: e.target.value })} />
+            <input maxLength={150} className="inp" value={h.label} placeholder="Hub name" onChange={(e) => setHub(i, { label: e.target.value })} />
             <input className="inp" value={h.itemsText} placeholder="What it covers, separated by commas" onChange={(e) => setHub(i, { itemsText: e.target.value })} />
             <button className="btn-sec" title="Remove this hub" onClick={() => setP({ ...p, hubs: p.hubs.filter((_, j) => j !== i) })}><Trash2 size={13} /></button>
           </div>
@@ -346,8 +347,8 @@ function Programmes({ policy, act, busy }) {
   return (
     <div className="space-y-3">
       <div className="card p-4 grid sm:grid-cols-[1fr_12rem_14rem_auto] gap-2 items-end">
-        <Field label="Programme"><input className="inp" value={n.name} placeholder="e.g. IIM Ahmedabad leadership programme" onChange={(e) => setN({ ...n, name: e.target.value })} /></Field>
-        <Field label="Institute"><input className="inp" value={n.provider} placeholder="e.g. IIM Ahmedabad" onChange={(e) => setN({ ...n, provider: e.target.value })} /></Field>
+        <Field label="Programme"><input maxLength={150} className="inp" value={n.name} placeholder="e.g. IIM Ahmedabad leadership programme" onChange={(e) => setN({ ...n, name: e.target.value })} /></Field>
+        <Field label="Institute"><input maxLength={150} className="inp" value={n.provider} placeholder="e.g. IIM Ahmedabad" onChange={(e) => setN({ ...n, provider: e.target.value })} /></Field>
         <Field label="For">
           <select className="inp" value={n.kind} onChange={(e) => setN({ ...n, kind: e.target.value })}>
             <option value="course">{KIND.course}</option><option value="refresher">{KIND.refresher}</option>

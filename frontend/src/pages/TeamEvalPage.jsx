@@ -10,6 +10,7 @@ import { useTimesheetRatings, TimesheetRatingChip, TimesheetRatingNote } from '.
 import SearchBox, { matches } from '../SearchBox';
 import StatusTabs, { statusTabs } from '../StatusTabs';
 import Grade, { grade } from '../grade';
+import LongText, { Req } from '../LongText';
 
 // Matches Self-Appraisal's convention: per-KRA picks in letter grades,
 // the one computed overall in descriptive wording — see that page for
@@ -171,9 +172,9 @@ function EvalEditor({ t, phase, scale, reload }) {
         </AiModal>
       )}
       <div><label className="lbl">Strengths</label>
-        <textarea className="inp" rows={3} value={f.strengths} onChange={setText('strengths')} disabled={!editable} /></div>
+        <LongText className="inp" rows={3} value={f.strengths} onChange={setText('strengths')} disabled={!editable} /></div>
       <div><label className="lbl">Improvement areas</label>
-        <textarea className="inp" rows={3} value={f.improvement_areas} onChange={setText('improvement_areas')} disabled={!editable} /></div>
+        <LongText className="inp" rows={3} value={f.improvement_areas} onChange={setText('improvement_areas')} disabled={!editable} /></div>
       <PotentialStep employeeId={t.employee_id} />
       {/* Performance Improvement Plan (7 Oct) — opened from here when the
           year has gone badly, rather than only by publish. */}
@@ -382,7 +383,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <p className="lbl mb-0">Rate each KRA</p>
+        <p className="lbl mb-0">Rate each KRA<Req /></p>
         {saveState === 'saving' && <span className="text-[11px] text-amber-600">Saving…</span>}
         {saveState === 'saved' && <span className="text-[11px] text-emerald-600">Saved ✓</span>}
       </div>
@@ -420,7 +421,7 @@ function PerKraRating({ employeeId, scale, editable, overallRating, selfEntries,
                   onClick={() => setRating(k.id, s.value)}>{grade(s.value, scale)}</button>
               ))}
             </div>
-            <textarea className="inp !bg-white" rows={2} placeholder="Your comment on this KRA (optional)"
+            <LongText className="inp !bg-white" rows={2} placeholder="Your comment on this KRA (optional)"
               value={(entries[k.id] || {}).comment ?? ''} onChange={setComment(k.id)} disabled={!editable} />
           </div>
         );

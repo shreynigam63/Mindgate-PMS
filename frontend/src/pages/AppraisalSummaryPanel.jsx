@@ -195,7 +195,7 @@ export function KeptRecommendations({ employeeId, kind, title = 'Kept AI recomme
           )}
           {noteFor === r.id && (
             <div className="flex flex-wrap gap-2">
-              <input className="inp flex-1 !text-[11px]" placeholder="Why are you turning this down?" value={note} onChange={e => setNote(e.target.value)} />
+              <input maxLength={150} className="inp flex-1 !text-[11px]" placeholder="Why are you turning this down?" value={note} onChange={e => setNote(e.target.value)} />
               <button className="btn-pri !py-0.5 !text-[11px]" disabled={!note.trim()} onClick={() => decide(r.id, 'dismissed', note)}>Dismiss</button>
             </div>
           )}

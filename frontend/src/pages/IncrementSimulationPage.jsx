@@ -82,7 +82,7 @@ function Matrix() {
       </p>
       {bands.map((b, i) => (
         <div key={i} className="flex flex-wrap gap-2 items-center">
-          <input className="inp flex-1 min-w-[140px]" placeholder="Label (e.g. Outstanding)" value={b.label || ''} onChange={set(i, 'label')} />
+          <input maxLength={150} className="inp flex-1 min-w-[140px]" placeholder="Label (e.g. Outstanding)" value={b.label || ''} onChange={set(i, 'label')} />
           <input className="inp w-20 text-right" type="number" step="0.1" placeholder="from" value={b.rating_min ?? ''} onChange={set(i, 'rating_min')} />
           <span className="text-xs text-navy-400">to</span>
           <input className="inp w-20 text-right" type="number" step="0.1" placeholder="to" value={b.rating_max ?? ''} onChange={set(i, 'rating_max')} />
@@ -227,7 +227,7 @@ function Scenarios() {
         <p className="lbl mb-0">New scenario · {cycle.name}</p>
         <div className="flex flex-wrap items-end gap-2">
           <div className="grow min-w-[180px]"><label className="text-[11px] text-navy-400">Name</label>
-            <input className="inp" placeholder="e.g. 8% blended" value={name} onChange={e => setName(e.target.value)} /></div>
+            <input maxLength={150} className="inp" placeholder="e.g. 8% blended" value={name} onChange={e => setName(e.target.value)} /></div>
           <div><label className="text-[11px] text-navy-400">Budget (optional)</label>
             <input className="inp w-44 text-right" type="number" placeholder="total pot" value={budget} onChange={e => setBudget(e.target.value)} /></div>
           <button className="btn-pri" disabled={!name.trim()} onClick={create}><Calculator size={13} className="inline mr-1" />Model it</button>
@@ -350,7 +350,7 @@ function ScenarioDetail({ data, onChange, onReload }) {
           <div><label className="text-[11px] text-navy-500">Increment %</label>
             <input className="inp w-24 text-right" type="number" step="0.01" value={pct} onChange={e => setPct(e.target.value)} /></div>
           <div className="grow min-w-[220px]"><label className="text-[11px] text-navy-500">Reason (required)</label>
-            <input className="inp" placeholder="Why this differs from the band" value={reason} onChange={e => setReason(e.target.value)} /></div>
+            <input maxLength={150} className="inp" placeholder="Why this differs from the band" value={reason} onChange={e => setReason(e.target.value)} /></div>
           <button className="btn-pri" disabled={!reason.trim()} onClick={() => setOverride(overriding)}>Apply</button>
           <button className="btn-sec" onClick={() => setOverriding(null)}>Cancel</button>
         </div>

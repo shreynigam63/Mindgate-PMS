@@ -4,6 +4,7 @@ import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import RatingPicker, { ScaleLegend, LevelChip } from '../CompetencyScale';
 import { Save, Send, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import LongText, { Req } from '../LongText';
 
 // "Team Competencies" — the manager half, from the Manager Assessment
 // sheet of the client's workbook.
@@ -206,7 +207,7 @@ function Detail({ d, draft, setDraft, busy, setBusy, setErr, summary, setSummary
 
       {cats.map((cat) => (
         <div key={cat.name} className="space-y-2">
-          <p className="lbl">{cat.name}</p>
+          <p className="lbl">{cat.name} <span className="normal-case font-normal text-navy-400">— rate every competency<Req /></span></p>
           <ScaleLegend scale={d.scale} />
           <div className="divide-y divide-navy-50">
             {cat.rows.map((r) => (
@@ -222,7 +223,7 @@ function Detail({ d, draft, setDraft, busy, setBusy, setErr, summary, setSummary
                   <LevelChip scale={d.scale} level={r.self_rating} />
                   {r.self_evidence && <span className="text-navy-500 basis-full italic">“{r.self_evidence}”</span>}
                 </div>
-                <textarea className="inp !py-2 text-[12.5px]" rows={2} disabled={!editable}
+                <LongText className="inp !py-2 text-[12.5px]" rows={2} disabled={!editable}
                   placeholder="Your evidence / comment"
                   value={cmt(r)} onChange={(e) => setEntry(r.competency_id, { comment: e.target.value })} />
               </div>
@@ -252,7 +253,7 @@ function Detail({ d, draft, setDraft, busy, setBusy, setErr, summary, setSummary
 
       <div>
         <label className="lbl">Overall comment</label>
-        <textarea className="inp" rows={2} disabled={!editable}
+        <LongText className="inp" rows={2} disabled={!editable}
           value={note !== undefined ? note : (d.assessment?.manager_summary || '')}
           onChange={(e) => setNote(e.target.value)} />
       </div>

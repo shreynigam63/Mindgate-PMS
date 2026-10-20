@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Search, X, Trash2, Save, Download } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import PageHead from '../PageHead';
+import LongText from '../LongText';
 
 // CR-11 (phase 1 of 2) — a richer transition matrix on top of the simpler
 // Career Framework band/level list, per a follow-up conversation with
@@ -195,7 +196,7 @@ export default function CareerTransitionsPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-300" />
-          <input className="inp pl-8" value={q} onChange={e => setQ(e.target.value)} placeholder="Search department / role / grade…" />
+          <input maxLength={150} className="inp pl-8" value={q} onChange={e => setQ(e.target.value)} placeholder="Search department / role / grade…" />
         </div>
         <label className="flex items-center gap-1.5 text-xs text-navy-500">
           <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />Show inactive
@@ -421,12 +422,12 @@ function TransitionForm({ designations, grades, departments, initial, onClose, o
           </div>
           <div>
             <label className="lbl">Required Competencies (one per line)</label>
-            <textarea className="inp" rows={3} value={f.required_competencies} onChange={set('required_competencies')}
+            <LongText className="inp" rows={3} value={f.required_competencies} onChange={set('required_competencies')}
               placeholder={'System design fundamentals\nIndependent feature ownership\nMentoring 1 junior'} />
           </div>
           <div>
             <label className="lbl">Notes (optional)</label>
-            <textarea className="inp" rows={2} value={f.notes} onChange={set('notes')} placeholder="Any context about this transition" />
+            <LongText className="inp" rows={2} value={f.notes} onChange={set('notes')} placeholder="Any context about this transition" />
           </div>
           {err && <p className="text-xs text-rose-600">{err}</p>}
         </div>

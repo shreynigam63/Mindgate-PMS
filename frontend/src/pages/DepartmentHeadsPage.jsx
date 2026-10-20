@@ -76,7 +76,7 @@ export default function DepartmentHeadsPage() {
       <div className="card p-3">
         <p className="lbl mb-1">Add a department</p>
         <div className="flex flex-wrap items-center gap-2">
-          <input className="inp !py-1 !text-xs !w-64 shrink-0" value={newDept} placeholder="e.g. Cloud Ops"
+          <input maxLength={150} className="inp !py-1 !text-xs !w-64 shrink-0" value={newDept} placeholder="e.g. Cloud Ops"
             onChange={e => setNewDept(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') addDept(); }} />
           <button className="btn-pri !py-1 !text-xs" disabled={busy || !newDept.trim()} onClick={addDept}>

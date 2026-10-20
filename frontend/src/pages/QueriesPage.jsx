@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import { Plus, Send, X, CheckCircle2 } from 'lucide-react';
+import LongText, { Req } from '../LongText';
 
 // Queries (15 Oct; until then "Appraisal Queries", asked with two prompt
 // boxes and seen only by HR). A query has a title, the people it is raised
@@ -99,7 +100,7 @@ function QueryForm({ onDone, onCancel }) {
     <div className="card p-4 space-y-3">
       <p className="lbl">Raise a query</p>
       <label className="block">
-        <span className="lbl">Title</span>
+        <span className="lbl">Title<Req /></span>
         <input className="inp" value={title} maxLength={150} placeholder="What is it about?" onChange={(e) => setTitle(e.target.value)} />
       </label>
       <div>
@@ -108,8 +109,8 @@ function QueryForm({ onDone, onCancel }) {
         <p className="text-[11px] text-navy-400 mt-1">Search by name or email. Each person is told by email. Leave it empty to raise it to HR.</p>
       </div>
       <label className="block">
-        <span className="lbl">Description</span>
-        <textarea className="inp" rows={5} maxLength={4000} value={description} placeholder="Describe your query" onChange={(e) => setDescription(e.target.value)} />
+        <span className="lbl">Description<Req /></span>
+        <LongText className="inp" rows={5} maxLength={4000} value={description} placeholder="Describe your query" onChange={(e) => setDescription(e.target.value)} />
       </label>
       {err && <p className="text-xs text-rose-600">{err}</p>}
       <div className="flex gap-2 justify-end">
@@ -145,7 +146,7 @@ function PeoplePicker({ value, onChange }) {
             <button type="button" aria-label={`Remove ${p.name}`} onClick={() => onChange(value.filter((x) => x.id !== p.id))}><X size={11} /></button>
           </span>
         ))}
-        <input className="flex-1 min-w-[12rem] text-sm px-2 py-1 outline-none bg-transparent" value={q} placeholder={value.length ? 'Add another…' : 'Name or email'}
+        <input maxLength={150} className="flex-1 min-w-[12rem] text-sm px-2 py-1 outline-none bg-transparent" value={q} placeholder={value.length ? 'Add another…' : 'Name or email'}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && shown[0]) { e.preventDefault(); add(shown[0]); } }} />
       </div>
@@ -220,7 +221,7 @@ function Thread({ id, reload }) {
       {err && <p className="text-xs text-rose-600">{err}</p>}
       {t.may_reply ? (
         <div className="flex gap-2 items-start pt-1">
-          <textarea className="inp" rows={2} placeholder="Reply…" value={body} onChange={(e) => setBody(e.target.value)} />
+          <LongText className="inp" rows={2} placeholder="Reply…" value={body} onChange={(e) => setBody(e.target.value)} />
           <div className="flex flex-col gap-1.5">
             <button className="btn-pri" disabled={busy || !body.trim()} onClick={() => act('reply', { body })}><Send size={13} className="inline mr-1" />Send</button>
             <button className="btn-sec" disabled={busy} onClick={() => act('close')}><CheckCircle2 size={13} className="inline mr-1" />Close</button>

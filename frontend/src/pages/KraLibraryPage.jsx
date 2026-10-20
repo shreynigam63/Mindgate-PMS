@@ -13,6 +13,7 @@ import KraTable from '../KraTable';
 // does too. Two implementations of one grouping would drift apart, so
 // there is only the one.
 import { groupByCategory, NO_CATEGORY } from './MyKRASheetPage';
+import LongText from '../LongText';
 
 // KRA Library — HR publishes a shelf of suggested KRAs per designation,
 // and employees pick from their own role's shelf when writing their KRAs.
@@ -466,15 +467,15 @@ function ShelfDetail({ designation, department, onChanged }) {
         total={total}
         totalOk={Math.abs(total - 100) < 0.01}
         renderKra={({ k: r }) => (editing === r.id
-          ? <input className="inp !text-xs" value={draft.title} onChange={set('title')} placeholder="KRA (S.M.A.R.T goal) *" />
+          ? <input maxLength={150} className="inp !text-xs" value={draft.title} onChange={set('title')} placeholder="KRA (S.M.A.R.T goal) *" />
           : <span>{r.title}</span>)}
         renderKpi={({ k: r }) => (editing === r.id ? (
           <div className="space-y-1.5">
-            <textarea className="inp !text-xs" rows={2} value={draft.measures} onChange={set('measures')}
+            <LongText className="inp !text-xs" rows={2} value={draft.measures} onChange={set('measures')}
               placeholder="KPIs — measuring metrics & data source" />
-            <textarea className="inp !text-xs" rows={2} value={draft.description} onChange={set('description')}
+            <LongText className="inp !text-xs" rows={2} value={draft.description} onChange={set('description')}
               placeholder="Comments (optional)" />
-            <input className="inp !text-xs !w-44" value={draft.category} onChange={set('category')} placeholder="Parameter" />
+            <input maxLength={150} className="inp !text-xs !w-44" value={draft.category} onChange={set('category')} placeholder="Parameter" />
             {/* Timesheet keywords. Phase 1 stores them; nothing scores
                 anything from them yet, and the hint says so rather than
                 letting HR think a rating already depends on this. */}
@@ -543,13 +544,13 @@ function ShelfDetail({ designation, department, onChanged }) {
           <tr className="kt-add kt-last">
           <td colSpan={4} className="p-3 bg-white">
             <div className="grid sm:grid-cols-2 gap-2">
-              <input className="inp !text-xs" autoFocus value={draft.title} onChange={set('title')}
+              <input maxLength={150} className="inp !text-xs" autoFocus value={draft.title} onChange={set('title')}
                 placeholder="KRA (S.M.A.R.T goal) *" />
-              <input className="inp !text-xs" value={draft.category} onChange={set('category')}
+              <input maxLength={150} className="inp !text-xs" value={draft.category} onChange={set('category')}
                 placeholder="Parameter — e.g. Financial" />
-              <textarea className="inp !text-xs" rows={2} value={draft.measures} onChange={set('measures')}
+              <LongText className="inp !text-xs" rows={2} value={draft.measures} onChange={set('measures')}
                 placeholder="KPIs — measuring metrics & data source" />
-              <textarea className="inp !text-xs" rows={2} value={draft.description} onChange={set('description')}
+              <LongText className="inp !text-xs" rows={2} value={draft.description} onChange={set('description')}
                 placeholder="Comments (optional)" />
             </div>
             <div className="flex items-center gap-2 mt-2">
@@ -648,7 +649,7 @@ function ClearLibrary({ total, onDone, onClose }) {
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-rose-800">Type <b>DELETE</b> to confirm:</span>
-        <input className="inp !text-xs !w-32" value={typed} autoFocus
+        <input maxLength={150} className="inp !text-xs !w-32" value={typed} autoFocus
           onChange={(e) => setTyped(e.target.value)} placeholder="DELETE" />
         <button className="btn-pri !bg-rose-600 !py-1.5" disabled={busy || typed !== 'DELETE'} onClick={go}>
           {busy ? 'Clearing…' : `Clear all ${total}`}
@@ -704,26 +705,26 @@ function AddKra({ departments, designations, onDone, onClose }) {
       <p className="lbl mb-0">Add one KRA to a shelf</p>
       <div className="grid sm:grid-cols-2 gap-2">
         <div>
-          <input className="inp !text-xs" list="kl-designations" value={f.designation}
+          <input maxLength={150} className="inp !text-xs" list="kl-designations" value={f.designation}
             onChange={set('designation')} placeholder="Designation * — e.g. Sales Manager" />
           <datalist id="kl-designations">
             {designations.map((d) => <option key={d} value={d} />)}
           </datalist>
         </div>
         <div>
-          <input className="inp !text-xs" list="kl-departments" value={f.department}
+          <input maxLength={150} className="inp !text-xs" list="kl-departments" value={f.department}
             onChange={set('department')} placeholder="Department — blank = every department" />
           <datalist id="kl-departments">
             {departments.map((d) => <option key={d} value={d} />)}
           </datalist>
         </div>
-        <input className="inp !text-xs" value={f.title} onChange={set('title')}
+        <input maxLength={150} className="inp !text-xs" value={f.title} onChange={set('title')}
           placeholder="KRA (S.M.A.R.T goal) *" />
-        <input className="inp !text-xs" value={f.category} onChange={set('category')}
+        <input maxLength={150} className="inp !text-xs" value={f.category} onChange={set('category')}
           placeholder="Parameter — e.g. Financial" />
-        <textarea className="inp !text-xs" rows={2} value={f.measures} onChange={set('measures')}
+        <LongText className="inp !text-xs" rows={2} value={f.measures} onChange={set('measures')}
           placeholder="KPIs — measuring metrics & data source" />
-        <textarea className="inp !text-xs" rows={2} value={f.description} onChange={set('description')}
+        <LongText className="inp !text-xs" rows={2} value={f.description} onChange={set('description')}
           placeholder="Comments (optional)" />
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -915,7 +916,7 @@ function KeywordPanel() {
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2 mt-1">
-            <input className="inp !text-xs flex-1 min-w-[240px]" value={vaEdit}
+            <input maxLength={150} className="inp !text-xs flex-1 min-w-[240px]" value={vaEdit}
               onChange={(e) => setVaEdit(e.target.value)} />
             <button className="btn-pri !py-1 !text-[11px]" disabled={busy} onClick={async () => {
               setBusy(true); setErr(null);

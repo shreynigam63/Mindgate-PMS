@@ -4,6 +4,7 @@ import { Plus, Trash2, CheckCircle2, XCircle, Clock, Pencil } from 'lucide-react
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
+import LongText, { Req } from '../LongText';
 
 const STATUS_LABEL = { open: 'Open', in_progress: 'In Progress', closed_successful: 'Closed — Successful', closed_unsuccessful: 'Closed — Unsuccessful',
   // Opened automatically at publish, withdrawn when a later publish of the
@@ -145,19 +146,19 @@ function PlanForm({ team, presetEmployeeId, initial, onCancel, onSaved }) {
         </div>
       )}
       <div>
-        <label className="lbl">1. Description of the performance concern</label>
-        <textarea className="inp" rows={4} value={description} onChange={(e) => setDescription(e.target.value)}
+        <label className="lbl">1. Description of the performance concern<Req /></label>
+        <LongText className="inp" rows={4} value={description} onChange={(e) => setDescription(e.target.value)}
           placeholder="What is falling short, how it shows, since when — specific examples, not labels." />
       </div>
 
       <div>
-        <label className="lbl">2. Targeted areas</label>
+        <label className="lbl">2. Targeted areas<Req /></label>
         <div className="space-y-1.5">
           {areas.map((a, i) => (
             <div key={i} className="grid sm:grid-cols-[1fr_1.4fr_auto] gap-1.5">
-              <input className="inp" value={a.area} placeholder="Area (e.g. Delivery predictability)"
+              <input maxLength={150} className="inp" value={a.area} placeholder="Area (e.g. Delivery predictability)"
                 onChange={(e) => setArea(i, { area: e.target.value })} />
-              <input className="inp" value={a.expected || ''} placeholder="What good looks like (e.g. 90% of sprint scope delivered)"
+              <input maxLength={150} className="inp" value={a.expected || ''} placeholder="What good looks like (e.g. 90% of sprint scope delivered)"
                 onChange={(e) => setArea(i, { expected: e.target.value })} />
               <button type="button" className="btn-sec !px-2" disabled={areas.length === 1}
                 onClick={() => setAreas((xs) => xs.filter((_, j) => j !== i))} title="Remove"><Trash2 size={13} /></button>
@@ -173,17 +174,17 @@ function PlanForm({ team, presetEmployeeId, initial, onCancel, onSaved }) {
       </div>
 
       <div>
-        <label className="lbl">3. Gates — where the improvement will be shown</label>
+        <label className="lbl">3. Gates — where the improvement will be shown<Req /></label>
         <p className="text-[11px] text-navy-400 mb-1">Each gate is a dated checkpoint. At its date you record whether the improvement was shown.</p>
         <div className="space-y-1.5">
           {gates.map((g, i) => {
             const locked = g.status && g.status !== 'pending';
             return (
               <div key={g.id || i} className="grid sm:grid-cols-[1.2fr_auto_1.4fr_auto] gap-1.5">
-                <input className="inp" value={g.title} placeholder={`Gate ${i + 1} (e.g. 30-day review)`} disabled={locked}
+                <input maxLength={150} className="inp" value={g.title} placeholder={`Gate ${i + 1} (e.g. 30-day review)`} disabled={locked}
                   onChange={(e) => setGate(i, { title: e.target.value })} />
                 <input className="inp" type="date" value={g.due_date || ''} disabled={locked} onChange={(e) => setGate(i, { due_date: e.target.value })} />
-                <input className="inp" value={g.success_measure || ''} placeholder="What must be shown by then" disabled={locked}
+                <input maxLength={150} className="inp" value={g.success_measure || ''} placeholder="What must be shown by then" disabled={locked}
                   onChange={(e) => setGate(i, { success_measure: e.target.value })} />
                 <button type="button" className="btn-sec !px-2" disabled={gates.length === 1 || locked}
                   onClick={() => setGates((xs) => xs.filter((_, j) => j !== i))} title={locked ? 'Reviewed — it stays' : 'Remove'}><Trash2 size={13} /></button>
@@ -300,7 +301,7 @@ function PIPDetail({ id, onChange }) {
           </div>
           <div className="flex-1 min-w-[200px]">
             <p className="lbl">Notes</p>
-            <input className="inp w-full" value={note} onChange={e => setNote(e.target.value)} placeholder="This week's progress / feedback" />
+            <input maxLength={150} className="inp w-full" value={note} onChange={e => setNote(e.target.value)} placeholder="This week's progress / feedback" />
           </div>
           <button className="btn-sec" onClick={addEntry}>Add note</button>
         </div>
@@ -310,7 +311,7 @@ function PIPDetail({ id, onChange }) {
         <div className="flex flex-wrap items-end gap-2 pt-2 border-t border-navy-100">
           <div className="flex-1 min-w-[200px]">
             <p className="lbl">Closure reason (required to close)</p>
-            <input className="inp w-full" value={closeReason} onChange={e => setCloseReason(e.target.value)} placeholder="Why is this PIP being closed?" />
+            <input maxLength={150} className="inp w-full" value={closeReason} onChange={e => setCloseReason(e.target.value)} placeholder="Why is this PIP being closed?" />
           </div>
           <button className="btn-pri" onClick={() => close('closed_successful')}>Close — Successful</button>
           <button className="btn-sec" onClick={() => close('closed_unsuccessful')}>Close — Unsuccessful</button>
@@ -347,7 +348,7 @@ function Gate({ pipId, g, canEdit, onDone }) {
       )}
       {reviewing && (
         <div className="space-y-1.5">
-          <textarea className="inp" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was seen at this gate" />
+          <LongText className="inp" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was seen at this gate" />
           <div className="flex flex-wrap gap-1.5">
             <button className="btn-pri !py-1" onClick={() => review('met')}>Met</button>
             <button className="btn-sec !py-1" onClick={() => review('not_met')}>Not met</button>

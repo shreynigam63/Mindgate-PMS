@@ -42,6 +42,8 @@ const router = express.Router();
 // refused them on the way in. Found by the browser sweep, on the one HR
 // page whose route rule names pms_admin explicitly.
 router.use(authenticate, require('./hrbp-gateway').gateway(), apiPermissionParity);
+// Length limits on typed text (20 Oct, Def-022/023/025): see core/text-limits.js.
+router.use(require('../../core/text-limits').textLimits);
 // Malformed uuid path params are rejected with 400 here, before any
 // handler can pass one into a query (see core/http.js).
 guardUuidParams(router);

@@ -113,7 +113,7 @@ export default function MySuper50Page() {
             </div>
             <div>
               <label className="lbl" htmlFor="s50-item">For</label>
-              <input id="s50-item" className="inp" list="s50-items" value={f.item} placeholder="e.g. Claude certification"
+              <input maxLength={150} id="s50-item" className="inp" list="s50-items" value={f.item} placeholder="e.g. Claude certification"
                 onChange={(e) => setF({ ...f, item: e.target.value })} />
               <datalist id="s50-items">{items.map((i) => <option key={i} value={i} />)}</datalist>
             </div>

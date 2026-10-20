@@ -7,6 +7,7 @@ import MeetingPanel from './MeetingPanel';
 import PageHead from '../PageHead';
 import SearchBox, { matches } from '../SearchBox';
 import MomTab from './MomTab';
+import LongText, { Req } from '../LongText';
 
 // Two tabs on one page (14 Oct): the connects log as it was, and the MoM
 // tab — daily connects, their minutes and action items (MomTab.jsx). The
@@ -339,7 +340,7 @@ function NewConnectForm({ me, team, mode = 'self', anyone = false, onSaved }) {
           )}
         </div>
         <div>
-          <label className="lbl">Date</label>
+          <label className="lbl">Date<Req /></label>
           <input className="inp" type="date" value={heldAt} onChange={e => setHeldAt(e.target.value)} />
         </div>
         <div>
@@ -384,7 +385,7 @@ function NewConnectForm({ me, team, mode = 'self', anyone = false, onSaved }) {
       {ask('topic', 'Topic', 'e.g. Mid-quarter check-in') && (
         <div>
           <label className="lbl">{ask('topic', 'Topic', '').label} (optional)</label>
-          <input className="inp" value={topic} onChange={e => setTopic(e.target.value)}
+          <input maxLength={150} className="inp" value={topic} onChange={e => setTopic(e.target.value)}
             placeholder={ask('topic', 'Topic', 'e.g. Mid-quarter check-in').hint} />
         </div>
       )}
@@ -437,7 +438,7 @@ function NewConnectForm({ me, team, mode = 'self', anyone = false, onSaved }) {
       )}
       <div>
         <label className="lbl">What was discussed?</label>
-        <textarea className="inp" rows={6} placeholder="Everything that came up — what went well, what is stuck, the feedback given"
+        <LongText className="inp" rows={6} placeholder="Everything that came up — what went well, what is stuck, the feedback given"
           value={discussionNotes} onChange={e => setDiscussionNotes(e.target.value)} />
         <p className="text-[11px] text-navy-400 mt-0.5"><Sparkles size={11} className="inline mr-1 text-violet-500" />After you save, AI sorts this into Achievements, Blockers and Feedback — nothing to fill in by hand.</p>
       </div>
@@ -686,7 +687,7 @@ function PersonPicker({ people, value, onChange, hint }) {
   const list = people.filter((p) => matches(q, p.name, p.designation, p.department)).slice(0, 8);
   return (
     <div className="relative">
-      <input className="inp" value={open ? q : (picked ? `${picked.name}${hint ? ` (${hint})` : ''}` : '')}
+      <input maxLength={150} className="inp" value={open ? q : (picked ? `${picked.name}${hint ? ` (${hint})` : ''}` : '')}
         placeholder="Search by name, designation or department…"
         onFocus={() => { setOpen(true); setQ(''); }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}

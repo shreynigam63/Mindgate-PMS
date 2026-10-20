@@ -3,6 +3,7 @@ import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import RatingPicker, { ScaleLegend, LevelChip } from '../CompetencyScale';
 import { Save, Send, CheckCircle2, Info, ChevronDown, ChevronRight } from 'lucide-react';
+import LongText, { Req } from '../LongText';
 
 // "My Competencies" — the employee half of the competency mapping
 // system the client asked for on 24 Sep, built from the Employee Form
@@ -170,7 +171,7 @@ export default function MyCompetenciesPage() {
         {ROLE_QUESTIONS.map(([k, q]) => (
           <div key={k}>
             <label className="text-[11.5px] text-navy-500 block mb-1">{q}</label>
-            <textarea className="inp" rows={2} disabled={!editable} value={field(k)}
+            <LongText className="inp" rows={2} disabled={!editable} value={field(k)}
               onChange={(e) => setText((p) => ({ ...p, [k]: e.target.value }))} />
           </div>
         ))}
@@ -205,7 +206,7 @@ export default function MyCompetenciesPage() {
               <div key={t.key}>
                 <label className="text-[11.5px] text-navy-600 font-semibold block">{t.label}</label>
                 <span className="text-[10.5px] text-navy-400 block mb-1">{t.hint}</span>
-                <input className="inp" list="tech-skill-options" disabled={!editable}
+                <input maxLength={150} className="inp" list="tech-skill-options" disabled={!editable}
                   placeholder={t.key === 'tech_basic' ? 'e.g. Docker, Jenkins, SQL' : 'start typing a skill'}
                   value={field(t.key)}
                   onChange={(e) => setText((p) => ({ ...p, [t.key]: e.target.value }))} />
@@ -218,7 +219,8 @@ export default function MyCompetenciesPage() {
       <div className="card p-3 text-[11.5px] text-navy-500 flex gap-2">
         <Info size={14} className="shrink-0 mt-0.5 text-navy-400" />
         <span>
-          <b>needs N</b> beside a competency is the level your role is expected to reach.
+          Every competency needs a rating<Req /> before you submit; the example under it is optional.
+          <b> needs N</b> beside a competency is the level your role is expected to reach.
           Rate what is true today — your manager rates you independently, and the two views
           are compared rather than averaged.
         </span>
@@ -258,7 +260,7 @@ export default function MyCompetenciesPage() {
                           disabled={!editable}
                           onChange={(lvl) => setEntry(r.competency_id, { rating: lvl })} />
                       </div>
-                      <textarea className="inp !py-2 text-[12.5px]" rows={2} disabled={!editable}
+                      <LongText className="inp !py-2 text-[12.5px]" rows={2} disabled={!editable}
                         placeholder="Evidence / example — what you actually did"
                         value={evi(r)}
                         onChange={(e) => setEntry(r.competency_id, { evidence: e.target.value })} />
@@ -276,7 +278,7 @@ export default function MyCompetenciesPage() {
         {CAREER_QUESTIONS.map(([k, q]) => (
           <div key={k}>
             <label className="text-[11.5px] text-navy-500 block mb-1">{q}</label>
-            <textarea className="inp" rows={2} disabled={!editable} value={field(k)}
+            <LongText className="inp" rows={2} disabled={!editable} value={field(k)}
               onChange={(e) => setText((p) => ({ ...p, [k]: e.target.value }))} />
           </div>
         ))}

@@ -414,7 +414,7 @@ router.get('/rnr/nominate/options', async (req, res) => {
     const options = m.awards
       .filter((a) => a.active && a.frequency === cycle.kind)
       .map((a) => ({ id: a.id, key: a.key, name: a.name, level: a.level, criteria: a.criteria,
-        is_team: a.is_team, discretionary: a.discretionary,
+        is_team: a.is_team, discretionary: a.discretionary, needs_justification: !!a.needs_justification,
         eligible_count: a.is_team ? null : elig.eligibleFrom(pool, a, ctx).length }));
     res.json({ cycle, options, pool_size: pool.length, window: await nominationWindow(cycle) });
   } catch (e) { logger.error('rnr options', { error: e.message }); res.status(500).json({ error: e.message }); }

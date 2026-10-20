@@ -7,6 +7,7 @@ import Grade from '../grade';
 import SearchBox, { matches } from '../SearchBox';
 import BellCurveChart from './BellCurveChart';
 import { KittyPanel, BracketFilter, AllocationRow, Section, short } from './CalibrationKitty';
+import LongText, { Req } from '../LongText';
 
 // The 9-box column (13 Oct build specification). The box is worked out
 // from the scores, live: performance is the Final Rating beside it,
@@ -416,8 +417,8 @@ function OverrideModal({ r, scale, onClose, onSaved }) {
             </div>
           </div>
           <div>
-            <label className="lbl">Reason (required)</label>
-            <textarea className="inp" rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
+            <label className="lbl">Reason<Req /></label>
+            <LongText className="inp" rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
               placeholder="Why the scores do not tell the whole story — kept with the override and in the audit trail" />
           </div>
           {err && <p className="text-rose-600">{err}</p>}

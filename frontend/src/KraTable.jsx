@@ -1,4 +1,5 @@
 import { NO_CATEGORY } from './pages/MyKRASheetPage';
+import { Req } from './LongText';
 
 // THE ONE KRA TABLE: Parameters · KRAs · KPIs · Weightage.
 //
@@ -39,6 +40,8 @@ export default function KraTable({
   legend,
   // Widest content column gets the room. The library's KPI text runs long.
   kpiHeaderNote,
+  // Mark the columns that must be filled, where the table is a form.
+  required = false,
 }) {
   return (
     <div className="card overflow-hidden">
@@ -47,12 +50,12 @@ export default function KraTable({
           <thead>
             <tr>
               <th className="kt-p">Parameters</th>
-              <th className="kt-k">KRAs</th>
+              <th className="kt-k">KRAs{required && <Req />}</th>
               <th>
                 KPIs
                 {kpiHeaderNote && <span className="kt-note"> {kpiHeaderNote}</span>}
               </th>
-              <th className="kt-w num">Weightage</th>
+              <th className="kt-w num">Weightage{required && <Req />}</th>
             </tr>
           </thead>
           <tbody>

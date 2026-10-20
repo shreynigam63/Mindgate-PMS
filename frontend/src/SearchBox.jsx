@@ -21,7 +21,7 @@ export default function SearchBox({ value, onChange, placeholder = 'Search…', 
     <div className="flex items-center gap-2">
       <div className="relative flex-1 min-w-0">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400 pointer-events-none" />
-        <input
+        <input maxLength={150}
           // The bang matters: .inp sets its own px-3.5 and is declared after
           // Tailwind's utilities in app.css, so a plain pl-9 loses to it and
           // the magnifier sits on top of the first letter.

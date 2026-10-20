@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pencil, Save, X } from 'lucide-react';
 import { api } from '../utils/api';
+import LongText from '../LongText';
 
 // KRA, KPI and weightage, editable during the reviews — IN PLACE.
 //
@@ -129,7 +130,7 @@ export function KraHead({ edit, k, index, compact }) {
     <div className="space-y-1.5 bg-amber-50/60 rounded-lg p-2 -m-1">
       <div className="flex flex-wrap items-center gap-2">
         {index != null && <span className="text-[10px] font-mono text-navy-400">KRA {index + 1}</span>}
-        <input className="inp !py-1 flex-1 min-w-[16ch] text-sm font-semibold" aria-label="KRA"
+        <input maxLength={150} className="inp !py-1 flex-1 min-w-[16ch] text-sm font-semibold" aria-label="KRA"
           value={edit.value(k, 'title')} onChange={(e) => edit.set(k.id, { title: e.target.value })} />
         <label className="flex items-center gap-1 text-[11px] text-navy-500">
           <input className="inp !py-1 w-20 text-right" type="number" min="1" max="100" step="1" aria-label="Weight %"
@@ -138,7 +139,7 @@ export function KraHead({ edit, k, index, compact }) {
       </div>
       <label className="block">
         <span className="text-[10px] uppercase font-bold text-navy-400">KPI</span>
-        <textarea className="inp !py-1 text-[12px]" rows={2}
+        <LongText className="inp !py-1 text-[12px]" rows={2}
           value={edit.value(k, 'measures')} onChange={(e) => edit.set(k.id, { measures: e.target.value })} />
       </label>
     </div>

@@ -3,6 +3,7 @@ import { Download, Eye, Pencil, Play, Plus, Sparkles, Square, Trash2, Upload } f
 import { api, API_BASE } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
+import LongText from '../LongText';
 
 // SPLIT IN TWO on 23 Sep. Asked for: "Engagement tab should be under HR
 // tab and not my performance."
@@ -851,7 +852,7 @@ function EmployeePicker({ chosen, onChange }) {
           ))}
         </div>
       )}
-      <input className="inp" value={q} onChange={(ev) => setQ(ev.target.value)}
+      <input maxLength={150} className="inp" value={q} onChange={(ev) => setQ(ev.target.value)}
         placeholder="Search the employee master by name, email or code" />
       {err && <p className="text-[11px] text-rose-600 mt-1">{err}</p>}
       {res && (
@@ -1013,7 +1014,7 @@ function SurveyBuilder({ onClose, onCreated }) {
       <div className="space-y-3">
         <div>
           <label className="lbl">Survey title</label>
-          <input className="inp" autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
+          <input maxLength={150} className="inp" autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
             placeholder="e.g. Employee Satisfaction — H1 FY26-27" />
         </div>
 
@@ -1033,7 +1034,7 @@ function SurveyBuilder({ onClose, onCreated }) {
                 </button>
               </span>
             </div>
-            <input className="inp" value={q.prompt} onChange={(e) => set(i, 'prompt', e.target.value)}
+            <input maxLength={150} className="inp" value={q.prompt} onChange={(e) => set(i, 'prompt', e.target.value)}
               placeholder="What do you want to ask?" />
             <div className="flex flex-wrap gap-1.5">
               {QTYPES.map((t) => (
@@ -1046,7 +1047,7 @@ function SurveyBuilder({ onClose, onCreated }) {
             {needsOptions(q.qtype) && (
               <div>
                 <label className="lbl">Options — one per line</label>
-                <textarea className="inp" rows={4} value={q.optionText || ''}
+                <LongText className="inp" rows={4} value={q.optionText || ''}
                   onChange={(e) => set(i, 'optionText', e.target.value)}
                   placeholder={'Lack of training\nLack of system access\nDependency on others\nNo significant blocker'} />
                 <p className="text-[10px] text-navy-400 mt-1">
@@ -1317,7 +1318,7 @@ function SurveyEditor({ surveyId, onClose, onSaved }) {
         <div className="space-y-3">
           <div>
             <label className="lbl">Survey title</label>
-            <input className="inp" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <input maxLength={150} className="inp" value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
 
           <div className="card p-3 space-y-3 border-l-4 border-leaf-500">
@@ -1359,7 +1360,7 @@ function SurveyEditor({ surveyId, onClose, onSaved }) {
                     onClick={() => setQs((rows) => rows.filter((_, j) => j !== i))}>&times;</button>
                 </span>
               </div>
-              <input className="inp" value={q.prompt} placeholder="Question text"
+              <input maxLength={150} className="inp" value={q.prompt} placeholder="Question text"
                 onChange={(e) => set(i, 'prompt', e.target.value)} />
               <div className="flex flex-wrap items-center gap-2">
                 {/* QTYPES, not a second hand-written list — a select
@@ -1369,7 +1370,7 @@ function SurveyEditor({ surveyId, onClose, onSaved }) {
                   {QTYPES.map((t) => <option key={t.v} value={t.v}>{t.label}</option>)}
                 </select>
                 {needsOptions(q.qtype) && (
-                  <textarea className="inp flex-1 min-w-[220px]" rows={2} value={q.optionText || ''}
+                  <LongText className="inp flex-1 min-w-[220px]" rows={2} value={q.optionText || ''}
                     placeholder="One option per line" onChange={(e) => set(i, 'optionText', e.target.value)} />
                 )}
               </div>
@@ -1422,7 +1423,7 @@ function TakeSurvey({ survey, done }) {
         <div key={q.id} className="card p-3">
           <p className="text-sm font-semibold mb-2">{q.prompt}{q.required && ' *'}</p>
           {q.qtype === 'text' && (
-            <textarea className="inp" rows={3} onChange={e => setAnswers(a => ({ ...a, [q.id]: { text: e.target.value } }))} />
+            <LongText className="inp" rows={3} onChange={e => setAnswers(a => ({ ...a, [q.id]: { text: e.target.value } }))} />
           )}
           {/* Pick one. Until 25 Sep a choice question fell through to
               the branch below and rendered as a 1-5 scale: the options

@@ -107,7 +107,7 @@ export default function HrbpAdminPage() {
         {/* Somebody who holds the role but has no row yet, and anybody HR
             wants to assign before granting the role. */}
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <input className="inp !text-xs !w-auto" placeholder="add a partner by email"
+          <input maxLength={150} className="inp !text-xs !w-auto" placeholder="add a partner by email"
             value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
           <button className="btn-sec !py-1 !text-xs" disabled={!newEmail.trim()}
             onClick={() => { start({ email: newEmail.trim().toLowerCase(), locations: [], hods: [] }); setNewEmail(''); }}>

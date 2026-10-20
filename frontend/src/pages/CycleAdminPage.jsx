@@ -3,6 +3,7 @@ import { Plus, ArrowRight, RotateCcw, Rocket, Activity, BellRing, Trash2, Save, 
 import { api, PHASES, phaseLabel, phaseColor } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
 import PageHead from '../PageHead';
+import LongText from '../LongText';
 
 export default function CycleAdminPage() {
   const [cycles, setCycles] = useState(null);
@@ -276,7 +277,7 @@ function NewCycleModal({ onClose, onCreated }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="lbl">Fiscal Year</label>
-              <input className="inp" value={fiscalYear} onChange={e => setFiscalYear(e.target.value)} placeholder="e.g. FY26-27" />
+              <input maxLength={150} className="inp" value={fiscalYear} onChange={e => setFiscalYear(e.target.value)} placeholder="e.g. FY26-27" />
             </div>
             <div>
               <label className="lbl">Type</label>
@@ -288,11 +289,11 @@ function NewCycleModal({ onClose, onCreated }) {
           </div>
           <div>
             <label className="lbl">Cycle Name</label>
-            <input className="inp" value={name} onChange={e => { setName(e.target.value); setNameTouched(true); }} placeholder="e.g. Annual Appraisal FY26-27" />
+            <input maxLength={150} className="inp" value={name} onChange={e => { setName(e.target.value); setNameTouched(true); }} placeholder="e.g. Annual Appraisal FY26-27" />
           </div>
           <div>
             <label className="lbl">Description (optional)</label>
-            <textarea className="inp" rows={2} value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief note about this cycle" />
+            <LongText className="inp" rows={2} value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief note about this cycle" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -436,8 +437,8 @@ function NineBoxSettingsModal({ cycle, onClose }) {
                 {BOX_ORDER.map((k) => (
                   <div key={k} className="grid sm:grid-cols-[3rem_10rem_1fr] gap-1.5 items-start">
                     <span className="text-navy-400 pt-1.5">({k})</span>
-                    <input className="inp" value={f.boxes[k].name} disabled={!!locked} onChange={(e) => setBox(k, 'name', e.target.value)} />
-                    <input className="inp" value={f.boxes[k].action} disabled={!!locked} onChange={(e) => setBox(k, 'action', e.target.value)} />
+                    <input maxLength={150} className="inp" value={f.boxes[k].name} disabled={!!locked} onChange={(e) => setBox(k, 'name', e.target.value)} />
+                    <input maxLength={150} className="inp" value={f.boxes[k].action} disabled={!!locked} onChange={(e) => setBox(k, 'action', e.target.value)} />
                   </div>
                 ))}
               </div>
@@ -449,8 +450,8 @@ function NineBoxSettingsModal({ cycle, onClose }) {
               <div className="space-y-1.5">
                 {f.questions.map((q, i) => (
                   <div key={q.key || i} className="grid sm:grid-cols-[14rem_1fr_auto] gap-1.5">
-                    <input className="inp" value={q.label} disabled={!!locked} onChange={(e) => setQ(i, 'label', e.target.value)} placeholder="Question" />
-                    <input className="inp" value={q.hint || ''} disabled={!!locked} onChange={(e) => setQ(i, 'hint', e.target.value)} placeholder="Hint shown to the manager" />
+                    <input maxLength={150} className="inp" value={q.label} disabled={!!locked} onChange={(e) => setQ(i, 'label', e.target.value)} placeholder="Question" />
+                    <input maxLength={150} className="inp" value={q.hint || ''} disabled={!!locked} onChange={(e) => setQ(i, 'hint', e.target.value)} placeholder="Hint shown to the manager" />
                     {!locked && !d.questions_answered && f.questions.length > 1 && (
                       <button className="text-navy-400 hover:text-rose-600 px-1" aria-label="Remove question"
                         onClick={() => setF((x) => ({ ...x, questions: x.questions.filter((_, j) => j !== i) }))}><X size={14} /></button>

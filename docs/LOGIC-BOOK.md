@@ -1229,6 +1229,16 @@ From the defect tracker and the employee and manager test cases.
 
 **Competencies — reopen.** HR → Competency Dashboard → *Reopen a submitted assessment*: search, pick the self- or manager assessment, give a reason. The employee (self) or their manager (manager assessment) can edit and submit again, and is told the reason. Audited.
 
+## 3.21 Changes of 20 Oct — from the client's QA, round 2
+
+**How much can be typed.** A one-line field (a title, a name, a topic, a team name) takes at most **150 characters**. A box for writing at length (a comment, a description, a KPI, a narrative, an answer) takes at most **220 words**, and never more than 2,000 characters (that stops one unbroken string thousands of letters long). Under each such box a counter reads *38 / 220 words*; typing or pasting past the limit stops at the limit. The server holds the same rule on every save under Performance, People and Engagement, and names the field: *"What went well" is too long — keep it to 220 words (it has 310).* Left alone because they are long by nature: meeting minutes and transcripts, HR's letter and email templates, and settings. AI drafts that fill these boxes (Annual Review strengths and areas to improve, the mid-year narrative) are kept to whole lines within 220 words. One KRA in the library is longer than 150 characters (Admin · Executive, "Facility Repairs & Preventive Infrastructure Maintenance…", 159): HR shortens it in the KRA Library; anyone who has it on their sheet shortens it there before saving.
+
+**Required fields** carry a red asterisk: KRA title and weightage on My KRAs; the comment needed to return a KRA sheet or a growth plan; mid-year ratings, the reflection and the manager's narrative; every KRA rating in Team Evaluation; every competency rating; the HOD rating; a query's title and description; a connect's date; a growth goal's title and target date; a PIP's concern, targeted areas and gates; a nomination's justification (when the award asks for one) and a team award's team name; the reason when HR overrides a rating in Calibration.
+
+**Status tabs** (Team KRA Sheets, Team Evaluation, All Approvals) always show every tab with its count, 0 included: on Team KRA Sheets *All · Pending · Approved · Returned · Not submitted*. Statuses read in words (*Not submitted*, not `not_started`) and weights as *100%*.
+
+**Team Timesheet.** The Manager menu's timesheet page is named *Team Timesheet*.
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |

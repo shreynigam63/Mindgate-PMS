@@ -263,7 +263,7 @@ function MailboxConnect({ d, provider, busy, save }) {
       {adv && (
         <div className="grid sm:grid-cols-2 gap-2 rounded-xl bg-[#f7f9fd] p-3">
           <label className="text-[11px] text-navy-500 sm:col-span-2">Sender name for reminders and notifications
-            <input className="inp !py-1.5 mt-0.5" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
+            <input maxLength={150} className="inp !py-1.5 mt-0.5" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
           {provider === 'other' ? (
             <>
               <label className="text-[11px] text-navy-500">Server

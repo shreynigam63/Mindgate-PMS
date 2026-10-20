@@ -70,7 +70,7 @@ export default function KraRatingSettings() {
         <div className="space-y-1.5">
           {bands.map((b, i) => (
             <div key={i} className="flex items-center gap-2">
-              <input className="inp !py-1 !px-2 !w-24" value={b.label} placeholder="Label"
+              <input maxLength={150} className="inp !py-1 !px-2 !w-24" value={b.label} placeholder="Label"
                 onChange={(e) => setBand(i, { label: e.target.value })} aria-label="Band label" />
               <span className="text-[11.5px] text-navy-500">from</span>
               <input type="number" min="0" max="100" className="inp !py-1 !px-2 !w-20" value={b.min}

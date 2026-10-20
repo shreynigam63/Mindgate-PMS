@@ -6,6 +6,7 @@ import MeetingPanel from './MeetingPanel';
 import { useKraEdit, KraEditBar, KraHead } from './ReviewKraEditor';
 import PageHead from '../PageHead';
 import Grade, { grade } from '../grade';
+import LongText from '../LongText';
 
 // Requested: per-KRA rating uses letter grades (A+ down to C), but the
 // computed OVERALL average is shown with the older descriptive wording
@@ -127,15 +128,15 @@ export default function SelfAppraisalPage() {
             ))}
           </div>
           {isAnnual && <p className="text-[10px] text-navy-400">Your grade here feeds the overall self-rating above.</p>}
-          <textarea className="inp" rows={3} placeholder="What you achieved against this KRA — be specific, name evidence"
+          <LongText className="inp" rows={3} placeholder="What you achieved against this KRA — be specific, name evidence"
             value={(entries[k.id] || {}).narrative || ''} onChange={setEntry(k.id, 'narrative')} disabled={!open} />
         </div>
       ))}
       <div className="card p-3 space-y-2">
         <label className="lbl">What went well this cycle</label>
-        <textarea className="inp" rows={3} value={f.went_well} onChange={setField('went_well')} disabled={!open} />
+        <LongText className="inp" rows={3} value={f.went_well} onChange={setField('went_well')} disabled={!open} />
         <label className="lbl">What could improve</label>
-        <textarea className="inp" rows={3} value={f.could_improve} onChange={setField('could_improve')} disabled={!open} />
+        <LongText className="inp" rows={3} value={f.could_improve} onChange={setField('could_improve')} disabled={!open} />
       </div>
       <EvidenceSection editable={open} />
       {open && (

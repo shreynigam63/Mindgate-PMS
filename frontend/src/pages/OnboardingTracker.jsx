@@ -67,7 +67,7 @@ function PersonPick({ placeholder, onPick, exclude }) {
     <div className="relative">
       <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-navy-100 bg-white">
         <Search size={14} className="text-navy-400" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder}
+        <input maxLength={150} value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder}
           className="flex-1 min-w-0 text-[13px] outline-none bg-transparent" />
       </label>
       {hits.length > 0 && (
@@ -172,7 +172,7 @@ function Holidays({ onClose, onChanged }) {
       {err && <p className="text-[12.5px] text-rose-600 mb-2">{err}</p>}
       <div className="flex flex-wrap gap-2 mb-3">
         <input type="date" className="inp !w-44" value={d} onChange={(e) => setD(e.target.value)} />
-        <input className="inp !w-64" placeholder="Holiday name" value={n} onChange={(e) => setN(e.target.value)} />
+        <input maxLength={150} className="inp !w-64" placeholder="Holiday name" value={n} onChange={(e) => setN(e.target.value)} />
         <button type="button" className="btn-pri" disabled={!d || !n.trim()} onClick={add}>Add holiday</button>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -220,9 +220,9 @@ function Spocs({ onClose }) {
             <span className="w-28 font-semibold text-[13px] text-navy-900">{x.role}</span>
             {x.per_joiner ? <span className="text-[12.5px] text-navy-500">{x.note}</span> : (
               <>
-                <input className="inp !w-48 !py-1.5" placeholder="Name (optional)" value={(edit[x.role] || {}).name || ''}
+                <input maxLength={150} className="inp !w-48 !py-1.5" placeholder="Name (optional)" value={(edit[x.role] || {}).name || ''}
                   onChange={(e) => setEdit({ ...edit, [x.role]: { ...edit[x.role], name: e.target.value } })} />
-                <input className="inp !w-64 !py-1.5" placeholder="email@company.com" value={(edit[x.role] || {}).email || ''}
+                <input maxLength={150} className="inp !w-64 !py-1.5" placeholder="email@company.com" value={(edit[x.role] || {}).email || ''}
                   onChange={(e) => setEdit({ ...edit, [x.role]: { ...edit[x.role], email: e.target.value } })} />
                 <button type="button" className="btn-sec" onClick={() => save(x.role)}>Save</button>
                 {saved === x.role && <span className="text-[12px] text-leaf-600">Saved</span>}
@@ -342,7 +342,7 @@ function JoinerEmail({ taskId, onSent, onClose }) {
             : <><b>{from.name}</b> sends this from their own Gmail — it is waiting on their PMS Home page. Replies go to {from.name}.</>}
         </p>
       )}
-      <input className="inp" value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Subject" />
+      <input maxLength={150} className="inp" value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Subject" />
       <textarea className="inp" rows={9} value={body} onChange={(e) => setBody(e.target.value)} aria-label="Message" />
       <div className="flex flex-wrap items-center gap-2">
         {d.sender_is_me && d.to && (
@@ -454,11 +454,11 @@ function TaskRow({ t, onSaved, asOf, canOperate }) {
             <input type="date" className="inp" disabled={!canOperate} title={canOperate ? undefined : 'HR Ops, HR and HRBP mark tasks done'}
               max={asOf > localToday() ? localToday() : undefined} value={f.completed_on} onChange={(e) => setF({ ...f, completed_on: e.target.value })} /></label>
           <label className="lg:col-span-2"><span className="lbl">Employee feedback / remarks</span>
-            <input className="inp" value={f.remarks} onChange={(e) => setF({ ...f, remarks: e.target.value })} /></label>
+            <input maxLength={150} className="inp" value={f.remarks} onChange={(e) => setF({ ...f, remarks: e.target.value })} /></label>
           <label><span className="lbl">Issue identified</span>
-            <input className="inp" value={f.issue} onChange={(e) => setF({ ...f, issue: e.target.value })} /></label>
+            <input maxLength={150} className="inp" value={f.issue} onChange={(e) => setF({ ...f, issue: e.target.value })} /></label>
           <label><span className="lbl">Action owner</span>
-            <input className="inp" value={f.action_owner} onChange={(e) => setF({ ...f, action_owner: e.target.value })} /></label>
+            <input maxLength={150} className="inp" value={f.action_owner} onChange={(e) => setF({ ...f, action_owner: e.target.value })} /></label>
           <label><span className="lbl">Closure date</span>
             <input type="date" className="inp" value={f.closure_date} onChange={(e) => setF({ ...f, closure_date: e.target.value })} /></label>
           <div className="sm:col-span-2 lg:col-span-3 flex items-center gap-2">
@@ -512,9 +512,9 @@ function Feedback({ joiner, questions, onSaved }) {
         ))}
       </div>
       <div className="grid md:grid-cols-3 gap-2.5 mt-3">
-        <label><span className="lbl">What worked best?</span><input className="inp" value={t.worked_best} onChange={(e) => setT({ ...t, worked_best: e.target.value })} /></label>
-        <label><span className="lbl">What should we improve?</span><input className="inp" value={t.improve} onChange={(e) => setT({ ...t, improve: e.target.value })} /></label>
-        <label><span className="lbl">Any issue still open?</span><input className="inp" value={t.open_issue} onChange={(e) => setT({ ...t, open_issue: e.target.value })} /></label>
+        <label><span className="lbl">What worked best?</span><input maxLength={150} className="inp" value={t.worked_best} onChange={(e) => setT({ ...t, worked_best: e.target.value })} /></label>
+        <label><span className="lbl">What should we improve?</span><input maxLength={150} className="inp" value={t.improve} onChange={(e) => setT({ ...t, improve: e.target.value })} /></label>
+        <label><span className="lbl">Any issue still open?</span><input maxLength={150} className="inp" value={t.open_issue} onChange={(e) => setT({ ...t, open_issue: e.target.value })} /></label>
       </div>
       <div className="flex items-center gap-2 mt-3">
         <button type="button" className="btn-pri" onClick={save}>Save feedback</button>

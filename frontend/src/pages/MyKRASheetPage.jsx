@@ -7,6 +7,7 @@ import PageHead from '../PageHead';
 import KraTable from '../KraTable';
 import Grade from '../grade';
 import { useKraTimesheet, KraTimesheetBar, KraTimesheetLine } from '../TimesheetRating';
+import LongText from '../LongText';
 
 // Whitespace counts as empty. An imported cell can carry a stray space or
 // newline, and treating that as content would put the box back on exactly
@@ -216,25 +217,26 @@ export default function MyKRASheetPage() {
       <KraTable
         groups={groups}
         kpiHeaderNote="(measuring metrics & data source)"
+        required={editable}
         totalLabel={editable
           ? 'Total weight — must reach 100% before you can submit'
           : 'Total weight'}
         total={total}
         totalOk={Math.abs(total - 100) < 0.01}
         renderKra={({ k, i }) => (editable
-          ? <input className="inp !text-[12.5px]" placeholder="KRA title *" value={k.title || ''} onChange={set(i, 'title')} />
+          ? <input maxLength={150} className="inp !text-[12.5px]" placeholder="KRA title" value={k.title || ''} onChange={set(i, 'title')} />
           : <span>{k.title}</span>)}
         renderKpi={({ k, i }) => (
           <div className="space-y-1.5">
             {editable
-              ? <textarea className="inp !text-[12.5px]" rows={2} placeholder="How it will be measured"
+              ? <LongText className="inp !text-[12.5px]" rows={2} placeholder="How it will be measured"
                   value={k.measures || ''} onChange={set(i, 'measures')} />
               : <span className="whitespace-pre-line">{k.measures || <i className="text-navy-300">no KPI recorded</i>}</span>}
             {/* Description is optional and hidden until it has content or
                 is asked for — it read as an extra empty box on every KRA. */}
             {(hasText(k.description) || k._showDesc) ? (
               editable
-                ? <textarea className="inp !text-[12.5px]" rows={2} placeholder="Description"
+                ? <LongText className="inp !text-[12.5px]" rows={2} placeholder="Description"
                     value={k.description || ''} onChange={set(i, 'description')} />
                 : <div className="text-navy-400">{k.description}</div>
             ) : editable && (
@@ -278,7 +280,7 @@ export default function MyKRASheetPage() {
                     <option value={NEW_CAT}>+ New parameter…</option>
                   </select>
                 ) : (
-                  <input className="inp !w-40 !py-1 !text-[11px]" autoFocus placeholder="New parameter, then Enter"
+                  <input maxLength={150} className="inp !w-40 !py-1 !text-[11px]" autoFocus placeholder="New parameter, then Enter"
                     value={k._newCatText || ''}
                     onChange={(e) => stageNewCategory(i, e.target.value)}
                     onBlur={() => commitNewCategory(i)}

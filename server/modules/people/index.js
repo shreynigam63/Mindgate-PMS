@@ -41,6 +41,8 @@ const transitionUpload = multer({ storage: multer.memoryStorage(), limits: { fil
 
 const router = express.Router();
 router.use(authenticate, require('../../core/scope-hooks').run(), apiPermissionParity);
+// Length limits on typed text (20 Oct, Def-022/023/025): see core/text-limits.js.
+router.use(require('../../core/text-limits').textLimits);
 // `.run()` is the extension point a module uses to narrow what this
 // router returns — today, the HRBP gateway. See core/scope-hooks.js.
 // Malformed uuid path params are rejected with 400 here, before any

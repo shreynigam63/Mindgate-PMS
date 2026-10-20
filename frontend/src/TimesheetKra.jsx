@@ -220,14 +220,14 @@ function ClosedMonths({ employeeId, canMap, reloadKey }) {
                 value={f.score} onChange={(e) => setF({ ...f, score: e.target.value })} />
             </label>
             <label className="text-[11px] text-navy-500">Grade
-              <input className="inp !py-1 !px-2 w-20 ml-1 !text-xs" value={f.grade}
+              <input maxLength={150} className="inp !py-1 !px-2 w-20 ml-1 !text-xs" value={f.grade}
                 onChange={(e) => setF({ ...f, grade: e.target.value })} placeholder="A" />
             </label>
           </div>
           {/* Required by the server too. Asking here as well means the
               manager is not told off by a 422 after typing everything
               else. */}
-          <input className="inp !text-xs" value={f.reason}
+          <input maxLength={150} className="inp !text-xs" value={f.reason}
             placeholder="Why is this month being overridden? (required)"
             onChange={(e) => setF({ ...f, reason: e.target.value })} />
           <p className="text-[10.5px] text-navy-400">
@@ -581,7 +581,7 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                         for it here as well means the manager is not told
                         off by a 422 after typing everything else. */}
                     {dr && dr.decision === 'excluded' && (
-                      <input className="inp !text-xs flex-1 min-w-[220px]" value={dr.note || ''}
+                      <input maxLength={150} className="inp !text-xs flex-1 min-w-[220px]" value={dr.note || ''}
                         placeholder="Why is this not KRA work? (required)"
                         onChange={(e) => setItem(it.item_key, { note: e.target.value })} />
                     )}

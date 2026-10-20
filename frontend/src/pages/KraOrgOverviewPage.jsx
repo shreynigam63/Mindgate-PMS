@@ -3,6 +3,7 @@ import { Search, UserCog, Plus, Trash2, Send, RotateCcw } from 'lucide-react';
 import { api, API_BASE } from '../utils/api';
 import KraLibraryPicker from './KraLibraryPicker';
 import PageHead from '../PageHead';
+import LongText from '../LongText';
 
 const STATUS_COLOR = {
   not_started: 'bg-navy-50 text-navy-500',
@@ -133,7 +134,7 @@ export default function KraOrgOverviewPage() {
       </div>
       <div className="flex items-center gap-2">
         <Search size={14} className="text-navy-400" />
-        <input className="inp max-w-xs" placeholder="Search by name, email, or department"
+        <input maxLength={150} className="inp max-w-xs" placeholder="Search by name, email, or department"
           value={q} onChange={e => { setQ(e.target.value); load(e.target.value); }} />
       </div>
       {err && <p className="text-xs text-rose-600">{err}</p>}
@@ -196,7 +197,7 @@ function ReopenApproved({ employeeId, onDone }) {
         This sheet is <b>approved</b> and locked. Reopening returns it to the employee for edits — they will need to
         resubmit, and their manager will need to approve it again.
       </p>
-      <textarea className="inp" rows={2} placeholder="Why is this being reopened? The employee will see this."
+      <LongText className="inp" rows={2} placeholder="Why is this being reopened? The employee will see this."
         value={comment} onChange={(e) => setComment(e.target.value)} />
       <div className="flex items-center gap-2">
         <button className="btn-sec" disabled={busy} onClick={reopen}>
@@ -271,7 +272,7 @@ function OnBehalfEditor({ employeeId, onDone }) {
           return (
             <div key={i} className="contents">
               <div className="flex items-center justify-center text-xs font-semibold text-navy-400">{i + 1}</div>
-              <input
+              <input maxLength={150}
                 className={`inp ${blank ? '!border-rose-300 !bg-rose-50/50' : ''}`}
                 placeholder="KRA title" value={k.title} onChange={e => update(i, 'title', e.target.value)}
               />

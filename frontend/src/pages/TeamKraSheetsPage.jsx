@@ -7,6 +7,7 @@ import SearchBox, { matches } from '../SearchBox';
 import StatusTabs, { statusTabs } from '../StatusTabs';
 import KraTable from '../KraTable';
 import { useKraTimesheet, KraTimesheetBar, KraTimesheetLine } from '../TimesheetRating';
+import LongText, { Req } from '../LongText';
 
 // Fix guide item #5 (BR-1.3): confirmed root cause was that no frontend
 // page anywhere called the existing, working GET /team/kra-sheets and
@@ -20,6 +21,10 @@ const STATUS_COLOR = {
   submitted: 'bg-amber-100 text-amber-700',
   returned: 'bg-rose-100 text-rose-700',
   approved: 'bg-emerald-100 text-emerald-700',
+};
+// Statuses in words, as the tabs name them (20 Oct, Def-024: "not_started").
+const STATUS_WORDS = {
+  not_started: 'Not submitted', draft: 'Not submitted', submitted: 'Pending', returned: 'Returned', approved: 'Approved',
 };
 
 export default function TeamKraSheetsPage() {
@@ -48,7 +53,7 @@ export default function TeamKraSheetsPage() {
   // in the header. An approved sheet used to look identical to one nobody
   // had touched until you opened it.
   const TABS = [
-    { key: 'submitted', label: 'Pending your review', tone: 'bg-amber2-500 text-white',
+    { key: 'submitted', label: 'Pending', tone: 'bg-amber2-500 text-white',
       match: v => v === 'submitted' },
     { key: 'approved', label: 'Approved', tone: 'bg-leaf-500 text-white',
       match: v => v === 'approved' },
@@ -68,7 +73,7 @@ export default function TeamKraSheetsPage() {
 
   const sheetsShown = (data.sheets || [])
     .filter(s => !active || active.match(s.status))
-    .filter(s => matches(q, s.employee_name, s.designation, s.department, s.status));
+    .filter(s => matches(q, s.employee_name, s.designation, s.department, s.status, STATUS_WORDS[s.status || 'not_started']));
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
@@ -115,8 +120,8 @@ export default function TeamKraSheetsPage() {
             {s.edited_by_manager_at && (
               <span className="chip bg-violet-100 text-violet-700" title="A manager has edited this sheet since it was submitted">edited</span>
             )}
-            <span className="text-[11px] text-navy-400">{s.kra_count} KRA{s.kra_count === 1 ? '' : 's'} · {s.total_weight}%</span>
-            <span className={`chip ${STATUS_COLOR[s.status] || STATUS_COLOR.not_started}`}>{s.status}</span>
+            <span className="text-[11px] text-navy-400">{s.kra_count} KRA{s.kra_count === 1 ? '' : 's'} · {Number(s.total_weight || 0)}%</span>
+            <span className={`chip ${STATUS_COLOR[s.status] || STATUS_COLOR.not_started}`}>{STATUS_WORDS[s.status || 'not_started'] || s.status}</span>
           </button>
           {openId === s.employee_id && (
             s.id
@@ -232,14 +237,14 @@ function SheetEditor({ sheet, reload, isMine, scale }) {
               {rows.map((r, i) => (
                 <div key={r.id} className="border border-navy-100 rounded-lg p-2 space-y-1.5">
                   <div className="flex gap-2">
-                    <input className="inp !py-1.5 text-xs flex-1" value={r.title}
+                    <input maxLength={150} className="inp !py-1.5 text-xs flex-1" value={r.title}
                       placeholder="KRA" onChange={(e) => patch(i, 'title', e.target.value)} />
-                    <input className="inp !py-1.5 text-xs w-24" value={r.weight} inputMode="numeric"
+                    <input maxLength={150} className="inp !py-1.5 text-xs w-24" value={r.weight} inputMode="numeric"
                       placeholder="Weight" onChange={(e) => patch(i, 'weight', e.target.value.replace(/[^0-9]/g, ''))} />
                   </div>
-                  <input className="inp !py-1.5 text-xs" value={r.category}
+                  <input maxLength={150} className="inp !py-1.5 text-xs" value={r.category}
                     placeholder="Parameter" onChange={(e) => patch(i, 'category', e.target.value)} />
-                  <textarea className="inp !py-1.5 text-xs" rows={2} value={r.measures}
+                  <LongText className="inp !py-1.5 text-xs" rows={2} value={r.measures}
                     placeholder="KPI — measuring metrics & data source"
                     onChange={(e) => patch(i, 'measures', e.target.value)} />
                 </div>
@@ -286,7 +291,8 @@ function SheetEditor({ sheet, reload, isMine, scale }) {
               <Pencil size={13} className="inline mr-1" />Edit this sheet
             </button>
           )}
-          <textarea className="inp" rows={2} placeholder="Comment (required if returning)" value={comment} onChange={e => setComment(e.target.value)} />
+          <label className="lbl">Comment<Req /> <span className="normal-case font-normal text-navy-400">needed to return it</span></label>
+          <LongText className="inp" rows={2} placeholder="What should change" value={comment} onChange={e => setComment(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <button className="btn-pri" disabled={busy} onClick={() => decide('approved')}><Check size={13} className="inline mr-1" />Approve</button>
             <button className="btn-sec" disabled={busy} onClick={() => decide('returned')}><Undo2 size={13} className="inline mr-1" />Return for edits</button>

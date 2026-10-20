@@ -8,11 +8,11 @@
 // The same control is used on the approvals queue, so a filter row means
 // the same thing everywhere in the product.
 //
-// A tab with nothing behind it is not shown: an empty "Returned 0" is a
-// question ("did something disappear?") rather than information. `All`
-// is always offered, so there is a way back.
+// Every tab is shown, with its count, even at 0 (20 Oct, from QA:
+// Def-024 / TC_NEW_009 — the manual names Pending, Approved, Returned and
+// Not submitted, and the empty ones were missing, which read as broken).
 export default function StatusTabs({ tabs, value, onChange }) {
-  const live = tabs.filter(t => t.key === 'all' || t.count > 0);
+  const live = tabs;
   if (live.length <= 1) return null;
   return (
     <div className="flex flex-wrap gap-2">

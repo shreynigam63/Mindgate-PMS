@@ -172,7 +172,7 @@ export function TeamPanel() {
         <div className="ml-auto flex flex-wrap gap-2">
           <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-navy-100 bg-white">
             <Search size={14} className="text-navy-400" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search a name"
+            <input maxLength={150} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search a name"
               className="text-[13px] outline-none w-32 bg-transparent" />
           </label>
           <select value={dept} onChange={(e) => setDept(e.target.value)}

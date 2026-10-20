@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { wallToIso, isoToWall, showAt, endOfEvent } from '../utils/zone';
 import PageHead from '../PageHead';
 import { Plus, Save, Trash2, Pencil, Users, X } from 'lucide-react';
+import LongText from '../LongText';
 
 // HR's Events & CSR page (13 Oct: "apart from awards, there is no option
 // for HR to start Events from HR Admin tab ... linked with People Hub").
@@ -141,7 +142,7 @@ export default function EventsAdminPage() {
           </div>
           <div className="sm:col-span-2">
             <label className="lbl">Description</label>
-            <textarea className="inp" rows={3} value={ev.description} maxLength={4000} onChange={(e) => setEv({ ...ev, description: e.target.value })} />
+            <LongText className="inp" rows={3} value={ev.description} maxLength={4000} onChange={(e) => setEv({ ...ev, description: e.target.value })} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -185,7 +186,7 @@ export default function EventsAdminPage() {
           </div>
           <div className="sm:col-span-3">
             <label className="lbl">Description</label>
-            <textarea className="inp" rows={3} value={c.description} maxLength={4000} onChange={(e) => setC({ ...c, description: e.target.value })} />
+            <LongText className="inp" rows={3} value={c.description} maxLength={4000} onChange={(e) => setC({ ...c, description: e.target.value })} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">

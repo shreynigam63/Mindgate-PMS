@@ -180,7 +180,7 @@ function ReopenEval({ employeeId, name, onDone }) {
   };
   return (
     <div className="mt-1 space-y-1 min-w-[12rem]">
-      <input className="inp !py-1 text-xs" autoFocus placeholder="Why (the manager sees this)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      <input maxLength={150} className="inp !py-1 text-xs" autoFocus placeholder="Why (the manager sees this)" value={reason} onChange={(e) => setReason(e.target.value)} />
       <div className="flex gap-1">
         <button type="button" className="btn-pri !py-1 !px-2" disabled={busy || !reason.trim()} onClick={go}>Reopen</button>
         <button type="button" className="btn-sec !py-1 !px-2" onClick={() => setOpen(false)}>Cancel</button>

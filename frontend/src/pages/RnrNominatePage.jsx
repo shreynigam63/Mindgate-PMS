@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import PageHead from '../PageHead';
 import { Award, AlertTriangle, Users, Check, Info } from 'lucide-react';
+import LongText, { Req } from '../LongText';
 
 // Raising an RnR nomination.
 //
@@ -208,19 +209,19 @@ export default function RnrNominatePage() {
               {[['team_name', 'Team name'], ['project', 'Project'], ['team_members', 'Team members'],
                 ['quantified_impact', 'Quantified impact — cost, revenue or productivity']].map(([k, label]) => (
                 <div key={k}>
-                  <label className="text-[11.5px] text-navy-500 block mb-1">{label}</label>
-                  <input className="inp" value={team[k]} onChange={(e) => setTeam((p) => ({ ...p, [k]: e.target.value }))} />
+                  <label className="text-[11.5px] text-navy-500 block mb-1">{label}{k === 'team_name' && <Req />}</label>
+                  <input maxLength={150} className="inp" value={team[k]} onChange={(e) => setTeam((p) => ({ ...p, [k]: e.target.value }))} />
                 </div>
               ))}
             </div>
           )}
           {[['achievement', 'What did they achieve?'],
             ['business_impact', 'What was the business impact?'],
-            ['justification', 'Why this award, for this person? *'],
+            ['justification', 'Why this award, for this person?'],
             ['comments', 'Anything else the approvers should know']].map(([k, label]) => (
             <div key={k}>
-              <label className="text-[11.5px] text-navy-500 block mb-1">{label}</label>
-              <textarea className="inp" rows={2} value={form[k]}
+              <label className="text-[11.5px] text-navy-500 block mb-1">{label}{k === 'justification' && award.needs_justification && <Req />}</label>
+              <LongText className="inp" rows={2} value={form[k]}
                 onChange={(e) => setForm((p) => ({ ...p, [k]: e.target.value }))} />
             </div>
           ))}

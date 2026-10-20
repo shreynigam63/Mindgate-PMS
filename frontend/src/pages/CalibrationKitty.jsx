@@ -467,14 +467,14 @@ export function AllocationRow({ line, bracket, onSaved, onError, currency }) {
                   Leave it empty to track the band{line.band_min_pct != null && ` (${line.band_min_pct}–${line.band_max_pct}%)`}.
                 </p>
                 {String(f.standard_pct) !== '' && (
-                  <input className="inp !py-1" placeholder="Why this differs from the band (required)"
+                  <input maxLength={150} className="inp !py-1" placeholder="Why this differs from the band (required)"
                     value={f.standard_reason} onChange={(e) => set('standard_reason', e.target.value)} />
                 )}
                 <p className="text-[10px] uppercase font-bold text-navy-400 pt-1">Market correction</p>
                 <input className="inp !py-1" type="number" step="0.1" min="0" value={f.market_pct}
                   onChange={(e) => set('market_pct', e.target.value)} />
                 {Number(f.market_pct) > 0 && (
-                  <input className="inp !py-1" placeholder="Reason (required)" value={f.market_reason}
+                  <input maxLength={150} className="inp !py-1" placeholder="Reason (required)" value={f.market_reason}
                     onChange={(e) => set('market_reason', e.target.value)} />
                 )}
               </div>
@@ -487,14 +487,14 @@ export function AllocationRow({ line, bracket, onSaved, onError, currency }) {
                 </label>
                 {f.promoted && (
                   <>
-                    <input className="inp !py-1" placeholder="New designation" value={f.proposed_designation}
+                    <input maxLength={150} className="inp !py-1" placeholder="New designation" value={f.proposed_designation}
                       onChange={(e) => set('proposed_designation', e.target.value)} />
-                    <input className="inp !py-1" placeholder="New band" value={f.proposed_band}
+                    <input maxLength={150} className="inp !py-1" placeholder="New band" value={f.proposed_band}
                       onChange={(e) => set('proposed_band', e.target.value)} />
                     <input className="inp !py-1" type="number" step="0.1" min="0" placeholder="Promotion hike %"
                       value={f.promotion_pct} onChange={(e) => set('promotion_pct', e.target.value)} />
                     {Number(f.promotion_pct) > 0 && (
-                      <input className="inp !py-1" placeholder="Reason (required)" value={f.promotion_reason}
+                      <input maxLength={150} className="inp !py-1" placeholder="Reason (required)" value={f.promotion_reason}
                         onChange={(e) => set('promotion_reason', e.target.value)} />
                     )}
                   </>
@@ -524,7 +524,7 @@ export function AllocationRow({ line, bracket, onSaved, onError, currency }) {
                           value={f.retention_pct} onChange={(e) => set('retention_pct', e.target.value)} />
                         <input className="inp !py-1" type="number" step="1" min="0" placeholder="Lump sum (₹)"
                           value={f.retention_lumpsum} onChange={(e) => set('retention_lumpsum', e.target.value)} />
-                        <input className="inp !py-1" placeholder="Reason (required)" value={f.retention_reason}
+                        <input maxLength={150} className="inp !py-1" placeholder="Reason (required)" value={f.retention_reason}
                           onChange={(e) => set('retention_reason', e.target.value)} />
                       </>
                     )}

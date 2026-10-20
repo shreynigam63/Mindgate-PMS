@@ -532,7 +532,7 @@ function ActionsTab({ query, view }) {
             </div>
             {closing === a.id && (
               <div className="flex flex-wrap gap-2 items-center">
-                <input className="inp !py-1 !text-xs flex-1 min-w-[12rem]" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was done (required)" />
+                <input maxLength={150} className="inp !py-1 !text-xs flex-1 min-w-[12rem]" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was done (required)" />
                 <button className="btn-pri !py-1" disabled={!note.trim()} onClick={() => save(a, 'done')}>Save</button>
                 <button className="btn-sec !py-1" onClick={() => setClosing(null)}>Cancel</button>
               </div>
