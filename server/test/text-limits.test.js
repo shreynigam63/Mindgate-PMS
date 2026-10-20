@@ -41,6 +41,7 @@ test('the middleware refuses with 422 on a save, and leaves reads and long-by-na
   let r = run('POST', '/api/v1/people/queries', { title: 'Payslip', ...long });
   assert.equal(r.status, 422);
   assert.match(r.sent.error, /"Description" is too long — keep it to 220 words \(it has 400\)/);
+  assert.equal(r.sent.field, 'description', 'the field is named, so a screen can point at it');
   assert.equal(run('GET', '/api/v1/people/queries', long).passed, true);
   // Meeting minutes and transcripts are long by nature.
   assert.equal(run('PUT', '/api/v1/pms/mom/meetings/x/minutes', { notes: words(900) }).passed, true);

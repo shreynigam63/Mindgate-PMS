@@ -47,15 +47,15 @@ const LABELS = {
 };
 const labelOf = (key) => LABELS[key] || String(key).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
-/** The first field over its limit, as a sentence, or null. Pure. */
-function textProblem(body, path = []) {
+/** The first field over its limit — {error, field} — or null. Pure. */
+function findProblem(body, path = []) {
   if (body == null || typeof body !== 'object') return null;
   for (const [k, v] of Object.entries(body)) {
     if (v == null) continue;
     // Per-KRA maps are keyed by an id; the field inside is what is checked.
     const key = /^[0-9a-f-]{36}$/i.test(k) || /^\d+$/.test(k) ? path[path.length - 1] : k;
     if (typeof v === 'object') {
-      const p = textProblem(v, [...path, key]);
+      const p = findProblem(v, [...path, key]);
       if (p) return p;
       continue;
     }
@@ -63,22 +63,25 @@ function textProblem(body, path = []) {
     const s = v.trim();
     if (!s) continue;
     if (SHORT_KEYS.has(key)) {
-      if (s.length > SHORT_CHARS) return `"${labelOf(key)}" is too long — keep it to ${SHORT_CHARS} characters (it has ${s.length}).`;
+      if (s.length > SHORT_CHARS) return { field: key, error: `"${labelOf(key)}" is too long — keep it to ${SHORT_CHARS} characters (it has ${s.length}).` };
     } else {
       const n = words(s);
-      if (n > WORD_LIMIT) return `"${labelOf(key)}" is too long — keep it to ${WORD_LIMIT} words (it has ${n}).`;
-      if (s.length > LONG_CHARS) return `"${labelOf(key)}" is too long — keep it to ${LONG_CHARS} characters (it has ${s.length}).`;
+      if (n > WORD_LIMIT) return { field: key, error: `"${labelOf(key)}" is too long — keep it to ${WORD_LIMIT} words (it has ${n}).` };
+      if (s.length > LONG_CHARS) return { field: key, error: `"${labelOf(key)}" is too long — keep it to ${LONG_CHARS} characters (it has ${s.length}).` };
     }
   }
   return null;
 }
+/** The first field over its limit, as a sentence, or null. Pure. */
+const textProblem = (body) => { const p = findProblem(body); return p ? p.error : null; };
 
 function textLimits(req, res, next) {
   if (!['POST', 'PUT', 'PATCH'].includes(req.method)) return next();
   if (!req.body || typeof req.body !== 'object' || Buffer.isBuffer(req.body)) return next();
   if (SKIP_PATH.test(req.originalUrl.split('?')[0])) return next();
-  const problem = textProblem(req.body);
-  if (problem) return res.status(422).json({ error: problem });
+  const problem = findProblem(req.body);
+  // The field is named, so a screen can point at the box.
+  if (problem) return res.status(422).json(problem);
   next();
 }
 
