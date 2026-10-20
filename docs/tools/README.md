@@ -3,7 +3,7 @@
 The **markdown in `docs/` is the source of truth.** The PDFs beside it are
 generated from it, so edit the markdown and re-render — never edit a PDF.
 
-Two documents are published this way:
+These documents are published this way:
 
 | Markdown | PDF |
 |---|---|
@@ -14,6 +14,20 @@ Two documents are published this way:
 | `docs/MANUAL-HR.md` | `docs/Agentic-PMS-HR-Manual.pdf` |
 | `docs/MANUAL-MANAGER.md` | `docs/Agentic-PMS-Manager-Manual.pdf` |
 | `docs/ONEPAGER-TIMESHEET-KRA-LOGIC.md` | `docs/Agentic-PMS-Timesheet-KRA-Logic.pdf` |
+| `docs/DEVELOPER-GUIDE.md` | `docs/Agentic-PMS-Developer-Guide.pdf` |
+
+The developer guide renders the same way:
+
+```bash
+python3 docs/tools/md2html.py docs/DEVELOPER-GUIDE.md /tmp/devguide.html "Agentic PMS — Developer Guide"
+IN=/tmp/devguide.html OUT=$PWD/docs/Agentic-PMS-Developer-Guide.pdf \
+FOOTER="Agentic PMS — Developer Guide" node docs/tools/topdf.js
+```
+
+`md2html.py` handles nested lists (by indentation), an item's indented
+continuation lines and a fenced code block inside a list item. A
+hand-written `## Contents` section is left out, because the script builds
+the contents page from the headings.
 
 ## Rendering
 

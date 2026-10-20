@@ -46,6 +46,64 @@ def close_blocks():
     if in_quote: body.append('</blockquote>'); in_quote = False
     if in_list:  body.append('</ul>'); in_list = False
 
+# Lists, nested by indentation. An item's indented lines that follow it,
+# a fenced code block among them, belong to that item; a blank line keeps
+# the list going when what follows is still indented, or is a numbered item
+# carrying on the count ("3." after a code block under "2.").
+ITEM = re.compile(r'^(\s*)([-*]|\d+\.)\s+(.*)$')
+
+def _next_nonblank(j):
+    while j < len(lines) and lines[j].strip() == '':
+        j += 1
+    return j
+
+def render_list(j):
+    stack = []                       # (indent, tag) of each open list
+    def close_to(ind):
+        while stack and stack[-1][0] > ind:
+            body.append('</li></ul>'); stack.pop()
+    while j < len(lines):
+        ln = lines[j]
+        if ln.strip() == '':
+            k = _next_nonblank(j)
+            if k >= len(lines):
+                break
+            nxt = lines[k]
+            m = ITEM.match(nxt)
+            if nxt[0].isspace() or (m and stack and stack[0][1] == 'num' and not m.group(1)
+                                    and m.group(2)[:-1].isdigit() and int(m.group(2)[:-1]) > 1):
+                j = k; continue
+            break
+        if ln.lstrip().startswith('```') and stack:
+            pad = len(ln) - len(ln.lstrip())
+            code = []
+            j += 1
+            while j < len(lines) and not lines[j].lstrip().startswith('```'):
+                code.append(html.escape(lines[j][pad:] if lines[j][:pad].strip() == '' else lines[j].lstrip()))
+                j += 1
+            body.append('<pre><code>' + '\n'.join(code) + '</code></pre>')
+            j += 1; continue
+        m = ITEM.match(ln)
+        if m:
+            ind, tag = len(m.group(1)), ('num' if m.group(2)[0].isdigit() else 'ul')
+            close_to(ind)
+            if stack and stack[-1][0] == ind:
+                if stack[-1][1] != tag:
+                    body.append('</li></ul>'); stack.pop()
+                else:
+                    body.append('</li>')
+            if not stack or stack[-1][0] < ind:
+                body.append('<ul class="num">' if tag == 'num' else '<ul>')
+                stack.append((ind, tag))
+            body.append('<li>' + inline(m.group(3)))
+            j += 1; continue
+        if ln[0].isspace() and stack:
+            body.append(' ' + inline(ln.strip()))
+            j += 1; continue
+        break
+    close_to(-1)
+    return j
+
 while i < len(lines):
     ln = lines[i]
 
@@ -97,6 +155,13 @@ while i < len(lines):
     if m:
         close_blocks()
         lvl, txt = len(m.group(1)), m.group(2)
+        # A hand-written "Contents" section repeats the contents page this
+        # script builds from the headings, so it is left out of the print.
+        if lvl == 2 and txt.strip().lower() == 'contents':
+            i += 1
+            while i < len(lines) and not re.match(r'^(##\s|-{3,}\s*$)', lines[i]):
+                i += 1
+            continue
         if lvl == 1:
             body.append(f'<h1>{inline(txt)}</h1>')
         else:
@@ -113,20 +178,12 @@ while i < len(lines):
     if re.match(r'^(-{3,}|\*{3,})$', ln.strip()):
         close_blocks(); i += 1; continue          # the --- rules are section separators; the h2 page break replaces them
 
-    m = re.match(r'^[-*]\s+(.*)$', ln)
-    if m:
-        if not in_list:
-            close_blocks(); body.append('<ul>'); in_list = True
-        body.append('<li>' + inline(m.group(1)) + '</li>'); i += 1; continue
-
-    m = re.match(r'^(\d+)\.\s+(.*)$', ln)
-    if m:
-        if not in_list:
-            close_blocks(); body.append('<ul class="num">'); in_list = True
-        body.append('<li>' + inline(m.group(2)) + '</li>'); i += 1; continue
+    if ITEM.match(ln) and not ln[0].isspace():
+        close_blocks()
+        i = render_list(i)
+        continue
 
     if ln.strip() == '':
-        if in_list: body.append('</ul>'); in_list = False
         i += 1; continue
 
     close_blocks()
@@ -229,7 +286,7 @@ open(out, 'w', encoding='utf-8').write(f"""<!doctype html>
   pre {{ background:#10202c; color:#e4eef5; border-radius:4pt; padding:8pt 10pt;
          margin:0 0 9pt; break-inside:avoid; }}
   pre code {{ background:none; border:none; color:inherit; font-size:8pt;
-              white-space:pre; padding:0; line-height:1.45; }}
+              white-space:pre-wrap; overflow-wrap:anywhere; padding:0; line-height:1.45; }}
   table {{ width:100%; border-collapse:collapse; margin:0 0 10pt; font-size:8.5pt; }}
   thead {{ display:table-header-group; }}   /* repeat the header on every page */
   tr {{ break-inside:avoid; }}

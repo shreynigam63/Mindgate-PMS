@@ -1,5 +1,9 @@
 # Agentic PMS — deployment and handover docs
 
+> **New to the code?** Start with **[DEVELOPER-GUIDE.md](DEVELOPER-GUIDE.md)**: architecture, how to run
+> it, how a request travels, where each feature lives, and how to make common changes. The rules
+> behind each screen are in **[LOGIC-BOOK.md](LOGIC-BOOK.md)**.
+
 Two kinds of document here.
 
 **`PAGE-*`** describes a screen as it stands: what is on it, where each piece
