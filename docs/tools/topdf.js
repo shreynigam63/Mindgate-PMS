@@ -40,6 +40,8 @@ if (!IN || !OUT) {
   await page.pdf({
     path: OUT,
     format: 'A4',
+    // LANDSCAPE=1 for wide documents (the process flows' swimlanes).
+    landscape: process.env.LANDSCAPE === '1',
     printBackground: true,
     displayHeaderFooter: true,
     headerTemplate: '<div></div>',

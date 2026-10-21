@@ -24,6 +24,20 @@ IN=/tmp/devguide.html OUT=$PWD/docs/Agentic-PMS-Developer-Guide.pdf \
 FOOTER="Agentic PMS — Developer Guide" node docs/tools/topdf.js
 ```
 
+The **process flows** are not markdown: the flows are data in
+`docs/tools/process-flows.py`, which draws the swimlane diagrams as SVG from
+that data, so a diagram and the step table under it cannot disagree. Edit the
+`FLOWS` there, then:
+
+```bash
+python3 docs/tools/process-flows.py /tmp/flows.html
+IN=/tmp/flows.html OUT=$PWD/docs/Agentic-PMS-Process-Flows.pdf LANDSCAPE=1 \
+FOOTER="Agentic PMS — Process Flows" node docs/tools/topdf.js
+```
+
+The build prints a warning for any arrow drawn through a box; fix the layout
+(`col`, `lane`, `route`, `via` or a channel `ch`) until there are none.
+
 `md2html.py` handles nested lists (by indentation), an item's indented
 continuation lines and a fenced code block inside a list item. A
 hand-written `## Contents` section is left out, because the script builds
