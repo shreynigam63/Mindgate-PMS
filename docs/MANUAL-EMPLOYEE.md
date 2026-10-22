@@ -49,7 +49,7 @@ Under the tab is the menu for that tab. Everything in this manual lives under
 | **My Rating** | Your rating history. Greyed out until HR publishes it. |
 | **Past Cycles** | Previous years. |
 | **My Competencies** | Rate yourself against what your role needs. |
-| **Timesheet** | Upload your timesheet export and see how your compliance reads. |
+| **Timesheet** | See how your timesheet compliance reads. HR uploads the timesheets. |
 | **Improvement Plan** | Your improvement plan, if one is open. |
 | **My Surveys** | Engagement surveys HR has sent you. |
 | **People Hub** | The company noticeboard and directory. |
@@ -96,18 +96,12 @@ fix.
 Two things live here: your **compliance** (did you fill your timesheet), and
 your **KRA coverage** (did the work you logged line up with your goals).
 
-### Uploading your export
+### Who uploads it
 
-1. Export your timesheet from **Zoho Sprints**.
-2. Click **Choose File**, pick the file exactly as it came out of Zoho — no editing, no re-saving.
-3. Click **Check the file** first if you want to see what it found.
-4. Click **Upload**.
-
-Three things worth knowing:
-
-- **The sheet's own header row is found wherever it sits**, so extra rows above the headings are not a problem.
-- **Only your own rows are loaded.** A project export usually carries the whole team; everybody else's rows are listed back to you and left alone.
-- **Uploading again replaces the days the new file covers and leaves every other day untouched**, so re-uploading the same export changes nothing. If you made a correction in Zoho, just upload again.
+**HR uploads timesheets** (since 22 October): there is no upload on your page. Log your hours in
+**Zoho Sprints** as usual; once HR loads the export, your report appears here. If a correction is
+needed, make it in Zoho and ask HR to upload again — a re-upload replaces only the days in the new
+file, so nothing else of yours changes.
 
 ### The Compliance tab
 
@@ -143,8 +137,8 @@ month keeps the numbers it was closed with, even if a KRA is reweighted
 afterwards.
 
 **What to do if the numbers look wrong:** don't argue with the screen — it is
-reporting what was logged and what was mapped. If hours are missing, the
-timesheet export is the place to fix it. If hours are in the wrong place, your
+reporting what was logged and what was mapped. If hours are missing, fix them
+in Zoho and ask HR to upload the export again. If hours are in the wrong place, your
 manager holds the mapping.
 
 ---

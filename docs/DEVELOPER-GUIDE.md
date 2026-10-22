@@ -478,10 +478,11 @@ Competencies (`/competencies/me`, `/competencies/team/:employeeId`) run alongsid
 
 ### Timesheet → KRA
 
-1. **Upload.** Employees, managers or HR upload a Zoho Sprints export at `POST /timesheet/upload`.
+1. **Upload.** Only HR and Super Admin upload (since 22 Oct; `mayUpload` checks the held `pms_admin`), at `POST /timesheet/upload` from HR → Timesheet.
    - It is a dry run unless `?commit=1`.
-   - A re-upload replaces only the dates present in the file.
-   - Non-HR uploaders load only their own rows.
+   - **Bulk** loads every row against the person it names; **one person** (`?employee_id=`) loads only that person's rows and reports the rest.
+   - A re-upload replaces only the dates present in the file, per person.
+   - `GET /timesheet/all` returns `can_upload`, which decides whether the screen shows the upload.
 2. **Compliance** is hours logged ÷ (8 h × working days) per period. The period starts on day 21 by default. It is graded Green / Amber / Red against settings.
 3. **Matching to KRAs.** Work items are matched to KRAs in this order: explicit mapping, then KRA title, then keyword.
    - The manager or HR maps them (`/timesheet/kra/employee/:id/map`).

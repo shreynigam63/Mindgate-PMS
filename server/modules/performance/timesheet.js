@@ -3,27 +3,34 @@
 // Asked for on 25 Sep, with the client's Zoho Sprints export and their
 // own compliance dashboard attached:
 //
-//   1  employees get an upload and their OWN report, on the Self tab
+//   1  employees get their OWN report, on the Self tab
 //   2  managers get the dashboard for the people who report to them
 //   3  HR gets it for everybody
 //   4  all three live under a tab called "Timesheet"
 //
 // Mounted by the performance router, which has already authenticated and
-// run the parity gate. Every handler still guards its own rows: the
-// route table cannot express "your own logs only", and that is exactly
-// the rule this feature turns on.
+// run the parity gate. Every handler still guards its own rows.
 //
-// THE UPLOAD IS SCOPED TO THE UPLOADER. An employee may load a file that
-// contains other people's rows — the export is per project, so it very
-// often does — and those rows are REPORTED and skipped, not loaded.
-// Silently loading them would let anyone write another person's
-// compliance record; silently dropping them would leave the employee
-// believing a partial upload was complete.
+// ONLY HR AND SUPER ADMIN UPLOAD (22 Oct): "Timesheet will be updated
+// only by HR/Super Admin and not by employee ... for HR provide option to
+// upload per person and bulk as well." Until then every employee
+// uploaded their own export from Self → Timesheet and HR's rows-for-all
+// was the exception. Now the upload checks the permission the person
+// HOLDS (holdsPermission 'pms_admin' — HR's bundle, and Super Admin's
+// '*'), not one the HRBP gateway lends for a request, so an HRBP reads
+// their remit's timesheets but does not load them.
+//
+// Two ways to load, one route:
+//   bulk        every row in the file, each against the person it names;
+//   one person  ?employee_id=… — only that person's rows load, and every
+//               other row is REPORTED and skipped, never silently loaded
+//               or silently dropped, because the export is per project
+//               and usually carries the whole team.
 const express = require('express');
 const multer = require('multer');
 const db = require('../../core/db');
 const logger = require('../../core/logger');
-const { hasPermission } = require('../../core/permissions');
+const { hasPermission, holdsPermission } = require('../../core/permissions');
 const { parseExcelSheets, parseCsv, detectFormat } = require('../../core/employees');
 const { parseTimesheetSheet, compliance, DEFAULTS } = require('./timesheet-rules');
 const { buildTimesheetTemplate } = require('./timesheet-template');
@@ -247,6 +254,9 @@ router.get('/all', async (req, res) => {
     res.json({
       settings,
       departments,
+      // Whether this screen offers the upload: HR and Super Admin, not an
+      // HRBP reading the same page through the gateway.
+      can_upload: await mayUpload(req),
       employees: rows,
       totals: {
         employees: rows.length,
@@ -284,16 +294,36 @@ router.get('/employee/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Upload
 
+// Who may load timesheets: HR and Super Admin, by the permission they
+// HOLD. Said in one place so the upload, the template and the screens'
+// can_upload flag cannot disagree.
+const mayUpload = (req) => holdsPermission(req.user, 'pms_admin');
+const UPLOAD_REFUSED = { error: 'Timesheets are uploaded by HR. Ask HR to upload yours.', needs: 'pms_admin' };
+
+// The person a one-person upload is for, or an error to send back.
+async function uploadTarget(req) {
+  const id = String(req.query.employee_id || '').trim();
+  if (!id) return { person: null };
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return { status: 400, error: 'employee_id is not a valid id' };
+  const person = (await db.query(
+    `SELECT ${EMP} FROM core.employees e WHERE e.tenant_id=$1 AND e.id=$2 AND e.archived_at IS NULL`,
+    [T(req), id])).rows[0];
+  return person ? { person } : { status: 404, error: 'No current employee with that id' };
+}
+
 // The upload template — the Zoho export's own layout, so a file filled in
 // by hand and an export go through the same parser. See
-// timesheet-template.js. Anyone may download it: an employee uploads their
-// own timesheet, and the template carries no one's data but the
-// downloader's own name and email, on the instructions sheet.
+// timesheet-template.js. HR downloads it; for a one-person upload
+// (?employee_id=) the instructions sheet carries that person's name and
+// email, which are what the Log owner and Owner Mail Id columns need.
 router.get('/template.xlsx', async (req, res) => {
   try {
-    const me = (await db.query(
+    if (!(await mayUpload(req))) return res.status(403).json(UPLOAD_REFUSED);
+    const target = await uploadTarget(req);
+    if (target.error) return res.status(target.status).json({ error: target.error });
+    const who = target.person || (await db.query(
       `SELECT name, email FROM core.employees WHERE tenant_id=$1 AND id=$2`, [T(req), req.user.id])).rows[0] || {};
-    const wb = buildTimesheetTemplate({ name: me.name, email: me.email });
+    const wb = buildTimesheetTemplate({ name: who.name, email: who.email });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="timesheet_upload_template.xlsx"');
     res.send(Buffer.from(await wb.xlsx.writeBuffer()));
@@ -308,6 +338,10 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
   next();
 }), async (req, res) => {
   try {
+    if (!(await mayUpload(req))) return res.status(403).json(UPLOAD_REFUSED);
+    const target = await uploadTarget(req);
+    if (target.error) return res.status(target.status).json({ error: target.error });
+    const person = target.person;
     if (!req.file) return res.status(400).json({ error: 'file required (multipart field "file")' });
     const format = detectFormat(req.file);
     if (format === 'xls-legacy') {
@@ -327,10 +361,6 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
       if (!parsed) parsed = { ...p, sheet: s.name };
     }
     if (parsed.fatal) return res.status(400).json({ error: parsed.fatal });
-
-    const isAdmin = await hasPermission(req.user, 'pms_admin');
-    const me = (await db.query(
-      `SELECT ${EMP} FROM core.employees e WHERE e.tenant_id=$1 AND e.id=$2`, [T(req), req.user.id])).rows[0];
 
     // Resolve owners to employees once, by email then by name. An email
     // is exact; a name is a soft key, so an ambiguous one is reported
@@ -371,9 +401,9 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
         errors.push({ line: e.line, error: `no employee on file for "${e.owner_email || e.owner_name}"` });
         continue;
       }
-      // THE SCOPE RULE. Not a route rule: it is about the row.
-      if (!isAdmin && emp.id !== req.user.id) {
-        skipped.push({ line: e.line, owner: emp.name, reason: 'not your log — only your own rows are loaded' });
+      // ONE PERSON: the rest of the file is reported, not loaded.
+      if (person && emp.id !== person.id) {
+        skipped.push({ line: e.line, owner: emp.name, reason: `not ${person.name} — this upload is for ${person.name} only` });
         continue;
       }
       keep.push({ ...e, employee: emp });
@@ -396,7 +426,8 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
       errors,
       skipped: skipped.slice(0, 200),
       skipped_total: skipped.length,
-      scope: isAdmin ? 'all employees' : 'your own logs only',
+      scope: person ? `${person.name} only` : 'everyone in the file',
+      for_employee: person ? { id: person.id, name: person.name, email: person.email } : null,
     };
 
     // A re-upload replaces only the days the file has logs for, per person
@@ -466,6 +497,7 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
       await audit(req, 'TIMESHEET_UPLOADED', emp.id, {
         batch: batchId,
         file: req.file.originalname,
+        mode: person ? 'one person' : 'bulk',
         rows: keep.filter((e) => e.employee.id === emp.id).length,
         from: report.first_log_date,
         to: report.last_log_date,

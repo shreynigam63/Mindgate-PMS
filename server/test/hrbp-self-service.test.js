@@ -136,7 +136,6 @@ test('an HRBP with no remit at all still has their own pages', async () => {
 
 test('own saves on every router get past the gateway', async () => {
   const tries = [
-    ['timesheet upload', () => post('outside', '/pms/timesheet/upload')],
     ['connect', () => post('outside', '/pms/connects', { employee_id: id.outside, held_at: '2026-10-01', topic: 'mine' })],
     ['appraisal query', () => post('outside', '/people/queries', { subject: 'My rating', body: 'A question' })],
     ['career path', () => put('outside', '/people/career/my-path', { horizon: 'short' })],
@@ -151,6 +150,14 @@ test('own saves on every router get past the gateway', async () => {
   assert.equal(q.status, 200);
   assert.equal(q.body.admin, false, 'People Hub treated the HRBP as HR');
   assert.ok(q.body.queries.some((x) => x.employee_id === id.outside), 'their own query is not listed');
+});
+
+test('an HRBP cannot load timesheets: only HR and Super Admin upload (22 Oct)', async () => {
+  const r = await post('outside', '/pms/timesheet/upload');
+  assert.equal(r.status, 403, JSON.stringify(r.body));
+  assert.match(r.body.error, /uploaded by HR/, 'refused by the upload rule, with its own sentence');
+  const all = await call('outside', '/pms/timesheet/all');
+  if (all.status === 200) assert.equal(all.body.can_upload, false, 'the HRBP Timesheet page offered the upload');
 });
 
 test('nothing is lent on a Self page: the Dashboard is an employee\'s', async () => {

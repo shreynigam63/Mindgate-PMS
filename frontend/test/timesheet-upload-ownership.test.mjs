@@ -1,17 +1,18 @@
-// node --test — the upload panel says WHOSE rows it just loaded.
+// node --test — who uploads timesheets, and whose rows an upload loads.
 //
-// Reported from the live PoC as "we are unable to check information of
-// uploaded data even after upload is completed". Nothing was broken: an
-// admin uploaded another person's Zoho export, all 73 rows loaded against
-// THAT person (the row-level scope rule is bypassed for pms_admin), and
-// My Timesheet — which reads only the signed-in user's own logs — sat
-// underneath the green "73 loaded" line saying "Nothing uploaded yet."
+// 22 Oct: "Timesheet will be updated only by HR/Super Admin and not by
+// employee. Kindly update logic and remove option from employee for
+// uploading time sheet. Also for HR provide option to upload per person
+// and bulk as well." These tests pin all three halves in a real browser:
 //
-// Both panels were telling the truth about different questions, which is
-// the worst kind of correct: it reads as data loss. These tests pin that
-// the screen now names the owner instead.
+//   * Self → Timesheet has no upload any more, and says HR loads it;
+//   * HR → Timesheet uploads in bulk (each row against the person it
+//     names) and for one person (only their rows; the rest is listed);
+//   * an HRBP reading HR's page through the gateway is not offered it.
 //
-// Skips cleanly when the dev stack is not up.
+// The fixture is built here rather than committed as a binary: a Zoho
+// export is only a header row carrying "Log Date" and "Log owner", and a
+// CSV the upload accepts. Skips cleanly when the dev stack is not up.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert';
 import { chromium } from 'playwright-core';
@@ -45,86 +46,99 @@ const token = async (email) => (await (await fetch(`${API}/api/v1/auth/dev-login
   body: JSON.stringify({ email, password: PASS }),
 })).json()).token;
 
-// The fixture is built here rather than committed as a binary: a Zoho
-// export is only a header row carrying "Log Date" and "Log owner", and a
-// CSV the upload accepts. Owned by somebody who is NOT the uploader,
-// which is the whole point.
-const OWNED_BY_SOMEONE_ELSE = [
-  'Item Id,Item Name,Log Type,Log Hours(for calculation),Log owner,Log Date,Approval Status,Description,Owner Mail Id',
-  'MSG-1,Ownership message probe,WorkItem,8,Arun Employee,17/Sep/2026,Approved,probe row,emp@shot.in',
-  'MSG-1,Ownership message probe,WorkItem,8,Arun Employee,18/Sep/2026,Approved,probe row,emp@shot.in',
+const HEAD = 'Item Id,Item Name,Log Type,Log Hours(for calculation),Log owner,Log Date,Approval Status,Description,Owner Mail Id';
+const row = (name, email, date) => `TSU-1,Upload probe,WorkItem,8,${name},${date},Approved,probe row,${email}`;
+// Two people in one file, the way a project export arrives.
+const TEAM_FILE = [HEAD,
+  row('Arun Krishnan', 'emp@shot.in', '15/Oct/2026'),
+  row('Arun Krishnan', 'emp@shot.in', '16/Oct/2026'),
+  row('Kavya Shetty', 'kavya@shot.in', '15/Oct/2026'),
 ].join('\n');
 
-const text = (page) => page.evaluate(() => document.body.textContent);
+const text = (page) => page.evaluate(() => document.body.textContent.replace(/\s+/g, ' '));
 
-async function uploadAs(email, csv) {
+async function open(email, path) {
   const t = await token(email);
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1200 } });
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1300 } });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(APP, { waitUntil: 'domcontentloaded' });
   await page.evaluate((x) => localStorage.setItem('apms_token', x), t);
-  await page.goto(`${APP}/my/timesheet`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(2000);
-  await page.setInputFiles('input[type=file]', {
-    name: 'probe-timesheet.csv', mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8'),
-  });
-  await page.getByRole('button', { name: /Check the file/ }).click();
-  await page.waitForTimeout(2200);
-  await page.getByRole('button', { name: /^Upload/ }).click();
-  await page.waitForTimeout(3000);
+  await page.goto(`${APP}${path}`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1800);
   return { ctx, page, errors };
 }
 
-test('AN ADMIN IS TOLD WHOSE ROWS THEY JUST LOADED, not left with a blank page', async (t) => {
+async function sendFile(page, csv) {
+  await page.setInputFiles('input[type=file]', { name: 'team-export.csv', mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8') });
+  await page.getByRole('button', { name: /Check the file/ }).click();
+  await page.waitForTimeout(1800);
+  await page.getByRole('button', { name: /^Upload$/ }).click();
+  await page.waitForTimeout(2500);
+}
+
+test('SELF → TIMESHEET HAS NO UPLOAD: the employee is told HR loads it', async (t) => {
   if (needStack(t)) return;
-  // admin@shot.in has no logs of their own, exactly like the live admin
-  // who reported this.
-  const { ctx, page, errors } = await uploadAs('admin@shot.in', OWNED_BY_SOMEONE_ELSE);
-  const body = (await text(page)).replace(/\s+/g, ' ');
-
-  assert.match(body, /loaded/, 'the upload itself must still report success');
-  // CONTIGUOUS, deliberately. The first version read
-  // /belong to .*Arun Employee/ and did not bite when the panel was
-  // poisoned to say "belong to other people": the greedy .* bridged all
-  // the way to the owner's name further down in the empty state, so the
-  // assertion passed on two unrelated fragments. Anything matching the
-  // whole document body needs the words next to each other.
-  assert.match(body, /belong to Arun Employee, not to you/,
-    'the owner has to be NAMED — "some rows belong to other people" is what left the reporter stuck');
-  assert.match(body, /This page shows your own logs only/,
-    'and it has to say why this screen is empty, or the next question is identical');
-  assert.match(body, /Open their record under HR . Timesheet/,
-    'and where to go to actually read the data');
-
-  // The whole defect: this sentence must NOT be on screen after a
-  // successful upload.
-  assert.ok(!/Nothing uploaded yet/.test(body),
-    'the empty state contradicted the upload panel directly above it');
+  const { ctx, page, errors } = await open('emp@shot.in', '/my/timesheet');
+  const body = await text(page);
+  assert.equal(await page.locator('input[type=file]').count(), 0, 'a file box is still on the employee page');
+  assert.equal(await page.getByRole('button', { name: /Check the file/ }).count(), 0);
+  assert.equal(await page.getByText(/Download template/).count(), 0);
+  assert.match(body, /uploaded by HR/);
   assert.deepEqual(errors, []);
   await ctx.close();
 });
 
-test('the empty state still reads normally for somebody who has simply never uploaded', async (t) => {
+test('HR BULK: every row loads against the person it names', async (t) => {
   if (needStack(t)) return;
-  // WRITTEN TWICE. The first version of this test only checked the
-  // admin-uploads-for-someone-else path, which passed just as happily
-  // with the honest "Nothing uploaded yet" deleted outright — and that
-  // message is right for a person who has genuinely never uploaded.
-  // hod@shot.in: can actually sign in (only 5 of the 9 demo people have a
-  // local credential — rekha@shot.in does not, and the first run of this
-  // test sat on the sign-in screen and failed for that reason, not for
-  // anything about the message) and has no timesheet rows of their own.
-  const tk = await token('hod@shot.in');
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  const page = await ctx.newPage();
-  await page.goto(APP, { waitUntil: 'domcontentloaded' });
-  await page.evaluate((x) => localStorage.setItem('apms_token', x), tk);
-  await page.goto(`${APP}/my/timesheet`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(2200);
-  const body = (await text(page)).replace(/\s+/g, ' ');
-  assert.match(body, /Nothing uploaded yet/,
-    'with no upload in this session there is nobody to name, and the original wording is correct');
+  const { ctx, page, errors } = await open('hr@shot.in', '/admin/timesheet');
+  assert.match(await text(page), /Upload timesheets/);
+  await page.getByRole('button', { name: /Bulk — everyone in the file/ }).click();
+  await sendFile(page, TEAM_FILE);
+  const body = await text(page);
+  assert.match(body, /Uploaded\. 3 rows read, 3 loaded/);
+  assert.match(body, /Loaded for 2 people: (Arun Krishnan, Kavya Shetty|Kavya Shetty, Arun Krishnan)/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('HR ONE PERSON: only that person\'s rows load, and the rest of the file is listed back', async (t) => {
+  if (needStack(t)) return;
+  const { ctx, page, errors } = await open('hr@shot.in', '/admin/timesheet');
+  await page.getByRole('button', { name: /^One person$/ }).click();
+  await page.getByPlaceholder(/Find the employee/).fill('Kavya');
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: /^Kavya Shetty/ }).first().click();
+  assert.match(await text(page), /For Kavya Shetty kavya@shot\.in/);
+  await sendFile(page, TEAM_FILE);
+  const body = await text(page);
+  assert.match(body, /3 rows read, 1 loaded/);
+  assert.match(body, /Loaded for 1 person: Kavya Shetty/);
+  assert.match(body, /2 rows belong to other people and were not loaded — this upload is for Kavya Shetty only/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a person\'s own timesheet under HR carries an upload for that person', async (t) => {
+  if (needStack(t)) return;
+  const { ctx, page, errors } = await open('hr@shot.in', '/admin/timesheet');
+  await page.getByPlaceholder(/Search/).first().fill('Arun Krishnan');
+  await page.waitForTimeout(400);
+  await page.locator('tr', { hasText: 'Arun Krishnan' }).first().click();
+  await page.waitForTimeout(1500);
+  assert.match(await text(page), /Upload timesheet for Arun Krishnan/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('an HRBP reading HR\'s timesheet page is not offered the upload', async (t) => {
+  if (needStack(t)) return;
+  const { ctx, page, errors } = await open('hrbp@shot.in', '/hrbp/timesheet');
+  const body = await text(page);
+  assert.match(body, /Timesheet Dashboard/);
+  assert.ok(!/Upload timesheets/.test(body), 'the HRBP page offered the upload');
+  assert.equal(await page.locator('input[type=file]').count(), 0);
+  assert.deepEqual(errors, []);
   await ctx.close();
 });

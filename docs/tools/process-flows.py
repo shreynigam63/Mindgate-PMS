@@ -10,14 +10,14 @@ arrows) and the swimlane diagrams are drawn from that data as SVG, so a
 diagram and the step table under it can never disagree about the order of
 things. Edit the FLOWS below, not the PDF.
 
-Every rule stated here was read from the code at build 211b79e or from
+Every rule stated here was read from the code (22 Oct 2026) or from
 docs/LOGIC-BOOK.md, which names the file that enforces it.
 """
 import base64, glob, html, os, re, sys
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else '/tmp/process-flows.html'
-BUILD = '211b79e'
-DATE = '21 October 2026'
+BUILD = 'release of 22 Oct 2026'
+DATE = '22 October 2026'
 
 # ---------------------------------------------------------------- drawing
 LW, CW, BW = 96, 144, 124           # lane label width, column pitch, box width
@@ -709,32 +709,33 @@ FLOWS.append(dict(
 # 11. Timesheet ------------------------------------------------------------
 FLOWS.append(dict(
     id='timesheet', title='Timesheet to KRA',
-    why='Turning logged hours into evidence per KRA: compliance, coverage and a timesheet rating shown beside the manager\'s.',
-    who=['Employee', 'Manager', 'HR', 'System'],
-    where='Self → Timesheet · Manager → Team Timesheet · HR → Timesheet',
-    diagrams=[dict(caption='Upload, map, rate, close', flow=dict(
-        lanes=['Employee', 'System', 'Manager', 'HR'],
+    why='Turning logged hours into evidence per KRA: compliance, coverage and a timesheet rating shown beside the manager\'s. Since 22 Oct only HR and Super Admin upload timesheets.',
+    who=['HR', 'Manager', 'Employee', 'System'],
+    where='HR → Timesheet (upload: bulk or one person) · Manager → Team Timesheet · Self → Timesheet (own report)',
+    diagrams=[dict(caption='Upload (HR only), map, rate, close', flow=dict(
+        lanes=['HR', 'System', 'Manager', 'Employee'],
         nodes={
-            'a': N(0, 0, 'Upload a Zoho export or the filled template', 'start', num=1),
-            'b': N(1, 1, 'Check the file: problems per row, total hours', 'system', num=2),
+            'a': N(0, 0, 'Bulk, or One person: pick the employee; choose the file', 'start', num=1),
+            'b': N(1, 1, 'Check the file: rows per person, problems, total hours', 'system', num=2),
             'c': N(0, 2, 'Upload: replaces only the days in the file', num=3),
             'd': N(1, 3, 'Login hours % and hours matched to KRAs', 'system', num=4),
             'e': N(2, 4, 'Map unplaced items to a KRA, or exclude with a note', num=5),
             'f': N(1, 5, 'Timesheet rating per KRA, shown beside the ratings', 'system', num=6),
-            'g': N(3, 6, 'Close the month (dry run first)', num=7),
-            'h': N(2, 7, 'Override a closed month, with a reason', num=8),
-            'i': N(1, 8, 'Rollup shown in Calibration, context only', 'end', num=9),
+            'x': N(3, 5, 'Sees their own report on Self → Timesheet', 'notify'),
+            'g': N(0, 6, 'Close the month (dry run first)', num=7),
+            'h': N(2, 6, 'Override a closed month, with a reason', num=8),
+            'i': N(1, 7, 'Rollup shown in Calibration, context only', 'end', num=9),
         },
-        edges=[E('a', 'b'), E('b', 'c'), E('c', 'd'), E('d', 'e'), E('e', 'f'), E('f', 'g', 'month over', dash=True, ls=1),
-               E('g', 'h'), E('h', 'i')],
+        edges=[E('a', 'b'), E('b', 'c'), E('c', 'd'), E('d', 'e'), E('e', 'f'), E('f', 'x'),
+               E('f', 'g', 'month over', dash=True, ls=1), E('g', 'h'), E('h', 'i')],
     ))],
     steps=[
-        (1, 'Employee', 'Uploads a Zoho Sprints export, or the Download template filled in by hand. HR can upload for everyone; anyone else loads only their own rows.', ''),
-        (2, 'System', 'Check the file: every problem per row (missing owner or date, an ambiguous date like 05/09/2026, more than 24 hours a log…) and the total hours it will load.', 'Bad rows are not loaded; the rest are.'),
-        (3, 'Employee', 'Uploads. A re-upload replaces only the days the file has logs for.', 'Audited.'),
+        (1, 'HR', 'HR → Timesheet → Upload timesheets. <b>Bulk</b>: every row loads against the person it names. <b>One person</b>: find the employee (or open their own timesheet) and only their rows load. The file is the Zoho Sprints export, or the Download template filled in by hand.', 'Only HR and Super Admin upload. Employees, managers and HRBPs cannot (403 “Timesheets are uploaded by HR”).'),
+        (2, 'System', 'Check the file: every problem per row (missing owner or date, an ambiguous date like 05/09/2026, more than 24 hours a log…), who the rows belong to, and the total hours it will load. In One person mode, other people\'s rows are listed back and not loaded.', 'Bad rows are not loaded; the rest are.'),
+        (3, 'HR', 'Uploads. A re-upload replaces only the days the file has logs for, person by person.', 'Audited per person, with the mode.'),
         (4, 'System', 'Login hours % = hours logged ÷ (8 h × working days), graded Green / Amber / Red. Hours reach a KRA by: a mapping, else the KRA\'s own name, else its keywords, else unplaced.', ''),
         (5, 'Manager', 'Team Timesheet → KRA coverage: maps each unplaced work item to a KRA, or excludes it with a note.', 'The employee cannot map their own items.'),
-        (6, 'System', 'Per KRA: effort % = hours ÷ expected hours (required hours × the KRA\'s weight share). A+ 100%+, A 80%+, B+ 70%+, B below.', 'Shown on My KRAs, Team KRA Sheets, Team Evaluation and HOD Review. Evidence, never the rating of record.'),
+        (6, 'System', 'Per KRA: effort % = hours ÷ expected hours (required hours × the KRA\'s weight share). A+ 100%+, A 80%+, B+ 70%+, B below. The employee reads their own report on Self → Timesheet.', 'Shown on My KRAs, Team KRA Sheets, Team Evaluation and HOD Review. Evidence, never the rating of record.'),
         (7, 'HR', 'Closes a finished month (a dry run first): a snapshot per person.', 'Audited.'),
         (8, 'Manager / HR', 'Overrides a closed month\'s score or grade with a reason.', 'Audited; shown as “overridden”.'),
         (9, 'System', 'The yearly rollup appears in Calibration as context only.', 'It never feeds the rating, the spread or the budget.'),
@@ -1018,7 +1019,7 @@ def build():
   who does what, in which order, what the system does and who is told.</p>
   <table class="meta"><tbody>
     <tr><td>For</td><td>HR, managers, QA and developers</td></tr>
-    <tr><td>Application</td><td>https://pms.agentichumans.in · build {BUILD}</td></tr>
+    <tr><td>Application</td><td>https://pms.agentichumans.in · {BUILD}</td></tr>
     <tr><td>Date</td><td>{DATE}</td></tr>
     <tr><td>Rules in detail</td><td>docs/LOGIC-BOOK.md (each rule names the file that enforces it)</td></tr>
   </tbody></table>

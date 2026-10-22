@@ -17,6 +17,7 @@ import TimesheetDashboard from '../TimesheetDashboard';
 import TimesheetTabs from '../TimesheetTabs';
 import TimesheetKra from '../TimesheetKra';
 import KraRatingSettings from '../KraRatingSettings';
+import TimesheetUpload from '../TimesheetUpload';
 import { TimesheetRoster } from './TeamTimesheetPage';
 import SearchBox from '../SearchBox';
 import {
@@ -455,6 +456,9 @@ export default function HrTimesheetPage() {
   const [report, setReport] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [view, setView] = useState('compliance');
+  // Bumped after an upload on a person's own timesheet, so their report
+  // and KRA coverage are read again.
+  const [loadedAt, setLoadedAt] = useState(0);
 
   const load = () => api(`/pms/timesheet/all${dept ? `?department=${encodeURIComponent(dept)}` : ''}`)
     .then(setD).catch((e) => setErr(e.message));
@@ -463,7 +467,7 @@ export default function HrTimesheetPage() {
     if (!open) { setReport(null); return; }
     setReport(null);
     api(`/pms/timesheet/employee/${open.id}`).then(setReport).catch((e) => setErr(e.message));
-  }, [open]);
+  }, [open, loadedAt]);
 
   if (err && !d) return <p className="text-sm text-rose-600">{err}</p>;
   if (!d) return <p className="text-sm text-navy-400">Loading…</p>;
@@ -477,9 +481,15 @@ export default function HrTimesheetPage() {
             <ChevronLeft size={13} className="inline mr-1" />Back to everyone
           </button>
         </PageHead>
+        {/* One person's upload, on their own timesheet (22 Oct): only
+            HR and Super Admin load timesheets — not an HRBP reading this
+            page through the gateway. */}
+        {d.can_upload && (
+          <TimesheetUpload person={open} onLoaded={() => { load(); setLoadedAt(Date.now()); }} />
+        )}
         <TimesheetTabs value={view} onChange={setView} />
         {view === 'kra'
-          ? <TimesheetKra employeeId={open.id} canMap />
+          ? <TimesheetKra key={loadedAt} employeeId={open.id} canMap />
           : report ? <TimesheetDashboard report={report} /> : <p className="text-sm text-navy-400">Loading…</p>}
       </div>
     );
@@ -489,7 +499,9 @@ export default function HrTimesheetPage() {
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
       <PageHead title="Timesheet Dashboard" hue="violet"
-        sub="Timesheet compliance across the organisation.">
+        sub={d.can_upload
+          ? 'Timesheet compliance across the organisation. Timesheets are uploaded here, in bulk or for one person.'
+          : 'Timesheet compliance across the organisation.'}>
         <select className="inp !py-1 !px-2 text-xs w-auto !text-navy-800" value={dept}
           onChange={(e) => setDept(e.target.value)}>
           <option value="">Every department</option>
@@ -503,11 +515,15 @@ export default function HrTimesheetPage() {
       {showSettings && <Settings settings={d.settings} onSaved={() => load()} />}
       {showSettings && <KraRatingSettings />}
 
+      {d.can_upload && (
+        <TimesheetUpload people={(d.employees || []).map((r) => r.employee)} onLoaded={() => load()} />
+      )}
+
       <TimesheetTabs value={view} onChange={setView} />
       {view === 'kra' ? <Backlog onOpen={setOpen} /> : <>
       <div className="kpirow">
         <Stat icon={Users} hue="violet" n={t.employees ?? 0} label="Employees in scope"
-          sub={`${t.with_data ?? 0} have uploaded`} />
+          sub={`${t.with_data ?? 0} have a timesheet loaded`} />
         <Stat icon={CheckCircle2} hue="leaf" n={t.green ?? 0} label="Green" />
         <Stat icon={AlertTriangle} hue="amber" n={t.amber ?? 0} label="Amber" />
         <Stat icon={XCircle} hue="red" n={t.red ?? 0} label="Red" />
@@ -517,8 +533,8 @@ export default function HrTimesheetPage() {
       {!!t.no_data && (
         <p className="card p-3 text-[11.5px] text-navy-600 border-l-4 border-amber2-500">
           <b>Read the ratings against the coverage.</b> {t.no_data} of {t.employees} people
-          {dept ? ` in ${dept}` : ''} have uploaded nothing yet, so they carry no rating at all —
-          they are not Red. Green, Amber and Red above describe the {t.with_data} who have.
+          {dept ? ` in ${dept}` : ''} have no timesheet loaded yet, so they carry no rating at all —
+          they are not Red. Green, Amber and Red above describe the {t.with_data} who have one.
         </p>
       )}
 

@@ -226,9 +226,10 @@ missing — send that wording to HR rather than describing the screen.
 
 **My report says their coverage is wrong.** Look at the mapping first: an
 unplaced or ambiguous item is the usual cause, and it is yours to fix. If
-hours are genuinely missing, that is a timesheet-export problem and they fix
-it by re-uploading — re-uploading the same export changes nothing, so it is
-always safe to try.
+hours are genuinely missing, that is a timesheet-export problem: the hours
+are corrected in Zoho and HR uploads the export again (only HR uploads
+timesheets) — re-uploading the same export changes nothing, so it is always
+safe to try.
 
 **A month is settled and the number is wrong.** Override it with a reason.
 Do not ask HR to re-close the period; a settled month is meant to hold still.

@@ -147,15 +147,15 @@ export default function TeamTimesheetPage() {
         sub="Timesheet compliance for the people who report to you. Click anyone for their full record." />
       <div className="kpirow">
         <Stat icon={Users} hue="lagoon" n={rows.length} label="Your reportees"
-          sub={`${withData.length} have uploaded`} />
+          sub={`${withData.length} have a timesheet loaded`} />
         <Stat icon={CheckCircle2} hue="leaf" n={withData.filter((r) => r.rating === 'Green').length} label="Green" />
         <Stat icon={AlertTriangle} hue="amber" n={withData.filter((r) => r.rating === 'Amber').length} label="Amber" />
         <Stat icon={XCircle} hue="red" n={withData.filter((r) => r.rating === 'Red').length} label="Red" />
       </div>
       {rows.length > withData.length && (
         <p className="card p-3 text-[11.5px] text-navy-600 border-l-4 border-amber2-500">
-          <b>{rows.length - withData.length}</b> of your {rows.length} reportees have uploaded nothing yet,
-          so they carry no rating. They are not Red — there is simply no data about them.
+          <b>{rows.length - withData.length}</b> of your {rows.length} reportees have no timesheet loaded
+          yet (HR uploads them), so they carry no rating. They are not Red — there is simply no data about them.
         </p>
       )}
       <TimesheetRoster rows={rows} onOpen={setOpen} q={q} setQ={setQ} />

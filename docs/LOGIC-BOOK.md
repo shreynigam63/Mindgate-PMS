@@ -247,7 +247,7 @@ deploy shows a *Reload now* bar (`BuildWatch`).
 | My Rating | `/my/rating` | **Gated**: opens only once something is published for you. Not a permission — an emptiness |
 | Past Cycles | `/my/history` | Published history plus imported prior-year ratings |
 | My Competencies | `/my/competencies` | §3.8 |
-| Timesheet | `/my/timesheet` | Upload your own timesheet (a Zoho Sprints export, or the **Download template** filled in by hand, §3.7) and see your own report. Your manager decides which KRA each item serves |
+| Timesheet | `/my/timesheet` | Your own report only. **HR uploads timesheets** (§3.22); there is no upload here. Your manager decides which KRA each item serves |
 | Improvement Plan | `/pip` | Public page, row-scoped in the handler: your own plan, or your reports' |
 | My Surveys | `/engagement` | §3.11 |
 | People Hub | `/people` | Company noticeboard |
@@ -644,7 +644,7 @@ breadth over value: on the real client month, every hour in one KRA scored
 
 The monthly rollup feeds Calibration as a **suggestion only**.
 
-**The upload template (8 Oct).** *Self → Timesheet → Download template*
+**The upload template (8 Oct).** *HR → Timesheet → Download template* (on Self → Timesheet until 22 Oct)
 gives an `.xlsx` laid out exactly like the Zoho Sprints export people
 already upload: sheet *Main*, the five metadata rows, the Timesheet / Item
 / Meeting bands, and the same 52 headings in the same order — repeated
@@ -1238,6 +1238,21 @@ From the defect tracker and the employee and manager test cases.
 **Status tabs** (Team KRA Sheets, Team Evaluation, All Approvals) always show every tab with its count, 0 included: on Team KRA Sheets *All · Pending · Approved · Returned · Not submitted*. Statuses read in words (*Not submitted*, not `not_started`) and weights as *100%*.
 
 **Team Timesheet.** The Manager menu's timesheet page is named *Team Timesheet*.
+
+## 3.22 Changes of 22 Oct — timesheets are uploaded by HR
+
+*"Timesheet will be updated only by HR/Super Admin and not by employee. Kindly update logic and remove option from employee for uploading time sheet. Also for HR provide option to upload per person and bulk as well."*
+
+**Who uploads.** Only HR and Super Admin, checked on the permission they **hold** (`pms_admin`; `holdsPermission`, `timesheet.js` `mayUpload`). An employee or a manager gets 403 *"Timesheets are uploaded by HR. Ask HR to upload yours."* on the upload and on the template; an HRBP reads their remit's timesheets but is not lent the upload. Self → Timesheet is the employee's own report and nothing else.
+
+**Two ways to load, one route** (`POST /pms/timesheet/upload`, check first, then `?commit=1`):
+
+| Mode | How | What loads |
+|---|---|---|
+| Bulk | HR → Timesheet → Upload timesheets → *Bulk — everyone in the file* | Every row, against the person it names (Owner Mail Id, else Log owner) |
+| One person | *One person* → find the employee; or the upload on that person's own timesheet | `?employee_id=` — only that person's rows; every other row is reported (*"this upload is for … only"*) and left alone |
+
+Everything else is as before: a re-upload replaces only the days the file has logs for, per person; each upload is audited per person (`TIMESHEET_UPLOADED`, now with `mode`). The template is on HR → Timesheet; in One person mode it names that person's Log owner and Owner Mail Id. `GET /pms/timesheet/all` carries `can_upload`, which decides whether the screen shows the upload.
 
 # Part 4 — Changing behaviour without code
 

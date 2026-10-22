@@ -51,7 +51,7 @@ not bundled with general HR administration. A manager must never see it.
 | **KRA Library** | Publish a shelf of suggested KRAs per job title. |
 | **Competency Framework** | What the organisation expects, by competency and job. |
 | **Competency Dashboard** | Where the organisation stands against it. |
-| **Timesheet** | Compliance, KRA coverage, closing periods, the year-end rollup. |
+| **Timesheet** | Uploading timesheets (bulk or one person), compliance, KRA coverage, closing periods, the year-end rollup. |
 | **PMS Completion Report** | Who has completed what. |
 | **Calibration** | Grade bands, distribution, the increment kitty. |
 | **9-Box Grid** | Performance against potential, placed from the scores; succession, movement and reports. |
@@ -127,6 +127,23 @@ improvement, innovation, value addition). Edit the list here.
 ---
 
 ## 6. Timesheet — the HR view
+
+### Uploading timesheets
+
+Only **HR and Super Admin** upload timesheets (since 22 October); employees and managers no longer
+can, and an HRBP reads this page without the upload. **HR → Timesheet → Upload timesheets** has two
+modes:
+
+- **Bulk — everyone in the file.** Every row loads against the person it names (Owner Mail Id,
+  else Log owner). Use it for a project or team export.
+- **One person.** Find the employee, then upload: only their rows load, and every other row in the
+  file is listed back and left alone. The same upload sits on each person's own timesheet (open
+  them from the list).
+
+Both are **Check the file** first (what will load, the hours, any row that cannot be read), then
+**Upload**. Re-uploading replaces only the days the new file has logs for, person by person.
+**Download template** gives the export's layout to fill by hand; in One person mode it names that
+person's Log owner and Owner Mail Id.
 
 Two tabs: **Compliance** and **KRA coverage**.
 

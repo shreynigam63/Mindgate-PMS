@@ -54,12 +54,13 @@ async function open(email, path) {
   return { ctx, page, errors };
 }
 
-test('one tab named Timesheet on Self, Manager and HR', async (t) => {
+test('one Timesheet tab on Self, Manager and HR', async (t) => {
   if (needStack(t)) return;
-  for (const [email, group, path] of [
-    ['emp@shot.in', 'Self', '/my/timesheet'],
-    ['mgr@shot.in', 'Manager', '/team/timesheet'],
-    ['admin@shot.in', 'HR', '/admin/timesheet'],
+  // The Manager's is named "Team Timesheet" since 20 Oct (client QA, round 2).
+  for (const [email, group, path, label] of [
+    ['emp@shot.in', 'Self', '/my/timesheet', 'Timesheet'],
+    ['mgr@shot.in', 'Manager', '/team/timesheet', 'Team Timesheet'],
+    ['admin@shot.in', 'HR', '/admin/timesheet', 'Timesheet'],
   ]) {
     const { ctx, page, errors } = await open(email, path);
     const links = await page.$$eval('nav a, header a', (as) => as.map((a) => ({
@@ -67,19 +68,19 @@ test('one tab named Timesheet on Self, Manager and HR', async (t) => {
     })));
     const ts = links.filter((l) => (l.href || '').includes('timesheet'));
     assert.equal(ts.length, 1, `${group}: exactly one Timesheet link in the nav`);
-    assert.equal(ts[0].text, 'Timesheet', `${group}: the tab is named Timesheet`);
+    assert.equal(ts[0].text, label, `${group}: the tab is named ${label}`);
     assert.equal(ts[0].href, path, `${group}: it points at ${path}`);
     assert.deepEqual(errors, [], `${group}: no page errors`);
     await ctx.close();
   }
 });
 
-test('Self offers an upload and the employee\'s own report, and nobody else\'s', async (t) => {
+test('Self is the employee\'s own report — no upload (22 Oct: HR uploads) — and nobody else\'s', async (t) => {
   if (needStack(t)) return;
   const { ctx, page, errors } = await open('emp@shot.in', '/my/timesheet');
-  assert.equal(await page.locator('input[type=file]').count(), 1, 'the upload control is there');
+  assert.equal(await page.locator('input[type=file]').count(), 0, 'the employee page still offers an upload');
   const main = await page.locator('main').innerText();
-  assert.match(main, /Only your own rows are loaded/i);
+  assert.match(main, /uploaded by HR/i);
   // The page is about the signed-in person. Nobody else's name appears —
   // the control here is a colleague who HAS uploaded, so a leak would
   // show up rather than being masked by an empty database.
@@ -135,7 +136,7 @@ test('the HR tab covers everybody and states the coverage', async (t) => {
   assert.match(main, /Every department/i);
   // People with no upload must be reported as having no data, never as
   // Red — the whole reason the totals split them out.
-  assert.match(main, /uploaded nothing yet|have uploaded/i);
+  assert.match(main, /no timesheet loaded yet|have a timesheet loaded/i);
   assert.deepEqual(errors, []);
   await ctx.close();
 });

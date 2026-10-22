@@ -1,11 +1,10 @@
 // node --test — timesheets end to end: real Postgres, real HTTP, real
 // migrations, a real .xlsx built in memory and posted as multipart.
 //
-// The rule this feature turns on is the one worth testing hardest: an
-// employee may upload a file full of the whole team's logs, and only
-// their own rows may be loaded. Route rules cannot express that, so it
-// lives in the handler — and so it gets a test that would catch it
-// coming back.
+// The rule worth testing hardest (22 Oct): only HR and Super Admin load
+// timesheets — in bulk, every row against the person it names, or for
+// one person, when only that person's rows load and the rest of the file
+// is reported. An employee or a manager cannot upload at all.
 const { test, after, before } = require('node:test');
 const assert = require('node:assert');
 const ExcelJS = require('exceljs');
@@ -49,10 +48,11 @@ async function exportBuffer(logs) {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-async function upload(tok, logs, commit) {
+async function upload(tok, logs, commit, employeeId) {
   const fd = new FormData();
   fd.append('file', new Blob([await exportBuffer(logs)]), 'timesheet.xlsx');
-  const r = await fetch(`${base}/pms/timesheet/upload${commit ? '?commit=1' : ''}`, {
+  const q = [commit && 'commit=1', employeeId && `employee_id=${employeeId}`].filter(Boolean).join('&');
+  const r = await fetch(`${base}/pms/timesheet/upload${q ? `?${q}` : ''}`, {
     method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd,
   });
   return { status: r.status, body: await r.json().catch(() => ({})) };
@@ -136,7 +136,7 @@ test('the three pages are registered, each behind its own permission', { skip },
 });
 
 test('a dry run saves nothing and says what it would do', { skip }, async () => {
-  const r = await upload(empTok, WEEK.slice(0, 3).map((d) => ({ date: d, name: 'TS Report', email: 'ts-emp@x.com' })));
+  const r = await upload(adminTok, WEEK.slice(0, 3).map((d) => ({ date: d, name: 'TS Report', email: 'ts-emp@x.com' })));
   assert.equal(r.status, 200);
   assert.equal(r.body.committed, false);
   assert.equal(r.body.loadable, 3);
@@ -146,26 +146,41 @@ test('a dry run saves nothing and says what it would do', { skip }, async () => 
   assert.equal(n, 0, 'a dry run must not write');
 });
 
-test('an employee uploading the whole team\'s export loads ONLY their own rows', { skip }, async () => {
+test('an employee or a manager cannot upload a timesheet at all, not even their own', { skip }, async () => {
+  const own = WEEK.slice(0, 2).map((d) => ({ date: d, name: 'TS Report', email: 'ts-emp@x.com' }));
+  for (const [who, tok] of [['employee', empTok], ['manager', mgrTok]]) {
+    const r = await upload(tok, own, true);
+    assert.equal(r.status, 403, `${who}: ${JSON.stringify(r.body)}`);
+    assert.match(r.body.error, /uploaded by HR/);
+    const t = await fetch(`${base}/pms/timesheet/template.xlsx`, { headers: { Authorization: `Bearer ${tok}` } });
+    assert.equal(t.status, 403, `${who} downloaded the upload template`);
+  }
+  const n = (await db.query(`SELECT count(*)::int AS n FROM pms.timesheet_entries WHERE tenant_id=$1`, [tenantId])).rows[0].n;
+  assert.equal(n, 0, 'nothing was written');
+});
+
+test('HR uploading for ONE person loads only that person\'s rows and reports the rest', { skip }, async () => {
   const logs = [
     ...WEEK.slice(0, 4).map((d) => ({ date: d, name: 'TS Report', email: 'ts-emp@x.com' })),
     ...WEEK.slice(0, 5).map((d) => ({ date: d, name: 'TS Stranger', email: 'ts-far@x.com' })),
   ];
-  const r = await upload(empTok, logs, true);
-  assert.equal(r.status, 200);
+  const r = await upload(adminTok, logs, true, empId);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.committed, true);
-  assert.equal(r.body.loadable, 4, 'four of their own');
+  assert.equal(r.body.loadable, 4, 'four of TS Report\'s');
   assert.equal(r.body.skipped_total, 5, 'five belonging to someone else');
-  assert.equal(r.body.scope, 'your own logs only');
-  // And the database agrees — the point of the rule.
-  const mine = (await db.query(
+  assert.equal(r.body.scope, 'TS Report only');
+  assert.equal(r.body.for_employee.id, empId);
+  assert.match(r.body.skipped[0].reason, /this upload is for TS Report only/);
+  const count = async (id) => (await db.query(
     `SELECT count(*)::int AS n FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2`,
-    [tenantId, empId])).rows[0].n;
-  const theirs = (await db.query(
-    `SELECT count(*)::int AS n FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2`,
-    [tenantId, farId])).rows[0].n;
-  assert.equal(mine, 4);
-  assert.equal(theirs, 0, 'nobody may write another person\'s timesheet');
+    [tenantId, id])).rows[0].n;
+  assert.equal(await count(empId), 4);
+  assert.equal(await count(farId), 0, 'the rest of the file was not loaded');
+  const bad = await upload(adminTok, logs, false, 'not-an-id');
+  assert.equal(bad.status, 400);
+  const gone = await upload(adminTok, logs, false, '00000000-0000-4000-8000-000000000000');
+  assert.equal(gone.status, 404);
 });
 
 test('HR uploading the same file loads everybody', { skip }, async () => {
@@ -173,7 +188,8 @@ test('HR uploading the same file loads everybody', { skip }, async () => {
   const r = await upload(adminTok, logs, true);
   assert.equal(r.body.committed, true);
   assert.equal(r.body.skipped_total, 0);
-  assert.equal(r.body.scope, 'all employees');
+  assert.equal(r.body.scope, 'everyone in the file');
+  assert.equal(r.body.for_employee, null);
   const theirs = (await db.query(
     `SELECT count(*)::int AS n FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2`,
     [tenantId, farId])).rows[0].n;
@@ -184,7 +200,7 @@ test('re-uploading the same export twice is a no-op, not a doubling', { skip }, 
   const before = (await db.query(
     `SELECT count(*)::int AS n FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2`,
     [tenantId, empId])).rows[0].n;
-  await upload(empTok, WEEK.slice(0, 4).map((d) => ({ date: d, name: 'TS Report', email: 'ts-emp@x.com' })), true);
+  await upload(adminTok, WEEK.slice(0, 4).map((d) => ({ date: d, name: 'TS Report', email: 'ts-emp@x.com' })), true);
   const after2 = (await db.query(
     `SELECT count(*)::int AS n FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2`,
     [tenantId, empId])).rows[0].n;
@@ -197,16 +213,16 @@ test('a re-upload replaces only the days in the file, not the days between them 
       WHERE tenant_id=$1 AND employee_id=$2 ORDER BY log_date`, [tenantId, empId])).rows.map((r) => r.d);
   const had = await days();
   const logs = [WEEK[0], WEEK[3]].map((d) => ({ date: d, name: 'TS Report', email: 'ts-emp@x.com' }));
-  const check = await upload(empTok, logs, false);
+  const check = await upload(adminTok, logs, false, empId);
   assert.equal(check.body.replaces_stored, 2, 'the check says how many stored logs go');
-  const r = await upload(empTok, logs, true);
+  const r = await upload(adminTok, logs, true, empId);
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.replaced, 2);
   assert.deepEqual(await days(), had, '22 and 23 Sep are still there');
 });
 
 test('an upload outside the window leaves the earlier window alone', { skip }, async () => {
-  await upload(empTok, [{ date: '2026-08-24', name: 'TS Report', email: 'ts-emp@x.com' }], true);
+  await upload(adminTok, [{ date: '2026-08-24', name: 'TS Report', email: 'ts-emp@x.com' }], true);
   const dates = (await db.query(
     `SELECT to_char(log_date,'YYYY-MM-DD') AS d FROM pms.timesheet_entries
       WHERE tenant_id=$1 AND employee_id=$2 ORDER BY log_date`, [tenantId, empId])).rows.map((r) => r.d);
@@ -247,6 +263,7 @@ test('a manager sees their reports, and cannot open anybody else', { skip }, asy
 test('HR sees everybody, and people with no upload are "no data" rather than Red', { skip }, async () => {
   const r = await call(adminTok, '/pms/timesheet/all?as_of=2026-09-25');
   assert.equal(r.status, 200);
+  assert.equal(r.body.can_upload, true, 'HR\'s Timesheet page offers the upload');
   const by = Object.fromEntries(r.body.employees.map((x) => [x.employee.email, x]));
   assert.equal(by['ts-emp@x.com'].has_data, true);
   assert.equal(by['ts-mgr@x.com'].has_data, false, 'the manager has uploaded nothing');
@@ -276,7 +293,7 @@ test('a file that is not a timesheet is refused with a reason', { skip }, async 
   const fd = new FormData();
   fd.append('file', new Blob([Buffer.from(await wb.xlsx.writeBuffer())]), 'nope.xlsx');
   const r = await fetch(`${base}/pms/timesheet/upload`, {
-    method: 'POST', headers: { Authorization: `Bearer ${empTok}` }, body: fd,
+    method: 'POST', headers: { Authorization: `Bearer ${adminTok}` }, body: fd,
   });
   assert.equal(r.status, 400);
   assert.match((await r.json()).error, /Log Date/);
@@ -321,8 +338,8 @@ test('every upload is audited against the employee it touched', { skip }, async 
   assert.ok(rows.every((r) => r.details && r.details.file));
 });
 
-test('TEMPLATE: an employee downloads it, fills one row, and it uploads like an export', { skip }, async () => {
-  const r = await fetch(`${base}/pms/timesheet/template.xlsx`, { headers: { Authorization: `Bearer ${empTok}` } });
+test('TEMPLATE: HR downloads it for one person, fills one row, and it uploads like an export', { skip }, async () => {
+  const r = await fetch(`${base}/pms/timesheet/template.xlsx?employee_id=${empId}`, { headers: { Authorization: `Bearer ${adminTok}` } });
   assert.equal(r.status, 200);
   assert.match(r.headers.get('content-type'), /spreadsheetml/);
   assert.match(r.headers.get('content-disposition'), /timesheet_upload_template\.xlsx/);
@@ -331,7 +348,7 @@ test('TEMPLATE: an employee downloads it, fills one row, and it uploads like an 
   const help = wb.getWorksheet('How to fill this in');
   const helpText = [];
   help.eachRow((row) => helpText.push(row.values.join(' ')));
-  assert.ok(helpText.some((t) => t.includes('ts-emp@x.com')), 'it tells the downloader what to put in Owner Mail Id');
+  assert.ok(helpText.some((t) => t.includes('ts-emp@x.com')), 'it names the person\'s Owner Mail Id');
   assert.ok(helpText.some((t) => t.includes('TS Report')), 'and in Log owner');
 
   const ws = wb.getWorksheet('Main');
@@ -342,7 +359,7 @@ test('TEMPLATE: an employee downloads it, fills one row, and it uploads like an 
   ws.getCell('B8').value = 'Filled from the template';
   const fd = new FormData();
   fd.append('file', new Blob([Buffer.from(await wb.xlsx.writeBuffer())]), 'timesheet_upload_template.xlsx');
-  const up = await fetch(`${base}/pms/timesheet/upload?commit=1`, { method: 'POST', headers: { Authorization: `Bearer ${empTok}` }, body: fd });
+  const up = await fetch(`${base}/pms/timesheet/upload?commit=1&employee_id=${empId}`, { method: 'POST', headers: { Authorization: `Bearer ${adminTok}` }, body: fd });
   const body = await up.json();
   assert.equal(up.status, 200, JSON.stringify(body));
   assert.equal(body.loadable, 1);

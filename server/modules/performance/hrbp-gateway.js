@@ -126,6 +126,9 @@ const SELF_SERVICE = {
     ['GET', '/closure-letters/me/:cycle/download'],
     ['GET', '/review/kras/:me'], ['PUT', '/review/kras/:me'],
     ['GET', '/competencies/me'], ['PUT', '/competencies/me'], ['POST', '/competencies/me/submit'],
+    // The template and the upload stay here so the gateway steps aside and
+    // the route's own answer reaches an HRBP: since 22 Oct only HR and
+    // Super Admin load timesheets (timesheet.js mayUpload).
     ['GET', '/timesheet/me'], ['GET', '/timesheet/template.xlsx'], ['POST', '/timesheet/upload'],
     ['GET', '/timesheet/kra/me'], ['GET', '/timesheet/kra/months/me'],
     ['GET', '/connects'], ['GET', '/connects/questions'], ['GET', '/connects/people'],
