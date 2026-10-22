@@ -376,3 +376,10 @@ test('the totals say how many hours have a Log Title that places them, one that 
   ], KRAS);
   assert.deepEqual(r.totals.log_title, { placed: 5, not_a_kra: 2, blank: 3 });
 });
+
+test('an exact title wins over the loose comparison: "Time sheet" and "Timesheet" stay two KRAs', () => {
+  const kras = [{ id: 'a', title: 'Time sheet' }, { id: 'b', title: 'Timesheet' }];
+  assert.deepEqual(m.krasNamedBy('Time sheet', kras).map((k) => k.id), ['a']);
+  assert.deepEqual(m.krasNamedBy('timesheet', kras).map((k) => k.id), ['b']);
+  assert.deepEqual(m.krasNamedBy('Time-sheet', kras).map((k) => k.id).sort(), ['a', 'b'], 'loose only: both, so ambiguous');
+});

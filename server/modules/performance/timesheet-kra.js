@@ -263,7 +263,12 @@ async function reportFor(req, target, q) {
   // usually one still in progress with no logs in it yet. Asked for
   // 1 May to 30 Sep it reported 0% compliance for somebody at 82.8%.
   // A wrong number that looks like a real one is worse than no number.
-  const comp = compliance(entries, settings, win.to);
+  // Counted to today at the latest (22 Oct): a month still in progress
+  // owes only the working days already past. Counted to its last day, two
+  // filled days of 21 Oct – 20 Nov read as 4.9% — the rest of the month
+  // marked missing before it had happened.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const comp = compliance(entries, settings, win.to < todayIso ? win.to : todayIso);
   const cyc = comp.cycles.find((c) => c.start === win.from) || null;
   const agg = cyc || comp.total;
   // Null rather than 0 when there are no logs, and also when the window
@@ -457,18 +462,22 @@ router.get('/backlog', async (req, res) => {
                 ${TITLE_KEY_SQL('t.log_title')} AS lt_key
            FROM pms.timesheet_entries t
           WHERE t.tenant_id=$1 AND t.log_date >= $2::date AND t.log_date <= $3::date),
-       titles AS (
-         SELECT s.employee_id, ${TITLE_KEY_SQL('k.title')} AS lt_key, count(*) AS n
+       kt AS (
+         SELECT s.employee_id, ${TITLE_SQL('k.title')} AS lt, ${TITLE_KEY_SQL('k.title')} AS lt_key
            FROM pms.kra_sheets s JOIN pms.kras k ON k.sheet_id = s.id
-          WHERE s.tenant_id=$1 AND s.cycle_id=$4
-          GROUP BY 1,2),
+          WHERE s.tenant_id=$1 AND s.cycle_id=$4),
+       exact AS (SELECT employee_id, lt, count(*) AS n FROM kt GROUP BY 1,2),
+       loose AS (SELECT employee_id, lt_key, count(*) AS n FROM kt GROUP BY 1,2),
        items AS (
          SELECT t.employee_id,
                 CASE WHEN t.lt <> '' THEN t.base_key || '${match.LOG_TITLE_KEY}' || t.lt ELSE t.base_key END AS item_key,
-                coalesce(bool_or(ti.n = 1), false) AS by_title,
+                -- The exact title first, the loose one only when none is
+                -- exact (krasNamedBy in timesheet-kra-match.js).
+                coalesce(bool_or(ex.n = 1 OR (ex.n IS NULL AND lo.n = 1)), false) AS by_title,
                 sum(t.hours) AS hours
            FROM t
-           LEFT JOIN titles ti ON ti.employee_id = t.employee_id AND ti.lt_key = t.lt_key AND t.lt_key <> ''
+           LEFT JOIN exact ex ON ex.employee_id = t.employee_id AND ex.lt = t.lt AND t.lt <> ''
+           LEFT JOIN loose lo ON lo.employee_id = t.employee_id AND lo.lt_key = t.lt_key AND t.lt_key <> ''
           GROUP BY 1,2)
        SELECT e.id, e.name, e.emp_code, e.department, e.designation,
               count(*) AS items,

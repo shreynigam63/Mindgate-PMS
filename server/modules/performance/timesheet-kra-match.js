@@ -106,7 +106,13 @@ const normName = (v) => String(v == null ? '' : v).trim().replace(/\s+/g, ' ').r
 // matches — "On-Site / Remote System Installation & Configuration" and
 // "On Site/Remote System Installation and Configuration" are the same KRA.
 const titleKey = (v) => String(v == null ? '' : v).toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '');
+// The exact title wins first: "Time sheet" and "Timesheet" are two KRAs
+// on some sheets, and only the loose comparison would confuse them.
 function krasNamedBy(logTitle, kras) {
+  const exact = normName(logTitle);
+  if (!exact) return [];
+  const same = kras.filter((k) => normName(k.title) === exact);
+  if (same.length) return same;
   const t = titleKey(logTitle);
   return t ? kras.filter((k) => titleKey(k.title) === t) : [];
 }
