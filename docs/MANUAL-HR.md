@@ -145,6 +145,15 @@ Both are **Check the file** first (what will load, the hours, any row that canno
 **Download template** gives the export's layout to fill by hand; in One person mode it names that
 person's Log owner and Owner Mail Id.
 
+**Log Title is the KRA** (since 22 October). In the template, column D (Log Title, shaded green)
+takes the KRA the log counts towards — pick it from the list in the cell, which holds that person's
+KRA titles (a bulk template lists every title, and a **KRA titles** sheet says whose each is). Item
+Name stays the name of the work. KRA coverage then counts each log's hours against the KRA its Log
+Title names. **Check the file** shows how many rows name one of their owner's KRAs, how many are
+blank, and lists every Log Title that is not one of that person's KRA titles — those rows still load
+for login hours but count towards no KRA until corrected. A row with no Log Title (every plain Zoho
+export) is placed by its item, as before.
+
 Two tabs: **Compliance** and **KRA coverage**.
 
 ### Compliance

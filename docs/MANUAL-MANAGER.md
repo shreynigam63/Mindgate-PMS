@@ -143,7 +143,13 @@ does not do the mapping. **The manager decides which KRA each logged item
 serves**, because you are the only person who knows.
 
 Open a report, choose **KRA coverage**, and work down **"What was logged — and
-which KRA it serves"**. Each item has a dropdown:
+which KRA it serves"**.
+
+Since 22 October, a log whose **Log Title** in the uploaded timesheet is one of the
+person's KRA titles is already placed — chip **By Log Title** — and has no dropdown:
+to move it, HR corrects the Log Title and uploads again. A Log Title that is not one
+of their KRA titles is flagged in amber and left for you to map. Everything else
+works as below. Each remaining item has a dropdown:
 
 - **Pick the KRA this serves** — the hours go to that KRA.
 - **Not KRA work** — the hours are deliberately left out of the coverage figure. **This asks you for a reason on the screen** (*"Why is this not KRA work?"*) and will not save without one. That is on purpose: excluded hours disappear from someone's coverage, and a year later the reason is the only thing that explains it.

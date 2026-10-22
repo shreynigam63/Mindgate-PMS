@@ -332,3 +332,21 @@ test('dates typed by hand: two-digit years, month first, day-first numbers; ambi
   const p = parseTimesheetSheet(sheet(row({ 'Log Date': '05/09/2026' })));
   assert.match(p.errors[0].error, /ambiguous/);
 });
+
+// 22 Oct: Log Title carries the KRA the log counts towards.
+test('Log Title is read; a Zoho export leaves it empty and loads as before', () => {
+  const p = parseTimesheetSheet(sheet(
+    row({ 'Log Title': '  Client Delivery ' }),
+    row({ 'Log Date': '19/Sep/2026' })));
+  assert.deepEqual(p.errors, []);
+  assert.deepEqual(p.entries.map((x) => x.log_title), ['Client Delivery', '']);
+});
+
+test('a row with only a Log Title is reported, not skipped as blank', () => {
+  const blank = new Array(HEADER.length).fill('');
+  blank[HEADER.indexOf('Log Title')] = 'Client Delivery';
+  const p = parseTimesheetSheet(sheet(row(), blank));
+  assert.equal(p.entries.length, 1);
+  assert.deepEqual(p.errors.map((x) => x.line), [9]);
+  assert.match(p.errors[0].error, /no Log Date/);
+});

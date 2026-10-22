@@ -1254,6 +1254,18 @@ From the defect tracker and the employee and manager test cases.
 
 Everything else is as before: a re-upload replaces only the days the file has logs for, per person; each upload is audited per person (`TIMESHEET_UPLOADED`, now with `mode`). The template is on HR → Timesheet; in One person mode it names that person's Log owner and Owner Mail Id. `GET /pms/timesheet/all` carries `can_upload`, which decides whether the screen shows the upload.
 
+## 3.23 Changes of 22 Oct — Log Title is the KRA
+
+Asked: "in download template log title should be use as KRA title and KRA coverage will be mapped
+accordingly instead of item used as KRA coverage."
+
+| What | Rule |
+|---|---|
+| Template | Log Title (column D) is shaded as the KRA column and offers a list: the person's KRA titles in the active cycle (one-person template), or every title (bulk, with a **KRA titles** sheet saying whose each is). Help sheet updated; it no longer says employees upload. |
+| Upload | Log Title is read and stored with each log (`pms.timesheet_entries.log_title`, migration 098). **Check the file** reports rows naming one of their owner's KRAs, blank ones, and every Log Title that is not one of the owner's KRA titles (row, title, reason). Those rows still load. |
+| KRA coverage | Order: **Log Title** → manager's mapping → item named after a KRA → keywords → unplaced. A Log Title equal to one of the person's KRA titles (case, spacing and a trailing full stop ignored) places the log there — chip **By Log Title**, not remappable on screen. A Log Title that is not a KRA title is shown as unplaced with the reason, never guessed from the item name or keywords; a manager may map it. A log with no Log Title is placed exactly as before. One item logged against two KRAs shows as two lines. |
+| HR backlog | Hours placed by Log Title count as mapped. |
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |

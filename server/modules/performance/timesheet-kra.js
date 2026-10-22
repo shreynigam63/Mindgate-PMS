@@ -84,6 +84,12 @@ async function scoringFor(tenantId) {
   };
 }
 
+// A title as the matcher compares it (normName in timesheet-kra-match.js),
+// in SQL: leading and trailing space gone, runs of space as one, no
+// trailing full stop, lower case.
+const TITLE_SQL = (col) => `lower(regexp_replace(regexp_replace(regexp_replace(coalesce(${col},''),
+  '^\\s+', ''), '\\s+', ' ', 'g'), '[.\\s]+$', ''))`;
+
 // ---------------------------------------------------------------------------
 // The window.
 //
@@ -229,7 +235,7 @@ async function reportFor(req, target, q) {
 
   const entries = (await db.query(
     `SELECT to_char(log_date,'YYYY-MM-DD') AS log_date, hours, item_id, item_name,
-            item_type, sprint, description
+            log_title, item_type, sprint, description
        FROM pms.timesheet_entries
       WHERE tenant_id=$1 AND employee_id=$2 AND log_date >= $3::date AND log_date <= $4::date
       ORDER BY log_date, item_id`, [T(req), target.id, win.from, win.to])).rows
@@ -434,20 +440,38 @@ router.get('/backlog', async (req, res) => {
     // mapping. Deliberately NOT filtered to people with a KRA sheet:
     // "logged work, nobody to credit it to" is the finding, not a row
     // to hide.
+    //
+    // A LOG WHOSE LOG TITLE IS ONE OF THE PERSON'S KRA TITLES IS PLACED
+    // (22 Oct), the same rule as timesheet-kra-match.js: it is keyed by
+    // item and title, counts as mapped, and needs no mapping session. The
+    // titles are compared as the matcher compares them — case, runs of
+    // spaces and a trailing full stop do not count (TITLE_SQL).
     const rows = (await db.query(
-      `WITH items AS (
-         SELECT t.employee_id,
-                lower(coalesce(nullif(btrim(t.item_id),''), btrim(t.item_name))) AS item_key,
-                sum(t.hours) AS hours
+      `WITH t AS (
+         SELECT t.employee_id, t.hours,
+                lower(coalesce(nullif(btrim(t.item_id),''), btrim(t.item_name))) AS base_key,
+                ${TITLE_SQL('t.log_title')} AS lt
            FROM pms.timesheet_entries t
-          WHERE t.tenant_id=$1 AND t.log_date >= $2::date AND t.log_date <= $3::date
+          WHERE t.tenant_id=$1 AND t.log_date >= $2::date AND t.log_date <= $3::date),
+       titles AS (
+         SELECT s.employee_id, ${TITLE_SQL('k.title')} AS lt, count(*) AS n
+           FROM pms.kra_sheets s JOIN pms.kras k ON k.sheet_id = s.id
+          WHERE s.tenant_id=$1 AND s.cycle_id=$4
+          GROUP BY 1,2),
+       items AS (
+         SELECT t.employee_id,
+                CASE WHEN t.lt <> '' THEN t.base_key || '${match.LOG_TITLE_KEY}' || t.lt ELSE t.base_key END AS item_key,
+                coalesce(bool_or(ti.n = 1), false) AS by_title,
+                sum(t.hours) AS hours
+           FROM t
+           LEFT JOIN titles ti ON ti.employee_id = t.employee_id AND ti.lt = t.lt AND t.lt <> ''
           GROUP BY 1,2)
        SELECT e.id, e.name, e.emp_code, e.department, e.designation,
               count(*) AS items,
-              count(m.id) FILTER (WHERE m.decision='kra') AS mapped_items,
-              count(m.id) FILTER (WHERE m.decision='excluded') AS excluded_items,
+              count(*) FILTER (WHERE i.by_title OR m.decision='kra') AS mapped_items,
+              count(m.id) FILTER (WHERE m.decision='excluded' AND NOT i.by_title) AS excluded_items,
               round(sum(i.hours)::numeric, 2) AS hours,
-              round(sum(i.hours) FILTER (WHERE m.decision='kra')::numeric, 2) AS mapped_hours,
+              round(sum(i.hours) FILTER (WHERE i.by_title OR m.decision='kra')::numeric, 2) AS mapped_hours,
               -- KRAs, NOT A SHEET ROW. Two of the three demo employees
               -- carry a sheet whose status is 'approved' or 'returned'
               -- with zero KRAs on it, so testing for the sheet reported
@@ -464,7 +488,7 @@ router.get('/backlog', async (req, res) => {
                 ON m.tenant_id=$1 AND m.employee_id=i.employee_id
                AND m.cycle_id=$4 AND m.item_key=i.item_key
         GROUP BY e.id, e.name, e.emp_code, e.department, e.designation
-        ORDER BY (count(*) - count(m.id)) DESC, e.name`,
+        ORDER BY (count(*) - count(*) FILTER (WHERE i.by_title OR m.id IS NOT NULL)) DESC, e.name`,
       [T(req), win.from, win.to, cycle ? cycle.id : null])).rows
       .map((r) => ({
         employee: { id: r.id, name: r.name, emp_code: r.emp_code, department: r.department, designation: r.designation },
@@ -510,7 +534,10 @@ router.get('/backlog', async (req, res) => {
 function validateMapping(b) {
   const key = String(b.item_key == null ? '' : b.item_key).trim();
   if (!key) return 'Which work item? item_key is required.';
-  if (key.length > 200) return 'That item key is too long to be one.';
+  // 500, not 200: since 22 Oct a log with a Log Title is keyed by its
+  // item AND that title (timesheet-kra-match.js), and a long item name plus
+  // a KRA title passes 200 without being anything but a real item.
+  if (key.length > 500) return 'That item key is too long to be one.';
   if (b.decision === 'excluded') {
     // A mandatory reason, because excluding hours takes them out of the
     // denominator. Without one, "not KRA work" becomes the quiet way to

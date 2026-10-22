@@ -403,7 +403,7 @@ All are idempotent. If your migration seeds per-tenant data, export the seed fun
 | Competencies | `competencies.js` (routes), `competency-rules.js` (pure) |
 | Calibration, pay, talent | `calibration-budget.js` (the "kitty", in paise), `increment-rules.js`, `nine-box.js` + `nine-box-rules.js`, `super50.js`, `super50-benefits.js`, `hod-team.js` |
 | Reminders | `reminders.js` (engine), `reminder-schedule.js` (April–March calendar, pure) |
-| Timesheet | `timesheet.js` (upload, compliance), `timesheet-rules.js`, `timesheet-template.js`, `timesheet-kra.js` (hours → KRAs, month close, override), `timesheet-kra-match.js`, `timesheet-kra-score.js`, `timesheet-rollup.js` |
+| Timesheet | `timesheet.js` (upload, compliance), `timesheet-rules.js`, `timesheet-template.js`, `timesheet-kra.js` (hours → KRAs, month close, override), `timesheet-kra-match.js` (Log Title first, then mapping, item name, keywords), `timesheet-kra-score.js`, `timesheet-rollup.js` |
 
 Sub-routers mounted from `index.js`:
 

@@ -8,9 +8,13 @@ Rows are grouped into **work items** first, so an item is decided once, not once
 
 | | Rule | Why it ranks there |
 |---|---|---|
-| **1** | **Explicit mapping** — a human said "this item serves that KRA" | A fact somebody asserted |
-| **2** | **Keyword match** — the KRA's own words appear in the item text | A guess about someone else's free text |
-| **3** | **Nothing**, and the screen says so | The engine is allowed to be silent |
+| **1** | **Log Title** — the uploaded log names one of the person's KRA titles (since 22 Oct) | The log itself says which KRA; HR fills it from the template's list |
+| **2** | **Explicit mapping** — a human said "this item serves that KRA" | A fact somebody asserted |
+| **3** | **KRA name** — the item is named after a KRA on the sheet | Somebody chose to write it there |
+| **4** | **Keyword match** — the KRA's own words appear in the item text | A guess about someone else's free text |
+| **5** | **Nothing**, and the screen says so | The engine is allowed to be silent |
+
+A Log Title that is **not** one of the person's KRA titles is flagged and left unplaced — never guessed from the item name — until it is corrected or a manager maps it. A log with no Log Title goes straight to rule 2.
 
 A mapping beats a keyword because on the client's own month the keyword-only formula gave **0% coverage**, and forcing keywords to fit put 88 hours of delivery work under *Training and team Upskill*. Keywords match **item name and description only** — never the sprint or project, where one word would tag a whole month — and only at word boundaries, so `rca` cannot match `sarcastic`.
 

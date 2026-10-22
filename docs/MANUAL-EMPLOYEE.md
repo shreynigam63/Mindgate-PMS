@@ -111,7 +111,9 @@ Red / Amber / Green marker.
 
 ### The KRA coverage tab
 
-This is where your logged hours are matched to your KRAs. Four numbers across
+This is where your logged hours are matched to your KRAs. A log whose **Log Title**
+(filled by HR in the upload) is one of your KRA titles counts towards that KRA —
+shown as **By Log Title**; the rest are placed by your manager. Four numbers across
 the top:
 
 | Number | What it means |

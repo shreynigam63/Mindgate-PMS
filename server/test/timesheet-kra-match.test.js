@@ -286,3 +286,77 @@ test('nothing logged produces zeroes and no crash', () => {
     assert.equal(short.items[0].how, 'unmapped', 'a short title is not hunted for inside longer names');
   });
 }
+
+// ---- the Log Title (22 Oct) ---------------------------------------------
+//
+// "In download template log title should be use as KRA title and KRA
+// coverage will be mapped accordingly instead of item used as KRA
+// coverage."
+
+test('a Log Title naming a KRA places the log there, whatever the item is called', () => {
+  const r = m.attribute([
+    // The item name carries another KRA's keyword ("rca"); the Log Title wins.
+    e({ item_id: 'P-1', item_name: 'RCA for the outage', log_title: 'client delivery.' }),
+  ], KRAS);
+  assert.equal(r.items[0].how, 'log_title');
+  assert.equal(r.items[0].kra_id, 'k2');
+  assert.equal(r.items[0].item_label, 'RCA for the outage');
+  assert.equal(r.totals.attributed, 8);
+});
+
+test('a Log Title that is not a KRA is reported, not guessed from the item name or keywords', () => {
+  const r = m.attribute([
+    e({ item_id: 'P-2', item_name: 'Incident analysis', description: 'rca', log_title: 'Incident analysys' }),
+  ], KRAS);
+  assert.equal(r.items[0].how, 'unmapped');
+  assert.equal(r.items[0].log_title, 'Incident analysys');
+  assert.match(r.items[0].log_title_problem, /not one of this person's KRA titles/);
+  assert.equal(r.totals.unmapped, 8);
+});
+
+test('two KRAs with the same title make the Log Title ambiguous, named rather than picked', () => {
+  const kras = [...KRAS, { id: 'k4', title: 'Client delivery', weight: 0, keywords: [] }];
+  const r = m.attribute([e({ item_id: 'P-3', log_title: 'Client Delivery' })], kras);
+  assert.equal(r.items[0].how, 'ambiguous');
+  assert.deepEqual(r.items[0].candidates.map((c) => c.kra_id).sort(), ['k2', 'k4']);
+});
+
+test('one item logged against two KRAs is two lines, each with its own hours', () => {
+  const r = m.attribute([
+    e({ item_id: 'P-4', item_name: 'Release 5', log_title: 'Client Delivery', hours: 6 }),
+    e({ item_id: 'P-4', item_name: 'Release 5', log_title: 'Incident analysis', hours: 2 }),
+    e({ item_id: 'P-4', item_name: 'Release 5', hours: 1 }),
+  ], KRAS);
+  assert.equal(r.items.length, 3);
+  const hours = Object.fromEntries(r.by_kra.map((k) => [k.kra_id, k.hours]));
+  assert.equal(hours.k2, 6);
+  assert.equal(hours.k1, 2);
+  assert.equal(r.items.find((i) => !i.log_title).how, 'unmapped', 'no Log Title: the old rules, which find nothing here');
+});
+
+test('a mapping decides a Log Title that is not a KRA; it never overrules one that is', () => {
+  const entries = [
+    e({ item_id: 'P-5', log_title: 'Delivery', hours: 3 }),
+    e({ item_id: 'P-6', log_title: 'Client Delivery', hours: 5 }),
+    e({ item_id: 'P-7', item_name: 'Tap N Pay', hours: 2 }),
+  ];
+  const keyOf = (id, lt) => `${id}${m.LOG_TITLE_KEY}${lt}`;
+  const r = m.attribute(entries, KRAS, [
+    { item_key: keyOf('p-5', 'delivery'), decision: 'kra', kra_id: 'k2' },
+    { item_key: keyOf('p-6', 'client delivery'), decision: 'kra', kra_id: 'k1' },
+    // Saved on the bare item: applies to a log with no Log Title only.
+    { item_key: 'p-5', decision: 'excluded', note: 'old mapping' },
+  ]);
+  const by = Object.fromEntries(r.items.map((i) => [i.item_id, i]));
+  assert.equal(by['P-5'].how, 'mapped');
+  assert.equal(by['P-5'].kra_id, 'k2');
+  assert.equal(by['P-6'].how, 'log_title');
+  assert.equal(by['P-6'].kra_id, 'k2');
+  assert.equal(by['P-7'].how, 'keyword', 'no Log Title: placed exactly as before');
+});
+
+test('krasNamedBy compares titles as the rest of the product does', () => {
+  assert.deepEqual(m.krasNamedBy('  client   DELIVERY. ', KRAS).map((k) => k.id), ['k2']);
+  assert.deepEqual(m.krasNamedBy('', KRAS), []);
+  assert.deepEqual(m.krasNamedBy('Client Deliveries', KRAS), []);
+});

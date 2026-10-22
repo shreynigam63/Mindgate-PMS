@@ -124,6 +124,9 @@ const norm = (h) => String(h == null ? '' : h).toLowerCase().replace(/[^a-z0-9]+
 const COLUMNS = {
   item_id: 'itemid',
   item_name: 'itemname',
+  // The KRA the log counts towards (22 Oct). Empty in a Zoho export; the
+  // template asks for the KRA title here. See timesheet-kra-match.js.
+  log_title: 'logtitle',
   log_type: 'logtype',
   hours_display: 'loghours',
   hours_decimal: 'loghoursforcalculation',
@@ -189,10 +192,13 @@ function parseTimesheetSheet(rows, opts = {}) {
     // to write a second log on the same day by hand — was skipped as blank.
     //
     // 16 Oct (Def-018): a row with hours and only an item type, a sprint or
-    // a project is a log line too, and is reported rather than skipped.
+    // a project is a log line too, and is reported rather than skipped. So
+    // is a row with only a Log Title (22 Oct): a KRA picked and the rest
+    // not filled in yet.
     if (!ownerEmail && !ownerName && !get('log_date') && !get('item_id')
         && !get('item_name') && !get('description') && !get('hours_decimal')
-        && !get('item_type') && !get('sprint') && !get('project_name')) continue;
+        && !get('item_type') && !get('sprint') && !get('project_name')
+        && !get('log_title')) continue;
     if (!get('log_date')) { errors.push({ line, error: 'the row has no Log Date — every row needs one, a second log on the same day too' }); continue; }
     const d = parseDate(get('log_date'));
     if (!d) { errors.push({ line, error: dateProblem(get('log_date')) }); continue; }
@@ -218,6 +224,7 @@ function parseTimesheetSheet(rows, opts = {}) {
       hours: Math.round(hours * 100) / 100,
       item_id: get('item_id'),
       item_name: get('item_name'),
+      log_title: get('log_title'),
       item_type: get('item_type'),
       sprint: get('sprint'),
       log_type: get('log_type'),

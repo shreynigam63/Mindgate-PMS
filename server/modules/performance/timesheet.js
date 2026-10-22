@@ -34,6 +34,8 @@ const { hasPermission, holdsPermission } = require('../../core/permissions');
 const { parseExcelSheets, parseCsv, detectFormat } = require('../../core/employees');
 const { parseTimesheetSheet, compliance, DEFAULTS } = require('./timesheet-rules');
 const { buildTimesheetTemplate } = require('./timesheet-template');
+const { krasNamedBy } = require('./timesheet-kra-match');
+const { activeCycle } = require('./active-cycle');
 
 const router = express.Router();
 const T = (req) => req.user.tenant_id;
@@ -311,19 +313,55 @@ async function uploadTarget(req) {
   return person ? { person } : { status: 404, error: 'No current employee with that id' };
 }
 
+// The KRAs a Log Title is checked against (22 Oct): each person's KRAs on
+// their sheet in the active cycle — the same KRAs KRA coverage reads
+// (timesheet-kra.js reportFor). employeeIds null means everyone current.
+// Returns employee id -> [{id, title, weight}], plus the people for the
+// template's list.
+async function krasByEmployee(tenantId, employeeIds = null) {
+  const cycle = await activeCycle(tenantId);
+  if (!cycle) return { cycle: null, kras: new Map(), rows: [] };
+  const rows = (await db.query(
+    `SELECT s.employee_id, e.name, e.email, k.id, k.title, k.weight
+       FROM pms.kras k
+       JOIN pms.kra_sheets s ON s.id = k.sheet_id
+       JOIN core.employees e ON e.id = s.employee_id AND e.tenant_id = s.tenant_id
+      WHERE s.tenant_id=$1 AND s.cycle_id=$2 AND e.archived_at IS NULL
+        AND ($3::uuid[] IS NULL OR s.employee_id = ANY($3::uuid[]))
+        AND btrim(coalesce(k.title,'')) <> ''
+      ORDER BY e.name, k.sort_order, k.title`,
+    [tenantId, cycle.id, employeeIds])).rows;
+  const kras = new Map();
+  for (const r of rows) {
+    if (!kras.has(r.employee_id)) kras.set(r.employee_id, []);
+    kras.get(r.employee_id).push({ id: r.id, title: r.title, weight: r.weight == null ? null : Number(r.weight) });
+  }
+  return { cycle, kras, rows };
+}
+
 // The upload template — the Zoho export's own layout, so a file filled in
 // by hand and an export go through the same parser. See
-// timesheet-template.js. HR downloads it; for a one-person upload
-// (?employee_id=) the instructions sheet carries that person's name and
-// email, which are what the Log owner and Owner Mail Id columns need.
+// timesheet-template.js. HR downloads it.
+//   one person (?employee_id=)  the instructions name that person, and the
+//                               Log Title list is their KRA titles;
+//   bulk                        the instructions say "each person", and
+//                               the list is every KRA title in the cycle,
+//                               with a sheet saying whose each one is.
 router.get('/template.xlsx', async (req, res) => {
   try {
     if (!(await mayUpload(req))) return res.status(403).json(UPLOAD_REFUSED);
     const target = await uploadTarget(req);
     if (target.error) return res.status(target.status).json({ error: target.error });
-    const who = target.person || (await db.query(
+    const me = (await db.query(
       `SELECT name, email FROM core.employees WHERE tenant_id=$1 AND id=$2`, [T(req), req.user.id])).rows[0] || {};
-    const wb = buildTimesheetTemplate({ name: who.name, email: who.email });
+    const p = target.person;
+    const k = await krasByEmployee(T(req), p ? [p.id] : null);
+    const wb = buildTimesheetTemplate(p
+      ? { name: p.name, email: p.email, exported_by: me.name,
+        kras: (k.kras.get(p.id) || []).map((x) => ({ title: x.title, weight: x.weight })), cycle: k.cycle && k.cycle.name }
+      : { bulk: true, exported_by: me.name,
+        everyone: k.rows.map((r) => ({ name: r.name, email: r.email, title: r.title, weight: r.weight == null ? null : Number(r.weight) })),
+        cycle: k.cycle && k.cycle.name });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="timesheet_upload_template.xlsx"');
     res.send(Buffer.from(await wb.xlsx.writeBuffer()));
@@ -410,6 +448,31 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
       touched.set(emp.id, emp);
     }
 
+    // THE LOG TITLE IS THE KRA (22 Oct). Every row that will load is
+    // checked against its owner's KRA titles, so "Check the file" says
+    // which rows will not count towards any KRA before anything is saved.
+    // Such a row still loads: its hours are real and count for login
+    // hours; it is only left unplaced in KRA coverage until the title is
+    // put right. A row with no Log Title is placed by its item, as before.
+    const owners = [...touched.keys()];
+    const { kras: krasOf } = owners.length ? await krasByEmployee(T(req), owners) : { kras: new Map() };
+    const titleCheck = { with_kra_title: 0, blank: 0, not_a_kra: [], not_a_kra_total: 0 };
+    for (const e of keep) {
+      if (!String(e.log_title || '').trim()) { titleCheck.blank += 1; continue; }
+      const theirs = krasOf.get(e.employee.id) || [];
+      const named = krasNamedBy(e.log_title, theirs);
+      if (named.length === 1) { titleCheck.with_kra_title += 1; continue; }
+      titleCheck.not_a_kra_total += 1;
+      if (titleCheck.not_a_kra.length < 200) {
+        titleCheck.not_a_kra.push({
+          line: e.line, owner: e.employee.name, log_title: e.log_title,
+          reason: !theirs.length ? `${e.employee.name} has no KRAs on their sheet for the current cycle`
+            : named.length > 1 ? `${named.length} of ${e.employee.name}'s KRAs carry this title`
+              : `not one of ${e.employee.name}'s KRA titles`,
+        });
+      }
+    }
+
     const dates = keep.map((e) => e.log_date).sort();
     const report = {
       sheet: parsed.sheet,
@@ -428,6 +491,7 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
       skipped_total: skipped.length,
       scope: person ? `${person.name} only` : 'everyone in the file',
       for_employee: person ? { id: person.id, name: person.name, email: person.email } : null,
+      log_titles: titleCheck,
     };
 
     // A re-upload replaces only the days the file has logs for, per person
@@ -478,12 +542,12 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
           `INSERT INTO pms.timesheet_entries
              (tenant_id, batch_id, employee_id, owner_name, owner_email, log_date, hours,
               item_id, item_name, item_type, sprint, log_type, description,
-              billing_status, approval_status, approved_by, logged_on, project_name)
-           VALUES ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+              billing_status, approval_status, approved_by, logged_on, project_name, log_title)
+           VALUES ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
           [T(req), batchId, e.employee.id, e.owner_name || null, e.owner_email || null, e.log_date, e.hours,
             e.item_id || null, e.item_name || null, e.item_type || null, e.sprint || null, e.log_type || null,
             e.description || null, e.billing_status || null, e.approval_status || null, e.approved_by || null,
-            e.logged_on || null, e.project_name || null]);
+            e.logged_on || null, e.project_name || null, e.log_title || null]);
       }
       await client.query('COMMIT');
     } catch (err) {

@@ -27,6 +27,10 @@ import {
 // One vocabulary for how an item came to be placed, used by the chip,
 // the legend and the grouping, so they cannot drift apart.
 export const HOW = {
+  // 22 Oct: the timesheet's Log Title names the KRA. First, and not
+  // remappable here — the Log Title is corrected in the file instead.
+  log_title: { label: 'By Log Title', chip: 'bg-teal-100 text-teal-700',    icon: Target,
+               help: 'Placed because the log’s Log Title is this KRA’s title.' },
   mapped:    { label: 'Mapped',      chip: 'bg-teal-100 text-teal-700',     icon: Link2,
                help: 'A manager said this item belongs to that KRA.' },
   title:     { label: 'By KRA name', chip: 'bg-teal-100 text-teal-700',     icon: Target,
@@ -523,6 +527,16 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                       <span className="text-navy-400"> · matched {it.matched_keywords.join(', ')}</span>}
                   </p>
                 )}
+                {/* A Log Title that names none of this person's KRAs: said,
+                    not guessed past. The hours wait for a correction or a
+                    manager's mapping. */}
+                {it.log_title_problem && (
+                  <p className="text-[10.5px] text-amber-700 mt-1">
+                    <AlertTriangle size={10} className="inline mr-1" />
+                    Log Title “{it.log_title}” — {it.log_title_problem}. Correct it in the timesheet and
+                    upload again{canMap && kras.length ? ', or map it below' : ''}.
+                  </p>
+                )}
                 {/* Why the engine refused to choose, shown rather than
                     hidden — it is the fastest way to see that two KRAs
                     carry overlapping keywords. */}
@@ -552,7 +566,16 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                     against them.
                   </p>
                 )}
-                {canMap && !!kras.length && (
+                {/* Placed by its Log Title: the timesheet already says which
+                    KRA, so there is nothing to pick. A dropdown here would
+                    save a mapping the Log Title overrules. */}
+                {canMap && it.how === 'log_title' && (
+                  <p className="text-[10.5px] text-navy-400 mt-1">
+                    Set by the Log Title in the uploaded timesheet. To move it, correct the Log Title and
+                    upload again.
+                  </p>
+                )}
+                {canMap && !!kras.length && it.how !== 'log_title' && (
                   <div className="flex flex-wrap items-center gap-2 mt-2">
                     <select className="inp !text-xs !w-auto" value={decided === 'excluded' ? '__ex' : chosenKra}
                       onChange={(e) => {

@@ -134,3 +134,62 @@ test('the Date stamp is local wall-clock text, like the export\'s', () => {
   if (tz === 'Asia/Kolkata') assert.equal(ws.getCell('B4').value, '2026-10-08 02:00:05');
   assert.match(ws.getCell('B4').value, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
 });
+
+// 22 Oct: Log Title (D) carries the KRA title.
+test('Log Title is shaded as the KRA column, and a filled one round-trips through the parser', async () => {
+  const wb = buildTimesheetTemplate({ name: 'Asha Rao', email: 'asha@x.com', kras: [{ title: 'Client Delivery', weight: 60 }] });
+  const ws = wb.getWorksheet('Main');
+  assert.equal(ws.getCell('D7').value, 'Log Title');
+  assert.match(ws.getCell('D7').note, /^KRA — /);
+  ws.getCell('N8').value = 'Asha Rao'; ws.getCell('AX8').value = 'asha@x.com';
+  ws.getCell('O8').value = '18/Sep/2026'; ws.getCell('G8').value = '8';
+  ws.getCell('D8').value = 'Client Delivery'; ws.getCell('B8').value = 'Refund API';
+  const sheets = await roundTrip(wb);
+  assert.deepEqual(sheets.map((s) => s.name), ['Main', 'How to fill this in', 'KRA titles']);
+  const main = sheets.find((s) => s.name === 'Main');
+  const p = parseTimesheetSheet(main.rows, { rowNumbers: main.rowNumbers });
+  assert.deepEqual(p.errors, []);
+  assert.equal(p.entries[0].log_title, 'Client Delivery');
+  assert.equal(p.entries[0].item_name, 'Refund API');
+  // The KRA list is never read as a timesheet.
+  assert.ok(parseTimesheetSheet(sheets.find((s) => s.name === 'KRA titles').rows).fatal);
+});
+
+test('the Log Title list points at the KRA titles sheet — a typed list breaks on commas in titles', () => {
+  const wb = buildTimesheetTemplate({ name: 'A', kras: [
+    { title: 'Code review, security & architectural compliance', weight: 50 },
+    { title: 'Client Delivery', weight: 50 },
+  ] });
+  const dv = wb.getWorksheet('Main').dataValidations.find('D8:D20000');
+  assert.equal(dv.type, 'list');
+  assert.deepEqual(dv.formulae, ["'KRA titles'!$A$2:$A$3"]);
+  assert.equal(dv.allowBlank, true);
+});
+
+test('the bulk list is every title once, whoever holds it', () => {
+  const wb = buildTimesheetTemplate({ bulk: true, everyone: [
+    { name: 'A', email: 'a@x', title: 'Client Delivery', weight: 50 },
+    { name: 'B', email: 'b@x', title: 'client delivery', weight: 40 },
+    { name: 'B', email: 'b@x', title: 'CSAT Score', weight: 60 },
+  ] });
+  const kws = wb.getWorksheet('KRA titles');
+  const list = []; const whose = [];
+  kws.eachRow((r, n) => {
+    if (n === 1) return;
+    if (r.getCell(1).value) list.push(r.getCell(1).value);
+    if (r.getCell(3).value) whose.push(`${r.getCell(3).value}: ${r.getCell(5).value}`);
+  });
+  assert.deepEqual(list, ['Client Delivery', 'CSAT Score']);
+  assert.deepEqual(whose, ['A: Client Delivery', 'B: client delivery', 'B: CSAT Score']);
+  assert.equal(wb.getWorksheet('Main').dataValidations.find('D8:D20000').formulae[0], "'KRA titles'!$A$2:$A$3");
+});
+
+test('a bare template has no KRA list, and its help sends nobody to Self → Timesheet', () => {
+  const wb = buildTimesheetTemplate({ name: 'Asha Rao', email: 'asha@x.com' });
+  assert.equal(wb.getWorksheet('KRA titles'), undefined);
+  assert.equal(wb.getWorksheet('Main').dataValidations.find('D8:D20000'), undefined);
+  const help = [];
+  wb.getWorksheet('How to fill this in').eachRow((r) => help.push(r.values.slice(1).join(' ')));
+  assert.ok(!help.some((l) => /Self → Timesheet/.test(l)));
+  assert.ok(help.some((l) => /HR uploads it on HR → Timesheet/.test(l)));
+});

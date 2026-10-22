@@ -12,10 +12,23 @@
 // -------------------------------------------------------------------
 // THE ORDER OF PRECEDENCE, and why it is this way round
 //
+//   0. the Log Title         the log itself names one of the person's KRAs
 //   1. an explicit mapping   a human said "this item is that KRA"
 //   2. the KRA's own name    the item is NAMED after a KRA on the sheet
 //   3. a keyword match       the KRA's own words appear in the text
 //   4. nothing               and it says so
+//
+// (0) since 22 Oct: "in download template log title should be use as KRA
+// title and KRA coverage will be mapped accordingly instead of item used
+// as KRA coverage." HR's upload carries, on every log, the KRA it counts
+// towards, so the item name can stay what the work actually was. A Log
+// Title that is one of the person's KRA titles places that log, and
+// nothing below it is consulted. A Log Title that is NOT one of their
+// KRA titles is reported as such and left unplaced — not guessed from the
+// item name or keywords, because the row already said which KRA it meant
+// and a guess would overrule it. A manager can still map it. Only a log
+// with NO Log Title — every Zoho export, and every log loaded before
+// 22 Oct — goes on to (1)–(4), exactly as before.
 //
 // (2) was added on 6 Oct, after a client upload in which the item names
 // had been changed to KRA titles — "Code review, security & architectural
@@ -82,6 +95,20 @@ const haystackOf = (e) => `${e.item_name || ''} \u0000 ${e.description || ''}`;
 // mapping saved against the bare id still applies to all of them (see
 // attribute), so nothing mapped before this change is lost.
 const normName = (v) => String(v == null ? '' : v).trim().replace(/\s+/g, ' ').replace(/[.\s]+$/, '').toLowerCase();
+
+// The KRAs a Log Title names: the person's KRAs whose title it is, compared
+// the way titles are everywhere here (case, spacing and a trailing full
+// stop do not count). One hit places the log; none or two do not. Shared
+// with the upload, which checks every row before it loads.
+function krasNamedBy(logTitle, kras) {
+  const t = normName(logTitle);
+  return t ? kras.filter((k) => normName(k.title) === t) : [];
+}
+
+// The item a log with a Log Title is grouped under: its item AND the KRA
+// it names, so the same item logged against two KRAs is two lines, each
+// with its own hours. Without a Log Title the key is the item's, as before.
+const LOG_TITLE_KEY = '::log title::';
 function itemKeyOf(e, splitIds = null) {
   const id = String(e.item_id == null ? '' : e.item_id).trim().toLowerCase();
   if (id && splitIds && splitIds.has(id)) return `${id}::${normName(e.item_name)}`;
@@ -101,7 +128,7 @@ const toHours = (n) => Math.round(n) / 100;
 
 /**
  * @param {object[]} entries  one person's timesheet rows for one window.
- *        Uses item_id, item_name, description, hours, log_date.
+ *        Uses log_title, item_id, item_name, description, hours, log_date.
  * @param {object[]} kras     that person's KRAs: {id, title, weight, keywords[]}
  * @param {object[]} map      rows from pms.timesheet_kra_map:
  *        {item_key, decision:'kra'|'excluded', kra_id, note}
@@ -143,11 +170,15 @@ function attribute(entries, kras, map = []) {
 
   const items = new Map();
   for (const e of entries) {
-    const key = itemKeyOf(e, splitIds);
+    const lt = normName(e.log_title);
+    const key = lt ? `${itemKeyOf(e, splitIds)}${LOG_TITLE_KEY}${lt}` : itemKeyOf(e, splitIds);
     if (!items.has(key)) {
       items.set(key, {
         item_key: key,
-        base_key: itemKeyOf(e),
+        // A log with a Log Title never falls back to a mapping saved on
+        // the bare item: the Log Title said which KRA it meant.
+        base_key: lt ? key : itemKeyOf(e),
+        log_title: lt ? String(e.log_title).trim().replace(/\s+/g, ' ') : null,
         item_id: e.item_id || null,
         item_label: e.item_name || '(no item name)',
         item_type: e.item_type || null,
@@ -185,7 +216,42 @@ function attribute(entries, kras, map = []) {
       candidates: [],
       note: null,
       matched_keywords: [],
+      log_title: it.log_title,
     };
+
+    // THE LOG TITLE FIRST (22 Oct) — see the header. Its own branch, so a
+    // log that carries one can never reach the item-name and keyword
+    // rules below.
+    if (it.log_title) {
+      const named = krasNamedBy(it.log_title, kras);
+      const m = byKey.get(it.item_key);
+      if (named.length === 1) {
+        row.how = 'log_title';
+        row.kra_id = String(named[0].id);
+        row.kra_title = named[0].title;
+      } else {
+        row.log_title_problem = named.length > 1
+          ? `${named.length} KRAs on the sheet carry this title`
+          : 'not one of this person\'s KRA titles';
+        if (m && m.decision === 'excluded') {
+          row.how = 'excluded';
+          row.note = m.note || null;
+        } else if (m && m.kra_id && kraById.has(String(m.kra_id))) {
+          row.how = 'mapped';
+          row.kra_id = String(m.kra_id);
+          row.kra_title = kraById.get(String(m.kra_id)).title;
+          row.note = m.note || null;
+        } else {
+          if (m && m.kra_id) row.stale_mapping = true;
+          if (named.length > 1) {
+            row.how = 'ambiguous';
+            row.candidates = named.map((k) => ({ kra_id: String(k.id), kra_title: k.title, keywords: [] }));
+          }
+        }
+      }
+      out.push(row);
+      continue;
+    }
 
     // A mapping on this exact item wins; then the KRA's own name; then a
     // mapping saved on the bare id before the id was split; then keywords.
@@ -353,4 +419,4 @@ function valueAdd(entries, words = []) {
   };
 }
 
-module.exports = { attribute, valueAdd, containsPhrase, itemKeyOf, haystackOf };
+module.exports = { attribute, valueAdd, containsPhrase, itemKeyOf, haystackOf, krasNamedBy, normName, LOG_TITLE_KEY };

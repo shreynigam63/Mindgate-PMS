@@ -125,6 +125,9 @@ export default function TimesheetUpload({ people = [], person = null, onLoaded }
         {forOne
           ? <><b>Only {target ? `${target.name}'s` : 'the chosen person’s'} rows are loaded</b>; every other row in the file is listed back and left alone.</>
           : <><b>Every row loads against the person it names</b> (by Owner Mail Id, else by Log owner).</>}
+        {' '}<b>Log Title is the KRA</b>: the template lists {forOne && target ? `${target.name}'s` : 'the'} KRA
+        titles in that column, and KRA coverage counts each log's hours against the KRA it names. A log
+        with no Log Title is placed by its Item Name, as before.
         {' '}Uploading again replaces only the days the new file has logs for, person by person, and
         leaves every other day untouched. Employees see their own report on Self → Timesheet.
       </p>
@@ -157,6 +160,33 @@ export default function TimesheetUpload({ people = [], person = null, onLoaded }
           )}
           {up.meta && (up.meta.project_name || up.meta.team_name) && (
             <p className="text-navy-400">{[up.meta.team_name, up.meta.project_name, up.meta.exported_on].filter(Boolean).join(' · ')}</p>
+          )}
+          {/* Log Title = KRA (22 Oct). Rows naming none of their owner's
+              KRAs still load — the hours are real — but are listed here,
+              before saving, because they will count towards no KRA. */}
+          {up.log_titles && !!up.loadable && (
+            <div>
+              <p className="text-navy-600">
+                <b>Log Title:</b>{' '}
+                {up.log_titles.with_kra_title} row{up.log_titles.with_kra_title === 1 ? ' names' : 's name'} one of the person's KRAs
+                {!!up.log_titles.blank && <> · {up.log_titles.blank} blank (placed by Item Name)</>}
+                {!!up.log_titles.not_a_kra_total && <> · <span className="text-amber-700 font-semibold">{up.log_titles.not_a_kra_total} not a KRA title</span></>}
+              </p>
+              {!!up.log_titles.not_a_kra_total && (
+                <>
+                  <p className="text-amber-700 mt-1">
+                    {up.log_titles.not_a_kra_total === 1 ? 'This row loads' : 'These rows load'} for login hours but
+                    count{up.log_titles.not_a_kra_total === 1 ? 's' : ''} towards no KRA until the Log Title is corrected:
+                  </p>
+                  <ul className="list-disc ml-5 text-amber-700">
+                    {up.log_titles.not_a_kra.slice(0, 8).map((x) => (
+                      <li key={x.line}>Row {x.line}: “{x.log_title}” — {x.reason}</li>
+                    ))}
+                  </ul>
+                  {up.log_titles.not_a_kra_total > 8 && <p className="text-navy-400">…and {up.log_titles.not_a_kra_total - 8} more.</p>}
+                </>
+              )}
+            </div>
           )}
           {!!up.skipped_total && (
             <div>
