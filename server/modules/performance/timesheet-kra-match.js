@@ -100,9 +100,15 @@ const normName = (v) => String(v == null ? '' : v).trim().replace(/\s+/g, ' ').r
 // the way titles are everywhere here (case, spacing and a trailing full
 // stop do not count). One hit places the log; none or two do not. Shared
 // with the upload, which checks every row before it loads.
+//
+// 22 Oct, second pass: compared on letters and digits only, with "&" read
+// as "and", so a title typed by hand or pasted from another sheet still
+// matches — "On-Site / Remote System Installation & Configuration" and
+// "On Site/Remote System Installation and Configuration" are the same KRA.
+const titleKey = (v) => String(v == null ? '' : v).toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '');
 function krasNamedBy(logTitle, kras) {
-  const t = normName(logTitle);
-  return t ? kras.filter((k) => normName(k.title) === t) : [];
+  const t = titleKey(logTitle);
+  return t ? kras.filter((k) => titleKey(k.title) === t) : [];
 }
 
 // The item a log with a Log Title is grouped under: its item AND the KRA
@@ -317,7 +323,14 @@ function attribute(entries, kras, map = []) {
     });
   }
   let logged = 0; let excluded = 0; let unmapped = 0; let ambiguous = 0; let attributed = 0;
+  // Where the Log Title stands, in hours — so the screen can say plainly
+  // when the logs were loaded without one (22 Oct: a month showing 0%
+  // placed because the file uploaded had an empty Log Title column).
+  const lt = { placed: 0, not_a_kra: 0, blank: 0 };
   for (const r of out) {
+    if (!r.log_title) lt.blank += r.hours100;
+    else if (r.how === 'log_title') lt.placed += r.hours100;
+    else lt.not_a_kra += r.hours100;
     logged += r.hours100;
     if (r.how === 'excluded') { excluded += r.hours100; continue; }
     if (r.how === 'unmapped') { unmapped += r.hours100; continue; }
@@ -371,6 +384,7 @@ function attribute(entries, kras, map = []) {
       unmapped: toHours(unmapped),
       ambiguous: toHours(ambiguous),
       items: out.length,
+      log_title: { placed: toHours(lt.placed), not_a_kra: toHours(lt.not_a_kra), blank: toHours(lt.blank) },
       // The number that decides whether any of this is trustworthy yet.
       mapped_pct: considered > 0 ? Math.round((attributed / considered) * 1000) / 10 : 0,
     },
@@ -419,4 +433,4 @@ function valueAdd(entries, words = []) {
   };
 }
 
-module.exports = { attribute, valueAdd, containsPhrase, itemKeyOf, haystackOf, krasNamedBy, normName, LOG_TITLE_KEY };
+module.exports = { attribute, valueAdd, containsPhrase, itemKeyOf, haystackOf, krasNamedBy, normName, titleKey, LOG_TITLE_KEY };

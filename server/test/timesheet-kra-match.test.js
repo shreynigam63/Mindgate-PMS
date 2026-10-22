@@ -360,3 +360,19 @@ test('krasNamedBy compares titles as the rest of the product does', () => {
   assert.deepEqual(m.krasNamedBy('', KRAS), []);
   assert.deepEqual(m.krasNamedBy('Client Deliveries', KRAS), []);
 });
+
+test('a Log Title matches its KRA across punctuation, spacing and "&" / "and"', () => {
+  const kras = [{ id: 'a', title: 'On-Site / Remote System Installation & Configuration' }, { id: 'b', title: 'UAT Patch Deployment & Smoke Testing' }];
+  assert.deepEqual(m.krasNamedBy('On Site/Remote System Installation and Configuration', kras).map((k) => k.id), ['a']);
+  assert.deepEqual(m.krasNamedBy('uat patch deployment &smoke testing.', kras).map((k) => k.id), ['b']);
+  assert.deepEqual(m.krasNamedBy('UAT Patch Deployment', kras), []);
+});
+
+test('the totals say how many hours have a Log Title that places them, one that does not, and none', () => {
+  const r = m.attribute([
+    e({ item_id: 'A', log_title: 'Client Delivery', hours: 5 }),
+    e({ item_id: 'B', log_title: 'Not a KRA', hours: 2 }),
+    e({ item_id: 'C', item_name: 'Tap N Pay', hours: 3 }),
+  ], KRAS);
+  assert.deepEqual(r.totals.log_title, { placed: 5, not_a_kra: 2, blank: 3 });
+});

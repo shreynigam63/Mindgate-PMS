@@ -488,6 +488,31 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
           </span>
         </div>
 
+        {/* Where the Log Title stands (22 Oct). The Log Title is what
+            places hours on a KRA; a period showing nothing placed is
+            usually a file loaded with that column empty, and the screen
+            says so rather than leaving a reader to guess. */}
+        {(() => {
+          const lt = t.log_title || {};
+          if (!t.logged) return null;
+          return (
+            <div className={`rounded-lg border p-2.5 text-[11px] ${lt.blank ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-teal-100 bg-teal-50/50 text-navy-600'}`}>
+              <b>Log Title:</b>{' '}
+              {hrs(lt.placed)} placed by the KRA title in Log Title
+              {!!lt.not_a_kra && <> · {hrs(lt.not_a_kra)} with a Log Title that is not one of this person's KRA titles</>}
+              {!!lt.blank && <> · <b>{hrs(lt.blank)} with no Log Title</b></>}.
+              {!!lt.blank && (
+                <span className="block mt-1">
+                  Logs with no Log Title cannot be placed by KRA title — they were uploaded with that column
+                  empty. To count them against a KRA, HR uploads the timesheet again with the KRA title in the
+                  Log Title column (HR → Timesheet → Download template lists each person's titles). Uploading
+                  again replaces those days.
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {!canMap && (
           <p className="text-[11px] text-navy-500">
             Your manager decides which KRA each item serves. Everything below is what they have
@@ -544,6 +569,9 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                   <p className="text-[10.5px] text-amber-700 mt-1">
                     Matched {it.candidates.map((c) => c.kra_title).join(' and ')} — given to neither.
                   </p>
+                )}
+                {!it.log_title && (it.how === 'unmapped' || it.how === 'ambiguous') && !dr && (
+                  <p className="text-[10.5px] text-navy-400 mt-1">No Log Title in the uploaded timesheet.</p>
                 )}
                 {it.how === 'excluded' && it.note && (
                   <p className="text-[10.5px] text-navy-400 mt-1">{it.note}</p>

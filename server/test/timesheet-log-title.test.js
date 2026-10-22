@@ -233,6 +233,7 @@ test('KRA COVERAGE PLACES EACH LOG BY ITS LOG TITLE — before the item name and
     'Code review, security & architectural compliance': 11, 'Ticket Resolution': 6, 'Client Reporting': 5,
   });
   assert.equal(r.body.totals.unmapped, 4);
+  assert.deepEqual(r.body.totals.log_title, { placed: 17, not_a_kra: 4, blank: 5 });
 });
 
 test('a manager can map a log whose Log Title is not a KRA; a mapping cannot overrule one that is', { skip }, async () => {

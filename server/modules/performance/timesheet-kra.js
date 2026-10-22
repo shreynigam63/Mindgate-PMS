@@ -89,6 +89,9 @@ async function scoringFor(tenantId) {
 // trailing full stop, lower case.
 const TITLE_SQL = (col) => `lower(regexp_replace(regexp_replace(regexp_replace(coalesce(${col},''),
   '^\\s+', ''), '\\s+', ' ', 'g'), '[.\\s]+$', ''))`;
+// Whether a Log Title names a KRA: letters and digits only, "&" as "and"
+// (titleKey in timesheet-kra-match.js).
+const TITLE_KEY_SQL = (col) => `regexp_replace(replace(lower(coalesce(${col},'')), '&', ' and '), '[^a-z0-9]+', '', 'g')`;
 
 // ---------------------------------------------------------------------------
 // The window.
@@ -450,11 +453,12 @@ router.get('/backlog', async (req, res) => {
       `WITH t AS (
          SELECT t.employee_id, t.hours,
                 lower(coalesce(nullif(btrim(t.item_id),''), btrim(t.item_name))) AS base_key,
-                ${TITLE_SQL('t.log_title')} AS lt
+                ${TITLE_SQL('t.log_title')} AS lt,
+                ${TITLE_KEY_SQL('t.log_title')} AS lt_key
            FROM pms.timesheet_entries t
           WHERE t.tenant_id=$1 AND t.log_date >= $2::date AND t.log_date <= $3::date),
        titles AS (
-         SELECT s.employee_id, ${TITLE_SQL('k.title')} AS lt, count(*) AS n
+         SELECT s.employee_id, ${TITLE_KEY_SQL('k.title')} AS lt_key, count(*) AS n
            FROM pms.kra_sheets s JOIN pms.kras k ON k.sheet_id = s.id
           WHERE s.tenant_id=$1 AND s.cycle_id=$4
           GROUP BY 1,2),
@@ -464,7 +468,7 @@ router.get('/backlog', async (req, res) => {
                 coalesce(bool_or(ti.n = 1), false) AS by_title,
                 sum(t.hours) AS hours
            FROM t
-           LEFT JOIN titles ti ON ti.employee_id = t.employee_id AND ti.lt = t.lt AND t.lt <> ''
+           LEFT JOIN titles ti ON ti.employee_id = t.employee_id AND ti.lt_key = t.lt_key AND t.lt_key <> ''
           GROUP BY 1,2)
        SELECT e.id, e.name, e.emp_code, e.department, e.designation,
               count(*) AS items,

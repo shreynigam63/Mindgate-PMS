@@ -1265,6 +1265,8 @@ accordingly instead of item used as KRA coverage."
 | Upload | Log Title is read and stored with each log (`pms.timesheet_entries.log_title`, migration 098). **Check the file** reports rows naming one of their owner's KRAs, blank ones, and every Log Title that is not one of the owner's KRA titles (row, title, reason). Those rows still load. |
 | KRA coverage | Order: **Log Title** → manager's mapping → item named after a KRA → keywords → unplaced. A Log Title equal to one of the person's KRA titles (case, spacing and a trailing full stop ignored) places the log there — chip **By Log Title**, not remappable on screen. A Log Title that is not a KRA title is shown as unplaced with the reason, never guessed from the item name or keywords; a manager may map it. A log with no Log Title is placed exactly as before. One item logged against two KRAs shows as two lines. |
 | HR backlog | Hours placed by Log Title count as mapped. |
+| Matching | A Log Title matches a KRA title on letters and digits only, "&" read as "and" — so punctuation, spacing and case never stop a match. |
+| Screen | KRA coverage states the hours placed by Log Title, the hours whose Log Title is not a KRA, and the hours with **no Log Title** — with what to do when logs were uploaded with that column empty (upload again with the titles; it replaces those days). Each unplaced item uploaded without a Log Title says so. |
 
 # Part 4 — Changing behaviour without code
 
