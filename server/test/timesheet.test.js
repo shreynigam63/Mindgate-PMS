@@ -371,3 +371,25 @@ test('TEMPLATE: HR downloads it for one person, fills one row, and it uploads li
 
   assert.equal((await fetch(`${base}/pms/timesheet/template.xlsx`)).status, 401, 'signed in only');
 });
+
+// 23 Oct: "count compliance from date of joining for new joiners".
+test('HR\'s roster counts a new joiner only from their date of joining', { skip }, async () => {
+  const before = (await call(adminTok, '/pms/timesheet/all?as_of=2026-09-25')).body.employees
+    .find((x) => x.employee.email === 'ts-emp@x.com');
+  await db.query(`UPDATE core.employees SET date_of_joining='2026-09-22' WHERE id=$1`, [empId]);
+  try {
+    const after = (await call(adminTok, '/pms/timesheet/all?as_of=2026-09-25')).body.employees
+      .find((x) => x.employee.email === 'ts-emp@x.com');
+    assert.ok(after.working_days < before.working_days, `${after.working_days} owed days, was ${before.working_days}`);
+    assert.equal(after.employee.date_of_joining, '2026-09-22');
+    const own = await call(adminTok, `/pms/timesheet/employee/${empId}?as_of=2026-09-25`);
+    const days = own.body.cycles.flatMap((c) => c.days);
+    const early = days.filter((x) => x.date < '2026-09-22');
+    assert.ok(early.length, 'the cycle still shows the days before joining');
+    assert.ok(early.every((x) => ['before_joining', 'extra', 'weekend'].includes(x.state)),
+      'no day before joining is owed, let alone missing');
+    assert.ok(early.some((x) => x.state === 'before_joining'));
+  } finally {
+    await db.query(`UPDATE core.employees SET date_of_joining=NULL WHERE id=$1`, [empId]);
+  }
+});

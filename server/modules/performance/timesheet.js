@@ -139,7 +139,9 @@ router.put('/settings', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Reads
 
-const EMP = `e.id, e.emp_code, e.name, e.email, e.department, e.designation`;
+// date_of_joining: compliance is owed from it (23 Oct), see timesheet-rules.
+const EMP = `e.id, e.emp_code, e.name, e.email, e.department, e.designation,
+             to_char(e.date_of_joining,'YYYY-MM-DD') AS date_of_joining`;
 
 async function entriesFor(tenantId, employeeIds) {
   if (!employeeIds.length) return new Map();
@@ -160,7 +162,7 @@ async function entriesFor(tenantId, employeeIds) {
 // One person's full report: every cycle, every day, every log.
 async function reportFor(tenantId, employee, settings, asOf) {
   const entries = (await entriesFor(tenantId, [employee.id])).get(employee.id) || [];
-  const c = compliance(entries, settings, asOf);
+  const c = compliance(entries, settings, asOf, employee.date_of_joining);
   const last = (await db.query(
     `SELECT b.source_file, b.project_name, b.created_at, b.uploaded_by_email, b.rows_loaded
        FROM pms.timesheet_batches b
@@ -172,7 +174,7 @@ async function reportFor(tenantId, employee, settings, asOf) {
 
 // A roster line: the headline numbers only, for a list of people.
 function summarise(employee, entries, settings, asOf) {
-  const c = compliance(entries, settings, asOf);
+  const c = compliance(entries, settings, asOf, employee.date_of_joining);
   const current = c.cycles.length ? c.cycles[c.cycles.length - 1] : null;
   const hasData = !!entries.length;
   return {

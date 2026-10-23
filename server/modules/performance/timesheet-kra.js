@@ -54,7 +54,8 @@ async function canWrite(req, target) {
   return hasPermission(req.user, 'pms_admin');
 }
 
-const EMP = `e.id, e.emp_code, e.name, e.email, e.department, e.designation, e.manager_id`;
+const EMP = `e.id, e.emp_code, e.name, e.email, e.department, e.designation, e.manager_id,
+             to_char(e.date_of_joining,'YYYY-MM-DD') AS date_of_joining`;
 
 async function employeeOr404(req, res, id) {
   const row = (await db.query(
@@ -268,7 +269,7 @@ async function reportFor(req, target, q) {
   // filled days of 21 Oct – 20 Nov read as 4.9% — the rest of the month
   // marked missing before it had happened.
   const todayIso = new Date().toISOString().slice(0, 10);
-  const comp = compliance(entries, settings, win.to < todayIso ? win.to : todayIso);
+  const comp = compliance(entries, settings, win.to < todayIso ? win.to : todayIso, target.date_of_joining);
   const cyc = comp.cycles.find((c) => c.start === win.from) || null;
   const agg = cyc || comp.total;
   // Null rather than 0 when there are no logs, and also when the window
@@ -282,7 +283,10 @@ async function reportFor(req, target, q) {
   // month in progress cannot have been worked yet.
   const today = new Date().toISOString().slice(0, 10);
   const kraRating = score.kraRatings(att, cfg.scoring, {
-    working_days: workingDays(win.from, win.to < today ? win.to : today, settings.holidays),
+    // From the joining date when that falls inside the window (23 Oct): a
+    // new joiner owes no KRA hours for the days before they joined.
+    working_days: workingDays(target.date_of_joining && target.date_of_joining > win.from ? target.date_of_joining : win.from,
+      win.to < today ? win.to : today, settings.holidays),
   });
 
   return {

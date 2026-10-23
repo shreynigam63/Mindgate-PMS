@@ -1267,6 +1267,7 @@ accordingly instead of item used as KRA coverage."
 | HR backlog | Hours placed by Log Title count as mapped. |
 | Matching | A Log Title matches a KRA title exactly first (case, spacing, trailing full stop ignored); only when nothing matches exactly is it compared on letters and digits, "&" read as "and" — so punctuation never stops a match, and "Time sheet" / "Timesheet" stay two KRAs. |
 | Compliance on KRA coverage | A month still in progress is counted to today, not to its last day (21 Oct – 20 Nov with two days filled read 4.9%). |
+| New joiners (23 Oct) | Compliance is owed from the **date of joining**: days before it are neither working days nor missing (calendar: *Before joining*). Applies to Self, Manager, HR and HRBP timesheet views and to KRA coverage, whose required hours also start at the joining date. A log dated before joining keeps its hours, like a weekend log. |
 | Screen | KRA coverage states the hours placed by Log Title, the hours whose Log Title is not a KRA, and the hours with **no Log Title** — with what to do when logs were uploaded with that column empty (upload again with the titles; it replaces those days). Each unplaced item uploaded without a Log Title says so. |
 
 # Part 4 — Changing behaviour without code

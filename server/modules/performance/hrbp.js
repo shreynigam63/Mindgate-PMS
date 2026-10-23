@@ -32,7 +32,7 @@ const router = express.Router();
 const T = (req) => req.user.tenant_id;
 
 const EMP = `e.id, e.name, e.email, e.department, e.designation, e.location, e.hod_name,
-             e.status, e.last_appraisal_rating`;
+             e.status, e.last_appraisal_rating, to_char(e.date_of_joining,'YYYY-MM-DD') AS date_of_joining`;
 // No 9-box cell or potential here since 13 Oct: the HRBP 9-box route that
 // read them is gone, and an HRBP inside their own remit was handed their
 // own box with every other row.
@@ -181,7 +181,7 @@ router.get('/timesheet', async (req, res) => {
     // The same pure compliance function the Self and Manager tabs use, so
     // the three cannot report different percentages for one person.
     const rows = people.map((p) => {
-      const c = compliance(by.get(p.id) || [], cfg, req.query.as_of);
+      const c = compliance(by.get(p.id) || [], cfg, req.query.as_of, p.date_of_joining);
       return { employee: p, has_data: !!(by.get(p.id) || []).length, total: c.total };
     });
     res.json({ remit, reason: null, settings: cfg, people: rows, total: rows.length,

@@ -154,6 +154,10 @@ blank, and lists every Log Title that is not one of that person's KRA titles —
 for login hours but count towards no KRA until corrected. A row with no Log Title (every plain Zoho
 export) is placed by its item, as before.
 
+**New joiners** are counted from their **date of joining** (from the employee master): days
+before it are shown as *Before joining* and are never missing, so someone who joined mid-month
+can still be Green for that month.
+
 Two tabs: **Compliance** and **KRA coverage**.
 
 ### Compliance

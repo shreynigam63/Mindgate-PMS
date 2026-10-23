@@ -98,10 +98,12 @@ const DAY_STYLE = {
   holiday: 'bg-navy-50 border-navy-100 text-navy-400',
   extra: 'bg-sky-50 border-sky-200 text-sky-800',
   future: 'bg-white border-navy-100 text-navy-300',
+  // 23 Oct: compliance is owed from the date of joining.
+  before_joining: 'bg-white border-dashed border-navy-100 text-navy-300',
 };
 const DAY_LABEL = {
   filled: 'Filled', missing: 'Missing', weekend: 'Weekend', holiday: 'Holiday',
-  extra: 'Weekend / holiday log', future: 'Upcoming',
+  extra: 'Weekend / holiday log', future: 'Upcoming', before_joining: 'Before joining',
 };
 
 function Calendar({ cycle, selectedDay, onDay }) {

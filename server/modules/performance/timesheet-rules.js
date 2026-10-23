@@ -283,12 +283,19 @@ function ratingOf(pct, green, amber) {
 // days with any log at all, so 207 hours over 23 days read as 22 of 23
 // days, 95.7%; as hours it is 207 ÷ 184 = 112.5%. Days filled are still
 // counted, as filled / missing, and their share is filled_pct.
+// NEW JOINERS (23 Oct: "count compliance from date of joining for new
+// joiners"). A day before the person joined is not owed: it is neither a
+// working day nor missing, and its state is 'before_joining'. Until then a
+// cycle was counted from its start day whatever the joining date, so
+// somebody who joined on 15 Sep read 17 missing days in 21 Aug – 20 Sep
+// and could not reach Green however fully they logged.
 /**
  * @param {{log_date:string, hours:number}[]} entries  one person's logs
  * @param {object} settings  cycle_start_day, green_pct, amber_pct, hours_per_day, holidays[]
  * @param {string} asOf  yyyy-mm-dd; days after it are not counted missing
+ * @param {string} joined  yyyy-mm-dd date of joining; days before it are not owed
  */
-function compliance(entries, settings = {}, asOf = null) {
+function compliance(entries, settings = {}, asOf = null, joined = null) {
   const s = { ...DEFAULTS, ...settings };
   const sd = Math.min(28, Math.max(1, Number(s.cycle_start_day) || DEFAULTS.cycle_start_day));
   const green = Number(s.green_pct);
@@ -299,6 +306,7 @@ function compliance(entries, settings = {}, asOf = null) {
   const r1 = (x) => Math.round(x * 10) / 10;
   const today = parseDate(asOf) || new Date();
   const asOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const joinedDay = parseDate(joined);
 
   const rows = entries.map((e) => ({ ...e, d: parseDate(e.log_date) })).filter((e) => e.d);
   if (!rows.length) {
@@ -329,7 +337,12 @@ function compliance(entries, settings = {}, asOf = null) {
       const off = wd === 0 || wd === 6 || hol.has(k);
       let state;
       if (d > asOfDay) state = logs.length ? 'filled' : 'future';
-      else if (off) {
+      else if (joinedDay && d < joinedDay) {
+        // Not owed. A log dated before joining still counts its hours, as
+        // a weekend log does, but the day asks for nothing.
+        state = logs.length ? 'extra' : 'before_joining';
+        if (logs.length) extra++;
+      } else if (off) {
         state = logs.length ? 'extra' : (hol.has(k) ? 'holiday' : 'weekend');
         if (logs.length) extra++;
       } else {

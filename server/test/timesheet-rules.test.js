@@ -350,3 +350,28 @@ test('a row with only a Log Title is reported, not skipped as blank', () => {
   assert.deepEqual(p.errors.map((x) => x.line), [9]);
   assert.match(p.errors[0].error, /no Log Date/);
 });
+
+// 23 Oct: "count compliance from date of joining for new joiners".
+test('a new joiner owes nothing before their date of joining', () => {
+  // Joined Tue 15 Sep 2026; logged 8 h every working day from then to Fri 18 Sep.
+  const logs = ['2026-09-15', '2026-09-16', '2026-09-17', '2026-09-18'].map((d) => ({ log_date: d, hours: 8 }));
+  const s = { cycle_start_day: 21 };
+  const before = compliance(logs, s, '2026-09-18');
+  assert.equal(before.total.work, 21, 'without the joining date, 21 Aug – 18 Sep is all owed');
+  assert.equal(before.total.rating, 'Red');
+  const c = compliance(logs, s, '2026-09-18', '2026-09-15');
+  assert.equal(c.total.work, 4);
+  assert.equal(c.total.missing, 0);
+  assert.equal(c.total.pct, 100);
+  assert.equal(c.total.rating, 'Green');
+  const days = c.cycles[0].days;
+  assert.equal(days.find((x) => x.date === '2026-09-14').state, 'before_joining');
+  assert.equal(days.find((x) => x.date === '2026-09-15').state, 'filled');
+});
+
+test('a log dated before joining keeps its hours but makes no day owed', () => {
+  const c = compliance([{ log_date: '2026-09-14', hours: 4 }, { log_date: '2026-09-15', hours: 8 }], { cycle_start_day: 21 }, '2026-09-15', '2026-09-15');
+  assert.equal(c.total.work, 1);
+  assert.equal(c.total.hours, 12);
+  assert.equal(c.total.extra, 1);
+});
