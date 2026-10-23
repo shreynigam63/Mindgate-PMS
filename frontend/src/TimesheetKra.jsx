@@ -157,7 +157,7 @@ function ClosedMonths({ employeeId, canMap, reloadKey }) {
           <thead>
             <tr className="text-left text-navy-400 uppercase text-[10px] border-b border-navy-100">
               <th className="px-2 py-1.5">Period</th>
-              <th className="px-2 py-1.5 text-right">Hours</th>
+              <th className="px-2 py-1.5 text-right">Hours logged</th>
               <th className="px-2 py-1.5 text-right">Placed</th>
               <th className="px-2 py-1.5 text-right">Coverage</th>
               <th className="px-2 py-1.5 text-right">Compliance</th>
@@ -426,7 +426,7 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                     we are aware on what purpose it is calculated". The
                     working shows under each figure. */}
                 <th className="px-3 py-2 text-right" title="Required hours for the period × this KRA's weight">Expected hours</th>
-                <th className="px-3 py-2 text-right">Hours</th>
+                <th className="px-3 py-2 text-right">Hours logged</th>
                 <th className="px-3 py-2 text-right">Share</th>
                 <th className="px-3 py-2 w-40">Effort vs weight</th>
                 <th className="px-3 py-2">Timesheet rating</th>
