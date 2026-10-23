@@ -403,7 +403,8 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
           <p className={`text-[11px] mb-2 ${d.kra_ratings.thin ? 'text-amber-700' : 'text-navy-500'}`}>
             <Info size={11} className="inline mr-1 -mt-px" />
             Timesheet rating: {d.kra_ratings.working_days} working days × {d.kra_ratings.hours_per_day} h
-            = {d.kra_ratings.required_hours} h required, shared across the KRAs by weight; each KRA's hours ÷ its expected hours
+            = {d.kra_ratings.required_hours} h required, shared across the KRAs by weight (expected hours = required hours × the
+            KRA's weight); each KRA's hours ÷ its expected hours
             ({(d.kra_ratings.bands || []).slice().sort((x, y) => y.min - x.min).map((b) => `${b.label} ≥ ${b.min}%`).join(', ')}).
             {d.kra_ratings.note ? ` ${d.kra_ratings.note}` : ''}
           </p>
@@ -421,6 +422,10 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
               <tr className="text-left text-navy-400 uppercase text-[10px] border-b border-navy-100">
                 <th className="px-3 py-2">KRA</th>
                 <th className="px-3 py-2 text-right">Weight</th>
+                {/* 23 Oct: "can we show expected hours column as well so that
+                    we are aware on what purpose it is calculated". The
+                    working shows under each figure. */}
+                <th className="px-3 py-2 text-right" title="Required hours for the period × this KRA's weight">Expected hours</th>
                 <th className="px-3 py-2 text-right">Hours</th>
                 <th className="px-3 py-2 text-right">Share</th>
                 <th className="px-3 py-2 w-40">Effort vs weight</th>
@@ -447,6 +452,20 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                     )}
                   </td>
                   <td className="px-3 py-2 text-right text-navy-500">{k.weight}%</td>
+                  <td className="px-3 py-2 text-right">{(() => {
+                    const r = ((d.kra_ratings || {}).ratings || []).find((x) => x.kra_id === k.kra_id);
+                    if (!r || !r.measured || r.expected_hours == null) return <span className="text-navy-300">—</span>;
+                    const req = d.kra_ratings.required_hours;
+                    const wAll = kras.filter((x) => x.scorable).reduce((t, x) => t + (Number(x.weight) || 0), 0);
+                    return (
+                      <span>
+                        <span className="text-navy-700">{r.expected_hours} h</span>
+                        <span className="block text-[10px] text-navy-400">
+                          {wAll === 100 ? `${req} h × ${k.weight}%` : `${req} h × ${k.weight} ÷ ${wAll}`}
+                        </span>
+                      </span>
+                    );
+                  })()}</td>
                   <td className="px-3 py-2 text-right font-semibold">{k.hours || '—'}</td>
                   <td className="px-3 py-2 text-right">{k.hours ? `${k.share_pct}%` : '—'}</td>
                   <td className="px-3 py-2">
@@ -468,8 +487,35 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                   })()}</td>
                 </tr>
               ))}
+              {/* The totals: expected hours add up to the required hours,
+                  which is the point of showing them. */}
+              {!!kras.length && d.kra_ratings && (() => {
+                const kr = d.kra_ratings;
+                const measured = (kr.ratings || []).filter((r) => r.measured);
+                const expected = Math.round(measured.reduce((t, r) => t + (Number(r.expected_hours) || 0), 0) * 100) / 100;
+                const placed = Math.round(kras.reduce((t, k) => t + (Number(k.hours) || 0), 0) * 100) / 100;
+                const weight = kras.filter((k) => k.scorable).reduce((t, k) => t + (Number(k.weight) || 0), 0);
+                return (
+                  <tr className="border-t-2 border-navy-100 font-semibold text-navy-700">
+                    <td className="px-3 py-2">Total</td>
+                    <td className="px-3 py-2 text-right">{weight}%</td>
+                    <td className="px-3 py-2 text-right">
+                      {expected} h
+                      <span className="block text-[10px] font-normal text-navy-400">
+                        {kr.working_days} days × {kr.hours_per_day} h = {kr.required_hours} h
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right">{placed || '—'}</td>
+                    <td className="px-3 py-2 text-right">{placed ? '100%' : '—'}</td>
+                    <td className="px-3 py-2" />
+                    <td className="px-3 py-2 text-[10.5px] font-normal text-navy-500">
+                      {kr.required_hours > 0 ? `${placed} of ${kr.required_hours} h · ${Math.round((placed / kr.required_hours) * 1000) / 10}%` : ''}
+                    </td>
+                  </tr>
+                );
+              })()}
               {!kras.length && (
-                <tr><td colSpan="6" className="px-3 py-8 text-center text-navy-400">
+                <tr><td colSpan="7" className="px-3 py-8 text-center text-navy-400">
                   No KRAs on this person's sheet for the current cycle.
                 </td></tr>
               )}
