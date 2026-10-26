@@ -56,7 +56,6 @@ import IncrementSimulationPage from './pages/IncrementSimulationPage';
 import SettingsPage from './pages/SettingsPage';
 import ApprovalsPage from './pages/ApprovalsPage';
 import HomePage from './pages/HomePage';
-import Summit from './Summit';
 
 // THE THREE ROLE TABS, named on 23 Sep to match the reference: SELF for
 // everyone, + MANAGER for people with reports, + HR for HR and super
@@ -535,10 +534,6 @@ function Sidebar({ user, groups, gates, mobileOpen, onClose }) {
               </div>
             );
           })}
-        </div>
-        <div className="side-card">
-          <p>“People<br />Processes<br />Progress<br />Together”</p>
-          <Summit className="side-card-art" />
         </div>
       </aside>
     </>
