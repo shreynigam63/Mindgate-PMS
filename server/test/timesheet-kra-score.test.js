@@ -187,8 +187,8 @@ const KR = (byKra, days, extra = {}, mapped = 100) => s.kraRatings({ by_kra: byK
 const K = (id, weight, hours, scorable = true) => ({ kra_id: id, title: id, weight, hours, scorable });
 
 test('THE CLIENT\'S EXAMPLE: 140 required hours, a 25% KRA expects 35 h', () => {
-  // 17.5 working days x 8 h = 140 h. Four KRAs at 25% each.
-  const r = KR([K('a', 25, 35), K('b', 25, 17.5), K('c', 25, 10), K('d', 25, 0)], 17.5);
+  // 17.5 working days x 8 h = 140 h. Four KRAs at 25% each, all used.
+  const r = KR([K('a', 25, 35), K('b', 25, 17.5), K('c', 25, 10), K('d', 25, 5)], 17.5);
   assert.equal(r.required_hours, 140);
   const by = Object.fromEntries(r.ratings.map((x) => [x.kra_id, x]));
   assert.equal(by.a.expected_hours, 35);
@@ -197,6 +197,44 @@ test('THE CLIENT\'S EXAMPLE: 140 required hours, a 25% KRA expects 35 h', () => 
   assert.equal(by.b.rating, 'B', 'below 70% is B');
   assert.equal(by.c.effort_pct, 28.6); assert.equal(by.c.rating, 'B', 'below 40% is B');
   assert.equal(by.d.rating, 'B');
+});
+
+// 26 Oct: "rating should be captured based on used KRAs for that particular
+// month ... other 4 should not be counted in average rating".
+test('ONLY THE KRAs USED THIS MONTH: 3 of 7 used share the 168 h by their weights', () => {
+  const r = KR([K('impl', 20, 67.2), K('code', 15, 50.4), K('resp', 15, 40),
+    K('train', 15, 0), K('zoho', 15, 0), K('cr', 10, 0), K('sec', 10, 0)], 21);
+  assert.equal(r.required_hours, 168);
+  const by = Object.fromEntries(r.ratings.map((x) => [x.kra_id, x]));
+  assert.equal(by.impl.expected_hours, 67.2, '168 x 20 / 50');
+  assert.equal(by.code.expected_hours, 50.4, '168 x 15 / 50');
+  assert.equal(by.impl.rating, 'A+'); assert.equal(by.code.rating, 'A+');
+  assert.equal(by.resp.effort_pct, 79.4); assert.equal(by.resp.rating, 'B+');
+  for (const k of ['train', 'zoho', 'cr', 'sec']) {
+    assert.equal(by[k].used, false); assert.equal(by[k].rating, null);
+    assert.equal(by[k].expected_hours, null); assert.equal(by[k].reason, 'Not used this month');
+  }
+  // The month average is over the 3 used KRAs only, weighted: (100x20 + 100x15 + 79.4x15) / 50.
+  assert.equal(r.month.kras_used, 3); assert.equal(r.month.kras_measured, 7);
+  assert.equal(r.month.weight_used, 50);
+  assert.equal(r.month.effort_pct, 93.8);
+  assert.equal(r.month.rating, 'A');
+});
+
+test('all KRAs used: the month average is the hours placed over the hours required', () => {
+  const r = KR([K('a', 50, 80), K('b', 50, 56)], 20);   // 160 h required, 80 + 80 expected
+  assert.equal(r.month.effort_pct, 85);                  // (100 x 50 + 70 x 50) / 100
+  assert.equal(r.month.rating, 'A');
+});
+
+test('OVERALL, ALL MONTHS: average hours per working day, on the KRA ladder', () => {
+  const o = s.overallOf({ hours: 303.75, work: 45 }, { hours_per_day: 8 }, { from: '2026-08-21', to: '2026-10-23', months: 3 });
+  assert.equal(o.avg_hours_per_day, 6.75);
+  assert.equal(o.required_hours, 360);
+  assert.equal(o.pct, 84.4);
+  assert.equal(o.rating, 'A');
+  assert.equal(o.months, 3);
+  assert.equal(s.overallOf({ hours: 0, work: 0 }, {}), null, 'no working days, no figure');
 });
 
 test('the client\'s ladder: A+ from 100, A from 80, B+ from 70, B below — and overtime shows', () => {
@@ -237,7 +275,7 @@ test('a thin mapping still rates, and says unmapped hours count for no KRA', () 
 });
 
 test('HR\'s own KRA bands replace the default ladder', () => {
-  const r = KR([K('a', 50, 80), K('b', 50, 0)], 20, { kra_bands: [{ label: 'Met', min: 90 }, { label: 'Not met', min: 0 }] });
+  const r = KR([K('a', 50, 80), K('b', 50, 64)], 20, { kra_bands: [{ label: 'Met', min: 90 }, { label: 'Not met', min: 0 }] });
   assert.deepEqual(r.ratings.map((x) => x.rating), ['Met', 'Not met']);
 });
 

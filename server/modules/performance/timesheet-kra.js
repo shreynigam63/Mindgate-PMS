@@ -289,9 +289,20 @@ async function reportFor(req, target, q) {
       win.to < today ? win.to : today, settings.holidays),
   });
 
+  // Overall, across every uploaded month (26 Oct) — see overallOf.
+  const allLogs = (await db.query(
+    `SELECT to_char(log_date,'YYYY-MM-DD') AS log_date, hours FROM pms.timesheet_entries
+      WHERE tenant_id=$1 AND employee_id=$2`, [T(req), target.id])).rows
+    .map((r) => ({ ...r, hours: Number(r.hours) }));
+  const overall = allLogs.length ? score.overallOf(
+    compliance(allLogs, settings, todayIso, target.date_of_joining).total, cfg.scoring,
+    { from: windows.length ? windows[windows.length - 1].from : null,
+      to: allLogs.reduce((m, e) => (e.log_date > m ? e.log_date : m), ''), months: windows.length }) : null;
+
   return {
     employee: target,
     window: win,
+    overall,
     // Every cycle this person has logs in, so the screen can offer them
     // rather than stranding a reader on one month.
     windows,
@@ -363,7 +374,7 @@ router.get('/ratings/:id', async (req, res) => {
     const to = span.hi || today;
     const r = await reportFor(req, target, { from, to: to < from ? from : to });
     res.json({ employee_id: target.id, cycle: r.cycle, window: r.window, has_entries: r.has_entries,
-      totals: r.totals, kra_ratings: r.kra_ratings });
+      totals: r.totals, kra_ratings: r.kra_ratings, overall: r.overall });
   } catch (e) {
     logger.error('timesheet-kra ratings', { error: e.message });
     res.status(500).json({ error: 'Could not build the timesheet rating' });

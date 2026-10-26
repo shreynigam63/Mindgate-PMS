@@ -251,13 +251,19 @@ test('EACH KRA GETS A TIMESHEET RATING — hours worked against hours required',
   // Resolution (60%), 8 h on Client Reporting (20%), none on CSAT (20%).
   //
   // The month 21 Aug – 20 Sep has 21 working days = 168 required hours.
+  // Since 26 Oct they are shared among the KRAs USED this month only:
+  // Ticket Resolution (60) and Client Reporting (20) — 80 of weight — and
+  // CSAT, with nothing logged, is left out.
   const v = (await api(`/pms/timesheet/kra/employee/${ids.emp}?${WIN}`)).body;
   assert.equal(v.kra_ratings.required_hours, 168);
   const by = Object.fromEntries(v.kra_ratings.ratings.map((r) => [r.title, r]));
-  assert.equal(by['Ticket Resolution'].expected_hours, 100.8);
-  assert.equal(by['Ticket Resolution'].effort_pct, 39.7, '40 of 100.8 hours');
-  assert.equal(by['Ticket Resolution'].rating, 'B', '39.7% is B');
-  assert.equal(by['CSAT Score'].rating, 'B');
+  assert.equal(by['Ticket Resolution'].expected_hours, 126, '168 x 60 / 80');
+  assert.equal(by['Ticket Resolution'].effort_pct, 31.7, '40 of 126 hours');
+  assert.equal(by['Ticket Resolution'].rating, 'B', '31.7% is B');
+  assert.equal(by['CSAT Score'].rating, null);
+  assert.equal(by['CSAT Score'].reason, 'Not used this month');
+  assert.equal(v.kra_ratings.month.kras_used, 2);
+  assert.ok(v.overall && v.overall.working_days > 0, 'the overall, all-months figure is there');
 
   // The cycle view the manager and HOD rate from covers the days the
   // uploads cover — 1 to 9 Sep, 7 working days, 56 h — so a month nobody
@@ -267,10 +273,11 @@ test('EACH KRA GETS A TIMESHEET RATING — hours worked against hours required',
   assert.deepEqual([c.body.window.from, c.body.window.to], ['2026-09-01', '2026-09-09']);
   assert.equal(c.body.kra_ratings.required_hours, 56);
   const cy = Object.fromEntries(c.body.kra_ratings.ratings.map((r) => [r.title, r]));
-  assert.equal(cy['Ticket Resolution'].effort_pct, 119, '40 h against 33.6 expected — overtime shows');
-  assert.equal(cy['Ticket Resolution'].rating, 'A+');
-  assert.equal(cy['Client Reporting'].effort_pct, 71.4, '8 h against 11.2 expected');
-  assert.equal(cy['Client Reporting'].rating, 'B+', '71.4% is B+');
+  assert.equal(cy['Ticket Resolution'].effort_pct, 95.2, '40 h against 42 expected (56 x 60 / 80)');
+  assert.equal(cy['Ticket Resolution'].rating, 'A');
+  assert.equal(cy['Client Reporting'].effort_pct, 57.1, '8 h against 14 expected (56 x 20 / 80)');
+  assert.equal(cy['Client Reporting'].rating, 'B', '57.1% is B');
+  assert.ok(c.body.overall, 'the appraisal view carries the overall figure too');
   assert.equal((await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'emp')).status, 200, 'the employee sees their own');
   assert.equal((await api(`/pms/timesheet/kra/ratings/${ids.emp}`, {}, 'other')).status, 403, 'a stranger does not');
 

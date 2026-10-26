@@ -264,7 +264,16 @@ function kraRatings(att, cfg = {}, win = {}) {
   const minMapped = Number(cfg.min_mapped_pct);
   const all = att.by_kra || [];
   const measured = all.filter((k) => k.scorable);
-  const weightAll = measured.reduce((t, k) => t + (Number(k.weight) || 0), 0);
+  // ONLY THE KRAs USED THIS MONTH (26 Oct): "in case all KRAs are not used
+  // every month, rating should be captured based on used KRAs for that
+  // particular month ... other 4 should not be counted in average rating".
+  // A KRA is used when at least one hour is placed on it. The month's
+  // required hours are shared among the used KRAs by their weights, and a
+  // KRA with nothing logged is "Not used this month": no expected hours, no
+  // rating, and not in the month's average. Until then an unused KRA kept
+  // its share and was rated B on 0 hours.
+  const used = measured.filter((k) => (Number(k.hours) || 0) > 0);
+  const weightAll = used.reduce((t, k) => t + (Number(k.weight) || 0), 0);
   const placed = measured.reduce((t, k) => t + (Number(k.hours) || 0), 0);
   const mappedPct = Number(att.totals && att.totals.mapped_pct) || 0;
   const thin = Number.isFinite(minMapped) && placed > 0 && mappedPct < minMapped;
@@ -285,17 +294,60 @@ function kraRatings(att, cfg = {}, win = {}) {
       return { ...row, measured: false, expected_hours: null, effort_pct: null, rating: null,
         reason: k.untracked_reason || 'Not measured from timesheets' };
     }
+    if (placed > 0 && !(row.hours > 0)) {
+      return { ...row, measured: true, used: false, expected_hours: null, effort_pct: null, rating: null,
+        reason: 'Not used this month' };
+    }
     const expected = weightAll > 0 ? round1((required * row.weight) / weightAll) : 0;
     if (!(expected > 0) || !(placed > 0)) {
       return { ...row, measured: true, expected_hours: expected || null, effort_pct: null, rating: null,
         reason: !(row.weight > 0) ? 'This KRA carries no weight' : !(required > 0) ? 'No working days' : 'No mapped hours yet' };
     }
     const effort = round1(Math.max(0, (row.hours / expected) * 100));
-    return { ...row, measured: true, expected_hours: expected, effort_pct: effort,
+    return { ...row, measured: true, used: true, expected_hours: expected, effort_pct: effort,
       rating: gradeFor(effort, bands), reason: null };
   });
+  // The month's average: the used KRAs' effort, weighted by their weights.
+  // Unused KRAs are not in it. (Equal to the hours on used KRAs ÷ the
+  // required hours, which is what the Total row shows.)
+  const rated = ratings.filter((r) => r.rating && r.weight > 0);
+  const wRated = rated.reduce((t, r) => t + r.weight, 0);
+  const monthPct = wRated > 0 ? round1(rated.reduce((t, r) => t + r.effort_pct * r.weight, 0) / wRated) : null;
+  const month = {
+    kras_used: rated.length,
+    kras_measured: measured.length,
+    weight_used: weightAll,
+    effort_pct: monthPct,
+    rating: monthPct == null ? null : gradeFor(monthPct, bands),
+  };
   return { ratings, required_hours: required, working_days: days, hours_per_day: perDay,
-    placed_hours: round1(placed), mapped_pct: mappedPct, thin, note, bands };
+    placed_hours: round1(placed), mapped_pct: mappedPct, thin, note, bands, month };
 }
 
-module.exports = { summarise, gradeFor, validateScoring, kraRatings, DEFAULT_KRA_BANDS };
+// OVERALL, ACROSS EVERY UPLOADED MONTH (26 Oct): "overall performance will
+// be managed on average working hours [of] all timesheet upload[s] for
+// overall months". The hours logged in every month uploaded, over the hours
+// those months asked for (working days × hours per day, from the joining
+// date) — the same figure as the dashboard's login hours — shown as average
+// hours per working day and graded on the KRA ladder.
+/**
+ * @param {{hours:number, work:number}} total  compliance(...).total over all logs
+ * @param {object} cfg  the `scoring` blob (kra_bands, hours_per_day)
+ */
+function overallOf(total, cfg = {}, span = {}) {
+  const bands = Array.isArray(cfg.kra_bands) && cfg.kra_bands.length ? cfg.kra_bands : DEFAULT_KRA_BANDS;
+  const perDay = Number(cfg.hours_per_day) > 0 ? Number(cfg.hours_per_day) : 8;
+  const days = Number(total && total.work) || 0;
+  const hours = Number(total && total.hours) || 0;
+  if (!(days > 0)) return null;
+  const pct = round1((hours / (perDay * days)) * 100);
+  return {
+    from: span.from || null, to: span.to || null, months: span.months || null,
+    hours: round1(hours), working_days: days, hours_per_day: perDay,
+    required_hours: round1(perDay * days),
+    avg_hours_per_day: Math.round((hours / days) * 100) / 100,
+    pct, rating: gradeFor(pct, bands),
+  };
+}
+
+module.exports = { summarise, gradeFor, validateScoring, kraRatings, overallOf, DEFAULT_KRA_BANDS };

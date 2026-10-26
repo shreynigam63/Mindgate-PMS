@@ -403,8 +403,8 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
           <p className={`text-[11px] mb-2 ${d.kra_ratings.thin ? 'text-amber-700' : 'text-navy-500'}`}>
             <Info size={11} className="inline mr-1 -mt-px" />
             Timesheet rating: {d.kra_ratings.working_days} working days × {d.kra_ratings.hours_per_day} h
-            = {d.kra_ratings.required_hours} h required, shared across the KRAs by weight (expected hours = required hours × the
-            KRA's weight); each KRA's hours ÷ its expected hours
+            = {d.kra_ratings.required_hours} h required, shared by weight across the KRAs <b>used this month</b> (expected
+            hours = required hours × the KRA's weight ÷ the weight of the KRAs used); each KRA's hours ÷ its expected hours
             ({(d.kra_ratings.bands || []).slice().sort((x, y) => y.min - x.min).map((b) => `${b.label} ≥ ${b.min}%`).join(', ')}).
             {d.kra_ratings.note ? ` ${d.kra_ratings.note}` : ''}
           </p>
@@ -447,16 +447,20 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                     )}
                     {k.scorable && !k.hours && (
                       <span className="block text-[10px] text-amber-600 mt-0.5">
-                        <AlertTriangle size={10} className="inline mr-1" />no logged work against this
+                        <AlertTriangle size={10} className="inline mr-1" />not used this month — left out of this month's rating
                       </span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-right text-navy-500">{k.weight}%</td>
                   <td className="px-3 py-2 text-right">{(() => {
                     const r = ((d.kra_ratings || {}).ratings || []).find((x) => x.kra_id === k.kra_id);
+                    if (r && r.used === false) return <span className="text-[10px] text-navy-400">not used</span>;
                     if (!r || !r.measured || r.expected_hours == null) return <span className="text-navy-300">—</span>;
                     const req = d.kra_ratings.required_hours;
-                    const wAll = kras.filter((x) => x.scorable).reduce((t, x) => t + (Number(x.weight) || 0), 0);
+                    // The weight of the KRAs USED this month (26 Oct): the
+                    // required hours are shared among those only.
+                    const wAll = (d.kra_ratings.month || {}).weight_used
+                      ?? kras.filter((x) => x.scorable).reduce((t, x) => t + (Number(x.weight) || 0), 0);
                     return (
                       <span>
                         <span className="text-navy-700">{r.expected_hours} h</span>
@@ -495,10 +499,23 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                 const expected = Math.round(measured.reduce((t, r) => t + (Number(r.expected_hours) || 0), 0) * 100) / 100;
                 const placed = Math.round(kras.reduce((t, k) => t + (Number(k.hours) || 0), 0) * 100) / 100;
                 const weight = kras.filter((k) => k.scorable).reduce((t, k) => t + (Number(k.weight) || 0), 0);
+                const mo = kr.month || {};
                 return (
                   <tr className="border-t-2 border-navy-100 font-semibold text-navy-700">
-                    <td className="px-3 py-2">Total</td>
-                    <td className="px-3 py-2 text-right">{weight}%</td>
+                    <td className="px-3 py-2">
+                      Total
+                      {mo.kras_measured > 0 && (
+                        <span className="block text-[10px] font-normal text-navy-400">
+                          {mo.kras_used} of {mo.kras_measured} KRAs used this month
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {weight}%
+                      {mo.weight_used != null && mo.weight_used !== weight && (
+                        <span className="block text-[10px] font-normal text-navy-400">{mo.weight_used}% used</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right">
                       {expected} h
                       <span className="block text-[10px] font-normal text-navy-400">
@@ -508,8 +525,15 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                     <td className="px-3 py-2 text-right">{placed || '—'}</td>
                     <td className="px-3 py-2 text-right">{placed ? '100%' : '—'}</td>
                     <td className="px-3 py-2" />
+                    {/* The month's rating: the average over the KRAs used
+                        this month only (26 Oct). */}
                     <td className="px-3 py-2 text-[10.5px] font-normal text-navy-500">
-                      {kr.required_hours > 0 ? `${placed} of ${kr.required_hours} h · ${Math.round((placed / kr.required_hours) * 1000) / 10}%` : ''}
+                      {mo.rating ? (
+                        <span>
+                          <span className="chip bg-navy-900 text-white">{mo.rating}</span>
+                          <span className="ml-1.5">month average {mo.effort_pct}% over the {mo.kras_used} KRA{mo.kras_used === 1 ? '' : 's'} used</span>
+                        </span>
+                      ) : kr.required_hours > 0 ? `${placed} of ${kr.required_hours} h` : ''}
                     </td>
                   </tr>
                 );
@@ -522,6 +546,21 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
             </tbody>
           </table>
         </div>
+        {/* Overall, across every uploaded month (26 Oct): average working
+            hours over all the months loaded — see overallOf on the server. */}
+        {d.overall && (
+          <div className="mt-3 rounded-lg border border-navy-100 bg-navy-50/50 p-2.5 text-[11.5px] text-navy-700 flex flex-wrap items-center gap-2">
+            <b>Overall, all uploaded months</b>
+            <span className="text-navy-500">
+              ({d.overall.from} – {d.overall.to}{d.overall.months ? `, ${d.overall.months} month${d.overall.months === 1 ? '' : 's'}` : ''}):
+            </span>
+            <span>
+              {d.overall.hours} h over {d.overall.working_days} working days = <b>{d.overall.avg_hours_per_day} h per working day</b>
+              {' '}= {d.overall.pct}% of {d.overall.hours_per_day} h
+            </span>
+            <span className="chip bg-navy-900 text-white">{d.overall.rating}</span>
+          </div>
+        )}
       </div>
 
       {/* The items. */}

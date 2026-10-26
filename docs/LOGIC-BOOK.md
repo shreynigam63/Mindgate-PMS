@@ -1279,6 +1279,17 @@ My KRAs, My KRAs, a manager's team sheets, approvals): **1 Financial, 2 Project 
 Any other parameter follows the four in the order it first appears; KRAs with no parameter come last.
 Within a parameter, KRAs keep their order on the sheet. (`frontend/src/paramOrder.js`)
 
+## 3.25 Changes of 26 Oct — timesheet rating on the KRAs used that month; overall on all months
+
+| What | Rule |
+|---|---|
+| A KRA is **used** in a month | At least one hour is placed on it (by Log Title, mapping, name or keyword). |
+| Expected hours | The month's required hours (working days × hours per day) are shared among the **used** KRAs only, by weight: required × the KRA's weight ÷ the weight of the KRAs used. E.g. 168 h with 3 of 7 KRAs used (20 %, 15 %, 15 % = 50 %): 67.2 h, 50.4 h, 50.4 h. |
+| Unused KRAs | Shown as *Not used this month*: no expected hours, no rating, and not in the month's average. Until 26 Oct they kept their share and were rated B on 0 hours. |
+| Month average | The used KRAs' effort %, weighted by their weights, graded on the KRA ladder (A+ ≥ 100, A ≥ 80, B+ ≥ 70, B below). Shown in the Total row and on the KRA sheet's timesheet line. |
+| Overall, all uploaded months | Total hours logged in every uploaded month ÷ (hours per day × working days in them, from the joining date) — shown as average hours per working day and %, graded on the same ladder. The same figure as the dashboard's login hours. |
+| Unchanged | KRA coverage % (how much of the sheet, by weight, was worked on) still counts every KRA, so a month that skips KRAs shows there. |
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |

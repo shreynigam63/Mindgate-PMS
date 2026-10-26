@@ -36,8 +36,10 @@ export function TimesheetRatingNote({ data }) {
     <p className={`text-[11px] ${k.thin ? 'text-amber-700' : 'text-navy-500'}`}>
       <Info size={11} className="inline mr-1 -mt-px" />
       Timesheet rating, {data.window.from} – {data.window.to}: {k.working_days} working days × {k.hours_per_day} h
-      = <b>{k.required_hours} h required</b>, shared across the KRAs by weight. Each KRA's hours ÷ its expected hours
-      gives its % ({ladder}). Shown as evidence — your rating is the one that counts.
+      = <b>{k.required_hours} h required</b>, shared by weight across the KRAs used this month. Each KRA's hours ÷ its
+      expected hours gives its % ({ladder}); a KRA not used this month is left out
+      {k.month && k.month.rating ? <> — month average <b>{k.month.rating}</b> ({k.month.effort_pct}%)</> : ''}.
+      Shown as evidence — your rating is the one that counts.
       {k.note ? ` ${k.note}` : ''}
     </p>
   );
@@ -109,8 +111,11 @@ export function KraTimesheetBar({ ts, mapLink }) {
         {mapLink && <a href={mapLink} className="ml-auto font-semibold text-brand-600">See the work items behind these →</a>}
       </div>
       <p>
-        {k.working_days} working days × {k.hours_per_day} h = <b>{k.required_hours} h required</b>, shared across the KRAs by weight.
-        Each KRA: hours worked ÷ expected hours ({ladder}). {k.note || ''}
+        {k.working_days} working days × {k.hours_per_day} h = <b>{k.required_hours} h required</b>, shared by weight across the
+        KRAs used this month. Each KRA: hours worked ÷ expected hours ({ladder}); a KRA not used this month is left out.
+        {k.month && k.month.rating ? <> Month average: <b>{k.month.rating}</b> ({k.month.effort_pct}% over {k.month.kras_used} of {k.month.kras_measured} KRAs).</> : ''}
+        {d.overall ? <> Overall, all uploaded months: <b>{d.overall.avg_hours_per_day} h</b> per working day = {d.overall.pct}% → <b>{d.overall.rating}</b>.</> : ''}
+        {' '}{k.note || ''}
       </p>
     </div>
   );
