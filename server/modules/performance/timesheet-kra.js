@@ -218,6 +218,56 @@ function workingDays(from, to, holidays = []) {
   return n;
 }
 
+// Every month this person has logs in, oldest first, with each KRA's
+// timesheet rating in it — the same rule as the month on screen
+// (kraRatings: required hours shared among the KRAs used that month) — and
+// each KRA across all of them: its hours in the months it was used over its
+// expected hours in those months. A month is the compliance cycle.
+async function monthByMonth(req, target, kras, map, cfg, settings, windows) {
+  const all = (await db.query(
+    `SELECT to_char(log_date,'YYYY-MM-DD') AS log_date, hours, item_id, item_name,
+            log_title, item_type, sprint, description
+       FROM pms.timesheet_entries WHERE tenant_id=$1 AND employee_id=$2`, [T(req), target.id])).rows
+    .map((r) => ({ ...r, hours: Number(r.hours) }));
+  const today = new Date().toISOString().slice(0, 10);
+  const round1 = (n) => Math.round(n * 10) / 10;
+  const bands = Array.isArray(cfg.scoring.kra_bands) && cfg.scoring.kra_bands.length
+    ? cfg.scoring.kra_bands : score.DEFAULT_KRA_BANDS;
+  const months = windows.slice().reverse().map((w) => {
+    const es = all.filter((e) => e.log_date >= w.from && e.log_date <= w.to);
+    const att = match.attribute(es, kras, map);
+    const start = target.date_of_joining && target.date_of_joining > w.from ? target.date_of_joining : w.from;
+    const end = w.to < today ? w.to : today;
+    const kr = score.kraRatings(att, cfg.scoring, { working_days: workingDays(start, end, settings.holidays) });
+    return {
+      from: w.from, to: w.to, in_progress: w.to >= today,
+      hours: att.totals.logged, placed: att.totals.attributed,
+      working_days: kr.working_days, required_hours: kr.required_hours,
+      month: kr.month, ratings: kr.ratings,
+    };
+  });
+  const rows = kras.map((k) => {
+    const id = String(k.id);
+    const cells = months.map((mo) => {
+      const r = mo.ratings.find((x) => x.kra_id === id);
+      if (!r) return null;
+      return { hours: r.hours, expected_hours: r.expected_hours, effort_pct: r.effort_pct,
+        rating: r.rating, used: r.hours > 0, measured: r.measured, reason: r.reason };
+    });
+    const rated = cells.filter((c) => c && c.rating && c.expected_hours > 0);
+    const hours = rated.reduce((t, c) => t + c.hours, 0);
+    const expected = rated.reduce((t, c) => t + c.expected_hours, 0);
+    const effort = expected > 0 ? round1((hours / expected) * 100) : null;
+    return {
+      kra_id: id, title: k.title, weight: Number(k.weight) || 0, scorable: k.timesheet_tracked !== false,
+      cells,
+      all: { hours: Math.round(hours * 100) / 100, expected_hours: round1(expected), effort_pct: effort,
+        rating: effort == null ? null : score.gradeFor(effort, bands), months_used: rated.length },
+    };
+  });
+  return { months: months.map(({ ratings, ...m }) => m), kras: rows };
+}
+
 // ---------------------------------------------------------------------------
 // The monthly read: one person, one window.
 
@@ -299,10 +349,19 @@ async function reportFor(req, target, q) {
     { from: windows.length ? windows[windows.length - 1].from : null,
       to: allLogs.reduce((m, e) => (e.log_date > m ? e.log_date : m), ''), months: windows.length }) : null;
 
+  // MONTH BY MONTH (26 Oct): "check monthwise timesheet rating as well in
+  // KRA coverage where on selection of particular employee i should get KRA
+  // wise and month wise timesheet rating in table format". Only when the
+  // screen asks (?months=1): the team roster and the month close call this
+  // function once per person and show none of it.
+  const monthly = q && q.months === '1'
+    ? await monthByMonth(req, target, kras, map, cfg, settings, windows) : null;
+
   return {
     employee: target,
     window: win,
     overall,
+    monthly,
     // Every cycle this person has logs in, so the screen can offer them
     // rather than stranding a reader on one month.
     windows,

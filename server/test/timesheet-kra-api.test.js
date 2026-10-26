@@ -473,3 +473,27 @@ test('a person with no KRA sheet is told that, not given a zero', { skip }, asyn
   assert.match(w.summary.withheld.join(' '), /has no KRAs for this cycle/);
   assert.equal(w.summary.score, null);
 });
+
+// 26 Oct: "KRA wise and month wise timesheet rating in table format".
+test('MONTH BY MONTH: each KRA rated in each month with logs, and across all of them', { skip }, async () => {
+  const plain = (await api(`/pms/timesheet/kra/employee/${ids.emp}?${WIN}`)).body;
+  assert.equal(plain.monthly, null, 'only when the screen asks for it');
+  const v = (await api(`/pms/timesheet/kra/employee/${ids.emp}?${WIN}&months=1`)).body;
+  assert.ok(v.monthly.months.length >= 1);
+  const sep = v.monthly.months.find((m) => m.from === '2026-08-21');
+  assert.ok(sep, 'the month 21 Aug – 20 Sep is a column');
+  assert.equal(sep.required_hours, 168);
+  assert.equal(v.monthly.kras.length, 3, 'one row per KRA');
+  const row = (t) => v.monthly.kras.find((k) => k.title === t);
+  const i = v.monthly.months.indexOf(sep);
+  // The same numbers as the month on screen.
+  const onScreen = Object.fromEntries(v.kra_ratings.ratings.map((r) => [r.title, r]));
+  assert.equal(row('Ticket Resolution').cells[i].effort_pct, onScreen['Ticket Resolution'].effort_pct);
+  assert.equal(row('Ticket Resolution').cells[i].rating, onScreen['Ticket Resolution'].rating);
+  assert.equal(row('CSAT Score').cells[i].used, false, 'nothing logged: not used');
+  assert.equal(sep.month.rating, v.kra_ratings.month.rating);
+  assert.equal(row('Ticket Resolution').all.months_used, 1);
+  const own = await api(`/pms/timesheet/kra/me?months=1`, {}, 'emp');
+  assert.equal(own.status, 200);
+  assert.ok(own.body.monthly, 'the employee sees their own table');
+});

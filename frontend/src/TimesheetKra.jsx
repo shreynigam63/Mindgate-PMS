@@ -259,6 +259,120 @@ function ClosedMonths({ employeeId, canMap, reloadKey }) {
   );
 }
 
+// MONTH BY MONTH (26 Oct): "on selection of particular employee i should
+// get KRA wise and month wise timesheet rating in table format". One row per
+// KRA, one column per month with logs, and a last column across all months.
+// The numbers are the server's (timesheet-kra.js monthByMonth): a month
+// rates only the KRAs used in it. A month heading opens that month above.
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const dm = (iso) => `${Number(iso.slice(8, 10))} ${MON[Number(iso.slice(5, 7)) - 1]}`;
+const GRADE_TONE = {
+  'A+': 'bg-emerald-600 text-white', A: 'bg-teal-600 text-white',
+  'B+': 'bg-amber-500 text-white', B: 'bg-rose-600 text-white',
+};
+const Grade = ({ g }) => <span className={`chip !text-[10px] ${GRADE_TONE[g] || 'bg-navy-700 text-white'}`}>{g}</span>;
+
+function MonthByMonth({ m, overall, current, onPick }) {
+  if (!m || !m.months.length) return null;
+  return (
+    <div className="card p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+        <p className="lbl">Month by month — timesheet rating per KRA</p>
+        <span className="text-[10px] text-navy-400">Click a month to open it above</span>
+      </div>
+      <p className="text-[10.5px] text-navy-500 mb-2">
+        Each cell: the KRA's hours ÷ its expected hours that month. A month shares its required hours only among the
+        KRAs used in it; a KRA with nothing logged is <i>not used</i> and left out of that month's average. All months:
+        the KRA's hours ÷ its expected hours over the months it was used.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-navy-400 uppercase text-[10px] border-b border-navy-100">
+              <th className="px-2 py-2">KRA</th>
+              <th className="px-2 py-2 text-right">Weight</th>
+              {m.months.map((mo) => (
+                <th key={mo.from} className={`px-2 py-2 text-center whitespace-nowrap ${mo.from === current ? 'bg-lagoon-50' : ''}`}>
+                  <button type="button" className="uppercase hover:text-navy-700 underline-offset-2 hover:underline"
+                    onClick={() => onPick({ from: mo.from, to: mo.to })}>
+                    {dm(mo.from)} – {dm(mo.to)}
+                  </button>
+                  {mo.in_progress && <span className="block normal-case text-[9.5px] text-navy-300">in progress</span>}
+                </th>
+              ))}
+              <th className="px-2 py-2 text-center bg-navy-50">All months</th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.kras.map((k) => (
+              <tr key={k.kra_id} className="border-b border-navy-50">
+                <td className="px-2 py-2 font-semibold text-navy-900">{k.title}</td>
+                <td className="px-2 py-2 text-right text-navy-500">{k.weight}%</td>
+                {k.cells.map((c, i) => (
+                  <td key={m.months[i].from} className={`px-2 py-2 text-center ${m.months[i].from === current ? 'bg-lagoon-50/60' : ''}`}>
+                    {!c || !c.measured ? <span className="text-navy-300">—</span>
+                      : !c.used ? <span className="text-[10px] text-navy-300">not used</span>
+                        : c.rating ? (
+                          <span className="inline-flex flex-col items-center gap-0.5">
+                            <span><Grade g={c.rating} /> <span className="text-navy-600">{c.effort_pct}%</span></span>
+                            <span className="text-[9.5px] text-navy-400">{c.hours} / {c.expected_hours} h</span>
+                          </span>
+                        ) : <span className="text-[10px] text-navy-400">{c.reason}</span>}
+                  </td>
+                ))}
+                <td className="px-2 py-2 text-center bg-navy-50/60">
+                  {k.all.rating ? (
+                    <span className="inline-flex flex-col items-center gap-0.5">
+                      <span><Grade g={k.all.rating} /> <span className="text-navy-600">{k.all.effort_pct}%</span></span>
+                      <span className="text-[9.5px] text-navy-400">{k.all.hours} / {k.all.expected_hours} h · {k.all.months_used} mo</span>
+                    </span>
+                  ) : <span className="text-navy-300">—</span>}
+                </td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-navy-100 font-semibold text-navy-700">
+              <td className="px-2 py-2" colSpan={2}>
+                Month average
+                <span className="block text-[10px] font-normal text-navy-400">KRAs used that month only</span>
+              </td>
+              {m.months.map((mo) => (
+                <td key={mo.from} className={`px-2 py-2 text-center ${mo.from === current ? 'bg-lagoon-50/60' : ''}`}>
+                  {mo.month && mo.month.rating ? (
+                    <span className="inline-flex flex-col items-center gap-0.5">
+                      <span><Grade g={mo.month.rating} /> <span>{mo.month.effort_pct}%</span></span>
+                      <span className="text-[9.5px] font-normal text-navy-400">{mo.month.kras_used} of {mo.month.kras_measured} KRAs used</span>
+                    </span>
+                  ) : <span className="text-navy-300">—</span>}
+                </td>
+              ))}
+              <td className="px-2 py-2 text-center bg-navy-50/60">
+                {overall ? (
+                  <span className="inline-flex flex-col items-center gap-0.5">
+                    <span><Grade g={overall.rating} /> <span>{overall.pct}%</span></span>
+                    <span className="text-[9.5px] font-normal text-navy-400">overall · {overall.avg_hours_per_day} h / working day</span>
+                  </span>
+                ) : '—'}
+              </td>
+            </tr>
+            <tr className="text-[10.5px] text-navy-500">
+              <td className="px-2 py-1.5" colSpan={2}>Hours logged / required</td>
+              {m.months.map((mo) => (
+                <td key={mo.from} className={`px-2 py-1.5 text-center ${mo.from === current ? 'bg-lagoon-50/60' : ''}`}>
+                  {mo.hours} / {mo.required_hours} h
+                  <span className="block text-[9.5px] text-navy-400">{mo.working_days} working days</span>
+                </td>
+              ))}
+              <td className="px-2 py-1.5 text-center bg-navy-50/60">
+                {overall ? <>{overall.hours} / {overall.required_hours} h<span className="block text-[9.5px] text-navy-400">{overall.working_days} working days</span></> : '—'}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function TimesheetKra({ employeeId, canMap, onSaved }) {
   const [d, setD] = useState(null);
   // Which cycle is on screen. Null means "let the server choose", which
@@ -274,7 +388,8 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
   const [saveErr, setSaveErr] = useState(null);
 
   const base = employeeId ? `/pms/timesheet/kra/employee/${employeeId}` : '/pms/timesheet/kra/me';
-  const path = win ? `${base}?from=${win.from}&to=${win.to}` : base;
+  // months=1: the month-by-month table rides on the same read (26 Oct).
+  const path = win ? `${base}?from=${win.from}&to=${win.to}&months=1` : `${base}?months=1`;
   const load = () => {
     setD(null);
     api(path).then((r) => { setD(r); setDraft({}); }).catch((e) => setErr(e.message));
@@ -562,6 +677,8 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
           </div>
         )}
       </div>
+
+      <MonthByMonth m={d.monthly} overall={d.overall} current={d.window.from} onPick={setWin} />
 
       {/* The items. */}
       <div className="card p-4 space-y-3">

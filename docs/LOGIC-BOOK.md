@@ -1289,6 +1289,7 @@ Within a parameter, KRAs keep their order on the sheet. (`frontend/src/paramOrde
 | Month average | The used KRAs' effort %, weighted by their weights, graded on the KRA ladder (A+ ≥ 100, A ≥ 80, B+ ≥ 70, B below). Shown in the Total row and on the KRA sheet's timesheet line. |
 | Overall, all uploaded months | Total hours logged in every uploaded month ÷ (hours per day × working days in them, from the joining date) — shown as average hours per working day and %, graded on the same ladder. The same figure as the dashboard's login hours. |
 | Unchanged | KRA coverage % (how much of the sheet, by weight, was worked on) still counts every KRA, so a month that skips KRAs shows there. |
+| Month by month | KRA coverage shows a table for the person: one row per KRA, one column per month with logs (oldest first, the month in progress marked), each cell the KRA's rating that month (hours ÷ expected, *not used* when nothing was logged), a **Month average** row (KRAs used that month only), an **Hours logged / required** row, and an **All months** column: each KRA's hours ÷ its expected hours over the months it was used, and the overall average hours per working day. A month heading opens that month above. |
 
 # Part 4 — Changing behaviour without code
 
