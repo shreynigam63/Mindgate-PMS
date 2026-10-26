@@ -218,13 +218,48 @@ test('ONLY THE KRAs USED THIS MONTH: 3 of 7 used share the 168 h by their weight
   assert.equal(r.month.kras_used, 3); assert.equal(r.month.kras_measured, 7);
   assert.equal(r.month.weight_used, 50);
   assert.equal(r.month.effort_pct, 93.8);
+  // The month's rating is the average of the 3 ratings by weight:
+  // (A+ 5 x 20 + A+ 5 x 15 + B+ 3 x 15) / 50 = 4.4, nearest A.
+  assert.equal(r.month.value, 4.4);
   assert.equal(r.month.rating, 'A');
 });
 
-test('all KRAs used: the month average is the hours placed over the hours required', () => {
+// 26 Oct: "average ratings should be based on value of rating and not
+// percentage derived from number of hours worked". The client's screen:
+// five B+ KRAs and two A+, 84.3% of the hours, which read as A.
+test('THE MONTH AVERAGE IS OF THE RATINGS, NOT THE HOURS: five B+ and two A+ is B+', () => {
+  const r = KR([K('impl', 20, 28.25), K('code', 15, 21.25), K('zoho', 15, 21.25), K('resp', 10, 21.25),
+    K('train', 10, 21.25), K('cr', 10, 14.25), K('sec', 10, 14.25), K('doc', 5, 0), K('unit', 5, 0)], 21);
+  const by = Object.fromEntries(r.ratings.map((x) => [x.kra_id, x.rating]));
+  assert.deepEqual([by.impl, by.code, by.zoho, by.resp, by.train, by.cr, by.sec], ['B+', 'B+', 'B+', 'A+', 'A+', 'B+', 'B+']);
+  assert.equal(r.month.effort_pct, 84.3, 'the hours figure is still there, for the Total row');
+  // (3x20 + 3x15 + 3x15 + 5x10 + 5x10 + 3x10 + 3x10) / 90 = 3.44
+  assert.equal(r.month.value, 3.44);
+  assert.equal(r.month.rating, 'B+', 'was A from the 84.3% of hours');
+  assert.equal(r.month.kras_used, 7); assert.equal(r.month.kras_measured, 9);
+});
+
+test('rating values: the cycle\'s scale, else A+ 5 .. B 2; the nearest rating, a half going up', () => {
+  const v = s.ratingValues(s.DEFAULT_KRA_BANDS, null);
+  assert.deepEqual(v.map((x) => [x.label, x.value]), [['A+', 5], ['A', 4], ['B+', 3], ['B', 2]]);
+  const mine = s.ratingValues(s.DEFAULT_KRA_BANDS, [{ label: 'A+', value: 10 }, { label: 'A', value: 8 }, { label: 'B+', value: 6 }, { label: 'B', value: 4 }]);
+  assert.equal(mine[0].value, 10, 'a cycle that grades in these letters is used as it is');
+  const words = s.ratingValues(s.DEFAULT_KRA_BANDS, [{ label: 'Outstanding', value: 5 }]);
+  assert.equal(words[0].value, 5, 'a scale in words falls back to the A+ .. C ladder');
+  const own = s.ratingValues([{ label: 'Gold', min: 90 }, { label: 'Silver', min: 50 }, { label: 'Bronze', min: 0 }], null);
+  assert.deepEqual(own.map((x) => [x.label, x.value]), [['Gold', 3], ['Silver', 2], ['Bronze', 1]]);
+  assert.equal(s.averageRating([{ rating: 'A', weight: 50 }, { rating: 'B+', weight: 50 }], v).rating, 'A', '3.5 goes up');
+  assert.equal(s.averageRating([{ rating: 'A', weight: 40 }, { rating: 'B+', weight: 60 }], v).rating, 'B+', '3.4');
+  assert.equal(s.averageRating([{ rating: 'A+' }, { rating: 'B' }, { rating: 'B' }], v, false).rating, 'B+', 'one per month: 3');
+  assert.equal(s.averageRating([{ rating: null, weight: 10 }], v), null, 'nothing rated, no average');
+  assert.equal(s.averageRating([{ approval_rating: { rating: 'B' }, weight: 10 }, { rating: 'A+', weight: 90 }], v).value, 4.7,
+    'the manager\'s Timesheet Approval KRA counts once it is rated');
+});
+
+test('all KRAs used: effort_pct is the hours placed over the hours required', () => {
   const r = KR([K('a', 50, 80), K('b', 50, 56)], 20);   // 160 h required, 80 + 80 expected
   assert.equal(r.month.effort_pct, 85);                  // (100 x 50 + 70 x 50) / 100
-  assert.equal(r.month.rating, 'A');
+  assert.equal(r.month.rating, 'A');                     // (A+ 5 + B+ 3) / 2 = 4
 });
 
 test('OVERALL, ALL MONTHS: average hours per working day, on the KRA ladder', () => {

@@ -40,6 +40,8 @@
 // in core.admin_settings and 065 seeds them — the house rule, and what
 // lets a client retune this without a release.
 
+const { DEFAULT_SCALE } = require('./rating-rules');
+
 const round1 = (n) => Math.round(n * 10) / 10;
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
@@ -251,12 +253,70 @@ function validateScoring(s) {
 // a rating for staying late rather than for the work.
 const DEFAULT_KRA_BANDS = [{ label: 'A+', min: 100 }, { label: 'A', min: 80 }, { label: 'B+', min: 70 }, { label: 'B', min: 0 }];
 
+// AVERAGES ARE OF THE RATINGS (26 Oct): "average ratings should be based on
+// value of rating and not percentage derived from number of hours worked".
+// Each rating counts at its value on the cycle's rating scale (this tenant:
+// A+ 5, A 4, B+ 3, B 2), the values are averaged — by KRA weight within a
+// month — and the average is read back as the NEAREST rating, a half going
+// up: the same rule as a manager's weighted KRA rating (grade.jsx). Until
+// then a month average was the hours placed ÷ the hours required, so five
+// B+ KRAs and two A+ read as A (84.3%).
+const norm = (l) => String(l || '').trim().toLowerCase();
+/**
+ * The value of each KRA rating: the cycle's own scale when it carries every
+ * band's label, else this product's A+..C ladder, else (a tenant's own band
+ * labels) by position, the top band highest.
+ */
+function ratingValues(bands, scale) {
+  const list = Array.isArray(bands) && bands.length ? bands : DEFAULT_KRA_BANDS;
+  const has = (sc) => list.every((b) => sc.some((x) => norm(x.label) === norm(b.label)));
+  const pick = (sc) => list.map((b) => ({ label: b.label, value: Number(sc.find((x) => norm(x.label) === norm(b.label)).value) }));
+  if (Array.isArray(scale) && scale.length && has(scale)) return pick(scale);
+  if (has(DEFAULT_SCALE)) return pick(DEFAULT_SCALE);
+  const desc = list.slice().sort((a, b) => Number(b.min) - Number(a.min));
+  return desc.map((b, i) => ({ label: b.label, value: desc.length - i }));
+}
+// The nearest rating to a value; on a tie the higher one.
+function nearestRating(value, values) {
+  if (value == null || !values.length) return null;
+  const desc = values.slice().sort((a, b) => b.value - a.value);
+  return desc.reduce((best, r) => (Math.abs(r.value - value) < Math.abs(best.value - value) ? r : best), desc[0]).label;
+}
+// A rated row's rating: the KRA's own, or — the manager's "Timesheet
+// Approval" KRA — the one its approvals earned.
+const ratingOf = (r) => (r && (r.rating || (r.approval_rating && r.approval_rating.rating))) || null;
+/**
+ * The weighted average of the rows' ratings. Rows without a rating (not used,
+ * not measured, still undecided) are not in it.
+ * @param {Array<{rating?:string, weight?:number}>} rows
+ * @param {Array<{label:string, value:number}>} values  from ratingValues()
+ * @param {boolean} byWeight  false: every row counts the same (one per month)
+ */
+function averageRating(rows, values, byWeight = true) {
+  const val = new Map(values.map((v) => [norm(v.label), Number(v.value)]));
+  const rated = (rows || []).filter((r) => val.has(norm(ratingOf(r))) && (!byWeight || Number(r.weight) > 0));
+  const w = rated.reduce((t, r) => t + (byWeight ? Number(r.weight) : 1), 0);
+  if (!(w > 0)) return null;
+  const value = Math.round((rated.reduce((t, r) => t + val.get(norm(ratingOf(r))) * (byWeight ? Number(r.weight) : 1), 0) / w) * 100) / 100;
+  return { value, rating: nearestRating(value, values), count: rated.length };
+}
+// The month's average over a month's rows, as kraRatings and the approver's
+// edits both need it: kras_used counts the KRAs rated, kras_measured the
+// KRAs that could have been.
+function monthOf(kr) {
+  const rows = kr.ratings || [];
+  const avg = averageRating(rows, kr.rating_values || []);
+  const could = rows.filter((r) => r.measured || r.approval).length;
+  return { ...(kr.month || {}), kras_used: avg ? avg.count : 0, kras_measured: could,
+    value: avg ? avg.value : null, rating: avg ? avg.rating : null };
+}
+
 /**
  * @param {object} att   the return of timesheet-kra-match.attribute()
  * @param {object} cfg   the `scoring` blob (kra_bands, hours_per_day, min_mapped_pct)
  * @param {{working_days:number}} win  working days in the window
  */
-function kraRatings(att, cfg = {}, win = {}) {
+function kraRatings(att, cfg = {}, win = {}, scale = null) {
   const bands = Array.isArray(cfg.kra_bands) && cfg.kra_bands.length ? cfg.kra_bands : DEFAULT_KRA_BANDS;
   const perDay = Number(cfg.hours_per_day) > 0 ? Number(cfg.hours_per_day) : 8;
   const days = Math.max(0, Number(win.working_days) || 0);
@@ -307,21 +367,19 @@ function kraRatings(att, cfg = {}, win = {}) {
     return { ...row, measured: true, used: true, expected_hours: expected, effort_pct: effort,
       rating: gradeFor(effort, bands), reason: null };
   });
-  // The month's average: the used KRAs' effort, weighted by their weights.
-  // Unused KRAs are not in it. (Equal to the hours on used KRAs ÷ the
-  // required hours, which is what the Total row shows.)
+  // The month's average: of the used KRAs' RATINGS, by weight (see
+  // averageRating). Unused KRAs are not in it. effort_pct stays as the hours
+  // on used KRAs ÷ the required hours — what the Total row shows — and no
+  // longer sets the rating.
   const rated = ratings.filter((r) => r.rating && r.weight > 0);
   const wRated = rated.reduce((t, r) => t + r.weight, 0);
   const monthPct = wRated > 0 ? round1(rated.reduce((t, r) => t + r.effort_pct * r.weight, 0) / wRated) : null;
-  const month = {
-    kras_used: rated.length,
-    kras_measured: measured.length,
-    weight_used: weightAll,
-    effort_pct: monthPct,
-    rating: monthPct == null ? null : gradeFor(monthPct, bands),
-  };
-  return { ratings, required_hours: required, working_days: days, hours_per_day: perDay,
-    placed_hours: round1(placed), mapped_pct: mappedPct, thin, note, bands, month };
+  const out = { ratings, required_hours: required, working_days: days, hours_per_day: perDay,
+    placed_hours: round1(placed), mapped_pct: mappedPct, thin, note, bands,
+    rating_values: ratingValues(bands, scale),
+    month: { weight_used: weightAll, effort_pct: monthPct } };
+  out.month = monthOf(out);
+  return out;
 }
 
 // OVERALL, ACROSS EVERY UPLOADED MONTH (26 Oct): "overall performance will
@@ -350,4 +408,5 @@ function overallOf(total, cfg = {}, span = {}) {
   };
 }
 
-module.exports = { summarise, gradeFor, validateScoring, kraRatings, overallOf, DEFAULT_KRA_BANDS };
+module.exports = { summarise, gradeFor, validateScoring, kraRatings, overallOf, DEFAULT_KRA_BANDS,
+  ratingValues, nearestRating, averageRating, monthOf };

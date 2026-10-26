@@ -38,7 +38,7 @@ export function TimesheetRatingNote({ data }) {
       Timesheet rating, {data.window.from} – {data.window.to}: {k.working_days} working days × {k.hours_per_day} h
       = <b>{k.required_hours} h required</b>, shared by weight across the KRAs used this month. Each KRA's hours ÷ its
       expected hours gives its % ({ladder}); a KRA not used this month is left out
-      {k.month && k.month.rating ? <> — month average <b>{k.month.rating}</b> ({k.month.effort_pct}%)</> : ''}.
+      {k.month && k.month.rating ? <> — month average <b>{k.month.rating}</b>, the average of the KRA ratings by weight</> : ''}.
       Shown as evidence — your rating is the one that counts.
       {k.note ? ` ${k.note}` : ''}
     </p>
@@ -113,7 +113,7 @@ export function KraTimesheetBar({ ts, mapLink }) {
       <p>
         {k.working_days} working days × {k.hours_per_day} h = <b>{k.required_hours} h required</b>, shared by weight across the
         KRAs used this month. Each KRA: hours worked ÷ expected hours ({ladder}); a KRA not used this month is left out.
-        {k.month && k.month.rating ? <> Month average: <b>{k.month.rating}</b> ({k.month.effort_pct}% over {k.month.kras_used} of {k.month.kras_measured} KRAs).</> : ''}
+        {k.month && k.month.rating ? <> Month average: <b>{k.month.rating}</b> — the average of the {k.month.kras_used} KRA rating{k.month.kras_used === 1 ? '' : 's'} by weight ({(k.rating_values || []).map((v) => `${v.label} ${v.value}`).join(', ')}), read as the nearest rating.</> : ''}
         {d.overall ? <> Overall, all uploaded months: <b>{d.overall.avg_hours_per_day} h</b> per working day = {d.overall.pct}% → <b>{d.overall.rating}</b>.</> : ''}
         {' '}{k.note || ''}
       </p>

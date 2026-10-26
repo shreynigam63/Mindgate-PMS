@@ -271,7 +271,7 @@ const GRADE_TONE = {
   'A+': 'bg-emerald-600 text-white', A: 'bg-teal-600 text-white',
   'B+': 'bg-amber-500 text-white', B: 'bg-rose-600 text-white',
 };
-const Grade = ({ g }) => <span className={`chip !text-[10px] ${GRADE_TONE[g] || 'bg-navy-700 text-white'}`}>{g}</span>;
+const RatingChip = ({ g }) => <span className={`chip !text-[10px] ${GRADE_TONE[g] || 'bg-navy-700 text-white'}`}>{g}</span>;
 
 function MonthByMonth({ m, overall, current, onPick }) {
   if (!m || !m.months.length) return null;
@@ -283,8 +283,9 @@ function MonthByMonth({ m, overall, current, onPick }) {
       </div>
       <p className="text-[10.5px] text-navy-500 mb-2">
         Each cell: the KRA's hours ÷ its expected hours that month. A month shares its required hours only among the
-        KRAs used in it; a KRA with nothing logged is <i>not used</i> and left out of that month's average. All months:
-        the KRA's hours ÷ its expected hours over the months it was used.
+        KRAs used in it; a KRA with nothing logged is <i>not used</i> and left out of that month's average. Averages are
+        of the ratings, not the hours ({(m.rating_values || []).map((v) => `${v.label} ${v.value}`).join(', ')}), read as
+        the nearest rating: a month's by KRA weight, a KRA's across the months it was used.
       </p>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -314,7 +315,7 @@ function MonthByMonth({ m, overall, current, onPick }) {
                     {c && c.approval ? (
                       c.rating ? (
                         <span className="inline-flex flex-col items-center gap-0.5">
-                          <Grade g={c.rating} />
+                          <RatingChip g={c.rating} />
                           <span className="text-[9.5px] text-navy-400">{c.on_time} of {c.total} on time</span>
                         </span>
                       ) : c.used ? <span className="text-[10px] text-navy-400">{c.awaiting} awaiting</span>
@@ -323,7 +324,7 @@ function MonthByMonth({ m, overall, current, onPick }) {
                       : !c.used ? <span className="text-[10px] text-navy-300">not used</span>
                         : c.rating ? (
                           <span className="inline-flex flex-col items-center gap-0.5" title={c.edited ? `Changed by the approver from ${c.rating_system}: ${c.edit_reason}` : undefined}>
-                            <span><Grade g={c.rating} />{c.edited && <span className="text-violet-700"> ✎</span>} <span className="text-navy-600">{c.effort_pct}%</span></span>
+                            <span><RatingChip g={c.rating} />{c.edited && <span className="text-violet-700"> ✎</span>} <span className="text-navy-600">{c.effort_pct}%</span></span>
                             <span className="text-[9.5px] text-navy-400">{c.hours} / {c.expected_hours} h</span>
                           </span>
                         ) : <span className="text-[10px] text-navy-400">{c.reason}</span>}
@@ -331,14 +332,14 @@ function MonthByMonth({ m, overall, current, onPick }) {
                 ))}
                 <td className="px-2 py-2 text-center bg-navy-50/60">
                   {k.approval ? (k.all.rating ? (
-                    <span className="inline-flex flex-col items-center gap-0.5">
-                      <Grade g={k.all.rating} />
-                      <span className="text-[9.5px] text-navy-400">{k.all.on_time} of {k.all.total} on time · {k.all.months_used} mo</span>
+                    <span className="inline-flex flex-col items-center gap-0.5" title={`Average value ${k.all.value}`}>
+                      <RatingChip g={k.all.rating} />
+                      <span className="text-[9.5px] text-navy-400">avg of {k.all.months_used} mo · {k.all.on_time} of {k.all.total} on time</span>
                     </span>
                   ) : <span className="text-navy-300">—</span>) : k.all.rating ? (
-                    <span className="inline-flex flex-col items-center gap-0.5">
-                      <span><Grade g={k.all.rating} /> <span className="text-navy-600">{k.all.effort_pct}%</span></span>
-                      <span className="text-[9.5px] text-navy-400">{k.all.hours} / {k.all.expected_hours} h · {k.all.months_used} mo</span>
+                    <span className="inline-flex flex-col items-center gap-0.5" title={`Average value ${k.all.value}`}>
+                      <RatingChip g={k.all.rating} />
+                      <span className="text-[9.5px] text-navy-400">avg of {k.all.months_used} mo · {k.all.hours} / {k.all.expected_hours} h</span>
                     </span>
                   ) : <span className="text-navy-300">—</span>}
                 </td>
@@ -353,10 +354,11 @@ function MonthByMonth({ m, overall, current, onPick }) {
                 <td key={mo.from} className={`px-2 py-2 text-center ${mo.from === current ? 'bg-lagoon-50/60' : ''}`}>
                   {mo.month && mo.month.rating ? (
                     <span className="inline-flex flex-col items-center gap-0.5">
-                      <span title={mo.month.edited ? `Changed by the approver from ${mo.month.rating_system}: ${mo.month.edit_reason}` : undefined}>
-                        <Grade g={mo.month.rating} />{mo.month.edited && <span className="text-violet-700"> ✎</span>} <span>{mo.month.effort_pct}%</span>
+                      <span title={mo.month.edited ? `Changed by the approver from ${mo.month.rating_system}: ${mo.month.edit_reason}`
+                        : mo.month.from_edits ? `From the approved KRA ratings; the system's was ${mo.month.rating_system}` : `Average value ${mo.month.value}`}>
+                        <RatingChip g={mo.month.rating} />{(mo.month.edited || mo.month.from_edits) && <span className="text-violet-700"> ✎</span>}
                       </span>
-                      <span className="text-[9.5px] font-normal text-navy-400">{mo.month.kras_used} of {mo.month.kras_measured} KRAs used</span>
+                      <span className="text-[9.5px] font-normal text-navy-400">avg of {mo.month.kras_used} of {mo.month.kras_measured} KRAs</span>
                     </span>
                   ) : <span className="text-navy-300">—</span>}
                 </td>
@@ -364,7 +366,7 @@ function MonthByMonth({ m, overall, current, onPick }) {
               <td className="px-2 py-2 text-center bg-navy-50/60">
                 {overall ? (
                   <span className="inline-flex flex-col items-center gap-0.5">
-                    <span><Grade g={overall.rating} /> <span>{overall.pct}%</span></span>
+                    <span><RatingChip g={overall.rating} /> <span>{overall.pct}%</span></span>
                     <span className="text-[9.5px] font-normal text-navy-400">overall · {overall.avg_hours_per_day} h / working day</span>
                   </span>
                 ) : '—'}
@@ -560,6 +562,8 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
             = {d.kra_ratings.required_hours} h required, shared by weight across the KRAs <b>used this month</b> (expected
             hours = required hours × the KRA's weight ÷ the weight of the KRAs used); each KRA's hours ÷ its expected hours
             ({(d.kra_ratings.bands || []).slice().sort((x, y) => y.min - x.min).map((b) => `${b.label} ≥ ${b.min}%`).join(', ')}).
+            The month average is the average of the KRA ratings by weight
+            ({(d.kra_ratings.rating_values || []).map((v) => `${v.label} ${v.value}`).join(', ')}), read as the nearest rating.
             {d.kra_ratings.note ? ` ${d.kra_ratings.note}` : ''}
           </p>
         )}
@@ -700,10 +704,11 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                         this month only (26 Oct). */}
                     <td className="px-3 py-2 text-[10.5px] font-normal text-navy-500">
                       {mo.rating ? (
-                        <span>
+                        <span title={mo.value != null ? `Average value ${mo.value}` : undefined}>
                           <span className="chip bg-navy-900 text-white">{mo.rating}</span>
-                          <span className="ml-1.5">month average {mo.effort_pct}% over the {mo.kras_used} KRA{mo.kras_used === 1 ? '' : 's'} used</span>
+                          <span className="ml-1.5">month average of the {mo.kras_used} KRA rating{mo.kras_used === 1 ? '' : 's'}, by weight</span>
                           {mo.edited && <span className="block text-[10px] text-violet-700" title={mo.edit_reason}>✎ changed by the approver from {mo.rating_system} — {mo.edit_reason}</span>}
+                          {!mo.edited && mo.from_edits && <span className="block text-[10px] text-violet-700">✎ from the approved KRA ratings; the system's was {mo.rating_system}</span>}
                         </span>
                       ) : kr.required_hours > 0 ? `${placed} of ${kr.required_hours} h` : ''}
                     </td>

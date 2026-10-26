@@ -242,18 +242,23 @@ function publicApproval(a) {
   };
 }
 // The approver's edits over the system's ratings; the system's kept as
-// rating_system so the screen can show both.
+// rating_system so the screen can show both. The month's average follows the
+// approved KRA ratings (26 Oct: an average of the ratings), unless the
+// approver set the month's rating itself, with a reason.
 function applyEdits(kr, appr) {
   if (!appr || appr.status !== 'approved') return kr;
   const o = appr.kra_overrides || {};
   const ratings = kr.ratings.map((r) => (o[r.kra_id]
     ? { ...r, rating_system: r.rating, rating: o[r.kra_id].rating, edited: true, edit_reason: o[r.kra_id].reason } : r));
+  const sys = kr.month;
+  let month = Object.keys(o).length ? score.monthOf({ ...kr, ratings }) : sys;
+  if (sys && month !== sys && month.rating !== sys.rating) month = { ...month, rating_system: sys.rating, from_edits: true };
   const mo = appr.month_override;
-  const month = mo && kr.month
-    ? { ...kr.month, rating_system: kr.month.rating, rating: mo.rating, edited: true, edit_reason: mo.reason } : kr.month;
+  if (mo && month) month = { ...month, rating_system: sys.rating, rating: mo.rating, edited: true, edit_reason: mo.reason, from_edits: false };
   return { ...kr, ratings, month };
 }
-// The "Timesheet Approval" KRA's rating for the month on screen.
+// The "Timesheet Approval" KRA's rating for the month on screen. Once
+// decided it is one of the month's ratings, so it is in the month's average.
 function withApprovalKra(kr, kras, a) {
   const k = kras.find((x) => x.system_kind === approvals.KRA_KIND);
   if (!k) return kr;
@@ -261,7 +266,8 @@ function withApprovalKra(kr, kras, a) {
     ? { ...r, approval: true, approval_rating: a || null,
       reason: a ? (a.rating ? null : `${a.awaiting} of ${a.total} still within the cutoff`) : 'No reportee timesheets this month' }
     : r));
-  return { ...kr, ratings };
+  const out = { ...kr, ratings };
+  return { ...out, month: score.monthOf(out) };
 }
 
 // Every month this person has logs in, oldest first, with each KRA's
@@ -269,7 +275,7 @@ function withApprovalKra(kr, kras, a) {
 // (kraRatings: required hours shared among the KRAs used that month) — and
 // each KRA across all of them: its hours in the months it was used over its
 // expected hours in those months. A month is the compliance cycle.
-async function monthByMonth(req, target, kras, map, cfg, settings, windows, approvalsByMonth = new Map(), approvalKra = null) {
+async function monthByMonth(req, target, kras, map, cfg, settings, windows, approvalsByMonth = new Map(), approvalKra = null, scale = null) {
   const all = (await db.query(
     `SELECT to_char(log_date,'YYYY-MM-DD') AS log_date, hours, item_id, item_name,
             log_title, item_type, sprint, description
@@ -292,13 +298,16 @@ async function monthByMonth(req, target, kras, map, cfg, settings, windows, appr
       cols.set(p, { from: key(c.start), to: key(c.end), logs: 0, hours: 0 });
     }
   }
+  const values = score.ratingValues(bands, scale);
   const months = [...cols.values()].sort((a, b) => (a.from < b.from ? -1 : 1)).map((w) => {
     const es = all.filter((e) => e.log_date >= w.from && e.log_date <= w.to);
     const att = match.attribute(es, kras, map);
     const start = target.date_of_joining && target.date_of_joining > w.from ? target.date_of_joining : w.from;
     const end = w.to < today ? w.to : today;
     const appr = approvalsByMonth.get(w.from) || null;
-    const kr = applyEdits(score.kraRatings(att, cfg.scoring, { working_days: workingDays(start, end, settings.holidays) }), appr);
+    const kr = applyEdits(withApprovalKra(
+      score.kraRatings(att, cfg.scoring, { working_days: workingDays(start, end, settings.holidays) }, scale),
+      kras, approvalKra && approvalKra[w.from]), appr);
     return {
       from: w.from, to: w.to, in_progress: w.to >= today,
       approval: appr ? publicApproval(appr) : null,
@@ -319,9 +328,11 @@ async function monthByMonth(req, target, kras, map, cfg, settings, windows, appr
       const decided = cells.filter((c) => c.rating);
       const onTime = decided.reduce((t, c) => t + c.on_time, 0);
       const total = decided.reduce((t, c) => t + c.total, 0);
+      // Across months: the average of its monthly ratings, each month alike.
+      const avg = score.averageRating(decided, values, false);
       return {
         kra_id: id, title: k.title, weight: Number(k.weight) || 0, scorable: false, approval: true, cells,
-        all: total ? { rating: onTime === total ? 'A' : onTime === 0 ? 'B' : 'B+', on_time: onTime, total, months_used: decided.length } : { rating: null },
+        all: avg ? { rating: avg.rating, value: avg.value, on_time: onTime, total, months_used: decided.length } : { rating: null },
       };
     }
     const cells = months.map((mo) => {
@@ -335,14 +346,17 @@ async function monthByMonth(req, target, kras, map, cfg, settings, windows, appr
     const hours = rated.reduce((t, c) => t + c.hours, 0);
     const expected = rated.reduce((t, c) => t + c.expected_hours, 0);
     const effort = expected > 0 ? round1((hours / expected) * 100) : null;
+    // Across months: the average of the KRA's monthly ratings (approved
+    // ones where edited), each month it was used alike — not its hours.
+    const avg = score.averageRating(rated, values, false);
     return {
       kra_id: id, title: k.title, weight: Number(k.weight) || 0, scorable: k.timesheet_tracked !== false,
       cells,
       all: { hours: Math.round(hours * 100) / 100, expected_hours: round1(expected), effort_pct: effort,
-        rating: effort == null ? null : score.gradeFor(effort, bands), months_used: rated.length },
+        rating: avg ? avg.rating : null, value: avg ? avg.value : null, months_used: rated.length },
     };
   });
-  return { months: months.map(({ ratings, ...m }) => m), kras: rows };
+  return { months: months.map(({ ratings, ...m }) => m), kras: rows, rating_values: values };
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +431,7 @@ async function reportFor(req, target, q) {
     // new joiner owes no KRA hours for the days before they joined.
     working_days: workingDays(target.date_of_joining && target.date_of_joining > win.from ? target.date_of_joining : win.from,
       win.to < today ? win.to : today, settings.holidays),
-  });
+  }, cycle && cycle.rating_scale);
 
   // Overall, across every uploaded month (26 Oct) — see overallOf.
   const allLogs = (await db.query(
@@ -437,9 +451,9 @@ async function reportFor(req, target, q) {
   // The approval of this month (26 Oct): its status, and the approver's
   // edits applied over the system's ratings, the system's kept beside them.
   const approval = approvalsByMonth.get(win.from) || null;
-  const kraRating = withApprovalKra(applyEdits(kraRatingRaw, approval), kras, approvalKra && approvalKra[win.from]);
+  const kraRating = applyEdits(withApprovalKra(kraRatingRaw, kras, approvalKra && approvalKra[win.from]), approval);
   const monthly = q && q.months === '1'
-    ? await monthByMonth(req, target, kras, map, cfg, settings, windows, approvalsByMonth, approvalKra) : null;
+    ? await monthByMonth(req, target, kras, map, cfg, settings, windows, approvalsByMonth, approvalKra, cycle && cycle.rating_scale) : null;
 
   return {
     employee: target,

@@ -180,10 +180,19 @@ test('PAST THE CUTOFF IT GOES TO THE UPPER MANAGER, and a late approval is not o
   assert.deepEqual(up.approvals.map((a) => [a.employee.name, a.status, a.can_act_as]), [['AP Two', 'escalated', 'upper_manager']]);
   assert.equal(await ap.sweepEscalations(tenantId), 1, 'the upper manager is told once');
   assert.equal(await ap.sweepEscalations(tenantId), 0);
-  const ok = await api(`/pms/timesheet/approvals/${id}/approve`, { method: 'POST', body: '{}' }, 'upper');
+  const ok = await api(`/pms/timesheet/approvals/${id}/approve`, { method: 'POST',
+    body: JSON.stringify({ kra_overrides: { [ids.k2.Delivery]: { rating: 'A', reason: 'Most of the month was on leave' } } }) }, 'upper');
   assert.equal(ok.status, 200);
   assert.equal(ok.body.approved_as, 'upper_manager');
   assert.equal(ok.body.on_time_by_manager, false);
+  // No month rating given: the month's average follows the approved KRA
+  // ratings (26 Oct, an average of the ratings), the system's beside it.
+  const cov = (await api(`/pms/timesheet/kra/employee/${ids.e2}?from=2026-08-21&to=2026-09-20&months=1`)).body;
+  assert.equal(cov.kra_ratings.month.rating, 'A', 'the system said B (24 of 168 h)');
+  assert.equal(cov.kra_ratings.month.from_edits, true);
+  assert.equal(cov.kra_ratings.month.rating_system, 'B');
+  assert.equal(cov.monthly.months[0].month.rating, 'A');
+  assert.equal(cov.monthly.kras.find((k) => k.title === 'Delivery').all.rating, 'A', 'all months: the approved rating');
 });
 
 test('THE MANAGER\'S "TIMESHEET APPROVAL" KRA: added by HR at 10%, rated from the approvals', { skip }, async () => {
@@ -208,6 +217,9 @@ test('THE MANAGER\'S "TIMESHEET APPROVAL" KRA: added by HR at 10%, rated from th
   assert.equal(row.cells[0].on_time, 1); assert.equal(row.cells[0].total, 2);
   const onScreen = cov.kra_ratings.ratings.find((r) => r.title === 'Timesheet Approval');
   assert.equal(onScreen.approval_rating.rating, 'B+');
+  // A rated KRA of the month, so it is in the month's average.
+  assert.equal(cov.kra_ratings.month.rating, 'B+');
+  assert.equal(cov.monthly.months[0].month.rating, 'B+');
 });
 
 test('uploading an approved month again sends it back for approval with a new clock', { skip }, async () => {

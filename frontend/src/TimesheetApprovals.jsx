@@ -11,6 +11,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from './utils/api';
 import { CheckCircle2, Clock, ArrowUpRight, XCircle, Pencil, ChevronDown, ChevronUp, ListChecks } from 'lucide-react';
+import { averageRating, valuesText } from './ratingAverage';
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const dm = (iso) => (iso ? `${Number(iso.slice(8, 10))} ${MON[Number(iso.slice(5, 7)) - 1]}` : '');
@@ -49,13 +50,21 @@ function Review({ id, onDone }) {
   const kr = d.kra_ratings || { ratings: [] };
   const labels = (kr.bands || d.bands || []).map((b) => b.label);
   const canAct = !!d.approval.can_act_as && d.approval.status !== 'approved';
+  // The month's average of the APPROVED ratings (26 Oct: an average of the
+  // ratings' values, not of the hours), moving as a KRA's rating is changed.
+  // Changing the month's rating away from it needs a reason.
+  const live = averageRating(kr.ratings.map((r) => ({ weight: r.weight,
+    rating: (edit[r.kra_id] && edit[r.kra_id].rating) || r.rating || (r.approval_rating && r.approval_rating.rating) })),
+  kr.rating_values);
+  const liveRating = live ? live.rating : (kr.month && kr.month.rating);
+  const monthChanged = !!month.rating && month.rating !== liveRating;
   const approve = async () => {
     setErr(null); setBusy(true);
     try {
       const kra_overrides = {};
       for (const [k, v] of Object.entries(edit)) if (v && v.rating) kra_overrides[k] = v;
       await api(`/pms/timesheet/approvals/${id}/approve`, { method: 'POST', body: JSON.stringify({
-        kra_overrides, month_override: month.rating ? month : null, note }) });
+        kra_overrides, month_override: monthChanged ? month : null, note }) });
       onDone();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
@@ -64,6 +73,7 @@ function Review({ id, onDone }) {
       <p className="text-[11px] text-navy-500">
         The system's rating of each KRA for {dm(d.approval.period_start)} – {dm(d.approval.period_end)}: hours logged ÷ expected
         hours ({kr.working_days} working days × {kr.hours_per_day} h = {kr.required_hours} h, shared among the KRAs used).
+        Month average: the average of the KRA ratings by weight ({valuesText(kr.rating_values)}), read as the nearest rating.
         {canAct ? ' Change any rating if it does not reflect the month — say why — then approve.' : ''}
       </p>
       <table className="w-full text-xs bg-white rounded-lg overflow-hidden">
@@ -110,19 +120,23 @@ function Review({ id, onDone }) {
           {kr.month && kr.month.rating && (
             <tr className="font-semibold text-navy-700">
               <td className="px-2 py-1.5" colSpan={3}>Month average <span className="font-normal text-[10.5px] text-navy-400">(KRAs used this month)</span></td>
-              <td className="px-2 py-1.5"><span className="chip bg-navy-900 text-white">{kr.month.rating}</span> <span className="font-normal">{kr.month.effort_pct}%</span></td>
+              <td className="px-2 py-1.5" title={kr.month.value != null ? `Average value ${kr.month.value}` : undefined}>
+                <span className="chip bg-navy-900 text-white">{kr.month.rating}</span>
+                <span className="font-normal text-[10.5px] text-navy-500 ml-1">avg of {kr.month.kras_used} rating{kr.month.kras_used === 1 ? '' : 's'}</span>
+              </td>
               <td className="px-2 py-1.5">
                 {canAct ? (
                   <div className="flex flex-wrap items-center gap-1.5 font-normal">
-                    <select className="inp !py-0.5 !px-1.5 !text-xs !w-auto" value={month.rating || kr.month.rating}
-                      onChange={(ev) => setMonth(ev.target.value === kr.month.rating ? { rating: '', reason: '' } : { ...month, rating: ev.target.value })}>
+                    <select className="inp !py-0.5 !px-1.5 !text-xs !w-auto" value={month.rating || liveRating}
+                      title={live ? `Average value ${live.value}` : undefined}
+                      onChange={(ev) => setMonth(ev.target.value === liveRating ? { rating: '', reason: '' } : { ...month, rating: ev.target.value })}>
                       {labels.map((l) => <option key={l} value={l}>{l}</option>)}
                     </select>
-                    {month.rating && (
+                    {monthChanged ? (
                       <input className="inp !py-0.5 !text-xs flex-1 min-w-[180px]" maxLength={300}
                         placeholder="Why is it changed? (required)" value={month.reason}
                         onChange={(ev) => setMonth({ ...month, reason: ev.target.value })} />
-                    )}
+                    ) : <span className="text-[10.5px] text-navy-400">avg of the approved ratings</span>}
                   </div>
                 ) : <span className="text-navy-300">—</span>}
               </td>
