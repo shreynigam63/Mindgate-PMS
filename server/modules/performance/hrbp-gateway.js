@@ -130,6 +130,10 @@ const SELF_SERVICE = {
     // the route's own answer reaches an HRBP: since 22 Oct only HR and
     // Super Admin load timesheets (timesheet.js mayUpload).
     ['GET', '/timesheet/me'], ['GET', '/timesheet/template.xlsx'], ['POST', '/timesheet/upload'],
+    // Timesheet approvals (26 Oct): the routes decide who may see and
+    // approve — manager, upper manager, an HRBP for their remit, HR — so
+    // an HRBP who manages people approves their own reportees here too.
+    ['GET', '/timesheet/approvals'], ['GET', '/timesheet/approvals/:id'], ['POST', '/timesheet/approvals/:id/approve'],
     ['GET', '/timesheet/kra/me'], ['GET', '/timesheet/kra/months/me'],
     ['GET', '/connects'], ['GET', '/connects/questions'], ['GET', '/connects/people'],
     ['GET', '/connects/kra-options/:me'], ['GET', '/connects/cadence/:me'],

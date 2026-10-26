@@ -77,6 +77,10 @@ async function settingsFor(tenantId) {
     hours_per_day: Number(v.hours_per_day) > 0 ? Number(v.hours_per_day)
       : (v.scoring && Number(v.scoring.hours_per_day) > 0 ? Number(v.scoring.hours_per_day) : DEFAULTS.hours_per_day),
     holidays: Array.isArray(v.holidays) ? v.holidays : [],
+    // Working days a manager has to approve an upload, then the upper
+    // manager the same again (26 Oct).
+    approval_cutoff_days: Number.isInteger(Number(v.approval_cutoff_days)) && Number(v.approval_cutoff_days) >= 1
+      && Number(v.approval_cutoff_days) <= 30 ? Number(v.approval_cutoff_days) : 5,
     // Read-only here, and owned by their own routes — 064's value-add
     // words and 065's scoring configuration. They are returned so the
     // compliance screen can show them, and named so the PUT below can
@@ -114,7 +118,12 @@ router.put('/settings', async (req, res) => {
       .map((s) => String(s).trim()).filter(Boolean);
     const bad = holidays.find((h) => !/^\d{4}-\d{2}-\d{2}$/.test(h));
     if (bad) return res.status(422).json({ error: `holiday "${bad}" is not a date — use YYYY-MM-DD` });
-    const value = { cycle_start_day: day, green_pct: green, amber_pct: amber, hours_per_day: perDay, holidays: [...new Set(holidays)].sort() };
+    const cutoff = b.approval_cutoff_days == null || b.approval_cutoff_days === '' ? 5 : Number(b.approval_cutoff_days);
+    if (!Number.isInteger(cutoff) || cutoff < 1 || cutoff > 30) {
+      return res.status(422).json({ error: 'approval_cutoff_days must be a whole number of working days between 1 and 30' });
+    }
+    const value = { cycle_start_day: day, green_pct: green, amber_pct: amber, hours_per_day: perDay,
+      holidays: [...new Set(holidays)].sort(), approval_cutoff_days: cutoff };
     // MERGED, NOT REPLACED, and this is a fix rather than a nicety.
     //
     // This blob is shared: it has always held the compliance thresholds
@@ -559,6 +568,20 @@ router.post('/upload', (req, res, next) => upload.single('file')(req, res, (err)
       client.release();
     }
 
+    // Each month this file carries goes to the person's manager to approve
+    // (26 Oct) — after the commit, through the pool, like the audit below.
+    try {
+      const byEmp = new Map();
+      for (const e of keep) {
+        if (!byEmp.has(e.employee.id)) byEmp.set(e.employee.id, new Set());
+        byEmp.get(e.employee.id).add(e.log_date);
+      }
+      report.approvals = await require('./timesheet-approval').recordUpload(T(req), byEmp, req.user.email);
+    } catch (err) {
+      logger.error('timesheet approvals not opened', { error: err.message });
+      report.approvals = { error: 'The timesheet loaded, but its months were not sent for approval.' };
+    }
+
     for (const emp of touched.values()) {
       await audit(req, 'TIMESHEET_UPLOADED', emp.id, {
         batch: batchId,
@@ -602,5 +625,7 @@ router.get('/batches', async (req, res) => {
 // grow a second subject. Mounted last so /kra/... cannot shadow an
 // existing route.
 router.use('/kra', require('./timesheet-kra').router);
+// Manager / HRBP / HR approval of each uploaded month (26 Oct).
+router.use('/approvals', require('./timesheet-approval').router);
 
 module.exports = { router, settingsFor };

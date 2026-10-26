@@ -20,6 +20,7 @@
 // file must never summarise them into "insufficient data".
 import { useEffect, useMemo, useState } from 'react';
 import { api } from './utils/api';
+import { ApprovalStatus } from './TimesheetApprovals';
 import {
   Link2, Link2Off, HelpCircle, Ban, Target, AlertTriangle, Save, Info, Sparkles, X,
 } from 'lucide-react';
@@ -310,18 +311,31 @@ function MonthByMonth({ m, overall, current, onPick }) {
                 <td className="px-2 py-2 text-right text-navy-500">{k.weight}%</td>
                 {k.cells.map((c, i) => (
                   <td key={m.months[i].from} className={`px-2 py-2 text-center ${m.months[i].from === current ? 'bg-lagoon-50/60' : ''}`}>
-                    {!c || !c.measured ? <span className="text-navy-300">—</span>
+                    {c && c.approval ? (
+                      c.rating ? (
+                        <span className="inline-flex flex-col items-center gap-0.5">
+                          <Grade g={c.rating} />
+                          <span className="text-[9.5px] text-navy-400">{c.on_time} of {c.total} on time</span>
+                        </span>
+                      ) : c.used ? <span className="text-[10px] text-navy-400">{c.awaiting} awaiting</span>
+                        : <span className="text-navy-300">—</span>
+                    ) : !c || !c.measured ? <span className="text-navy-300">—</span>
                       : !c.used ? <span className="text-[10px] text-navy-300">not used</span>
                         : c.rating ? (
-                          <span className="inline-flex flex-col items-center gap-0.5">
-                            <span><Grade g={c.rating} /> <span className="text-navy-600">{c.effort_pct}%</span></span>
+                          <span className="inline-flex flex-col items-center gap-0.5" title={c.edited ? `Changed by the approver from ${c.rating_system}: ${c.edit_reason}` : undefined}>
+                            <span><Grade g={c.rating} />{c.edited && <span className="text-violet-700"> ✎</span>} <span className="text-navy-600">{c.effort_pct}%</span></span>
                             <span className="text-[9.5px] text-navy-400">{c.hours} / {c.expected_hours} h</span>
                           </span>
                         ) : <span className="text-[10px] text-navy-400">{c.reason}</span>}
                   </td>
                 ))}
                 <td className="px-2 py-2 text-center bg-navy-50/60">
-                  {k.all.rating ? (
+                  {k.approval ? (k.all.rating ? (
+                    <span className="inline-flex flex-col items-center gap-0.5">
+                      <Grade g={k.all.rating} />
+                      <span className="text-[9.5px] text-navy-400">{k.all.on_time} of {k.all.total} on time · {k.all.months_used} mo</span>
+                    </span>
+                  ) : <span className="text-navy-300">—</span>) : k.all.rating ? (
                     <span className="inline-flex flex-col items-center gap-0.5">
                       <span><Grade g={k.all.rating} /> <span className="text-navy-600">{k.all.effort_pct}%</span></span>
                       <span className="text-[9.5px] text-navy-400">{k.all.hours} / {k.all.expected_hours} h · {k.all.months_used} mo</span>
@@ -339,7 +353,9 @@ function MonthByMonth({ m, overall, current, onPick }) {
                 <td key={mo.from} className={`px-2 py-2 text-center ${mo.from === current ? 'bg-lagoon-50/60' : ''}`}>
                   {mo.month && mo.month.rating ? (
                     <span className="inline-flex flex-col items-center gap-0.5">
-                      <span><Grade g={mo.month.rating} /> <span>{mo.month.effort_pct}%</span></span>
+                      <span title={mo.month.edited ? `Changed by the approver from ${mo.month.rating_system}: ${mo.month.edit_reason}` : undefined}>
+                        <Grade g={mo.month.rating} />{mo.month.edited && <span className="text-violet-700"> ✎</span>} <span>{mo.month.effort_pct}%</span>
+                      </span>
                       <span className="text-[9.5px] font-normal text-navy-400">{mo.month.kras_used} of {mo.month.kras_measured} KRAs used</span>
                     </span>
                   ) : <span className="text-navy-300">—</span>}
@@ -354,6 +370,17 @@ function MonthByMonth({ m, overall, current, onPick }) {
                 ) : '—'}
               </td>
             </tr>
+            {m.months.some((mo) => mo.approval) && (
+              <tr className="text-[10.5px] text-navy-600 border-t border-navy-50">
+                <td className="px-2 py-1.5" colSpan={2}>Approval</td>
+                {m.months.map((mo) => (
+                  <td key={mo.from} className={`px-2 py-1.5 text-center ${mo.from === current ? 'bg-lagoon-50/60' : ''}`}>
+                    {mo.approval ? <ApprovalStatus a={mo.approval} /> : <span className="text-navy-300">—</span>}
+                  </td>
+                ))}
+                <td className="px-2 py-1.5 bg-navy-50/60" />
+              </tr>
+            )}
             <tr className="text-[10.5px] text-navy-500">
               <td className="px-2 py-1.5" colSpan={2}>Hours logged / required</td>
               {m.months.map((mo) => (
@@ -458,6 +485,9 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
             ? ' Pick a period above that has logs.'
             : ' Coverage appears here as soon as an export covering this period is uploaded.'}
         </div>
+        {/* A manager who logs no time still has a "Timesheet Approval"
+            KRA, rated from approving their reportees (26 Oct). */}
+        <MonthByMonth m={d.monthly} overall={d.overall} current={d.window.from} onPick={setWin} />
       </div>
     );
   }
@@ -514,6 +544,15 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
 
       {/* The KRAs. */}
       <div className="card p-4">
+        {/* 26 Oct: where this month's approval stands, and whether the
+            approver changed any of the system's ratings below. */}
+        {d.approval && (
+          <div className="flex flex-wrap items-center gap-2 mb-2 text-[11px] text-navy-600">
+            <b>Approval:</b> <ApprovalStatus a={d.approval} />
+            {d.approval.edits > 0 && <span className="text-navy-500">· {d.approval.edits} rating{d.approval.edits === 1 ? '' : 's'} changed by the approver (marked ✎)</span>}
+            {d.approval.note && <span className="text-navy-400 italic">“{d.approval.note}”</span>}
+          </div>
+        )}
         {d.kra_ratings && (
           <p className={`text-[11px] mb-2 ${d.kra_ratings.thin ? 'text-amber-700' : 'text-navy-500'}`}>
             <Info size={11} className="inline mr-1 -mt-px" />
@@ -557,7 +596,8 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                     {!k.scorable && (
                       <span className="block text-[10px] text-navy-400 mt-0.5">
                         <Ban size={10} className="inline mr-1" />
-                        not measured from timesheets{k.untracked_reason ? ` — ${k.untracked_reason}` : ''}
+                        {k.untracked_reason && /approval/i.test(k.untracked_reason) ? k.untracked_reason
+                          : `not measured from timesheets${k.untracked_reason ? ` — ${k.untracked_reason}` : ''}`}
                       </span>
                     )}
                     {k.scorable && !k.hours && (
@@ -595,12 +635,28 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                       the KRA; it does not set the appraisal rating. */}
                   <td className="px-3 py-2">{(() => {
                     const r = ((d.kra_ratings || {}).ratings || []).find((x) => x.kra_id === k.kra_id);
+                    // The manager's "Timesheet Approval" KRA: rated from approvals.
+                    if (r && r.approval) {
+                      const a = r.approval_rating;
+                      if (!a || !a.rating) return <span className="text-[10.5px] text-navy-400">{r.reason}</span>;
+                      return (
+                        <span>
+                          <span className="chip bg-navy-700 text-white">{a.rating}</span>
+                          <span className="text-[10.5px] text-navy-500 ml-1.5">{a.on_time} of {a.total} reportees approved on time</span>
+                        </span>
+                      );
+                    }
                     if (!r || !r.measured) return <span className="text-navy-300">—</span>;
                     if (!r.rating) return <span className="text-[10.5px] text-navy-400">{r.reason}</span>;
                     return (
                       <span>
                         <span className="chip bg-navy-700 text-white">{r.rating}</span>
                         <span className="text-[10.5px] text-navy-500 ml-1.5">{r.hours} of {r.expected_hours} h · {r.effort_pct}%</span>
+                        {r.edited && (
+                          <span className="block text-[10px] text-violet-700 mt-0.5" title={r.edit_reason}>
+                            ✎ changed by the approver from {r.rating_system} — {r.edit_reason}
+                          </span>
+                        )}
                       </span>
                     );
                   })()}</td>
@@ -647,6 +703,7 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
                         <span>
                           <span className="chip bg-navy-900 text-white">{mo.rating}</span>
                           <span className="ml-1.5">month average {mo.effort_pct}% over the {mo.kras_used} KRA{mo.kras_used === 1 ? '' : 's'} used</span>
+                          {mo.edited && <span className="block text-[10px] text-violet-700" title={mo.edit_reason}>✎ changed by the approver from {mo.rating_system} — {mo.edit_reason}</span>}
                         </span>
                       ) : kr.required_hours > 0 ? `${placed} of ${kr.required_hours} h` : ''}
                     </td>

@@ -237,6 +237,11 @@ async function main() {
   // Super 50 benefits: closes a benefits year once it ends, and reminds
   // everyone with money left before it lapses (super50-benefits.js).
   require('./modules/performance/super50-benefits').startScheduler(TENANT_ID);
+
+  // Timesheet approvals (26 Oct): tells an upper manager when months pass
+  // their manager's cutoff and reach them. The cutoffs themselves need no
+  // job — the status is read from the dates.
+  require('./modules/performance/timesheet-approval').startScheduler(TENANT_ID);
 }
 
 main().catch(e => { logger.error('boot failed', { error: e.message }); process.exit(1); });

@@ -18,6 +18,7 @@ import TimesheetTabs from '../TimesheetTabs';
 import TimesheetKra from '../TimesheetKra';
 import KraRatingSettings from '../KraRatingSettings';
 import TimesheetUpload from '../TimesheetUpload';
+import TimesheetApprovals from '../TimesheetApprovals';
 import { TimesheetRoster } from './TeamTimesheetPage';
 import SearchBox from '../SearchBox';
 import {
@@ -397,6 +398,7 @@ function Settings({ settings, onSaved }) {
     amber_pct: settings.amber_pct,
     hours_per_day: settings.hours_per_day || 8,
     holidays: (settings.holidays || []).join(', '),
+    approval_cutoff_days: settings.approval_cutoff_days || 5,
   });
   const [msg, setMsg] = useState(null);
   const [err, setErr] = useState(null);
@@ -427,6 +429,10 @@ function Settings({ settings, onSaved }) {
         <label className="text-[11px] text-navy-500">Login hours a working day
           <input type="number" min="1" max="24" step="0.5" className="inp !py-1 !px-2 w-20 mt-0.5"
             value={s.hours_per_day} onChange={(e) => setS({ ...s, hours_per_day: Number(e.target.value) })} />
+        </label>
+        <label className="text-[11px] text-navy-500" title="Working days a manager has to approve an upload; the upper manager then has the same again">Approval cutoff (working days)
+          <input type="number" min="1" max="30" className="inp !py-1 !px-2 w-20 mt-0.5"
+            value={s.approval_cutoff_days} onChange={(e) => setS({ ...s, approval_cutoff_days: Number(e.target.value) })} />
         </label>
         <label className="text-[11px] text-navy-500 flex-1 min-w-[260px]">Holidays — YYYY-MM-DD, comma separated
           <input className="inp !py-1 !px-2 mt-0.5" value={s.holidays}
@@ -518,6 +524,10 @@ export default function HrTimesheetPage() {
       {d.can_upload && (
         <TimesheetUpload people={(d.employees || []).map((r) => r.employee)} onLoaded={() => load()} />
       )}
+
+      {/* 26 Oct: every uploaded month and where its approval stands; HR
+          approves any, an HRBP their remit. */}
+      <TimesheetApprovals scope="all" />
 
       <TimesheetTabs value={view} onChange={setView} />
       {view === 'kra' ? <Backlog onOpen={setOpen} /> : <>

@@ -26,6 +26,7 @@ const match = require('./timesheet-kra-match');
 const score = require('./timesheet-kra-score');
 const { activeCycle } = require('./active-cycle');
 const rollupRules = require('./timesheet-rollup');
+const approvals = require('./timesheet-approval');
 const { ensureScoringSettings, DEFAULT_SCORING } = require('../../migrations/065-timesheet-kra-map');
 const { ensureValueAddKeywords } = require('../../migrations/064-kra-keywords');
 
@@ -218,12 +219,57 @@ function workingDays(from, to, holidays = []) {
   return n;
 }
 
+// Approvals (26 Oct) — timesheet-approval.js.
+async function approvalsFor(tenantId, employeeId) {
+  const rows = (await db.query(
+    `SELECT a.id, to_char(a.period_start,'YYYY-MM-DD') AS period_start, a.status, a.approved_at,
+            a.approved_by_email, a.approved_as, a.on_time_by_manager, a.kra_overrides, a.month_override,
+            a.note, to_char(a.due_on,'YYYY-MM-DD') AS due_on,
+            to_char(a.escalation_due_on,'YYYY-MM-DD') AS escalation_due_on, a.upper_manager_id,
+            m.name AS manager_name, u.name AS upper_manager_name
+       FROM pms.timesheet_approvals a
+       LEFT JOIN core.employees m ON m.id = a.manager_id
+       LEFT JOIN core.employees u ON u.id = a.upper_manager_id
+      WHERE a.tenant_id=$1 AND a.employee_id=$2`, [tenantId, employeeId])).rows;
+  return new Map(rows.map((r) => [r.period_start, r]));
+}
+function publicApproval(a) {
+  return {
+    id: a.id, status: approvals.statusOf(a), approved_at: a.approved_at, approved_by_email: a.approved_by_email,
+    approved_as: a.approved_as, on_time_by_manager: a.on_time_by_manager, due_on: a.due_on,
+    escalation_due_on: a.escalation_due_on, manager_name: a.manager_name, upper_manager_name: a.upper_manager_name,
+    note: a.note, edits: Object.keys(a.kra_overrides || {}).length + (a.month_override ? 1 : 0),
+  };
+}
+// The approver's edits over the system's ratings; the system's kept as
+// rating_system so the screen can show both.
+function applyEdits(kr, appr) {
+  if (!appr || appr.status !== 'approved') return kr;
+  const o = appr.kra_overrides || {};
+  const ratings = kr.ratings.map((r) => (o[r.kra_id]
+    ? { ...r, rating_system: r.rating, rating: o[r.kra_id].rating, edited: true, edit_reason: o[r.kra_id].reason } : r));
+  const mo = appr.month_override;
+  const month = mo && kr.month
+    ? { ...kr.month, rating_system: kr.month.rating, rating: mo.rating, edited: true, edit_reason: mo.reason } : kr.month;
+  return { ...kr, ratings, month };
+}
+// The "Timesheet Approval" KRA's rating for the month on screen.
+function withApprovalKra(kr, kras, a) {
+  const k = kras.find((x) => x.system_kind === approvals.KRA_KIND);
+  if (!k) return kr;
+  const ratings = kr.ratings.map((r) => (r.kra_id === String(k.id)
+    ? { ...r, approval: true, approval_rating: a || null,
+      reason: a ? (a.rating ? null : `${a.awaiting} of ${a.total} still within the cutoff`) : 'No reportee timesheets this month' }
+    : r));
+  return { ...kr, ratings };
+}
+
 // Every month this person has logs in, oldest first, with each KRA's
 // timesheet rating in it — the same rule as the month on screen
 // (kraRatings: required hours shared among the KRAs used that month) — and
 // each KRA across all of them: its hours in the months it was used over its
 // expected hours in those months. A month is the compliance cycle.
-async function monthByMonth(req, target, kras, map, cfg, settings, windows) {
+async function monthByMonth(req, target, kras, map, cfg, settings, windows, approvalsByMonth = new Map(), approvalKra = null) {
   const all = (await db.query(
     `SELECT to_char(log_date,'YYYY-MM-DD') AS log_date, hours, item_id, item_name,
             log_title, item_type, sprint, description
@@ -233,14 +279,29 @@ async function monthByMonth(req, target, kras, map, cfg, settings, windows) {
   const round1 = (n) => Math.round(n * 10) / 10;
   const bands = Array.isArray(cfg.scoring.kra_bands) && cfg.scoring.kra_bands.length
     ? cfg.scoring.kra_bands : score.DEFAULT_KRA_BANDS;
-  const months = windows.slice().reverse().map((w) => {
+  // The months with this person's own logs, and — for a manager — the
+  // months they had reportees' timesheets to approve, so their "Timesheet
+  // Approval" KRA has a column even when they log no time themselves.
+  const cols = new Map(windows.map((w) => [w.from, w]));
+  if (approvalKra) {
+    const { cycleOf, key } = require('./timesheet-rules');
+    for (const p of Object.keys(approvalKra)) {
+      if (cols.has(p)) continue;
+      const [y, mo, dd] = p.split('-').map(Number);
+      const c = cycleOf(new Date(y, mo - 1, dd), Number(settings.cycle_start_day) || 21);
+      cols.set(p, { from: key(c.start), to: key(c.end), logs: 0, hours: 0 });
+    }
+  }
+  const months = [...cols.values()].sort((a, b) => (a.from < b.from ? -1 : 1)).map((w) => {
     const es = all.filter((e) => e.log_date >= w.from && e.log_date <= w.to);
     const att = match.attribute(es, kras, map);
     const start = target.date_of_joining && target.date_of_joining > w.from ? target.date_of_joining : w.from;
     const end = w.to < today ? w.to : today;
-    const kr = score.kraRatings(att, cfg.scoring, { working_days: workingDays(start, end, settings.holidays) });
+    const appr = approvalsByMonth.get(w.from) || null;
+    const kr = applyEdits(score.kraRatings(att, cfg.scoring, { working_days: workingDays(start, end, settings.holidays) }), appr);
     return {
       from: w.from, to: w.to, in_progress: w.to >= today,
+      approval: appr ? publicApproval(appr) : null,
       hours: att.totals.logged, placed: att.totals.attributed,
       working_days: kr.working_days, required_hours: kr.required_hours,
       month: kr.month, ratings: kr.ratings,
@@ -248,11 +309,27 @@ async function monthByMonth(req, target, kras, map, cfg, settings, windows) {
   });
   const rows = kras.map((k) => {
     const id = String(k.id);
+    // The manager's "Timesheet Approval" KRA is rated from approvals, not hours.
+    if (k.system_kind === approvals.KRA_KIND) {
+      const cells = months.map((mo) => {
+        const a = approvalKra && approvalKra[mo.from];
+        return a ? { approval: true, measured: true, used: true, rating: a.rating, on_time: a.on_time, total: a.total, awaiting: a.awaiting }
+          : { approval: true, measured: true, used: false, rating: null };
+      });
+      const decided = cells.filter((c) => c.rating);
+      const onTime = decided.reduce((t, c) => t + c.on_time, 0);
+      const total = decided.reduce((t, c) => t + c.total, 0);
+      return {
+        kra_id: id, title: k.title, weight: Number(k.weight) || 0, scorable: false, approval: true, cells,
+        all: total ? { rating: onTime === total ? 'A' : onTime === 0 ? 'B' : 'B+', on_time: onTime, total, months_used: decided.length } : { rating: null },
+      };
+    }
     const cells = months.map((mo) => {
       const r = mo.ratings.find((x) => x.kra_id === id);
       if (!r) return null;
       return { hours: r.hours, expected_hours: r.expected_hours, effort_pct: r.effort_pct,
-        rating: r.rating, used: r.hours > 0, measured: r.measured, reason: r.reason };
+        rating: r.rating, used: r.hours > 0, measured: r.measured, reason: r.reason,
+        edited: !!r.edited, rating_system: r.rating_system, edit_reason: r.edit_reason };
     });
     const rated = cells.filter((c) => c && c.rating && c.expected_hours > 0);
     const hours = rated.reduce((t, c) => t + c.hours, 0);
@@ -281,7 +358,7 @@ async function reportFor(req, target, q) {
 
   const cycle = await activeCycle(T(req));
   const kras = cycle ? (await db.query(
-    `SELECT k.id, k.title, k.weight, k.keywords, k.timesheet_tracked, k.timesheet_untracked_reason
+    `SELECT k.id, k.title, k.weight, k.keywords, k.timesheet_tracked, k.timesheet_untracked_reason, k.system_kind
        FROM pms.kras k JOIN pms.kra_sheets s ON s.id = k.sheet_id
       WHERE s.tenant_id=$1 AND s.employee_id=$2 AND s.cycle_id=$3
       ORDER BY k.sort_order, k.title`, [T(req), target.id, cycle.id])).rows : [];
@@ -328,11 +405,14 @@ async function reportFor(req, target, q) {
   const compliancePct = entries.length && agg && agg.work > 0 ? agg.pct : null;
 
   const sum = score.summarise(att, va, compliancePct, cfg.scoring);
+  const approvalsByMonth = await approvalsFor(T(req), target.id);
+  const approvalKra = kras.some((k) => k.system_kind === approvals.KRA_KIND)
+    ? await approvals.approvalKraByMonth(T(req), target.id) : null;
   // One rating per KRA from the same attribution — see kraRatings.
   // Required hours run to today at the latest: the unfinished part of a
   // month in progress cannot have been worked yet.
   const today = new Date().toISOString().slice(0, 10);
-  const kraRating = score.kraRatings(att, cfg.scoring, {
+  const kraRatingRaw = score.kraRatings(att, cfg.scoring, {
     // From the joining date when that falls inside the window (23 Oct): a
     // new joiner owes no KRA hours for the days before they joined.
     working_days: workingDays(target.date_of_joining && target.date_of_joining > win.from ? target.date_of_joining : win.from,
@@ -354,14 +434,19 @@ async function reportFor(req, target, q) {
   // wise and month wise timesheet rating in table format". Only when the
   // screen asks (?months=1): the team roster and the month close call this
   // function once per person and show none of it.
+  // The approval of this month (26 Oct): its status, and the approver's
+  // edits applied over the system's ratings, the system's kept beside them.
+  const approval = approvalsByMonth.get(win.from) || null;
+  const kraRating = withApprovalKra(applyEdits(kraRatingRaw, approval), kras, approvalKra && approvalKra[win.from]);
   const monthly = q && q.months === '1'
-    ? await monthByMonth(req, target, kras, map, cfg, settings, windows) : null;
+    ? await monthByMonth(req, target, kras, map, cfg, settings, windows, approvalsByMonth, approvalKra) : null;
 
   return {
     employee: target,
     window: win,
     overall,
     monthly,
+    approval: approval ? publicApproval(approval) : null,
     // Every cycle this person has logs in, so the screen can offer them
     // rather than stranding a reader on one month.
     windows,

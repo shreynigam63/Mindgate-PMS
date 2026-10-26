@@ -1291,6 +1291,19 @@ Within a parameter, KRAs keep their order on the sheet. (`frontend/src/paramOrde
 | Unchanged | KRA coverage % (how much of the sheet, by weight, was worked on) still counts every KRA, so a month that skips KRAs shows there. |
 | Month by month | KRA coverage shows a table for the person: one row per KRA, one column per month with logs (oldest first, the month in progress marked), each cell the KRA's rating that month (hours ÷ expected, *not used* when nothing was logged), a **Month average** row (KRAs used that month only), an **Hours logged / required** row, and an **All months** column: each KRA's hours ÷ its expected hours over the months it was used, and the overall average hours per working day. A month heading opens that month above. |
 
+## 3.26 Changes of 26 Oct — timesheet approvals
+
+| What | Rule |
+|---|---|
+| A month to approve | Each person-month (compliance cycle) HR's upload carries opens an approval (`pms.timesheet_approvals`, migration 099). The person's manager and the manager's manager are recorded at upload. |
+| Cutoff | **N working days after the upload** (HR → Timesheet → Settings → Approval cutoff, default 5). Past it the month is **passed to the upper manager** for N more working days; past that it is **not approved**. The status is read from the dates; a daily sweep notifies the upper manager once. |
+| Who approves | The direct manager (also late); the upper manager once it reaches them; an HRBP for their remit; HR / Super Admin — any time. Nobody approves their own. |
+| Editing ratings | Before approving, the approver may change the system's rating of any KRA for the month, and the month's average, each with a required reason. Both the system's and the approved rating are shown (✎), and the employee is told. |
+| Uploading again | An approved month uploaded again goes back to pending with a new clock and no edits; a pending month keeps its clock. |
+| Missed cutoff | The employee keeps the system's rating. Only the manager's **Timesheet Approval** KRA shows it. |
+| "Timesheet Approval" KRA | Added by HR from the approvals panel to every manager's sheet (active cycle) at a **fixed 10%**, the other KRAs scaled to 90%. Rated per month from approvals, not hours: every reportee approved by the manager within the cutoff **A**, none **B**, some **B+**; undecided while any is still within the cutoff. Shown in KRA coverage and the month-by-month table. |
+| Where | Manager → Team Timesheet → Timesheet approvals (their reportees, and months passed up to them); HR → Timesheet → Timesheet approvals (everyone; an HRBP sees their remit); KRA coverage shows each month's approval status and the edits. |
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |

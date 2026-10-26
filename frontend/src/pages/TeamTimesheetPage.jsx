@@ -17,6 +17,7 @@ import SearchBox from '../SearchBox';
 import TimesheetDashboard, { RatingChip } from '../TimesheetDashboard';
 import TimesheetTabs from '../TimesheetTabs';
 import TimesheetKra from '../TimesheetKra';
+import TimesheetApprovals from '../TimesheetApprovals';
 import { Users, CheckCircle2, AlertTriangle, XCircle, ChevronLeft } from 'lucide-react';
 import Kpi from '../Kpi';
 
@@ -158,6 +159,8 @@ export default function TeamTimesheetPage() {
           yet (HR uploads them), so they carry no rating. They are not Red — there is simply no data about them.
         </p>
       )}
+      {/* 26 Oct: the manager reviews and approves each uploaded month. */}
+      <TimesheetApprovals scope="team" />
       <TimesheetRoster rows={rows} onOpen={setOpen} q={q} setQ={setQ} />
     </div>
   );
