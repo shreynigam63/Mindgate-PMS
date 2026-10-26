@@ -952,15 +952,25 @@ function SignIn({ onUser }) {
   const go = async (e) => {
     if (e) e.preventDefault();
     setErr(null);
+    // READ FROM THE FORM, not only from state (26 Oct: "still only email is
+    // saved, password is not saved for login"). A browser that fills a saved
+    // password keeps it from the page until the person clicks; React's copy
+    // was still empty when Sign in was pressed, so a filled password read as
+    // "Enter your password" and looked as if it had never been saved.
+    const fields = e && e.target && e.target.elements;
+    const em = String((fields && fields.email && fields.email.value) || email || '').trim();
+    const pw = (fields && fields.password && fields.password.value) || password;
+    if (em !== email) setEmail(em);
+    if (pw !== password) setPassword(pw);
     // Said before asking the server (16 Oct, Def-006): an empty box is not
     // "invalid credentials".
-    if (!email.trim() && !password) { setErr('Enter your email and password.'); return; }
-    if (!email.trim()) { setErr('Enter your email.'); return; }
-    if (!password) { setErr('Enter your password.'); return; }
+    if (!em && !pw) { setErr('Enter your email and password.'); return; }
+    if (!em) { setErr('Enter your email.'); return; }
+    if (!pw) { setErr('Enter your password.'); return; }
     setBusy(true);
     try {
-      const r = await api('/auth/dev-login', { method: 'POST', body: JSON.stringify({ email, password }) });
-      try { if (remember) localStorage.setItem(REMEMBER_KEY, email.trim()); else localStorage.removeItem(REMEMBER_KEY); } catch { /* private window */ }
+      const r = await api('/auth/dev-login', { method: 'POST', body: JSON.stringify({ email: em, password: pw }) });
+      try { if (remember) localStorage.setItem(REMEMBER_KEY, em); else localStorage.removeItem(REMEMBER_KEY); } catch { /* private window */ }
       // A sign-in without a page load does not always make the browser ask;
       // where it can be asked directly (Chrome, Edge), ask it to offer saving.
       if (e && e.target && window.PasswordCredential) {
@@ -985,13 +995,16 @@ function SignIn({ onUser }) {
         <PasswordInput id="password" name="password" autoComplete="current-password" placeholder="Password"
           value={password} onChange={e => setPassword(e.target.value)} />
         <label className="flex items-center gap-2 text-xs text-navy-600">
-          <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />Remember my email on this device
+          <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />Remember me on this device
         </label>
         {done && <p className="text-xs text-emerald-700">{done}</p>}
         {err && <p className="text-xs text-rose-600">{err}</p>}
         <button type="submit" className="btn-pri" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
       </form>
-      <p className="text-[11px] text-navy-400">Your browser will offer to save the password after you sign in. Do not save it on a shared computer.</p>
+      <p className="text-[11px] text-navy-400">
+        Your browser saves the password: after you sign in it asks "Save password?" — choose Save, and next time the
+        email and password are filled in for you. Do not save it on a shared computer.
+      </p>
       <button type="button" className="text-xs text-navy-500 underline self-center" onClick={() => setForgot(true)}>Forgot password?</button>
     </div>
   );
