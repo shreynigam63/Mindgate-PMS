@@ -1301,7 +1301,7 @@ Within a parameter, KRAs keep their order on the sheet. (`frontend/src/paramOrde
 | Editing ratings | Before approving, the approver may change the system's rating of any KRA for the month, and the month's average, each with a required reason. Both the system's and the approved rating are shown (✎), and the employee is told. |
 | Uploading again | An approved month uploaded again goes back to pending with a new clock and no edits; a pending month keeps its clock. |
 | Missed cutoff | The employee keeps the system's rating. Only the manager's **Timesheet Approval** KRA shows it. |
-| "Timesheet Approval" KRA | Added by HR from the approvals panel to every manager's sheet (active cycle) at a **fixed 10%**, the other KRAs scaled to 90%. Rated per month from approvals, not hours: every reportee approved by the manager within the cutoff **A**, none **B**, some **B+**; undecided while any is still within the cutoff. Shown in KRA coverage and the month-by-month table. |
+| Timesheet Approval KRA | Added by HR from the approvals panel to every manager's sheet (active cycle) at a **fixed 10%**, the other KRAs scaled to 90%. Rated per month from approvals, not hours: every reportee approved by the manager within the cutoff **A**, none **B**, some **B+**; undecided while any is still within the cutoff. Shown in KRA coverage and the month-by-month table. |
 | Where | Manager → Team Timesheet → Timesheet approvals (their reportees, and months passed up to them); HR → Timesheet → Timesheet approvals (everyone; an HRBP sees their remit); KRA coverage shows each month's approval status and the edits. |
 
 # Part 4 — Changing behaviour without code

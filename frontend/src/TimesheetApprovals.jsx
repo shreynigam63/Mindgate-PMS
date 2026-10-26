@@ -157,10 +157,10 @@ function AddKra() {
   };
   return (
     <div className="text-[11px]">
-      {!p && <button className="btn-sec !text-xs" onClick={() => run(false)}><ListChecks size={12} className="inline mr-1" />"Timesheet Approval" KRA for managers</button>}
+      {!p && <button className="btn-sec !text-xs" onClick={() => run(false)}><ListChecks size={12} className="inline mr-1" />Timesheet Approval KRA for managers</button>}
       {p && (
         <div className="rounded-lg border border-navy-100 p-2.5 space-y-1.5 mt-2">
-          <p className="text-navy-700"><b>{p.to_add}</b> of {p.managers.length} managers get <b>"{p.title}"</b> at a fixed {p.weight}% on their {p.cycle.name} KRA sheet; their other KRAs are scaled to {100 - p.weight}% so the sheet still totals 100%.</p>
+          <p className="text-navy-700"><b>{p.to_add}</b> of {p.managers.length} managers get <b>{p.title}</b> at a fixed {p.weight}% on their {p.cycle.name} KRA sheet; their other KRAs are scaled to {100 - p.weight}% so the sheet still totals 100%.</p>
           <ul className="max-h-40 overflow-auto text-navy-600">
             {p.managers.map((m) => <li key={m.employee.id}>{m.employee.name} · {m.reportees} reportee{m.reportees === 1 ? '' : 's'} · {m.action}{m.total_before != null ? ` · sheet ${m.total_before}% → ${m.total_after}%` : ''}</li>)}
           </ul>
@@ -205,7 +205,7 @@ export default function TimesheetApprovals({ scope = 'team', onChanged }) {
       </div>
       <p className="text-[11px] text-navy-500">
         {scope === 'team'
-          ? `Each month HR uploads goes to the person's manager to review and approve within ${d.cutoff_days} working days; after that it passes to the manager's manager for ${d.cutoff_days} more. Approving every reportee in time is your "Timesheet Approval" KRA.`
+          ? `Each month HR uploads goes to the person's manager to review and approve within ${d.cutoff_days} working days; after that it passes to the manager's manager for ${d.cutoff_days} more. Approving every reportee in time is your Timesheet Approval KRA.`
           : `Approval is the manager's, within ${d.cutoff_days} working days of the upload, then their manager's for ${d.cutoff_days} more. ${d.as === 'hrbp' ? 'You can approve for the people in your remit' : 'HR can approve any of them'} at any time.`}
       </p>
       {scope === 'all' && d.as === 'hr' && <AddKra />}
