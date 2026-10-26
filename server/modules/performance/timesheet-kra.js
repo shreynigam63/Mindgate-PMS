@@ -433,27 +433,38 @@ async function reportFor(req, target, q) {
       win.to < today ? win.to : today, settings.holidays),
   }, cycle && cycle.rating_scale);
 
-  // Overall, across every uploaded month (26 Oct) — see overallOf.
-  const allLogs = (await db.query(
-    `SELECT to_char(log_date,'YYYY-MM-DD') AS log_date, hours FROM pms.timesheet_entries
-      WHERE tenant_id=$1 AND employee_id=$2`, [T(req), target.id])).rows
-    .map((r) => ({ ...r, hours: Number(r.hours) }));
-  const overall = allLogs.length ? score.overallOf(
-    compliance(allLogs, settings, todayIso, target.date_of_joining).total, cfg.scoring,
-    { from: windows.length ? windows[windows.length - 1].from : null,
-      to: allLogs.reduce((m, e) => (e.log_date > m ? e.log_date : m), ''), months: windows.length }) : null;
-
-  // MONTH BY MONTH (26 Oct): "check monthwise timesheet rating as well in
-  // KRA coverage where on selection of particular employee i should get KRA
-  // wise and month wise timesheet rating in table format". Only when the
-  // screen asks (?months=1): the team roster and the month close call this
-  // function once per person and show none of it.
   // The approval of this month (26 Oct): its status, and the approver's
   // edits applied over the system's ratings, the system's kept beside them.
   const approval = approvalsByMonth.get(win.from) || null;
   const kraRating = applyEdits(withApprovalKra(kraRatingRaw, kras, approvalKra && approvalKra[win.from]), approval);
-  const monthly = q && q.months === '1'
-    ? await monthByMonth(req, target, kras, map, cfg, settings, windows, approvalsByMonth, approvalKra, cycle && cycle.rating_scale) : null;
+
+  // MONTH BY MONTH (26 Oct): "check monthwise timesheet rating as well in
+  // KRA coverage where on selection of particular employee i should get KRA
+  // wise and month wise timesheet rating in table format". Worked out every
+  // time, because the overall rating is the average of its months; sent
+  // only when the screen asks (?months=1).
+  const byMonth = await monthByMonth(req, target, kras, map, cfg, settings, windows, approvalsByMonth, approvalKra, cycle && cycle.rating_scale);
+  const monthly = q && q.months === '1' ? byMonth : null;
+
+  // Overall, across every uploaded month (26 Oct) — see overallOf. The
+  // RATING is the average of the months' ratings (approved where approved),
+  // each month counting once: "average ratings should be based on value of
+  // rating and not percentage derived from number of hours worked" (asked
+  // again, with the All months column, the same day). The average hours per
+  // working day stay beside it; their own grade is kept as hours_rating.
+  const allLogs = (await db.query(
+    `SELECT to_char(log_date,'YYYY-MM-DD') AS log_date, hours FROM pms.timesheet_entries
+      WHERE tenant_id=$1 AND employee_id=$2`, [T(req), target.id])).rows
+    .map((r) => ({ ...r, hours: Number(r.hours) }));
+  const hoursOverall = allLogs.length ? score.overallOf(
+    compliance(allLogs, settings, todayIso, target.date_of_joining).total, cfg.scoring,
+    { from: windows.length ? windows[windows.length - 1].from : null,
+      to: allLogs.reduce((m, e) => (e.log_date > m ? e.log_date : m), ''), months: windows.length }) : null;
+  const monthAvg = score.averageRating(byMonth.months.map((mo) => ({ rating: mo.month && mo.month.rating })),
+    byMonth.rating_values, false);
+  const overall = hoursOverall ? { ...hoursOverall, hours_rating: hoursOverall.rating,
+    rating: monthAvg ? monthAvg.rating : null, value: monthAvg ? monthAvg.value : null,
+    months_rated: monthAvg ? monthAvg.count : 0 } : null;
 
   return {
     employee: target,

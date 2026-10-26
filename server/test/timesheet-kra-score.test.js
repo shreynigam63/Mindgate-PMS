@@ -262,6 +262,13 @@ test('all KRAs used: effort_pct is the hours placed over the hours required', ()
   assert.equal(r.month.rating, 'A');                     // (A+ 5 + B+ 3) / 2 = 4
 });
 
+test('OVERALL, ALL MONTHS: the average of the month ratings, each month once', () => {
+  const v = s.ratingValues(s.DEFAULT_KRA_BANDS, null);
+  // The client's table: A, A, and B for the month in progress -> (4 + 4 + 2) / 3 = 3.33.
+  assert.equal(s.averageRating([{ rating: 'A' }, { rating: 'A' }, { rating: 'B' }], v, false).rating, 'B+');
+  assert.equal(s.averageRating([{ rating: 'A' }, { rating: 'A' }, { rating: null }], v, false).rating, 'A', 'an unrated month is left out');
+});
+
 test('OVERALL, ALL MONTHS: average hours per working day, on the KRA ladder', () => {
   const o = s.overallOf({ hours: 303.75, work: 45 }, { hours_per_day: 8 }, { from: '2026-08-21', to: '2026-10-23', months: 3 });
   assert.equal(o.avg_hours_per_day, 6.75);

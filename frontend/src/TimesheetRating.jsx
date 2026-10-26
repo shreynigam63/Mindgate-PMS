@@ -114,7 +114,7 @@ export function KraTimesheetBar({ ts, mapLink }) {
         {k.working_days} working days × {k.hours_per_day} h = <b>{k.required_hours} h required</b>, shared by weight across the
         KRAs used this month. Each KRA: hours worked ÷ expected hours ({ladder}); a KRA not used this month is left out.
         {k.month && k.month.rating ? <> Month average: <b>{k.month.rating}</b> — the average of the {k.month.kras_used} KRA rating{k.month.kras_used === 1 ? '' : 's'} by weight ({(k.rating_values || []).map((v) => `${v.label} ${v.value}`).join(', ')}), read as the nearest rating.</> : ''}
-        {d.overall ? <> Overall, all uploaded months: <b>{d.overall.avg_hours_per_day} h</b> per working day = {d.overall.pct}% → <b>{d.overall.rating}</b>.</> : ''}
+        {d.overall && d.overall.rating ? <> Overall, all uploaded months: <b>{d.overall.rating}</b>, the average of the {d.overall.months_rated} month rating{d.overall.months_rated === 1 ? '' : 's'} ({d.overall.avg_hours_per_day} h per working day).</> : ''}
         {' '}{k.note || ''}
       </p>
     </div>

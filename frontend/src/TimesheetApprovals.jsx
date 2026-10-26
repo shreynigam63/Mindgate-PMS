@@ -195,6 +195,7 @@ export default function TimesheetApprovals({ scope = 'team', onChanged }) {
   const [err, setErr] = useState(null);
   const [status, setStatus] = useState('open');
   const [openId, setOpenId] = useState(null);
+  const [who, setWho] = useState('');
   const load = () => api(`/pms/timesheet/approvals?scope=${scope}&status=${status === 'open' ? 'open' : 'all'}`)
     .then(setD).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [scope, status]);
@@ -202,6 +203,19 @@ export default function TimesheetApprovals({ scope = 'team', onChanged }) {
   if (!d) return null;
   if (scope === 'team' && !d.approvals.length && !d.counts.approved && !d.counts.pending && !d.counts.escalated && !d.counts.lapsed) return null;
   const c = d.counts;
+  // ONE EMPLOYEE AT A TIME (26 Oct): "employee list should be in dropdown
+  // selection and not one below other". The people with months in the list,
+  // by name, each with how many months; the table shows the chosen one's.
+  const people = [];
+  for (const a of d.approvals) {
+    let p = people.find((x) => x.employee.id === a.employee.id);
+    if (!p) { p = { employee: a.employee, months: 0, open: 0 }; people.push(p); }
+    p.months += 1;
+    if (a.status !== 'approved' && a.can_act_as) p.open += 1;
+  }
+  people.sort((x, y) => String(x.employee.name).localeCompare(String(y.employee.name)));
+  const sel = people.find((p) => p.employee.id === who) || people[0] || null;
+  const rows = sel ? d.approvals.filter((a) => a.employee.id === sel.employee.id) : [];
   return (
     <div className="card p-4 space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -223,11 +237,25 @@ export default function TimesheetApprovals({ scope = 'team', onChanged }) {
           : `Approval is the manager's, within ${d.cutoff_days} working days of the upload, then their manager's for ${d.cutoff_days} more. ${d.as === 'hrbp' ? 'You can approve for the people in your remit' : 'HR can approve any of them'} at any time.`}
       </p>
       {scope === 'all' && d.as === 'hr' && <AddKra />}
+      {!!people.length && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <label className="font-semibold text-navy-700" htmlFor={`ts-appr-who-${scope}`}>Employee</label>
+          <select id={`ts-appr-who-${scope}`} className="inp !py-1 !text-xs !w-auto min-w-[260px]" value={sel ? sel.employee.id : ''}
+            onChange={(e) => { setWho(e.target.value); setOpenId(null); }}>
+            {people.map((p) => (
+              <option key={p.employee.id} value={p.employee.id}>
+                {p.employee.name} — {p.months} month{p.months === 1 ? '' : 's'}{p.open ? `, ${p.open} to approve` : ''}
+              </option>
+            ))}
+          </select>
+          {sel && <span className="text-navy-500">{[sel.employee.designation, sel.employee.department].filter(Boolean).join(' · ')}</span>}
+          <span className="ml-auto text-[10.5px] text-navy-400">{people.length} employee{people.length === 1 ? '' : 's'}</span>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-navy-400 uppercase text-[10px] border-b border-navy-100">
-              <th className="px-2 py-1.5">Employee</th>
               <th className="px-2 py-1.5">Month</th>
               <th className="px-2 py-1.5 text-right">Hours</th>
               <th className="px-2 py-1.5">Manager</th>
@@ -236,11 +264,10 @@ export default function TimesheetApprovals({ scope = 'team', onChanged }) {
             </tr>
           </thead>
           <tbody>
-            {d.approvals.map((a) => (
+            {rows.map((a) => (
               <Fragment key={a.id}>
                 <tr className="border-b border-navy-50">
-                  <td className="px-2 py-1.5"><b className="text-navy-900">{a.employee.name}</b><span className="block text-[10px] text-navy-400">{a.employee.designation}</span></td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{dm(a.period_start)} – {dm(a.period_end)}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap font-semibold text-navy-900">{dm(a.period_start)} – {dm(a.period_end)}</td>
                   <td className="px-2 py-1.5 text-right">{a.hours ?? '—'}</td>
                   <td className="px-2 py-1.5 text-navy-600">{a.manager ? a.manager.name : '—'}</td>
                   <td className="px-2 py-1.5"><ApprovalStatus a={a} />
@@ -254,14 +281,14 @@ export default function TimesheetApprovals({ scope = 'team', onChanged }) {
                   </td>
                 </tr>
                 {openId === a.id && (
-                  <tr><td colSpan={6} className="p-0">
+                  <tr><td colSpan={5} className="p-0">
                     <Review id={a.id} onDone={() => { setOpenId(null); load(); if (onChanged) onChanged(); }} />
                   </td></tr>
                 )}
               </Fragment>
             ))}
-            {!d.approvals.length && (
-              <tr><td colSpan={6} className="px-2 py-4 text-center text-navy-400">
+            {!rows.length && (
+              <tr><td colSpan={5} className="px-2 py-4 text-center text-navy-400">
                 {status === 'open' ? 'Nothing waiting for approval.' : 'No uploaded months yet.'}
               </td></tr>
             )}

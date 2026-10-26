@@ -364,10 +364,11 @@ function MonthByMonth({ m, overall, current, onPick }) {
                 </td>
               ))}
               <td className="px-2 py-2 text-center bg-navy-50/60">
-                {overall ? (
-                  <span className="inline-flex flex-col items-center gap-0.5">
-                    <span><RatingChip g={overall.rating} /> <span>{overall.pct}%</span></span>
-                    <span className="text-[9.5px] font-normal text-navy-400">overall · {overall.avg_hours_per_day} h / working day</span>
+                {overall && overall.rating ? (
+                  <span className="inline-flex flex-col items-center gap-0.5" title={`Average value ${overall.value}`}>
+                    <RatingChip g={overall.rating} />
+                    <span className="text-[9.5px] font-normal text-navy-400">overall · avg of {overall.months_rated} month{overall.months_rated === 1 ? '' : 's'}</span>
+                    <span className="text-[9.5px] font-normal text-navy-400">{overall.avg_hours_per_day} h / working day</span>
                   </span>
                 ) : '—'}
               </td>
@@ -723,19 +724,24 @@ export default function TimesheetKra({ employeeId, canMap, onSaved }) {
             </tbody>
           </table>
         </div>
-        {/* Overall, across every uploaded month (26 Oct): average working
-            hours over all the months loaded — see overallOf on the server. */}
+        {/* Overall, across every uploaded month (26 Oct): the average of the
+            month ratings, with the average working hours beside it — see
+            reportFor on the server. */}
         {d.overall && (
           <div className="mt-3 rounded-lg border border-navy-100 bg-navy-50/50 p-2.5 text-[11.5px] text-navy-700 flex flex-wrap items-center gap-2">
             <b>Overall, all uploaded months</b>
             <span className="text-navy-500">
               ({d.overall.from} – {d.overall.to}{d.overall.months ? `, ${d.overall.months} month${d.overall.months === 1 ? '' : 's'}` : ''}):
             </span>
-            <span>
-              {d.overall.hours} h over {d.overall.working_days} working days = <b>{d.overall.avg_hours_per_day} h per working day</b>
-              {' '}= {d.overall.pct}% of {d.overall.hours_per_day} h
+            {d.overall.rating && (
+              <span title={`Average value ${d.overall.value}`}>
+                <span className="chip bg-navy-900 text-white">{d.overall.rating}</span>
+                <span className="ml-1.5">the average of the {d.overall.months_rated} month rating{d.overall.months_rated === 1 ? '' : 's'}</span>
+              </span>
+            )}
+            <span className="text-navy-500">
+              · {d.overall.hours} h over {d.overall.working_days} working days = <b>{d.overall.avg_hours_per_day} h per working day</b>
             </span>
-            <span className="chip bg-navy-900 text-white">{d.overall.rating}</span>
           </div>
         )}
       </div>

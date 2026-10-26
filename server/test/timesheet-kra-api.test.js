@@ -493,6 +493,12 @@ test('MONTH BY MONTH: each KRA rated in each month with logs, and across all of 
   assert.equal(row('CSAT Score').cells[i].used, false, 'nothing logged: not used');
   assert.equal(sep.month.rating, v.kra_ratings.month.rating);
   assert.equal(row('Ticket Resolution').all.months_used, 1);
+  // The overall rating is the average of the months' ratings (26 Oct), not
+  // the hours' grade; the hours per working day stay beside it.
+  const rated = v.monthly.months.filter((mo) => mo.month && mo.month.rating);
+  assert.equal(v.overall.months_rated, rated.length);
+  if (rated.length === 1) assert.equal(v.overall.rating, rated[0].month.rating);
+  assert.ok(v.overall.avg_hours_per_day > 0 && v.overall.hours_rating);
   const own = await api(`/pms/timesheet/kra/me?months=1`, {}, 'emp');
   assert.equal(own.status, 200);
   assert.ok(own.body.monthly, 'the employee sees their own table');
