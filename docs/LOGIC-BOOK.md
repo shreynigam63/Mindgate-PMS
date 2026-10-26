@@ -1271,6 +1271,14 @@ accordingly instead of item used as KRA coverage."
 | New joiners (23 Oct) | Compliance is owed from the **date of joining**: days before it are neither working days nor missing (calendar: *Before joining*). Applies to Self, Manager, HR and HRBP timesheet views and to KRA coverage, whose required hours also start at the joining date. A log dated before joining keeps its hours, like a weekend log. |
 | Screen | KRA coverage states the hours placed by Log Title, the hours whose Log Title is not a KRA, and the hours with **no Log Title** — with what to do when logs were uploaded with that column empty (upload again with the titles; it replaces those days). Each unplaced item uploaded without a Log Title says so. |
 
+## 3.24 Changes of 26 Oct — parameter order
+
+KRAs are grouped by Parameter in a fixed order on every KRA screen (KRA Library, the library picker on
+My KRAs, My KRAs, a manager's team sheets, approvals): **1 Financial, 2 Project / Process,
+3 Internal / External Customer, 4 People**. Matched loosely ("Project/Process", "Customer" count).
+Any other parameter follows the four in the order it first appears; KRAs with no parameter come last.
+Within a parameter, KRAs keep their order on the sheet. (`frontend/src/paramOrder.js`)
+
 # Part 4 — Changing behaviour without code
 
 | What | Where |

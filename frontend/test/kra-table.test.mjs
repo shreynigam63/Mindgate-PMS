@@ -140,7 +140,7 @@ test('the KRA Library shelf uses the same table', async (t) => {
   assert.deepEqual(s.repeated, []);
   assert.deepEqual(s.groups.map((g) => g.name),
     ['Financial', 'Project / Process', 'Customer', 'People'],
-    'parameters keep the order HR published them in');
+    'parameters come Financial, Project / Process, Customer, People (26 Oct)');
   assert.equal(s.footer, '100%');
   assert.deepEqual(errors, []);
   await ctx.close();

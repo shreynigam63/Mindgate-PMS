@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Library } from 'lucide-react';
 import { api } from '../utils/api';
 import { AiModal } from './AiDraftPanel';
+import { byParamOrder } from '../paramOrder';
 
 // "Choose from library" — the shelf of KRAs HR published for a role, as a
 // pick list the employee (or their manager) adds from.
@@ -312,9 +313,10 @@ export default function KraLibraryPicker({ source, onAdd, disabled = false }) {
   );
 }
 
-// Grouped by Parameter, in the order HR published them — the same grouping
-// the KRA sheet itself uses, so the picker and the thing it fills read the
-// same way round. Order is first appearance, not alphabetical: HR chose it.
+// Grouped by Parameter in the fixed order — Financial, Project / Process,
+// Internal / External Customer, People (paramRank) — the same grouping the
+// KRA sheet itself uses, so the picker and the thing it fills read the same
+// way round. "No parameter" comes last.
 function Shelf({ entries, picked, toggle, allPicked, onSelectAll }) {
   const selectable = entries.filter((e) => !e.already_added).length;
   const groups = [];
@@ -324,6 +326,7 @@ function Shelf({ entries, picked, toggle, allPicked, onSelectAll }) {
     if (!byCat.has(cat)) { byCat.set(cat, []); groups.push(cat); }
     byCat.get(cat).push(e);
   }
+  const ordered = [...byParamOrder(groups.filter((c) => c !== '—')), ...groups.filter((c) => c === '—')];
   return (
     <div className="space-y-1">
       {onSelectAll && selectable > 0 && (
@@ -334,7 +337,7 @@ function Shelf({ entries, picked, toggle, allPicked, onSelectAll }) {
           </button>
         </div>
       )}
-      {groups.map((cat) => (
+      {ordered.map((cat) => (
         <div key={cat}>
           <p className="text-lagoon-700 font-semibold mt-2 mb-1">{cat === '—' ? 'No parameter' : cat}</p>
           {byCat.get(cat).map((e) => {

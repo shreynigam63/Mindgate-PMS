@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, Check, Send } from 'lucide-react';
 import { api, phaseLabel, phaseColor, sheetStatusLabel } from '../utils/api';
 import KraLibraryPicker from './KraLibraryPicker';
+import { byParamOrder } from '../paramOrder';
 import KraSuggestPanel from './KraSuggestPanel';
 import PageHead from '../PageHead';
 import KraTable from '../KraTable';
@@ -18,14 +19,15 @@ export const hasText = (v) => !!(v && String(v).trim());
 //
 // Migration 025 records why this is structure rather than decoration: in
 // the source workbooks the column is filled once per group and left blank
-// down the rest of it, so the grouping IS how the sheet reads. Group order
-// is first appearance, not alphabetical, so an imported sheet keeps the
-// order its author chose.
+// down the rest of it, so the grouping IS how the sheet reads. Groups come
+// in the fixed parameter order below (paramRank); within a group, KRAs keep
+// the order the sheet has them in.
 //
 // Rows carry their original index because every edit goes through set(i)
 // and a KRA is deleted by index — grouping must not renumber anything.
 // A KRA with no parameter goes in a trailing group rather than vanishing.
 export const NO_CATEGORY = '__none__';
+
 export function groupByCategory(kras) {
   const order = [];
   const byCat = new Map();
@@ -37,7 +39,7 @@ export function groupByCategory(kras) {
   // The unparameterised group sits last wherever it first appeared —
   // it is the leftovers, and reading it between two real groups implies
   // an order the sheet does not have.
-  const cats = order.filter((c) => c !== NO_CATEGORY);
+  const cats = byParamOrder(order.filter((c) => c !== NO_CATEGORY));
   if (byCat.has(NO_CATEGORY)) cats.push(NO_CATEGORY);
   return cats.map((cat) => ({
     cat,
