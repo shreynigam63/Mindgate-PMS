@@ -22,7 +22,7 @@ one stops a whole section of this guide dead. Fix them first.
 
 | # | Blocker | What it blocks | Who fixes it |
 |---|---|---|---|
-| 1 | **No user holds the `hr` role.** One `admin` account exists (`hr.admin@mindgate.com`); 0 `hr`, 5 `hod`, 239 `manager`. | Everything in §2, §9 and §10. You cannot test "HR does X" with no HR user. | HR/IT |
+| 1 | **No user holds the `hr` role.** One `admin` account exists (`hr.admin@example.com`); 0 `hr`, 5 `hod`, 239 `manager`. | Everything in §2, §9 and §10. You cannot test "HR does X" with no HR user. | HR/IT |
 | 2 | **The KRA library has no Department values** — 0 of 2,155 rows. | Department-based shelves (§3.2). Every employee falls back to the designation-only shelf. | HR |
 | 3 | **`Senior Software Engineer` shelf totals 105%.** | Anyone on that shelf cannot submit (weights must total 100). Either fix the shelf or avoid that designation in testing. | HR |
 | 4 | **4 designations have no shelf at all** — Vice President I (×11), Senior Vice President II (×3), Senior Vice President I (×1), Senior Administrator - Network and System (×1). | Those 16 people get an empty sheet. Expected, not a bug — but don't pick them as test subjects. | HR |

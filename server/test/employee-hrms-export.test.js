@@ -23,15 +23,15 @@ const warnedAbout = (r, re) => r.warnings.filter((w) => re.test(w.warning));
 
 test('the export’s own column names are accepted — this is the whole point', () => {
   const r = csv(
-    'MGS1,Rajesh Kulkarni,rajesh.k@mindgate.in,Delivery,Delivery Head,,,01/04/2019',
-    'MGS2,Priya Menon,priya.menon@mindgate.in,Delivery,Manager - Delivery,Rajesh Kulkarni,Rajesh Kulkarni,15/06/2021',
+    'MGS1,Rajesh Kulkarni,rajesh.k@example.in,Delivery,Delivery Head,,,01/04/2019',
+    'MGS2,Priya Menon,priya.menon@example.in,Delivery,Manager - Delivery,Rajesh Kulkarni,Rajesh Kulkarni,15/06/2021',
   );
   assert.equal(r.fatal, null, 'the header check must not reject the file');
   assert.equal(r.ok, true, JSON.stringify(r.errors));
   assert.equal(r.rows.length, 2);
   assert.equal(r.rows[0].emp_code, 'MGS1');
   assert.equal(r.rows[1].name, 'Priya Menon');
-  assert.equal(r.rows[1].email, 'priya.menon@mindgate.in');
+  assert.equal(r.rows[1].email, 'priya.menon@example.in');
 });
 
 test('the importer’s original column names still work — this widened what is accepted, it did not replace it', () => {
@@ -46,16 +46,16 @@ test('the importer’s original column names still work — this widened what is
 
 test('Reporting Manager is resolved by NAME against the same file', () => {
   const r = csv(
-    'MGS1,Rajesh Kulkarni,rajesh.k@mindgate.in,Delivery,Delivery Head,,,01/04/2019',
-    'MGS2,Priya Menon,priya.menon@mindgate.in,Delivery,Manager - Delivery,Rajesh Kulkarni,,15/06/2021',
-    'MGS3,Akshay Raut,akshay.raut@mindgate.in,Delivery,Project Manager,Priya  Menon,,01/07/2022',
+    'MGS1,Rajesh Kulkarni,rajesh.k@example.in,Delivery,Delivery Head,,,01/04/2019',
+    'MGS2,Priya Menon,priya.menon@example.in,Delivery,Manager - Delivery,Rajesh Kulkarni,,15/06/2021',
+    'MGS3,Asha Rao,asha.rao@example.in,Delivery,Project Manager,Priya  Menon,,01/07/2022',
   );
   assert.equal(r.ok, true, JSON.stringify(r.errors));
-  assert.equal(r.rows[1].manager_email, 'rajesh.k@mindgate.in');
+  assert.equal(r.rows[1].manager_email, 'rajesh.k@example.in');
   // Doubled space in "Priya  Menon" still matches: an HRMS writes the same
   // person's name two ways often enough that exact comparison would drop
   // real reporting lines.
-  assert.equal(r.rows[2].manager_email, 'priya.menon@mindgate.in');
+  assert.equal(r.rows[2].manager_email, 'priya.menon@example.in');
   assert.equal(r.summary.managers_resolved_by_name, 2);
 });
 
@@ -131,11 +131,11 @@ test('.invalid is used on purpose — a placeholder must never be able to receiv
 
 test('two people sharing one address: the first keeps it, the second gets a placeholder', () => {
   const r = csv(
-    'MGST347,Linux Admin One,shared@mindgate.in,INFRA,Linux Administrator,,,01/04/2019',
-    'MGST395,Linux Admin Two,shared@mindgate.in,INFRA,Linux Administrator,,,01/04/2020',
+    'MGST347,Linux Admin One,shared@example.in,INFRA,Linux Administrator,,,01/04/2019',
+    'MGST395,Linux Admin Two,shared@example.in,INFRA,Linux Administrator,,,01/04/2020',
   );
   assert.equal(r.ok, true, 'one shared address must not block the whole file');
-  assert.equal(r.rows[0].email, 'shared@mindgate.in');
+  assert.equal(r.rows[0].email, 'shared@example.in');
   assert.equal(r.rows[1].email, `mgst395@${NO_EMAIL_DOMAIN}`);
   assert.equal(warnedAbout(r, /is already used at line 2/).length, 1);
 });
@@ -147,23 +147,23 @@ test('no email AND no employee code is an error — there is nothing to build an
 });
 
 test('a space inside an address is repaired and reported', () => {
-  // Two rows of the client's export are written "amit.nandi @mindgate.in".
+  // Two rows of the client's export are written "anil.naik @example.in".
   // No valid unquoted address contains a space, so stripping it can only
   // repair the value — but the HRMS should still be fixed, so it is said.
-  const r = csv('MGS1,Amit Nandi,amit.nandi @mindgate.in,Delivery,Engineer,,,01/04/2021');
+  const r = csv('MGS1,Anil Naik,anil.naik @example.in,Delivery,Engineer,,,01/04/2021');
   assert.equal(r.ok, true, JSON.stringify(r.errors));
-  assert.equal(r.rows[0].email, 'amit.nandi@mindgate.in');
+  assert.equal(r.rows[0].email, 'anil.naik@example.in');
   assert.equal(warnedAbout(r, /contains spaces — read as/).length, 1);
 });
 
 test('the department head is set only when every row in the department agrees', () => {
   const r = csv(
-    'MGS1,Vadivel S,vadivel@x.com,Development,Delivery Head,,,01/04/2015',
-    'MGS2,Dev One,dev1@x.com,Development,Engineer,Vadivel S,Vadivel S,01/04/2020',
-    'MGS3,Dev Two,dev2@x.com,Development,Engineer,Vadivel S,Vadivel S,01/04/2021',
+    'MGS1,Dev Head,devhead@x.com,Development,Delivery Head,,,01/04/2015',
+    'MGS2,Dev One,dev1@x.com,Development,Engineer,Dev Head,Dev Head,01/04/2020',
+    'MGS3,Dev Two,dev2@x.com,Development,Engineer,Dev Head,Dev Head,01/04/2021',
   );
   assert.equal(r.ok, true, JSON.stringify(r.errors));
-  assert.deepEqual(r.department_heads, [{ department: 'Development', name: 'Vadivel S', email: 'vadivel@x.com', employees: 2 }]);
+  assert.deepEqual(r.department_heads, [{ department: 'Development', name: 'Dev Head', email: 'devhead@x.com', employees: 2 }]);
   assert.equal(r.summary.department_heads, 1);
 });
 
@@ -235,12 +235,12 @@ test('the same export as a real .xlsx reaches the identical result', async () =>
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('EmpReport');
   ws.addRow(HRMS.split(','));
-  ws.addRow(['MGS1', 'Rajesh Kulkarni', 'rajesh.k@mindgate.in', 'Delivery', 'Delivery Head', '', '', '01/04/2019']);
-  ws.addRow(['MGS2', 'Priya Menon', 'priya.menon@mindgate.in', 'Delivery', 'Manager - Delivery', 'Rajesh Kulkarni', 'Rajesh Kulkarni', '15/06/2021']);
+  ws.addRow(['MGS1', 'Rajesh Kulkarni', 'rajesh.k@example.in', 'Delivery', 'Delivery Head', '', '', '01/04/2019']);
+  ws.addRow(['MGS2', 'Priya Menon', 'priya.menon@example.in', 'Delivery', 'Manager - Delivery', 'Rajesh Kulkarni', 'Rajesh Kulkarni', '15/06/2021']);
   const r = await validateEmployeeXlsx(await wb.xlsx.writeBuffer());
   assert.equal(r.ok, true, JSON.stringify(r.errors));
-  assert.equal(r.rows[1].manager_email, 'rajesh.k@mindgate.in');
-  assert.deepEqual(r.department_heads, [{ department: 'Delivery', name: 'Rajesh Kulkarni', email: 'rajesh.k@mindgate.in', employees: 1 }]);
+  assert.equal(r.rows[1].manager_email, 'rajesh.k@example.in');
+  assert.deepEqual(r.department_heads, [{ department: 'Delivery', name: 'Rajesh Kulkarni', email: 'rajesh.k@example.in', employees: 1 }]);
 });
 
 test('a file with neither a name nor an email column is still rejected outright', () => {

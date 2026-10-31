@@ -2,3 +2,10 @@ node_modules/
 dist/
 .env
 *.local
+
+# Client data never lives in git (31 Oct 2026). Spreadsheets and exports a
+# client hands over stay with the client; .github/scripts/check-no-client-data.sh
+# fails CI if one is committed anyway.
+docs/**/*.xlsx
+docs/**/*.xls
+docs/**/*.csv

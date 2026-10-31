@@ -57,7 +57,7 @@ before(async () => {
      VALUES ($1,$2,$3,'active','Executive','Delivery') RETURNING id`,
     [t.id, name, email])).rows[0].id;
   await mk('FL Admin', 'fl-admin@x.com');
-  empId = await mk('Akshay Raut', 'fl-akshay@x.com');
+  empId = await mk('Asha Rao', 'fl-asha@x.com');
   await db.query(`INSERT INTO core.local_credentials (tenant_id,email,password_hash) VALUES ($1,$2,$3)`,
     [t.id, 'fl-admin@x.com', await bcrypt.hash('adminpass1', 10)]);
   await db.query(`INSERT INTO core.user_roles (tenant_id,email,role) VALUES ($1,'fl-admin@x.com','admin')`, [t.id]);
@@ -90,23 +90,23 @@ test('the bulk run issues first-name@123 and marks it for replacement', { skip }
   });
   assert.equal(r.status, 200);
   assert.equal(r.body.created, 1);
-  assert.equal(r.body.rows[0].password, 'akshay@123', '"Akshay Raut" — the rule the client asked for');
+  assert.equal(r.body.rows[0].password, 'asha@123', '"Asha Rao" — the rule the client asked for');
   assert.equal(r.body.must_change_password, true, 'and the report says so, so HR can tell people');
 
   const row = (await db.query(
-    `SELECT must_change_password FROM core.local_credentials WHERE tenant_id=$1 AND email='fl-akshay@x.com'`,
+    `SELECT must_change_password FROM core.local_credentials WHERE tenant_id=$1 AND email='fl-asha@x.com'`,
     [tenantId])).rows[0];
   assert.equal(row.must_change_password, true);
 });
 
 test('the preview shows the exact password each person will get', { skip }, async () => {
   // A rule read off a slide is not the same as the string it produces for
-  // a particular name. HR has to see "akshay@123" before it goes out.
+  // a particular name. HR has to see "asha@123" before it goes out.
   const r = await call('/employees/credentials/bulk', adminTok, {
     method: 'POST', body: JSON.stringify({ dry_run: true, mode: 'name', replace_existing: true }),
   });
-  const row = r.body.rows.find((x) => x.email === 'fl-akshay@x.com');
-  assert.equal(row.would_be, 'akshay@123');
+  const row = r.body.rows.find((x) => x.email === 'fl-asha@x.com');
+  assert.equal(row.would_be, 'asha@123');
   assert.equal(typeof r.body.short_passwords, 'number');
   // And not in the modes that do not use it — there is nothing to show.
   const other = await call('/employees/credentials/bulk', adminTok, {
@@ -119,7 +119,7 @@ test('the issued password signs you in, and then opens nothing', { skip }, async
   // THE ONE THAT MATTERS. A change-password SCREEN is a suggestion; this
   // asserts the API itself refuses, which is what makes "compulsory"
   // true for somebody holding the token rather than the page.
-  const r = await login('fl-akshay@x.com', 'akshay@123');
+  const r = await login('fl-asha@x.com', 'asha@123');
   assert.equal(r.status, 200);
   assert.equal(r.body.user.must_change_password, true, 'the sign-in says a change is owed');
   const tok = r.body.token;
@@ -133,7 +133,7 @@ test('the issued password signs you in, and then opens nothing', { skip }, async
 });
 
 test('two routes stay open, and only two', { skip }, async () => {
-  const tok = (await login('fl-akshay@x.com', 'akshay@123')).body.token;
+  const tok = (await login('fl-asha@x.com', 'asha@123')).body.token;
   // /me, because the page has to be able to learn that it is locked.
   const me = await call('/me', tok);
   assert.equal(me.status, 200);
@@ -147,9 +147,9 @@ test('two routes stay open, and only two', { skip }, async () => {
 });
 
 test('the current password is required, and the new one must be new', { skip }, async () => {
-  const tok = (await login('fl-akshay@x.com', 'akshay@123')).body.token;
+  const tok = (await login('fl-asha@x.com', 'asha@123')).body.token;
   const short = await call('/auth/password', tok, {
-    method: 'POST', body: JSON.stringify({ current_password: 'akshay@123', new_password: 'abc' }),
+    method: 'POST', body: JSON.stringify({ current_password: 'asha@123', new_password: 'abc' }),
   });
   assert.equal(short.status, 400);
   assert.match(short.body.error, /at least 8/);
@@ -157,19 +157,19 @@ test('the current password is required, and the new one must be new', { skip }, 
   // The one that would quietly defeat the whole thing: clearing the lock
   // while leaving the issued password in place.
   const same = await call('/auth/password', tok, {
-    method: 'POST', body: JSON.stringify({ current_password: 'akshay@123', new_password: 'akshay@123' }),
+    method: 'POST', body: JSON.stringify({ current_password: 'asha@123', new_password: 'asha@123' }),
   });
   assert.equal(same.status, 400);
   assert.match(same.body.error, /different from the current/);
   assert.equal((await db.query(
-    `SELECT must_change_password FROM core.local_credentials WHERE tenant_id=$1 AND email='fl-akshay@x.com'`,
+    `SELECT must_change_password FROM core.local_credentials WHERE tenant_id=$1 AND email='fl-asha@x.com'`,
     [tenantId])).rows[0].must_change_password, true, 'and the lock is still on');
 });
 
 test('changing it unlocks the app, in the same request', { skip }, async () => {
-  const tok = (await login('fl-akshay@x.com', 'akshay@123')).body.token;
+  const tok = (await login('fl-asha@x.com', 'asha@123')).body.token;
   const r = await call('/auth/password', tok, {
-    method: 'POST', body: JSON.stringify({ current_password: 'akshay@123', new_password: 'MyOwnPass99' }),
+    method: 'POST', body: JSON.stringify({ current_password: 'asha@123', new_password: 'MyOwnPass99' }),
   });
   assert.equal(r.status, 200);
   assert.ok(r.body.token, 'a fresh token comes back');
@@ -181,9 +181,9 @@ test('changing it unlocks the app, in the same request', { skip }, async () => {
   assert.equal((await call('/pms/home', r.body.token)).status, 200, 'the new one works');
 
   // And the new password is the password.
-  assert.equal((await login('fl-akshay@x.com', 'MyOwnPass99')).status, 200);
-  assert.equal((await login('fl-akshay@x.com', 'akshay@123')).status, 401, 'the issued one is spent');
-  assert.equal((await login('fl-akshay@x.com', 'MyOwnPass99')).body.user.must_change_password, false,
+  assert.equal((await login('fl-asha@x.com', 'MyOwnPass99')).status, 200);
+  assert.equal((await login('fl-asha@x.com', 'asha@123')).status, 401, 'the issued one is spent');
+  assert.equal((await login('fl-asha@x.com', 'MyOwnPass99')).body.user.must_change_password, false,
     'and signing in again does not ask twice');
 });
 
@@ -194,7 +194,7 @@ test('a password HR sets for one person is one-use too', { skip }, async () => {
     method: 'POST', body: JSON.stringify({ password: 'ResetByHr1' }),
   });
   assert.equal(r.status, 200);
-  const signIn = await login('fl-akshay@x.com', 'ResetByHr1');
+  const signIn = await login('fl-asha@x.com', 'ResetByHr1');
   assert.equal(signIn.body.user.must_change_password, true);
   assert.equal((await call('/pms/home', signIn.body.token)).status, 403);
 });

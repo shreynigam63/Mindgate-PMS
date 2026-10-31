@@ -320,7 +320,7 @@ function validateEmployeeRows(rows) {
     const line = n + 2; // 1-based + header
     const get = (c) => (idx[c] != null ? String(r[idx[c]] ?? '').trim() : '');
     // All whitespace stripped, not just the ends: the client's export
-    // carries addresses written "amit.nandi @mindgate.in". No valid
+    // carries addresses written "anil.naik @example.in". No valid
     // unquoted address contains a space, so removing them can only ever
     // repair the value — and it is reported, so the HRMS gets fixed too.
     const emailRaw = get('email');

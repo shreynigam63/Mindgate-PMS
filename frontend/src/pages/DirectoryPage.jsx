@@ -872,14 +872,14 @@ function AddEmployee({ onClose, onSaved }) {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Field label="Full name *" value={f.name} onChange={set('name')} placeholder="Jane Sample" />
-        <Field label="Office email" value={f.email} onChange={set('email')} type="email" placeholder="jane.sample@mindgate.in"
+        <Field label="Office email" value={f.email} onChange={set('email')} type="email" placeholder="jane.sample@example.in"
           hint="Leave blank only if there is none — then an employee code is required and a placeholder address is built from it." />
         <Field label="Employee code" value={f.emp_code} onChange={set('emp_code')} placeholder="MGS1001" />
         <Field label="Department" value={f.department} onChange={set('department')} placeholder="Development" />
         <Field label="Designation" value={f.designation} onChange={set('designation')} placeholder="Software Developer"
           hint="Decides which KRA library shelf they are offered — spell it as the library spells it." />
         <Field label="Role band" value={f.role_band} onChange={set('role_band')} placeholder="Band 6" />
-        <Field label="Manager's email" value={f.manager_email} onChange={set('manager_email')} placeholder="priya.menon@mindgate.in"
+        <Field label="Manager's email" value={f.manager_email} onChange={set('manager_email')} placeholder="priya.menon@example.in"
           hint="Must already be on file. Leave blank for the top of the organisation." />
         <Field label="Location" value={f.location} onChange={set('location')} placeholder="Pune"
           hint="The site they work from. Decides which HRBP sees them — spell it as the rest of the master spells it." />

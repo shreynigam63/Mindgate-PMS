@@ -90,14 +90,14 @@ Mindgate when the alternatives were put to them.
 
 ### The rule
 
-`Akshay Raut` → `akshay@123`. Lower-cased, punctuation stripped, because
+`Asha Rao` → `asha@123`. Lower-cased, punctuation stripped, because
 a password nobody can type from the rule is not a rule and
 `M. Harikrishnan` must not become `M.@123`. Two fallbacks so it can never
 produce a bare `@123`: a first token with no letters uses the whole name;
 a name with no letters uses the address.
 
 It is deliberately **not** made unique or lengthened. Against the real
-master, 23 people share `akshay@123` and **20 get a password under eight
+master, 23 people share `asha@123` and **20 get a password under eight
 characters** (`e@123`, `al@123`, `jay@123` — the initials cases). The
 preview names every one of them and counts the short ones before
 anything is written.
@@ -270,6 +270,7 @@ completeness:
 - 26 of 34 departments have no head; 18 employees have no manager.
 - 0 prior-year ratings, 0 CTC rows, 0 increment-matrix bands — Super 50,
   the 9-box and Increment Simulation have no inputs.
-- The nine employee department corrections
-  (`docs/employee-department-corrections-25Sep2026.xlsx`) are unapplied.
+- The nine employee department corrections (the file sent on 25 Sep;
+  removed from this repository on 31 Oct 2026 because it held employee
+  records) are unapplied.
 - The Anthropic API key on the box still wants rotating.

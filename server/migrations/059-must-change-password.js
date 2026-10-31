@@ -7,7 +7,7 @@
 //
 // The two halves belong together. A password built from a published
 // pattern — first name, then @123 — is one any colleague can guess, and
-// on this master 23 people would share akshay@123. That is acceptable
+// on this master 23 people would share asha@123. That is acceptable
 // only because it is a one-use password: this flag is what makes it one.
 //
 // FALSE BY DEFAULT and NOT backfilled. The accounts that already exist

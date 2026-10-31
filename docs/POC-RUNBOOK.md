@@ -306,7 +306,7 @@ permission, so the team queue and the approve/return buttons return **403**.
 On live this is exactly one person, and it is blocking three submitted sheets:
 
 ```
-Bhawana Maheshwari <bhawana.m@mindgate.in>  — no role, 1 active report
+Project Contact <contact@example.in>  — no role, 1 active report
 ```
 
 **In the UI:** HR Admin → Employees → find them → assign the **manager** role.

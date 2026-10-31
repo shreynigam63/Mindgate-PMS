@@ -249,7 +249,7 @@ test('A TASK EMAIL GOES TO THE JOINER, FROM THE SPOC WHO OWNS THE ACTIVITY', { s
     'nothing is sent with no sender');
   assert.equal((await req('PUT', '/spocs/Recruiter', hrbpTok, { email: 'r@onb.x' })).status, 403, 'the SPOC list is HR\'s');
   assert.equal((await req('PUT', '/spocs/Recruiter', hrTok, { email: 'not-an-address' })).status, 400);
-  assert.equal((await req('PUT', '/spocs/Recruiter', hrTok, { name: 'Bhawana M', email: 'recruiter@onb.x' })).status, 200);
+  assert.equal((await req('PUT', '/spocs/Recruiter', hrTok, { name: 'Bina M', email: 'recruiter@onb.x' })).status, 200);
 
   // Before joining, a personal address wins when HR has one.
   assert.equal((await req('PATCH', `/joiners/${ids.puneJoiner}`, hrTok, { personal_email: 'riya.personal@mail.x' })).status, 200);

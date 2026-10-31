@@ -20,8 +20,8 @@ const API = process.env.API || 'http://127.0.0.1:8080/api/v1';
 const OUT = process.env.OUT || path.join(import.meta.dirname, 'images');
 // An employee whose department employs several titles, so the department
 // figures are interesting rather than all 1s.
-const EMPLOYEE = process.env.EMPLOYEE || 'mohan.yassh@mindgate.in';
-const HR       = process.env.HR       || 'hr.admin@mindgate.in';
+const EMPLOYEE = process.env.EMPLOYEE || 'employee@example.in';
+const HR       = process.env.HR       || 'hr.admin@example.in';
 const PASSWORD = process.env.PASSWORD || 'Demo#2026pms';
 
 const tok = async (email) => {

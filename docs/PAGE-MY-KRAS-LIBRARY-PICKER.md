@@ -146,7 +146,7 @@ department; until then every employee correctly falls back to the company-wide
 list.
 
 **Current live state:** ON. It was switched on in production by
-`hr.admin@mindgate.com`, and **no library row carries a department yet**, so
+`hr.admin@example.com`, and **no library row carries a department yet**, so
 every employee is on the fallback path.
 
 ---

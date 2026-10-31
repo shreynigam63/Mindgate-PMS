@@ -287,7 +287,7 @@ cd /opt/agentic-pms/server
 TOK=$(sudo env $(sudo grep -E '^(JWT_SECRET|DATABASE_URL|DATABASE_SSL)=' \
       /etc/agentic-pms/api.env | xargs) node -e "
 const jwt=require('jsonwebtoken'), db=require('./core/db');
-(async()=>{const e=(await db.query(\"SELECT id,email,name,tenant_id FROM core.employees WHERE lower(email)='hr.admin@mindgate.com' LIMIT 1\")).rows[0];
+(async()=>{const e=(await db.query(\"SELECT id,email,name,tenant_id FROM core.employees WHERE lower(email)='hr.admin@example.com' LIMIT 1\")).rows[0];
 console.log(jwt.sign({sub:e.id,email:e.email,name:e.name,role:'hr',tenant_id:e.tenant_id},process.env.JWT_SECRET,{expiresIn:'5m'}));await db.pool.end();})()")
 curl -s -H "Authorization: Bearer $TOK" \
      'http://127.0.0.1/api/v1/pms/hr/kra-library?department=Admin' | python3 -m json.tool | head -40

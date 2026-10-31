@@ -132,6 +132,11 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: server/package-lock.json
+      # Client data never lives in git (31 Oct 2026): two spreadsheets of a
+      # client's employee records once sat in docs/ while the repository was
+      # public. Spreadsheets and client email addresses fail the gate here.
+      - name: No client data in the repository
+        run: bash .github/scripts/check-no-client-data.sh
       - name: Install server dependencies
         working-directory: server
         run: npm ci --no-audit --no-fund

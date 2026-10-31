@@ -38,8 +38,8 @@ test('a generated password is long, mixed, and never the same twice', () => {
 
 test('the pattern password is the first name, lower-cased, plus @123', () => {
   const { derivedPassword } = require('../core/bulk-credentials');
-  const p = (name, email) => derivedPassword({ name, email: email === undefined ? 'x.y@mindgate.in' : email });
-  assert.equal(p('Akshay Raut'), 'akshay@123');
+  const p = (name, email) => derivedPassword({ name, email: email === undefined ? 'x.y@example.in' : email });
+  assert.equal(p('Asha Rao'), 'asha@123');
   assert.equal(p('  Lohit  Lala  '), 'lohit@123', 'the double spaces in the HRMS export');
   assert.equal(p('PRIYA'), 'priya@123', 'lower-cased, or nobody can type it from the rule');
   // "M. Harikrishnan" must not become `M.@123` — the punctuation goes,
@@ -47,7 +47,7 @@ test('the pattern password is the first name, lower-cased, plus @123', () => {
   // when the alternatives were put to them; it is safe because the
   // password is replaced at the first sign-in.
   assert.equal(p('M. Harikrishnan'), 'm@123');
-  assert.equal(p('R S Akshaya'), 'r@123');
+  assert.equal(p('R S Ashwini'), 'r@123');
   // A first token with no letters at all would leave a bare '@123',
   // which is not a password. The whole name is used instead.
   assert.equal(p('. Ramesh'), 'ramesh@123');
@@ -94,7 +94,7 @@ test('the plan says who gets a short password, rather than leaving it to be foun
   // or fewer once punctuation is stripped. HR should see that number
   // before the run, not hear it from a support call.
   const p = plan([
-    { id: '1', name: 'Akshay Raut', email: 'a@x', status: 'active', has_login: false },
+    { id: '1', name: 'Asha Rao', email: 'a@x', status: 'active', has_login: false },
     { id: '2', name: 'M. Harikrishnan', email: 'b@x', status: 'active', has_login: false },
     { id: '3', name: 'Om Singh', email: 'c@x', status: 'active', has_login: false },
     // Already has one, so their short password is not about to be issued
@@ -102,7 +102,7 @@ test('the plan says who gets a short password, rather than leaving it to be foun
     { id: '4', name: 'E Elasachin', email: 'd@x', status: 'active', has_login: true },
   ], { mode: 'name' });
   assert.equal(p.short_passwords, 2, 'm@123 and om@123 — not the one nobody is getting');
-  assert.equal(p.rows[0].would_be, 'akshay@123');
+  assert.equal(p.rows[0].would_be, 'asha@123');
 });
 
 test('the plan counts every row it was given', () => {

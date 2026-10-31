@@ -24,11 +24,11 @@ const row = (over = {}) => {
   const put = (name, v) => { r[HEADER.indexOf(name)] = v; };
   put('Item Id', 'U5P-I58'); put('Item Name', 'GFF Activities'); put('Log Type', 'WorkItem');
   put('Log Hours', '08:00'); put('Log Hours(for calculation)', '8.0');
-  put('Log owner', 'Arun Prajapati'); put('Log Date', '18/Sep/2026');
+  put('Log owner', 'Arun Patel'); put('Log Date', '18/Sep/2026');
   put('Approval Status', 'Approved'); put('Approved by', 'Danish Tawsalkar');
   put('Created On', '18/Sep/2026 16:19'); put('Description', 'working on tap n pay');
   put('Sprint', 'Q2 Sprint 3'); put('Item Type', 'Story');
-  put('Owner Mail Id', 'arun.prajapati@mindgate.in'); put('Project Name', 'UPI 5.0 Product');
+  put('Owner Mail Id', 'manager@example.in'); put('Project Name', 'UPI 5.0 Product');
   for (const [k, v] of Object.entries(over)) put(k, v);
   return r;
 };
@@ -37,7 +37,7 @@ const sheet = (...rows) => ([
   ['Project Name', 'UPI 5.0 Product'],
   ['Exported By', 'Prashant Rajeshirke'],
   ['Date', '2026-09-25 11:04:03'],
-  ['Filter', 'Log owner Is Arun Prajapati'],
+  ['Filter', 'Log owner Is Arun Patel'],
   ['', '', '', '', '', '', '', '', 'Timesheet'],
   HEADER,
   ...rows,
@@ -60,8 +60,8 @@ test('a sheet with no Log Date / Log owner pair is refused, not half-read', () =
 
 test('the export\'s own fields land where they belong', () => {
   const [e] = parseTimesheetSheet(sheet(row())).entries;
-  assert.equal(e.owner_email, 'arun.prajapati@mindgate.in');
-  assert.equal(e.owner_name, 'Arun Prajapati');
+  assert.equal(e.owner_email, 'manager@example.in');
+  assert.equal(e.owner_name, 'Arun Patel');
   assert.equal(e.log_date, '2026-09-18');
   assert.equal(e.hours, 8);
   assert.equal(e.item_id, 'U5P-I58');

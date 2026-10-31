@@ -34,7 +34,7 @@ const WORK = join(OUT, '.work');
 const ROLES = {
   employee: { label: 'Employee', who: 'Vishakha Rane', tabs: 'Self', groups: ['self'] },
   manager: { label: 'Manager', who: 'Nida Vajid Momin', tabs: 'Self + Manager', groups: ['self', 'mgr'] },
-  hr: { label: 'HR / Super Admin', who: 'Akshay Raut', tabs: 'Self + Manager + HR / Admin', groups: ['self', 'mgr', 'hr'] },
+  hr: { label: 'HR / Super Admin', who: 'Asha Rao', tabs: 'Self + Manager + HR / Admin', groups: ['self', 'mgr', 'hr'] },
 };
 const TAB = { self: 'Self', mgr: 'Manager', hr: 'HR / Admin' };
 

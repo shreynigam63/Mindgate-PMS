@@ -84,7 +84,8 @@ Both are worth re-checking before they are quoted to Mindgate.
 6. **Prior-year annual ratings.** Super 50 and the 9-box need them.
 7. **The Career Pathing Matrix uploaded back** (point 13).
 8. **A reporting manager for 61 employees** who currently have none.
-9. **The corrected KRA library** — `docs/KRA-library-upload-corrected-25Sep2026.xlsx`,
+9. **The corrected KRA library** — the file sent on 25 Sep (removed from this
+   repository on 31 Oct 2026: client data stays with the client),
    225 shelves. The existing 2,360 rows must be cleared first. Say the
    word and we will run it.
 10. **Nine department corrections**, including the Application Support

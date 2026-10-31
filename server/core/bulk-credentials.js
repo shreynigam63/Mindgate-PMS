@@ -45,7 +45,7 @@ function generatePassword() {
 // employees will be their name@123", and confirmed as the first name
 // exactly as asked when the alternatives were put to the client.
 //
-// "Akshay Raut" becomes akshay@123. Lower-cased and stripped of
+// "Asha Rao" becomes asha@123. Lower-cased and stripped of
 // punctuation, because a password nobody can type from the rule is not a
 // rule — "M. Harikrishnan" must not become `M.@123`.
 //
@@ -59,7 +59,7 @@ function generatePassword() {
 //     every employee has (a placeholder one if nothing else).
 //
 // It is deliberately NOT made unique or lengthened. 23 people on this
-// master share the first name Akshay and will share akshay@123; 20 have
+// master share the first name Asha and will share asha@123; 20 have
 // a first name of three letters or fewer. That is what was asked for,
 // and it is safe only because must_change_password is set with it — the
 // password survives exactly one sign-in.
@@ -117,7 +117,7 @@ function plan(employees, opts = {}) {
       department: e.department || '', outcome, reason: OUTCOMES[outcome],
       placeholder_email: !!e.email_is_placeholder,
       // What the pattern would produce for this person. Shown in the
-      // preview, because "akshay@123" is the thing HR is about to hand
+      // preview, because "asha@123" is the thing HR is about to hand
       // out and the only way to notice a name the rule reads badly is to
       // see it. Only for the mode that uses it — the others have nothing
       // to show until the run has happened.

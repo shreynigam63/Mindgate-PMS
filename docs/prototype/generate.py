@@ -395,7 +395,7 @@ def s_employees():
         + table(['Employee','Code','Department','Manager','Role','Actions'],
             [[emp('Suraj Khairnar','Sales Manager'),'MGS167','Sales','Nida Vajid Momin',pill('employee','none'),btn('Edit')+' '+btn('Set password')],
              [emp('Nida Vajid Momin','Regional Head'),'MGS092','Sales','Rajiv Nair',pill('manager','wait'),btn('Edit')+' '+btn('Set password')],
-             [emp('Akshay Raut','HR Business Partner'),'MGS004','HR','&mdash;',pill('hr','ok'),btn('Edit')+' '+btn('Set password')]])
+             [emp('Asha Rao','HR Business Partner'),'MGS004','HR','&mdash;',pill('hr','ok'),btn('Edit')+' '+btn('Set password')]])
         + '</div></div>')
 
 
@@ -544,7 +544,7 @@ GROUPS = [('self', 'Self', SELF_PAGES), ('mgr', 'Manager', MGR_PAGES), ('hr', 'H
 PERSONAS = [
     ('employee', 'Employee', 'Vishakha Rane', 'V', ['self'], 'self-mykras'),
     ('manager', 'Manager', 'Nida Vajid Momin', 'N', ['self', 'mgr'], 'mgr-teamover'),
-    ('hr', 'HR / Super Admin', 'Akshay Raut', 'A', ['self', 'mgr', 'hr'], 'hr-dash'),
+    ('hr', 'HR / Super Admin', 'Asha Rao', 'A', ['self', 'mgr', 'hr'], 'hr-dash'),
 ]
 
 TOP = ['Dashboard']
